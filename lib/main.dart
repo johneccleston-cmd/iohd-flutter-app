@@ -20,6 +20,9 @@ import 'estimates_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
 import 'commission_tester_page.dart'; // 🔥 Added import
 import 'inventory_screen.dart';
+import 'statuses_screen.dart';
+import 'payments_screen.dart';
+import 'invoices_screen.dart';
 
 // Retainage Imports
 import 'company_pool_screen.dart';
@@ -37,8 +40,13 @@ final GoRouter _router = GoRouter(
         return MainNavigationShell(navigationShell: navigationShell);
       },
       branches: [
+       // OFFICE BRANCH (Index 0)
         StatefulShellBranch(routes: [
           GoRoute(path: '/office', builder: (context, state) => const _PlaceholderScreen(title: "My Office")),
+          // Add the new routes here so they live inside the same indexed shell
+          GoRoute(path: '/statuses', builder: (context, state) => const StatusesScreen()),
+          GoRoute(path: '/payments', builder: (context, state) => const PaymentsScreen()),
+          GoRoute(path: '/invoices', builder: (context, state) => const InvoicesScreen()),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/customers', builder: (context, state) => const CustomersScreen()),
