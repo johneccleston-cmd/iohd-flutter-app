@@ -18,7 +18,6 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
     {'id': 'PAY-8921', 'customer': 'Acme Corp', 'date': 'Oct 1, 2026', 'method': 'ACH', 'amount': 2100.00, 'status': 'Processing'},
   ];
 
-  // ... (use the exact same _buildMetricCard helper here) ...
   Widget _buildMetricCard(String title, String value, IconData icon) {
     return Expanded(
       child: Container(

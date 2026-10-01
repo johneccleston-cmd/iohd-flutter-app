@@ -165,7 +165,7 @@ class AnimatedMetricCard extends StatefulWidget {
     super.key,
     required this.title,
     required this.value,
-    required this.caption,
+    this.caption = '',
     required this.valueColor,
     required this.index,
     this.format = dashMoney,
@@ -254,13 +254,6 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
             curve: Curves.easeOutCubic,
             builder: (context, value, _) => _valueText(value),
           ),
-        const SizedBox(height: 4),
-        Text(
-          w.caption,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: DashUi.muted),
-        ),
       ],
     );
 

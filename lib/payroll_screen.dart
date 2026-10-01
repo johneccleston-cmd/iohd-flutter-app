@@ -1,62 +1,335 @@
-﻿import 'dart:convert';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import 'config/api_config.dart';
+import 'payroll_sample_data.dart';
+import 'widgets/dashboard_kit.dart';
+
 // ---------------------------------------------------------------------------
-// Palette
+// Payroll: commission detail by pay week (office use).
+//
+// Built on the same pieces as the finished dashboards (DashUi, AnimatedMetricCard and DashAvatar from
+// dashboard_kit.dart), without the dashboard header bar: the page name already lives in the app navigation.
+//
+// Pick dates, then pick "Everyone" for a one-line-per-person register, or a technician for the
+// full breakdown: every pay week, every closed job, every commission line item, the 1% company
+// pool, commercial retainage, advances, callbacks and the weekly hurdle.
+//
+// Data: GET /api/payroll/commission-detail. Pay weeks run Monday to Sunday, so the server widens
+// any range to whole pay weeks and reports the dates it used. This screen only reports. It does
+// not record or pay a payroll run.
 // ---------------------------------------------------------------------------
-class _C {
-  static const ink = Color(0xFF14213D); // navy: header, primary text
-  static const paper = Color(0xFFF4F5F7); // page background
-  static const card = Colors.white;
-  static const line = Color(0xFFE3E6EB); // borders / dividers
-  static const muted = Color(0xFF6B7585); // secondary text
-  static const amber = Color(0xFFE09F1F); // primary action
-  static const pay = Color(0xFF1B7F4B); // take-home money
-  static const loss = Color(0xFFB4412F); // penalties
-  static const barTrack = Color(0xFFEDEFF3);
+
+/// Shows the Live / Sample switch so the screen can be previewed with made-up data.
+/// Set to false after go-live (and delete payroll_sample_data.dart).
+const bool _showSampleToggle = true;
+
+class _P {
+  static const wash = Color(0xFFF8FAFC);
+  static const toggleActive = Color(0xFF1D4ED8);
+  static const goodBg = Color(0xFFECFDF5);
+  static const goodFg = Color(0xFF047857);
+  static const badBg = Color(0xFFFEF2F2);
+  static const badFg = Color(0xFFB91C1C);
+  static const sampleBg = Color(0xFFFFFBEB);
+  static const sampleLine = Color(0xFFFDE68A);
+  static const sampleFg = Color(0xFF92400E);
 }
 
-class _PayrollRow {
+const List<FontFeature> _figures = [FontFeature.tabularFigures()];
+
+double _d(dynamic v) {
+  if (v is num) return v.toDouble();
+  return double.tryParse(v?.toString() ?? '') ?? 0.0;
+}
+
+String _s(dynamic v) => v?.toString() ?? '';
+
+String _fmt(double v) => dashMoney(v.abs() < 0.005 ? 0 : v);
+
+String _pct(double v) {
+  final whole = v == v.roundToDouble();
+  return '${v.toStringAsFixed(whole ? 0 : 2)}%';
+}
+
+DateTime? _parseDay(String? iso) {
+  if (iso == null || iso.length < 10) return null;
+  return DateTime.tryParse(iso.substring(0, 10));
+}
+
+String _day(String? iso, {bool year = false}) {
+  final d = _parseDay(iso);
+  if (d == null) return '';
+  return DateFormat(year ? 'MMM d, yyyy' : 'MMM d').format(d);
+}
+
+// Calendar math on dates (never add a Duration to a local date: daylight saving breaks it).
+DateTime _addDays(DateTime d, int n) => DateTime(d.year, d.month, d.day + n);
+
+int _daysBetween(DateTime a, DateTime b) =>
+    DateTime.utc(b.year, b.month, b.day).difference(DateTime.utc(a.year, a.month, a.day)).inDays;
+
+String _ymd(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
+
+DateTime _today() {
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day);
+}
+
+// ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+class _Line {
   final String name;
-  final int jobs;
-  final double penalized;
-  final double takeHome;
+  final String category;
+  final bool isPool;
+  final double jobAmount;
+  final double techShare;
 
-  const _PayrollRow({
-    required this.name,
-    required this.jobs,
-    required this.penalized,
-    required this.takeHome,
-  });
+  _Line(Map<String, dynamic> j)
+      : name = _s(j['name']),
+        category = _s(j['category']),
+        isPool = j['kind'] == 'company_pool',
+        jobAmount = _d(j['jobAmount']),
+        techShare = _d(j['techShare']);
+}
 
-  factory _PayrollRow.fromJson(Map<String, dynamic> j) => _PayrollRow(
-        name: (j['tech_name'] ?? 'Unknown').toString(),
-        jobs: int.tryParse(j['jobs_worked'].toString()) ?? 0,
-        penalized: double.tryParse(j['penalized_amount'].toString()) ?? 0.0,
-        takeHome: double.tryParse(j['take_home_pay'].toString()) ?? 0.0,
-      );
+class _Job {
+  final String jobId;
+  final String customer;
+  final String status;
+  final String closedOn;
+  final String firstWorked;
+  final String lastWorked;
+  final int daysWorked;
+  final double jobRevenue;
+  final double splitPct;
+  final double adjustment;
+  final double share;
+  final double retainage;
+  final double advancesRepaid;
+  final double net;
+  final List<_Line> lines;
 
-  String get initials {
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return (parts.first[0] + parts.last[0]).toUpperCase();
+  _Job(Map<String, dynamic> j)
+      : jobId = _s(j['jobId']),
+        customer = _s(j['customer']),
+        status = _s(j['status']),
+        closedOn = _s(j['closedOn']),
+        firstWorked = _s(j['firstWorked']),
+        lastWorked = _s(j['lastWorked']),
+        daysWorked = _d(j['daysWorked']).round(),
+        jobRevenue = _d(j['jobRevenue']),
+        splitPct = _d(j['splitPct']),
+        adjustment = _d(j['adjustment']),
+        share = _d(j['share']),
+        retainage = _d(j['retainage']),
+        advancesRepaid = _d(j['advancesRepaid']),
+        net = _d(j['net']),
+        lines = ((j['lines'] as List?) ?? const [])
+            .map((e) => _Line(Map<String, dynamic>.from(e as Map)))
+            .toList();
+}
+
+class _DayItem {
+  final String jobId;
+  final String customer;
+  final String date;
+  final double amount;
+
+  _DayItem(Map<String, dynamic> j)
+      : jobId = _s(j['jobId']),
+        customer = _s(j['customer']),
+        date = _s(j['date']),
+        amount = _d(j['amount']);
+}
+
+class _Week {
+  final String weekStart;
+  final String weekEnd;
+  final double jobNet;
+  final double advancesPaid;
+  final double callbackPay;
+  final double otherAdjustments;
+  final double weeklyGross;
+  final double hurdleApplied;
+  final double hurdleRule;
+  final double cashPay;
+  final double advanceShortfall;
+  final List<_Job> jobs;
+  final List<_DayItem> advances;
+  final List<_DayItem> callbacks;
+
+  _Week(Map<String, dynamic> j)
+      : weekStart = _s(j['weekStart']),
+        weekEnd = _s(j['weekEnd']),
+        jobNet = _d(j['jobNet']),
+        advancesPaid = _d(j['advancesPaid']),
+        callbackPay = _d(j['callbackPay']),
+        otherAdjustments = _d(j['otherAdjustments']),
+        weeklyGross = _d(j['weeklyGross']),
+        hurdleApplied = _d(j['hurdleApplied']),
+        hurdleRule = _d(j['hurdleRule']),
+        cashPay = _d(j['cashPay']),
+        advanceShortfall = _d(j['advanceShortfall']),
+        jobs = ((j['jobs'] as List?) ?? const [])
+            .map((e) => _Job(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+        advances = ((j['advances'] as List?) ?? const [])
+            .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+        callbacks = ((j['callbacks'] as List?) ?? const [])
+            .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
+            .toList();
+}
+
+class _Release {
+  final String jobId;
+  final String type;
+  final double amount;
+  final String releasedOn;
+
+  _Release(Map<String, dynamic> j)
+      : jobId = _s(j['jobId']),
+        type = _s(j['type']),
+        amount = _d(j['amount']),
+        releasedOn = _s(j['releasedOn']);
+}
+
+class _Totals {
+  final double companyPool;
+  final double retainage;
+  final double advancesPaid;
+  final double callbackPay;
+  final double weeklyGross;
+  final double hurdleApplied;
+  final double cashPay;
+  final double retainageReleased;
+  final double totalDue;
+
+  _Totals(Map<String, dynamic> j)
+      : companyPool = _d(j['companyPool']),
+        retainage = _d(j['retainage']),
+        advancesPaid = _d(j['advancesPaid']),
+        callbackPay = _d(j['callbackPay']),
+        weeklyGross = _d(j['weeklyGross']),
+        hurdleApplied = _d(j['hurdleApplied']),
+        cashPay = _d(j['cashPay']),
+        retainageReleased = _d(j['retainageReleased']),
+        totalDue = _d(j['totalDue']);
+}
+
+class _Tech {
+  final int userId;
+  final String name;
+  final String role;
+  final bool isSales;
+  final bool isCallbackOnly;
+  final _Totals totals;
+  final List<_Week> weeks;
+  final List<_Release> releases;
+
+  _Tech(Map<String, dynamic> j)
+      : userId = _d(j['userId']).round(),
+        name = _s(j['name']),
+        role = _s(j['role']),
+        isSales = j['isSales'] == true,
+        isCallbackOnly = j['isCallbackOnly'] == true,
+        totals = _Totals(Map<String, dynamic>.from((j['totals'] as Map?) ?? const {})),
+        weeks = ((j['weeks'] as List?) ?? const [])
+            .map((e) => _Week(Map<String, dynamic>.from(e as Map)))
+            .toList(),
+        releases = ((j['retainageReleases'] as List?) ?? const [])
+            .map((e) => _Release(Map<String, dynamic>.from(e as Map)))
+            .toList();
+
+  int get jobCount => weeks.fold<int>(0, (n, w) => n + w.jobs.length);
+
+  double get jobNet => weeks.fold<double>(0, (s, w) => s + w.jobNet);
+
+  String get kindLabel {
+    if (isCallbackOnly) return 'Callback pay only';
+    if (isSales) return 'Sales';
+    return role;
   }
 }
 
-class _Preset {
+class _Report {
+  final String start;
+  final String end;
+  final double weeklyThreshold;
+  final double dailyAdvance;
+  final double callbackPay;
+  final double companyPoolRate;
+  final double retainageRate;
+  final List<_Tech> techs;
+
+  _Report(Map<String, dynamic> j)
+      : start = _s((j['range'] as Map?)?['start']),
+        end = _s((j['range'] as Map?)?['end']),
+        weeklyThreshold = _d((j['rules'] as Map?)?['weeklyThreshold']),
+        dailyAdvance = _d((j['rules'] as Map?)?['dailyAdvance']),
+        callbackPay = _d((j['rules'] as Map?)?['callbackPay']),
+        companyPoolRate = _d((j['rules'] as Map?)?['companyPoolRate']),
+        retainageRate = _d((j['rules'] as Map?)?['retainageRate']),
+        techs = ((j['techs'] as List?) ?? const [])
+            .map((e) => _Tech(Map<String, dynamic>.from(e as Map)))
+            .toList();
+}
+
+class _Opt {
+  final String key;
   final String label;
-  final DateTimeRange range;
-  const _Preset(this.label, this.range);
+  const _Opt(this.key, this.label);
+}
+
+class _Seg {
+  final String label;
+  final double value;
+  final Color color;
+  const _Seg(this.label, this.value, this.color);
+}
+
+const List<_Opt> _kPresets = [
+  _Opt('thisWeek', 'This Week'),
+  _Opt('lastWeek', 'Last Week'),
+  _Opt('last2', 'Last 2 Weeks'),
+  _Opt('thisMonth', 'This Month'),
+  _Opt('lastMonth', 'Last Month'),
+  _Opt('ytd', 'Year to Date'),
+  _Opt('custom', 'Custom'),
+];
+
+DateTimeRange _rangeFor(String key) {
+  final t = _today();
+  final monday = _addDays(t, -(t.weekday - 1));
+  switch (key) {
+    case 'thisWeek':
+      return DateTimeRange(start: monday, end: _addDays(monday, 6));
+    case 'last2':
+      return DateTimeRange(start: _addDays(monday, -14), end: _addDays(monday, -1));
+    case 'thisMonth':
+      return DateTimeRange(start: DateTime(t.year, t.month, 1), end: t);
+    case 'lastMonth':
+      return DateTimeRange(start: DateTime(t.year, t.month - 1, 1), end: DateTime(t.year, t.month, 0));
+    case 'ytd':
+      return DateTimeRange(start: DateTime(t.year, 1, 1), end: t);
+    default:
+      return DateTimeRange(start: _addDays(monday, -7), end: _addDays(monday, -1));
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Screen
 // ---------------------------------------------------------------------------
+
 class PayrollScreen extends StatefulWidget {
   const PayrollScreen({super.key});
 
@@ -65,551 +338,781 @@ class PayrollScreen extends StatefulWidget {
 }
 
 class _PayrollScreenState extends State<PayrollScreen> {
-  bool isLoading = false;
-  bool hasRun = false;
-  String? errorMessage;
-  List<_PayrollRow> rows = [];
-
-  final NumberFormat currency = NumberFormat.currency(symbol: '\$');
-  final DateFormat dateFormat = DateFormat('MMM d, yyyy');
-  final DateFormat shortFormat = DateFormat('MMM d');
-
-  late DateTimeRange selectedDateRange;
-
-  static DateTime _today() {
-    final n = DateTime.now();
-    return DateTime(n.year, n.month, n.day);
-  }
+  DateTimeRange _range = _rangeFor('lastWeek');
+  _Report? _report;
+  bool _loading = false;
+  String? _error;
+  int _requestId = 0;
+  bool _sample = false;
+  int? _selectedId; // null = everyone (the register)
+  String? _weekStart; // which pay week is open for the selected technician
+  final Set<String> _collapsedJobs = {}; // jobs the user has folded away
 
   @override
   void initState() {
     super.initState();
-    final t = _today();
-    selectedDateRange =
-        DateTimeRange(start: t.subtract(const Duration(days: 7)), end: t);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _load();
+    });
   }
 
-  List<_Preset> get _presets {
-    final t = _today();
-    final monday = t.subtract(Duration(days: t.weekday - 1));
-    final lastMonday = monday.subtract(const Duration(days: 7));
-    return [
-      _Preset('Last 7 days',
-          DateTimeRange(start: t.subtract(const Duration(days: 7)), end: t)),
-      _Preset('This week', DateTimeRange(start: monday, end: t)),
-      _Preset(
-          'Last week',
-          DateTimeRange(
-              start: lastMonday, end: lastMonday.add(const Duration(days: 6)))),
-      _Preset('This month',
-          DateTimeRange(start: DateTime(t.year, t.month, 1), end: t)),
-    ];
-  }
+  // ---- Range ---------------------------------------------------------------
 
-  bool _sameRange(DateTimeRange a, DateTimeRange b) =>
-      a.start.year == b.start.year &&
-      a.start.month == b.start.month &&
-      a.start.day == b.start.day &&
-      a.end.year == b.end.year &&
-      a.end.month == b.end.month &&
-      a.end.day == b.end.day;
-
-  Future<void> pickDateRange() async {
-    final DateTimeRange? newRange = await showDateRangePicker(
-      context: context,
-      initialDateRange: selectedDateRange,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now().add(const Duration(days: 1)),
-      builder: (context, child) {
-        return Theme(
-          data: ThemeData.light().copyWith(
-            colorScheme: const ColorScheme.light(
-              primary: _C.ink,
-              onPrimary: Colors.white,
-              surface: Colors.white,
-              onSurface: _C.ink,
-            ),
-          ),
-          child: child!,
-        );
-      },
-    );
-
-    if (newRange != null) {
-      setState(() => selectedDateRange = newRange);
+  DateTimeRange get _shownRange {
+    final r = _report;
+    if (_sample && r != null) {
+      final s = _parseDay(r.start);
+      final e = _parseDay(r.end);
+      if (s != null && e != null) return DateTimeRange(start: s, end: e);
     }
+    return _range;
   }
 
-  Future<void> generatePayroll() async {
+  String get _activeKey {
+    for (final p in _kPresets) {
+      if (p.key == 'custom') continue;
+      final r = _rangeFor(p.key);
+      if (r.start == _range.start && r.end == _range.end) return p.key;
+    }
+    return 'custom';
+  }
+
+  bool get _canStep =>
+      !_sample &&
+      _range.start.weekday == DateTime.monday &&
+      (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
+
+  void _step(int dir) {
+    if (!_canStep) return;
+    final days = _daysBetween(_range.start, _range.end) + 1;
     setState(() {
-      isLoading = true;
-      errorMessage = null;
+      _range = DateTimeRange(
+        start: _addDays(_range.start, dir * days),
+        end: _addDays(_range.end, dir * days),
+      );
+    });
+    _load();
+  }
+
+  Future<void> _selectPreset(String key) async {
+    if (_sample) return;
+    if (key == 'custom') {
+      await _pickCustom();
+      return;
+    }
+    setState(() => _range = _rangeFor(key));
+    _load();
+  }
+
+  Future<void> _pickCustom() async {
+    final picked = await showDateRangePicker(
+      context: context,
+      initialDateRange: _range,
+      firstDate: DateTime(2020),
+      lastDate: _addDays(_today(), 30),
+      builder: (context, child) => Theme(
+        data: ThemeData.light().copyWith(
+          colorScheme: const ColorScheme.light(
+            primary: DashUi.ink,
+            onPrimary: Colors.white,
+            surface: Colors.white,
+            onSurface: DashUi.ink,
+          ),
+        ),
+        child: child!,
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _range = picked);
+    _load();
+  }
+
+  // ---- Data ----------------------------------------------------------------
+
+  void _selectTech(int? id) => setState(() {
+        _selectedId = id;
+        _weekStart = null;
+      });
+
+  void _setSample(bool on) {
+    if (on == _sample) return;
+    setState(() {
+      _sample = on;
+      _selectedId = null;
+      _weekStart = null;
+      _report = null;
+      _error = null;
+    });
+    _load();
+  }
+
+  void _applySample() {
+    _requestId++; // ignore any live request still in flight
+    final report = _Report(json.decode(kPayrollSampleJson) as Map<String, dynamic>);
+    setState(() {
+      _report = report;
+      _loading = false;
+      _error = null;
+    });
+  }
+
+  Future<void> _load() async {
+    if (_sample) {
+      _applySample();
+      return;
+    }
+    final id = ++_requestId;
+    setState(() {
+      _loading = true;
+      _error = null;
     });
 
-    final startDateStr =
-        DateFormat('yyyy-MM-dd').format(selectedDateRange.start);
-    final endDateStr = DateFormat('yyyy-MM-dd').format(selectedDateRange.end);
-
     try {
-      final url =
-          'https://integrity-backend-cr02.onrender.com/api/payroll/weekly-summary?startDate=$startDateStr&endDate=$endDateStr';
-      final response = await http.get(Uri.parse(url));
-      if (!mounted) return;
+      final uri = Uri.parse('$kApiBaseUrl/api/payroll/commission-detail').replace(
+        queryParameters: {'start': _ymd(_range.start), 'end': _ymd(_range.end)},
+      );
+      final response = await http.get(
+        uri,
+        headers: {
+          'Content-Type': 'application/json',
+          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
+        },
+      ).timeout(const Duration(seconds: 90)); // the hosted server can be slow to wake up
+
+      if (!mounted || id != _requestId) return;
 
       if (response.statusCode == 200) {
-        final jsonResponse = json.decode(response.body);
-        final list = (jsonResponse['data'] ?? []) as List<dynamic>;
-        final parsed = list
-            .map((e) => _PayrollRow.fromJson(e as Map<String, dynamic>))
-            .toList()
-          ..sort((a, b) => b.takeHome.compareTo(a.takeHome));
+        final report = _Report(json.decode(response.body) as Map<String, dynamic>);
         setState(() {
-          rows = parsed;
-          hasRun = true;
-          isLoading = false;
+          _report = report;
+          _loading = false;
+          if (_selectedId != null && !report.techs.any((t) => t.userId == _selectedId)) {
+            _selectedId = null;
+          }
         });
       } else {
+        String message = 'The server returned status ${response.statusCode}.';
+        try {
+          final body = json.decode(response.body);
+          if (body is Map && body['error'] != null) message = body['error'].toString();
+        } catch (_) {}
+        if (response.statusCode == 401 || response.statusCode == 403) {
+          message = 'You do not have access to payroll reports. Sign in with an office account and try again.';
+        }
         setState(() {
-          errorMessage =
-              'The server returned an error (${response.statusCode}). Try again in a moment.';
-          isLoading = false;
+          _error = message;
+          _loading = false;
         });
       }
-    } catch (e) {
-      if (!mounted) return;
+    } on TimeoutException {
+      if (!mounted || id != _requestId) return;
       setState(() {
-        errorMessage =
-            'Could not reach the server. Check your connection and try again.';
-        isLoading = false;
+        _error = 'The server took too long to respond. Try again in a moment.';
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || id != _requestId) return;
+      setState(() {
+        _error = 'Could not reach the server. Check the connection and try again.';
+        _loading = false;
       });
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Build
-  // -------------------------------------------------------------------------
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: _C.paper,
-      appBar: AppBar(
-        backgroundColor: _C.ink,
-        elevation: 0,
-        iconTheme: const IconThemeData(color: Colors.white),
-        title: const Text(
-          'Payroll',
-          style: TextStyle(
-              fontWeight: FontWeight.w700, color: Colors.white, fontSize: 20),
-        ),
-      ),
-      body: Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100),
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              _buildControls(),
-              const SizedBox(height: 20),
-              ..._buildResults(),
-            ],
-          ),
-        ),
-      ),
-    );
+  List<_Tech> _visibleTechs(_Report r) {
+    if (_selectedId == null) return r.techs;
+    return r.techs.where((t) => t.userId == _selectedId).toList();
   }
 
-  // --- Pay period + run -----------------------------------------------------
-  Widget _buildControls() {
-    final presets = _presets;
-    final rangeText =
-        '${dateFormat.format(selectedDateRange.start)} – ${dateFormat.format(selectedDateRange.end)}';
-    final days = selectedDateRange.end.difference(selectedDateRange.start).inDays + 1;
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: _C.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _C.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 16,
-            runSpacing: 16,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            alignment: WrapAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Pay period',
-                      style: TextStyle(
-                          fontSize: 13,
-                          color: _C.muted,
-                          fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 4),
-                  Text(rangeText,
-                      style: const TextStyle(
-                          fontSize: 24,
-                          color: _C.ink,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.3)),
-                  const SizedBox(height: 2),
-                  Text('$days ${days == 1 ? 'day' : 'days'}',
-                      style: const TextStyle(fontSize: 13, color: _C.muted)),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  OutlinedButton.icon(
-                    icon: const Icon(Icons.edit_calendar_outlined, size: 18),
-                    label: const Text('Custom dates'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: _C.ink,
-                      side: const BorderSide(color: _C.line),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 16, vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: pickDateRange,
-                  ),
-                  const SizedBox(width: 10),
-                  FilledButton.icon(
-                    icon: isLoading
-                        ? const SizedBox(
-                            width: 16,
-                            height: 16,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: _C.ink))
-                        : const Icon(Icons.play_arrow_rounded, size: 22),
-                    label: Text(isLoading ? 'Running…' : 'Run payroll'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _C.amber,
-                      foregroundColor: _C.ink,
-                      textStyle: const TextStyle(
-                          fontWeight: FontWeight.w800, fontSize: 15),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 22, vertical: 16),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
-                    ),
-                    onPressed: isLoading ? null : generatePayroll,
-                  ),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: presets.map((p) {
-              final selected = _sameRange(p.range, selectedDateRange);
-              return ChoiceChip(
-                label: Text(p.label),
-                selected: selected,
-                showCheckmark: false,
-                labelStyle: TextStyle(
-                  color: selected ? Colors.white : _C.ink,
-                  fontWeight: FontWeight.w600,
-                  fontSize: 13,
-                ),
-                backgroundColor: _C.paper,
-                selectedColor: _C.ink,
-                side: BorderSide(color: selected ? _C.ink : _C.line),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20)),
-                onSelected: (_) => setState(() => selectedDateRange = p.range),
-              );
-            }).toList(),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // --- Results area ---------------------------------------------------------
-  List<Widget> _buildResults() {
-    if (isLoading && rows.isEmpty) {
-      return [
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 80),
-          child: Center(child: CircularProgressIndicator(color: _C.ink)),
-        ),
-      ];
-    }
-
-    final widgets = <Widget>[];
-
-    if (errorMessage != null) {
-      widgets.add(_buildError(errorMessage!));
-      widgets.add(const SizedBox(height: 20));
-    }
-
-    if (!hasRun) {
-      if (errorMessage == null) {
-        widgets.add(_buildEmpty(
-          icon: Icons.request_quote_outlined,
-          title: 'No report yet',
-          message: 'Choose a pay period, then select Run payroll.',
-        ));
-      }
-      return widgets;
-    }
-
-    if (rows.isEmpty) {
-      widgets.add(_buildEmpty(
-        icon: Icons.search_off_rounded,
-        title: 'No payroll for this period',
-        message: 'No technician activity was found for these dates.',
-      ));
-      return widgets;
-    }
-
-    final totalTake = rows.fold<double>(0, (s, r) => s + r.takeHome);
-    final totalPenalty = rows.fold<double>(0, (s, r) => s + r.penalized);
-    final totalJobs = rows.fold<int>(0, (s, r) => s + r.jobs);
-    final maxTake = rows.map((r) => r.takeHome).fold<double>(0, (a, b) => a > b ? a : b);
-
-    widgets.add(_buildSummary(totalTake, totalPenalty, totalJobs));
-    widgets.add(const SizedBox(height: 20));
-    widgets.add(_buildTable(maxTake));
-    return widgets;
-  }
-
-  Widget _buildSummary(double totalTake, double totalPenalty, int totalJobs) {
-    final tiles = [
-      _StatTile(
-        label: 'Total take-home',
-        value: currency.format(totalTake),
-        color: _C.pay,
-        big: true,
-      ),
-      _StatTile(
-        label: 'Penalized',
-        value: currency.format(totalPenalty),
-        color: totalPenalty > 0 ? _C.loss : _C.muted,
-      ),
-      _StatTile(
-        label: 'Jobs worked',
-        value: totalJobs.toString(),
-        color: _C.ink,
-      ),
-      _StatTile(
-        label: 'Technicians',
-        value: rows.length.toString(),
-        color: _C.ink,
-      ),
-    ];
-
-    return LayoutBuilder(builder: (context, c) {
-      if (c.maxWidth >= 760) {
-        return IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(flex: 5, child: tiles[0]),
-              const SizedBox(width: 12),
-              Expanded(flex: 3, child: tiles[1]),
-              const SizedBox(width: 12),
-              Expanded(flex: 3, child: tiles[2]),
-              const SizedBox(width: 12),
-              Expanded(flex: 3, child: tiles[3]),
-            ],
-          ),
-        );
-      }
-      return Column(
-        children: [
-          tiles[0],
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(child: tiles[1]),
-              const SizedBox(width: 12),
-              Expanded(child: tiles[2]),
-            ],
-          ),
-          const SizedBox(height: 12),
-          tiles[3],
-        ],
-      );
+  _Totals _totalsFor(List<_Tech> techs) {
+    double sum(double Function(_Totals) f) => techs.fold<double>(0, (s, t) => s + f(t.totals));
+    return _Totals({
+      'companyPool': sum((t) => t.companyPool),
+      'retainage': sum((t) => t.retainage),
+      'advancesPaid': sum((t) => t.advancesPaid),
+      'callbackPay': sum((t) => t.callbackPay),
+      'weeklyGross': sum((t) => t.weeklyGross),
+      'hurdleApplied': sum((t) => t.hurdleApplied),
+      'cashPay': sum((t) => t.cashPay),
+      'retainageReleased': sum((t) => t.retainageReleased),
+      'totalDue': sum((t) => t.totalDue),
     });
   }
 
-  Widget _buildTable(double maxTake) {
-    return Container(
-      decoration: BoxDecoration(
-        color: _C.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _C.line),
-      ),
-      clipBehavior: Clip.antiAlias,
+  // ---- Copy for Excel ------------------------------------------------------
+
+  String _tsv(List<_Tech> techs) {
+    final rows = <List<String>>[
+      [
+        'Pay week start', 'Technician', 'Row type', 'Job #', 'Customer', 'Job closed',
+        'Line item', 'Category', 'Job line amount', 'Tech %', 'Tech amount',
+      ],
+    ];
+    String n(double v) => v.toStringAsFixed(2);
+
+    for (final t in techs) {
+      for (final w in t.weeks) {
+        for (final j in w.jobs) {
+          for (final l in j.lines) {
+            rows.add([
+              w.weekStart, t.name, l.isPool ? 'Company pool' : 'Line item', j.jobId, j.customer,
+              j.closedOn, l.name, l.category, n(l.jobAmount), _pct(j.splitPct), n(l.techShare),
+            ]);
+          }
+          if (j.adjustment != 0) {
+            rows.add([w.weekStart, t.name, 'Adjustment', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.adjustment)]);
+          }
+          rows.add([w.weekStart, t.name, 'Net pool share', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.share)]);
+          if (j.retainage != 0) {
+            rows.add([w.weekStart, t.name, 'Commercial retainage held', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(-j.retainage)]);
+          }
+          if (j.advancesRepaid != 0) {
+            rows.add([w.weekStart, t.name, 'Advances repaid', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(-j.advancesRepaid)]);
+          }
+          rows.add([w.weekStart, t.name, 'Net to tech', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.net)]);
+        }
+        for (final a in w.advances) {
+          rows.add([w.weekStart, t.name, 'Advance paid', a.jobId, a.customer, a.date, '', '', '', '', n(a.amount)]);
+        }
+        for (final c in w.callbacks) {
+          rows.add([w.weekStart, t.name, 'Callback pay', c.jobId, c.customer, c.date, '', '', '', '', n(c.amount)]);
+        }
+        if (w.otherAdjustments != 0) {
+          rows.add([w.weekStart, t.name, 'Other adjustments', '', '', '', '', '', '', '', n(w.otherAdjustments)]);
+        }
+        rows.add([w.weekStart, t.name, 'Week gross', '', '', '', '', '', '', '', n(w.weeklyGross)]);
+        rows.add([w.weekStart, t.name, 'Weekly hurdle', '', '', '', '', '', '', '', n(-w.hurdleApplied)]);
+        rows.add([w.weekStart, t.name, 'Week cash pay', '', '', '', '', '', '', '', n(w.cashPay)]);
+      }
+      for (final r in t.releases) {
+        rows.add(['', t.name, 'Retainage released', r.jobId, '', r.releasedOn, '', r.type, '', '', n(r.amount)]);
+      }
+      rows.add(['', t.name, 'TOTAL DUE', '', '', '', '', '', '', '', n(t.totals.totalDue)]);
+    }
+
+    String clean(String v) => v.replaceAll(RegExp(r'[\t\r\n]+'), ' ');
+    return rows.map((r) => r.map(clean).join('\t')).join('\n');
+  }
+
+  Future<void> _copy() async {
+    final r = _report;
+    if (r == null || r.techs.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: _tsv(_visibleTechs(r))));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Copied. Paste into Excel or Google Sheets.')),
+    );
+  }
+
+  // ---- Build ---------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFE2E8F0),
       child: LayoutBuilder(builder: (context, c) {
-        final wide = c.maxWidth >= 720;
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-              child: Row(
-                children: [
-                  const Text('Technicians',
-                      style: TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w800,
-                          color: _C.ink)),
-                  const SizedBox(width: 8),
-                  Text('${rows.length}',
-                      style: const TextStyle(
-                          fontSize: 15,
-                          color: _C.muted,
-                          fontWeight: FontWeight.w600)),
-                  const Spacer(),
-                  const Text('Highest take-home first',
-                      style: TextStyle(fontSize: 12, color: _C.muted)),
-                ],
-              ),
-            ),
-            if (wide) _buildHeaderRow(),
-            const Divider(height: 1, color: _C.line),
-            for (int i = 0; i < rows.length; i++) ...[
-              wide ? _wideRow(rows[i], maxTake) : _narrowRow(rows[i], maxTake),
-              if (i != rows.length - 1)
-                const Divider(height: 1, color: _C.line),
-            ],
-          ],
+        final w = c.maxWidth;
+        final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 24.0);
+        return Align(
+          alignment: Alignment.topCenter,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1600),
+            child: Padding(padding: EdgeInsets.all(pad), child: _body()),
+          ),
         );
       }),
     );
   }
 
-  Widget _buildHeaderRow() {
-    const style = TextStyle(
-        fontSize: 12, fontWeight: FontWeight.w600, color: _C.muted);
+  Widget _body() {
+    return LayoutBuilder(builder: (context, c) {
+      final wide = c.maxWidth >= 1000;
+      final top = <Widget>[
+        _toolbar(),
+        const SizedBox(height: 12),
+        if (_sample) ...[_sampleBanner(), const SizedBox(height: 12)],
+      ];
+
+      if (wide) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [...top, Expanded(child: _results(wide: true))],
+        );
+      }
+      return ListView(children: [...top, _results(wide: false)]);
+    });
+  }
+
+  // ---- Toolbar -------------------------------------------------------------
+
+  Widget _toolbar() {
+    final range = _shownRange;
+    final label =
+        '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
+    final r = _report;
+    final widened = !_sample &&
+        r != null &&
+        (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
+    final String note = (widened && r != null)
+        ? 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}. '
+            'Pay weeks run Monday to Sunday and the weekly hurdle applies per week.'
+        : 'Pay weeks run Monday to Sunday and the weekly hurdle applies per week, '
+            'so reports always cover whole pay weeks.';
+
     return Container(
-      color: _C.paper,
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      decoration: DashUi.panel(radius: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _toolbarControls(label)),
+              const SizedBox(width: 12),
+              _toolbarActions(),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            note,
+            style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _toolbarActions() {
+    final hasData = _report != null && _report!.techs.isNotEmpty;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        OutlinedButton.icon(
+          icon: const Icon(Icons.copy_all_outlined, size: 18),
+          label: const Text('Copy for Excel'),
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            foregroundColor: DashUi.ink,
+            backgroundColor: Colors.white,
+            side: const BorderSide(color: DashUi.line),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          ),
+          onPressed: hasData ? _copy : null,
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: 'Refresh',
+          iconSize: 20,
+          color: DashUi.slate,
+          icon: const Icon(Icons.refresh_rounded),
+          onPressed: _loading ? null : _load,
+        ),
+      ],
+    );
+  }
+
+  Widget _toolbarControls(String label) {
+    return Wrap(
+      spacing: 14,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _stepper(label),
+        Opacity(
+          opacity: _sample ? 0.45 : 1,
+          child: IgnorePointer(
+            ignoring: _sample,
+            child: _pillGroup(
+              items: _kPresets,
+              active: _activeKey,
+              onSelected: _selectPreset,
+            ),
+          ),
+        ),
+        if (_showSampleToggle)
+          _pillGroup(
+            items: const [_Opt('live', 'Live Data'), _Opt('sample', 'Sample Data')],
+            active: _sample ? 'sample' : 'live',
+            onSelected: (k) => _setSample(k == 'sample'),
+          ),
+        if (_loading)
+          const SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate),
+          ),
+      ],
+    );
+  }
+
+  Widget _stepper(String label) {
+    final can = _canStep;
+    Widget btn(IconData icon, String tip, VoidCallback? onTap) => IconButton(
+          tooltip: tip,
+          visualDensity: VisualDensity.compact,
+          iconSize: 20,
+          color: DashUi.slate,
+          icon: Icon(icon),
+          onPressed: onTap,
+        );
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: DashUi.line),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          btn(Icons.chevron_left_rounded, 'Previous pay weeks', can ? () => _step(-1) : null),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            child: Text(
+              label,
+              style: const TextStyle(
+                  fontSize: 14.5, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: _figures),
+            ),
+          ),
+          btn(Icons.chevron_right_rounded, 'Next pay weeks', can ? () => _step(1) : null),
+        ],
+      ),
+    );
+  }
+
+  Widget _pillGroup({
+    required List<_Opt> items,
+    required String active,
+    required ValueChanged<String> onSelected,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
+      child: Wrap(
+        spacing: 2,
+        runSpacing: 2,
+        children: [
+          for (final o in items) _pill(o.label, o.key == active, () => onSelected(o.key)),
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(String text, bool selected, VoidCallback onTap) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: selected ? DashUi.line : Colors.transparent),
+          ),
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+              color: selected ? _P.toggleActive : DashUi.slate,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sampleBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: _P.sampleBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _P.sampleLine),
+      ),
       child: const Row(
         children: [
-          Expanded(flex: 5, child: Text('Technician', style: style)),
+          Icon(Icons.science_outlined, size: 18, color: _P.sampleFg),
+          SizedBox(width: 10),
           Expanded(
-              flex: 2,
-              child:
-                  Text('Jobs', textAlign: TextAlign.right, style: style)),
-          Expanded(
-              flex: 3,
-              child: Text('Penalized',
-                  textAlign: TextAlign.right, style: style)),
-          Expanded(
-              flex: 4,
-              child: Text('Take-home',
-                  textAlign: TextAlign.right, style: style)),
+            child: Text(
+              'Sample data. Every name, job and amount here is made up so you can preview the report '
+              'before go-live. Switch to Live Data to see real payroll.',
+              style: TextStyle(fontSize: 12.5, color: _P.sampleFg, fontWeight: FontWeight.w600, height: 1.35),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  static const _figures = [FontFeature.tabularFigures()];
+  // ---- Results -------------------------------------------------------------
 
-  Widget _avatar(_PayrollRow r) {
-    return Container(
-      width: 40,
-      height: 40,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: _C.ink,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(r.initials,
-          style: const TextStyle(
-              color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
-    );
+  Widget _centered(bool wide, Widget child) {
+    if (wide) return Center(child: child);
+    return Padding(padding: const EdgeInsets.symmetric(vertical: 48), child: Center(child: child));
   }
 
-  Widget _shareBar(_PayrollRow r, double maxTake) {
-    final frac = maxTake <= 0 ? 0.0 : (r.takeHome / maxTake).clamp(0.0, 1.0);
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(3),
-      child: LinearProgressIndicator(
-        value: frac,
-        minHeight: 5,
-        backgroundColor: _C.barTrack,
-        valueColor: const AlwaysStoppedAnimation(_C.pay),
-      ),
-    );
-  }
+  Widget _results({required bool wide}) {
+    final report = _report;
 
-  Widget _penaltyText(_PayrollRow r) {
-    if (r.penalized <= 0) {
-      return const Text('—', style: TextStyle(color: _C.muted, fontSize: 15));
+    if (report == null) {
+      if (_loading) {
+        return _centered(wide, const CircularProgressIndicator(color: DashUi.slate));
+      }
+      if (_error != null) {
+        return _centered(wide, _stateMessage(
+          icon: Icons.cloud_off_rounded,
+          title: 'Could not load the report',
+          message: _error!,
+          action: OutlinedButton(
+            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
+            onPressed: _load,
+            child: const Text('Try again'),
+          ),
+        ));
+      }
+      return _centered(wide, _stateMessage(
+        icon: Icons.request_quote_outlined,
+        title: 'No report yet',
+        message: 'Choose the dates above to load the report.',
+      ));
     }
-    return Text(
-      '−${currency.format(r.penalized)}',
-      style: const TextStyle(
-          color: _C.loss,
-          fontWeight: FontWeight.w600,
-          fontSize: 15,
-          fontFeatures: _figures),
+
+    if (report.techs.isEmpty) {
+      return _centered(wide, _stateMessage(
+        icon: Icons.event_busy_rounded,
+        title: 'No commission activity for these dates',
+        message: 'Nothing was settled or paid from ${_day(report.start, year: true)} to ${_day(report.end, year: true)}. '
+            'Commission starts counting on the Oct 5 go-live, and a job pays in the week it is closed.',
+        action: _showSampleToggle && !_sample
+            ? OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
+                icon: const Icon(Icons.science_outlined, size: 18),
+                label: const Text('Preview with sample data'),
+                onPressed: () => _setSample(true),
+              )
+            : null,
+      ));
+    }
+
+    final visible = _visibleTechs(report);
+    final totals = _totalsFor(visible);
+    final jobNet = visible.fold<double>(0, (s, t) => s + t.jobNet);
+
+    _Tech? selected;
+    for (final t in report.techs) {
+      if (t.userId == _selectedId) selected = t;
+    }
+    final detail = selected == null ? <Widget>[_register(report)] : _techDetail(selected, report);
+
+    final banner = _error == null
+        ? <Widget>[]
+        : <Widget>[_errorBanner(), const SizedBox(height: 12)];
+
+    if (wide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ...banner,
+          _scorecards(totals, jobNet, report.companyPoolRate, true),
+          const SizedBox(height: 16),
+          Expanded(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(width: 300, child: _techList(report)),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: SingleChildScrollView(
+                    key: ValueKey<int?>(_selectedId),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _spaced(detail),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ...banner,
+        _scorecards(totals, jobNet, report.companyPoolRate, false),
+        const SizedBox(height: 16),
+        _techChips(report),
+        const SizedBox(height: 16),
+        ..._spaced(detail),
+        const SizedBox(height: 16),
+      ],
     );
   }
 
-  Widget _wideRow(_PayrollRow r, double maxTake) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+  List<Widget> _spaced(List<Widget> items) {
+    final out = <Widget>[];
+    for (var i = 0; i < items.length; i++) {
+      if (i > 0) out.add(const SizedBox(height: 16));
+      out.add(items[i]);
+    }
+    return out;
+  }
+
+  Widget _stateMessage({
+    required IconData icon,
+    required String title,
+    required String message,
+    Widget? action,
+  }) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 520),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: DashUi.line),
+            ),
+            child: Icon(icon, size: 44, color: DashUi.muted),
+          ),
+          const SizedBox(height: 20),
+          Text(title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: DashUi.ink)),
+          const SizedBox(height: 6),
+          Text(message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.4)),
+          if (action != null) ...[const SizedBox(height: 18), action],
+        ],
+      ),
+    );
+  }
+
+  Widget _errorBanner() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: BoxDecoration(
+        color: _P.badBg,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFECACA)),
+      ),
       child: Row(
         children: [
+          const Icon(Icons.error_outline_rounded, size: 18, color: _P.badFg),
+          const SizedBox(width: 10),
           Expanded(
-            flex: 5,
+            child: Text(_error ?? '',
+                style: const TextStyle(fontSize: 13, color: _P.badFg, fontWeight: FontWeight.w600)),
+          ),
+          TextButton(onPressed: _loading ? null : _load, child: const Text('Try again')),
+        ],
+      ),
+    );
+  }
+
+  // ---- Scorecards ----------------------------------------------------------
+
+  Widget _scorecards(_Totals t, double jobNet, double poolRate, bool wide) {
+    final cards = <Widget>[
+      AnimatedMetricCard(
+          title: 'Total Due', value: t.totalDue, valueColor: DashUi.emeraldDeep, index: 0),
+      AnimatedMetricCard(
+          title: 'Closed-Job Commission', value: jobNet, valueColor: DashUi.ink, index: 1),
+      AnimatedMetricCard(
+          title: 'Retainage Held', value: t.retainage, valueColor: DashUi.indigo, index: 2),
+      AnimatedMetricCard(
+          title: 'Company Pool (${_pct(poolRate * 100)})',
+          value: t.companyPool,
+          valueColor: DashUi.slate,
+          index: 3),
+      AnimatedMetricCard(
+          title: 'Advances & Callbacks',
+          value: t.advancesPaid + t.callbackPay,
+          valueColor: DashUi.amber,
+          index: 4),
+    ];
+
+    if (wide) {
+      final row = <Widget>[];
+      for (var i = 0; i < cards.length; i++) {
+        if (i > 0) row.add(const SizedBox(width: 8));
+        row.add(Expanded(child: cards[i]));
+      }
+      return SizedBox(height: 88, child: Row(children: row));
+    }
+
+    return LayoutBuilder(builder: (context, c) {
+      final cols = c.maxWidth >= 620 ? 2 : 1;
+      const gap = 8.0;
+      final width = (c.maxWidth - gap * (cols - 1)) / cols;
+      return Wrap(
+        spacing: gap,
+        runSpacing: gap,
+        children: [for (final card in cards) SizedBox(width: width, height: 88, child: card)],
+      );
+    });
+  }
+
+  // ---- Technician list -----------------------------------------------------
+
+  Widget _techList(_Report report) {
+    return Container(
+      decoration: DashUi.panel(),
+      padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
             child: Row(
               children: [
-                _avatar(r),
-                const SizedBox(width: 12),
-                Flexible(
-                  child: Text(r.name,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 15,
-                          color: _C.ink)),
-                ),
+                const Text('Technicians',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                const SizedBox(width: 8),
+                Text('${report.techs.length}',
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
               ],
             ),
           ),
           Expanded(
-            flex: 2,
-            child: Text('${r.jobs}',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 15, color: _C.ink, fontFeatures: _figures)),
-          ),
-          Expanded(
-            flex: 3,
-            child: Align(
-                alignment: Alignment.centerRight, child: _penaltyText(r)),
-          ),
-          Expanded(
-            flex: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+            child: ListView(
               children: [
-                Text(currency.format(r.takeHome),
-                    style: const TextStyle(
-                        color: _C.pay,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 17,
-                        fontFeatures: _figures)),
-                const SizedBox(height: 6),
-                Padding(
-                  padding: const EdgeInsets.only(left: 24),
-                  child: _shareBar(r, maxTake),
+                _techRow(
+                  leading: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: const BoxDecoration(color: DashUi.ink, shape: BoxShape.circle),
+                    child: const Icon(Icons.groups_rounded, size: 18, color: Colors.white),
+                  ),
+                  name: 'Everyone',
+                  subtitle: 'Payroll register',
+                  due: report.techs.fold<double>(0, (s, t) => s + t.totals.totalDue),
+                  selected: _selectedId == null,
+                  onTap: () => _selectTech(null),
                 ),
+                for (final t in report.techs)
+                  _techRow(
+                    leading: DashAvatar(name: t.name, imageUrl: '', size: 34),
+                    name: t.name,
+                    subtitle: t.kindLabel,
+                    due: t.totals.totalDue,
+                    selected: _selectedId == t.userId,
+                    onTap: () => _selectTech(t.userId),
+                  ),
               ],
             ),
           ),
@@ -618,165 +1121,1132 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
-  Widget _narrowRow(_PayrollRow r, double maxTake) {
+  Widget _techRow({
+    required Widget leading,
+    required String name,
+    required String subtitle,
+    required double due,
+    required bool selected,
+    required VoidCallback onTap,
+  }) {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Material(
+        color: selected ? DashUi.faint : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: [
+                leading,
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                              color: DashUi.ink)),
+                      Text(subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(_fmt(due),
+                    style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                        color: due < 0 ? DashUi.red : DashUi.emeraldDeep,
+                        fontFeatures: _figures)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _techChips(_Report report) {
+    final items = <_Opt>[
+      const _Opt('all', 'Everyone'),
+      for (final t in report.techs) _Opt('${t.userId}', t.name),
+    ];
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: _pillGroup(
+        items: items,
+        active: _selectedId == null ? 'all' : '$_selectedId',
+        onSelected: (k) => _selectTech(k == 'all' ? null : int.tryParse(k)),
+      ),
+    );
+  }
+
+  // ---- Everyone: payroll register -----------------------------------------
+
+  static const List<int> _regFlex = [34, 8, 14, 13, 12, 14, 12, 14, 15, 15];
+
+  Widget _registerCell(int i, Widget child) => Expanded(flex: _regFlex[i], child: child);
+
+  Widget _registerText(int i, String text, {Color color = DashUi.ink, FontWeight weight = FontWeight.w600}) {
+    return _registerCell(
+      i,
+      Text(text,
+          textAlign: TextAlign.right,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 13.5, fontWeight: weight, color: color, fontFeatures: _figures)),
+    );
+  }
+
+  Widget _register(_Report report) {
+    const heads = [
+      'Technician', 'Jobs', 'Closed-Job Net', 'Advances', 'Callbacks',
+      'Gross', 'Hurdle', 'Cash Pay', 'Retainage Released', 'Total Due',
+    ];
+    const minWidth = 980.0;
+
+    double sum(double Function(_Tech) f) => report.techs.fold<double>(0, (s, t) => s + f(t));
+
+    final headRow = Container(
+      color: DashUi.faint,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          for (var i = 0; i < heads.length; i++)
+            _registerCell(
+              i,
+              Text(heads[i],
+                  textAlign: i == 0 ? TextAlign.left : TextAlign.right,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+            ),
+        ],
+      ),
+    );
+
+    Widget techRow(_Tech t) {
+      return InkWell(
+        onTap: () => _selectTech(t.userId),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+          child: Row(
+            children: [
+              _registerCell(
+                0,
+                Row(
+                  children: [
+                    DashAvatar(name: t.name, imageUrl: '', size: 30),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(t.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                  fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+                          Text(t.kindLabel,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 11.5, color: DashUi.muted)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              _registerText(1, '${t.jobCount}'),
+              _registerText(2, _fmt(t.jobNet)),
+              _registerText(3, _fmt(t.totals.advancesPaid), color: DashUi.amber),
+              _registerText(4, _fmt(t.totals.callbackPay), color: DashUi.amber),
+              _registerText(5, _fmt(t.totals.weeklyGross)),
+              _registerText(6, _fmt(-t.totals.hurdleApplied), color: DashUi.slate),
+              _registerText(7, _fmt(t.totals.cashPay), color: DashUi.emeraldDeep),
+              _registerText(8, _fmt(t.totals.retainageReleased), color: DashUi.indigo),
+              _registerText(9, _fmt(t.totals.totalDue),
+                  color: DashUi.emeraldDeep, weight: FontWeight.w800),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final totalRow = Container(
+      color: DashUi.faint,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      child: Row(
+        children: [
+          _registerCell(
+            0,
+            const Text('Total',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink)),
+          ),
+          _registerText(1, '${report.techs.fold<int>(0, (n, t) => n + t.jobCount)}', weight: FontWeight.w800),
+          _registerText(2, _fmt(sum((t) => t.jobNet)), weight: FontWeight.w800),
+          _registerText(3, _fmt(sum((t) => t.totals.advancesPaid)), color: DashUi.amber, weight: FontWeight.w800),
+          _registerText(4, _fmt(sum((t) => t.totals.callbackPay)), color: DashUi.amber, weight: FontWeight.w800),
+          _registerText(5, _fmt(sum((t) => t.totals.weeklyGross)), weight: FontWeight.w800),
+          _registerText(6, _fmt(-sum((t) => t.totals.hurdleApplied)), color: DashUi.slate, weight: FontWeight.w800),
+          _registerText(7, _fmt(sum((t) => t.totals.cashPay)), color: DashUi.emeraldDeep, weight: FontWeight.w800),
+          _registerText(8, _fmt(sum((t) => t.totals.retainageReleased)), color: DashUi.indigo, weight: FontWeight.w800),
+          _registerText(9, _fmt(sum((t) => t.totals.totalDue)), color: DashUi.emeraldDeep, weight: FontWeight.w800),
+        ],
+      ),
+    );
+
+    final table = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [headRow, for (final t in report.techs) techRow(t), totalRow],
+    );
+
+    return Container(
+      decoration: DashUi.panel(),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Payroll register',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                SizedBox(height: 2),
+                Text('One line per person for these pay weeks. Select a technician for the full line-item breakdown.',
+                    style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+          LayoutBuilder(builder: (context, c) {
+            if (c.maxWidth >= minWidth) return table;
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(width: minWidth, child: table),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ---- One technician -------------------------------------------------------
+
+  Widget _chip(String text, Color fg, Color bg) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      child: Text(text, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: fg)),
+    );
+  }
+
+  Widget _dot(Color color, {double size = 8}) {
+    return Container(width: size, height: size, decoration: BoxDecoration(color: color, shape: BoxShape.circle));
+  }
+
+  TextStyle _num(double size, FontWeight weight, Color color) =>
+      TextStyle(fontSize: size, fontWeight: weight, color: color, fontFeatures: _figures);
+
+  _Week _activeWeek(_Tech t) {
+    for (final w in t.weeks) {
+      if (w.weekStart == _weekStart) return w;
+    }
+    return t.weeks.last;
+  }
+
+  List<Widget> _techDetail(_Tech t, _Report report) {
+    final panels = <Widget>[_techHero(t)];
+
+    if (t.weeks.isNotEmpty) {
+      final w = _activeWeek(t);
+      if (t.weeks.length > 1) panels.add(_weekStrip(t, w));
+      panels.add(_weekSummary(w));
+      if (w.jobs.isNotEmpty) panels.add(_jobsSection(t, w, report));
+      final days = _dayCards(w);
+      if (days != null) panels.add(days);
+    }
+
+    if (t.releases.isNotEmpty) panels.add(_releasesPanel(t));
+
+    if (t.weeks.isEmpty && t.releases.isEmpty) {
+      panels.add(Container(
+        padding: const EdgeInsets.all(20),
+        decoration: DashUi.panel(),
+        child: const Text('Nothing to report for this person in these dates.',
+            style: TextStyle(color: DashUi.slate, fontSize: 14)),
+      ));
+    }
+
+    panels.add(_footnote(report));
+    return panels;
+  }
+
+  // ---- Hero: who, how much, and where it comes from -------------------------
+
+  Widget _techHero(_Tech t) {
+    final tot = t.totals;
+    final segs = <_Seg>[
+      _Seg('Closed-job net', t.jobNet, DashUi.emeraldDeep),
+      _Seg('Advances', tot.advancesPaid, DashUi.sky),
+      _Seg('Callbacks', tot.callbackPay, DashUi.amber),
+      _Seg('Retainage released', tot.retainageReleased, DashUi.indigo),
+    ];
+    final positive = tot.totalDue > 0;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: DashUi.panel(radius: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              _avatar(r),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(r.name,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15,
-                        color: _C.ink)),
+              DashAvatar(
+                name: t.name,
+                imageUrl: '',
+                size: 56,
+                ringColor: positive ? DashUi.emerald : DashUi.line,
+                ringWidth: 2,
+                glowColor: positive ? DashUi.emerald.withValues(alpha: 0.25) : null,
               ),
-              Text(currency.format(r.takeHome),
-                  style: const TextStyle(
-                      color: _C.pay,
-                      fontWeight: FontWeight.w800,
-                      fontSize: 17,
-                      fontFeatures: _figures)),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(t.name,
+                            style: const TextStyle(
+                                fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.3)),
+                        if (t.kindLabel.isNotEmpty) _chip(t.kindLabel, DashUi.slate, DashUi.faint),
+                        if (_sample) _chip('Sample', _P.sampleFg, _P.sampleBg),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
+                      '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed',
+                      style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text('Total Due',
+                      style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(_fmt(tot.totalDue),
+                      style: _num(34, FontWeight.w800, tot.totalDue < 0 ? DashUi.red : DashUi.emeraldDeep)),
+                ],
+              ),
             ],
           ),
-          const SizedBox(height: 10),
-          _shareBar(r, maxTake),
-          const SizedBox(height: 10),
-          Row(
+          const SizedBox(height: 18),
+          _compositionBar(segs),
+          const SizedBox(height: 12),
+          _legend(segs, hurdleKept: tot.hurdleApplied),
+        ],
+      ),
+    );
+  }
+
+  Widget _compositionBar(List<_Seg> segs, {double height = 12}) {
+    final shown = segs.where((s) => s.value > 0.004).toList();
+    final total = shown.fold<double>(0, (a, s) => a + s.value);
+    if (total <= 0) {
+      return Container(
+        height: height,
+        decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(height / 2)),
+      );
+    }
+    final reduce = MediaQuery.of(context).disableAnimations;
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<String>('bar|${total.toStringAsFixed(2)}|${shown.length}'),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 700),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, _) => ClipRRect(
+        borderRadius: BorderRadius.circular(height / 2),
+        child: ClipRect(
+          clipper: _WipeClipper(t),
+          child: SizedBox(
+            height: height,
+            child: Row(
+              children: [
+                for (var i = 0; i < shown.length; i++)
+                  Expanded(
+                    flex: math.max(1, (shown[i].value * 1000).round()),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color: shown[i].color,
+                        border: i < shown.length - 1
+                            ? const Border(right: BorderSide(color: Colors.white, width: 2))
+                            : null,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _legend(List<_Seg> segs, {double hurdleKept = 0}) {
+    Widget item(Color color, String label, String value) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _dot(color),
+            const SizedBox(width: 7),
+            Text(label,
+                style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 6),
+            Text(value, style: _num(12.5, FontWeight.w800, DashUi.ink)),
+          ],
+        );
+
+    return Wrap(
+      spacing: 22,
+      runSpacing: 8,
+      children: [
+        for (final s in segs)
+          if (s.value.abs() > 0.004) item(s.color, s.label, _fmt(s.value)),
+        if (hurdleKept > 0.004) item(DashUi.muted, 'Weekly hurdle kept', _fmt(-hurdleKept)),
+      ],
+    );
+  }
+
+  // ---- Pay week picker ------------------------------------------------------
+
+  Widget _weekStrip(_Tech t, _Week active) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
+          child: Row(
             children: [
-              Text('${r.jobs} ${r.jobs == 1 ? 'job' : 'jobs'}',
-                  style: const TextStyle(color: _C.muted, fontSize: 13)),
-              const Spacer(),
-              if (r.penalized > 0) ...[
-                const Text('Penalized ',
-                    style: TextStyle(color: _C.muted, fontSize: 13)),
-                _penaltyText(r),
+              const Text('Pay Weeks',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              const SizedBox(width: 8),
+              Text('${t.weeks.length}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
+            ],
+          ),
+        ),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final w in t.weeks)
+                Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: _weekChip(w, w.weekStart == active.weekStart),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _weekChip(_Week w, bool selected) {
+    final under = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
+    final String flag;
+    final Color flagColor;
+    if (w.advanceShortfall > 0) {
+      flag = 'Advance shortfall';
+      flagColor = DashUi.red;
+    } else if (under) {
+      flag = 'Under hurdle';
+      flagColor = DashUi.amber;
+    } else {
+      flag = '${w.jobs.length} ${w.jobs.length == 1 ? 'job' : 'jobs'} closed';
+      flagColor = DashUi.muted;
+    }
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () => setState(() => _weekStart = w.weekStart),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOut,
+          width: 172,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: selected ? DashUi.ink : DashUi.line, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('${_day(w.weekStart)} – ${_day(w.weekEnd)}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              const SizedBox(height: 4),
+              Text(_fmt(w.cashPay),
+                  style: _num(18, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted)),
+              const SizedBox(height: 2),
+              Text(flag, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: flagColor)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---- Week summary: bar against the hurdle, then the ledger ----------------
+
+  List<_Seg> _weekSegs(_Week w) => [
+        _Seg('Closed-job net', w.jobNet, DashUi.emeraldDeep),
+        _Seg('Advances', w.advancesPaid, DashUi.sky),
+        _Seg('Callbacks', w.callbackPay, DashUi.amber),
+      ].where((s) => s.value > 0.004).toList();
+
+  Widget _weekSummary(_Week w) {
+    final segs = _weekSegs(w);
+    final underHurdle = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: DashUi.panel(radius: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Pay Week',
+                        style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+                    const SizedBox(height: 2),
+                    Text('${_day(w.weekStart)} – ${_day(w.weekEnd, year: true)}',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text('Cash Pay',
+                      style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 2),
+                  Text(_fmt(w.cashPay),
+                      style: _num(28, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted)),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _hurdleBar(w, segs),
+          const SizedBox(height: 8),
+          _legend(segs),
+          const SizedBox(height: 14),
+          const Divider(height: 1, color: DashUi.line),
+          const SizedBox(height: 8),
+          _ledgerRow('Closed-job commission (net to tech)', w.jobNet, dot: DashUi.emeraldDeep),
+          if (w.advancesPaid != 0)
+            _ledgerRow('Advances paid this week', w.advancesPaid, dot: DashUi.sky, plus: true),
+          if (w.callbackPay != 0)
+            _ledgerRow('Callback pay', w.callbackPay, dot: DashUi.amber, plus: true),
+          if (w.otherAdjustments != 0)
+            _ledgerRow('Other adjustments', w.otherAdjustments,
+                color: DashUi.muted, note: 'Counted in the weekly total but not one of the lines above'),
+          const Divider(height: 18, color: DashUi.line),
+          _ledgerRow('Weekly gross', w.weeklyGross, bold: true),
+          if (w.hurdleRule > 0)
+            _ledgerRow(
+              underHurdle ? 'Under the ${_fmt(w.hurdleRule)} hurdle, no cash pay' : 'Weekly hurdle',
+              -w.hurdleApplied,
+              color: DashUi.slate,
+            ),
+          if (w.advanceShortfall > 0)
+            _ledgerRow('Advance shortfall', w.advanceShortfall,
+                color: DashUi.red,
+                note: 'Job commission did not cover the advances. Recovered from a later payroll run.'),
+          const Divider(height: 18, color: DashUi.line),
+          _ledgerRow('Cash pay for the week', w.cashPay,
+              color: w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted, bold: true),
+        ],
+      ),
+    );
+  }
+
+  Widget _ledgerRow(
+    String label,
+    double amount, {
+    Color color = DashUi.ink,
+    Color? dot,
+    bool bold = false,
+    String? note,
+    bool plus = false,
+  }) {
+    final style = TextStyle(
+        fontSize: 14,
+        color: color,
+        fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+        fontFeatures: _figures);
+    final text = plus && amount > 0 ? '+${_fmt(amount)}' : _fmt(amount);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 20,
+            child: dot == null
+                ? null
+                : Padding(padding: const EdgeInsets.only(top: 6), child: _dot(dot)),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: style),
+                if (note != null)
+                  Text(note, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
+              ],
+            ),
+          ),
+          Text(text, style: style),
+        ],
+      ),
+    );
+  }
+
+  /// The week's gross as a bar, with the hurdle drawn as a line. Whatever sits past the line is cash.
+  Widget _hurdleBar(_Week w, List<_Seg> segs) {
+    final gross = segs.fold<double>(0, (a, s) => a + s.value);
+    final hurdle = w.hurdleRule;
+    final scale = math.max(gross, hurdle);
+    if (scale <= 0) return const SizedBox.shrink();
+    final reduce = MediaQuery.of(context).disableAnimations;
+
+    return TweenAnimationBuilder<double>(
+      key: ValueKey<String>('hb|${w.weekStart}|${gross.toStringAsFixed(2)}'),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 650),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, _) => LayoutBuilder(builder: (context, c) {
+        final width = c.maxWidth;
+        final unit = (width - 8) / scale;
+        final hurdleX = hurdle * unit;
+        final labelLeft = (hurdleX - 44).clamp(0.0, math.max(0.0, width - 88)).toDouble();
+
+        return SizedBox(
+          height: 52,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned(
+                left: 0,
+                right: 0,
+                top: 24,
+                height: 14,
+                child: Container(
+                  decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(7)),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                top: 24,
+                height: 14,
+                width: gross * unit * t,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(7),
+                  child: Row(
+                    children: [
+                      for (var i = 0; i < segs.length; i++)
+                        Expanded(
+                          flex: math.max(1, (segs[i].value * 1000).round()),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: segs[i].color,
+                              border: i < segs.length - 1
+                                  ? const Border(right: BorderSide(color: Colors.white, width: 2))
+                                  : null,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (hurdle > 0) ...[
+                Positioned(
+                  left: labelLeft,
+                  top: 0,
+                  width: 88,
+                  child: Text(
+                    'Hurdle ${_fmt(hurdle)}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate),
+                  ),
+                ),
+                Positioned(
+                  left: hurdleX - 1,
+                  top: 16,
+                  height: 30,
+                  width: 2,
+                  child: Container(color: DashUi.ink),
+                ),
               ],
             ],
           ),
-        ],
-      ),
+        );
+      }),
     );
   }
 
-  // --- States ---------------------------------------------------------------
-  Widget _buildEmpty({
-    required IconData icon,
-    required String title,
-    required String message,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 24),
-      decoration: BoxDecoration(
-        color: _C.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _C.line),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: _C.paper,
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Icon(icon, size: 30, color: _C.muted),
+  // ---- Closed jobs ----------------------------------------------------------
+
+  Widget _jobsSection(_Tech t, _Week w, _Report report) {
+    final keys = [for (final j in w.jobs) '${t.userId}|${w.weekStart}|${j.jobId}'];
+    final allOpen = keys.every((k) => !_collapsedJobs.contains(k));
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
+          child: Row(
+            children: [
+              const Text('Closed Jobs',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              const SizedBox(width: 8),
+              Text('${w.jobs.length}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
+              const Spacer(),
+              if (w.jobs.length > 1)
+                TextButton.icon(
+                  icon: Icon(allOpen ? Icons.unfold_less : Icons.unfold_more, size: 18),
+                  label: Text(allOpen ? 'Collapse all' : 'Expand all'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: DashUi.slate,
+                    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  onPressed: () => setState(() {
+                    if (allOpen) {
+                      _collapsedJobs.addAll(keys);
+                    } else {
+                      _collapsedJobs.removeAll(keys);
+                    }
+                  }),
+                ),
+            ],
           ),
-          const SizedBox(height: 16),
-          Text(title,
-              style: const TextStyle(
-                  fontSize: 17, fontWeight: FontWeight.w800, color: _C.ink)),
-          const SizedBox(height: 6),
-          Text(message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: _C.muted)),
+        ),
+        for (var i = 0; i < w.jobs.length; i++) ...[
+          if (i > 0) const SizedBox(height: 12),
+          _jobCard(t, w, w.jobs[i], report),
+        ],
+      ],
+    );
+  }
+
+  Widget _jobCard(_Tech t, _Week w, _Job j, _Report report) {
+    final key = '${t.userId}|${w.weekStart}|${j.jobId}';
+    final open = !_collapsedJobs.contains(key);
+    final worked = j.firstWorked.isEmpty
+        ? ''
+        : (j.firstWorked == j.lastWorked
+            ? 'Worked ${_day(j.firstWorked)}'
+            : 'Worked ${_day(j.firstWorked)} – ${_day(j.lastWorked)}');
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: DashUi.line),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Material(
+            color: Colors.transparent,
+            child: InkWell(
+              onTap: () => setState(() {
+                if (open) {
+                  _collapsedJobs.add(key);
+                } else {
+                  _collapsedJobs.remove(key);
+                }
+              }),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 16, 14),
+                child: Row(
+                  children: [
+                    AnimatedRotation(
+                      turns: open ? 0.25 : 0,
+                      duration: const Duration(milliseconds: 160),
+                      child: const Icon(Icons.chevron_right_rounded, size: 22, color: DashUi.muted),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('Job ${j.jobId}${j.customer.isEmpty ? '' : '  ${j.customer}'}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                              if (j.closedOn.isNotEmpty) 'Closed ${_day(j.closedOn, year: true)}',
+                              if (j.status.isNotEmpty) j.status,
+                              if (worked.isNotEmpty) '$worked (${j.daysWorked} ${j.daysWorked == 1 ? 'day' : 'days'})',
+                              if (j.jobRevenue > 0) 'Job total ${_fmt(j.jobRevenue)}',
+                            ].join('   '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    _chip('Split ${_pct(j.splitPct)}', _P.goodFg, _P.goodBg),
+                    const SizedBox(width: 16),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('Net to Tech',
+                            style: TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600)),
+                        Text(_fmt(j.net), style: _num(18, FontWeight.w800, DashUi.emeraldDeep)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (open) ...[
+            const Divider(height: 1, color: DashUi.line),
+            LayoutBuilder(builder: (context, c) {
+              const minWidth = 720.0;
+              final table = _lineTable(j, report);
+              if (c.maxWidth >= minWidth) return table;
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: minWidth, child: table),
+              );
+            }),
+            _payoutStrip(j, report),
+          ],
         ],
       ),
     );
   }
 
-  Widget _buildError(String message) {
+  Widget _lineTable(_Job j, _Report report) {
+    const head = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate);
+    final hairline = BoxDecoration(
+      border: Border(top: BorderSide(color: DashUi.line.withValues(alpha: 0.7))),
+    );
+
+    Widget cell(String text,
+        {TextAlign align = TextAlign.left, TextStyle? style, double top = 9, double bottom = 9}) {
+      return Padding(
+        padding: EdgeInsets.fromLTRB(16, top, 16, bottom),
+        child: Text(text,
+            textAlign: align,
+            style: style ?? const TextStyle(fontSize: 13.5, color: DashUi.ink, fontFeatures: _figures)),
+      );
+    }
+
+    TableRow headerRow() => TableRow(
+          decoration: BoxDecoration(color: DashUi.faint.withValues(alpha: 0.6)),
+          children: [
+            cell('Line Item', style: head, top: 8, bottom: 8),
+            cell('Category', style: head, top: 8, bottom: 8),
+            cell('Job Line', align: TextAlign.right, style: head, top: 8, bottom: 8),
+            cell('Tech %', align: TextAlign.right, style: head, top: 8, bottom: 8),
+            cell('Tech Share', align: TextAlign.right, style: head, top: 8, bottom: 8),
+          ],
+        );
+
+    TableRow lineRow(_Line l) {
+      final color = l.isPool ? DashUi.red : DashUi.ink;
+      final base = TextStyle(fontSize: 13.5, color: color, fontFeatures: _figures);
+      return TableRow(decoration: hairline, children: [
+        cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of revenue)' : l.name, style: base),
+        cell(l.isPool ? '' : l.category,
+            style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+        cell(_fmt(l.jobAmount), align: TextAlign.right, style: base),
+        cell(_pct(j.splitPct), align: TextAlign.right, style: base),
+        cell(_fmt(l.techShare), align: TextAlign.right, style: base.copyWith(fontWeight: FontWeight.w700)),
+      ]);
+    }
+
+    final adjust = TextStyle(fontSize: 13.5, color: DashUi.muted, fontFeatures: _figures);
+    final rows = <TableRow>[
+      headerRow(),
+      for (final l in j.lines) lineRow(l),
+      if (j.adjustment != 0)
+        TableRow(decoration: hairline, children: [
+          cell('Adjustment', style: adjust),
+          cell(''),
+          cell(''),
+          cell(''),
+          cell(_fmt(j.adjustment), align: TextAlign.right, style: adjust),
+        ]),
+    ];
+
+    return Table(
+      columnWidths: const {
+        0: FlexColumnWidth(5),
+        1: FlexColumnWidth(3.2),
+        2: FlexColumnWidth(1.8),
+        3: FlexColumnWidth(1.2),
+        4: FlexColumnWidth(1.8),
+      },
+      children: rows,
+    );
+  }
+
+  /// Net pool share, minus what is held back, equals what the tech keeps from this job.
+  Widget _payoutStrip(_Job j, _Report report) {
+    Widget op(String s) => Text(s,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: DashUi.muted));
+
+    Widget chip(String label, double value, Color color, {bool strong = false}) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: strong ? _P.goodBg : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: strong ? const Color(0xFFA7F3D0) : DashUi.line),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label,
+                style: const TextStyle(fontSize: 11.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 1),
+            Text(_fmt(value), style: _num(14.5, FontWeight.w800, color)),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      color: _P.wash,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          chip('Net Pool Share', j.share, DashUi.ink),
+          if (j.retainage != 0) ...[
+            op('−'),
+            chip('Retainage Held (${_pct(report.retainageRate * 100)})', j.retainage, DashUi.indigo),
+          ],
+          if (j.advancesRepaid != 0) ...[
+            op('−'),
+            chip('Advances Repaid', j.advancesRepaid, DashUi.amber),
+          ],
+          op('='),
+          chip('Net to Tech', j.net, DashUi.emeraldDeep, strong: true),
+        ],
+      ),
+    );
+  }
+
+  // ---- Advance days and callbacks -------------------------------------------
+
+  Widget? _dayCards(_Week w) {
+    final cards = <Widget>[
+      if (w.advances.isNotEmpty)
+        _dayCard('Advance Days', 'Flat daily advance. Counts toward the weekly hurdle.', w.advances, DashUi.sky),
+      if (w.callbacks.isNotEmpty)
+        _dayCard('Callbacks', 'Flat callback pay, outside any job pool.', w.callbacks, DashUi.amber),
+    ];
+    if (cards.isEmpty) return null;
+
+    return LayoutBuilder(builder: (context, c) {
+      if (cards.length == 2 && c.maxWidth >= 720) {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: cards[0]),
+            const SizedBox(width: 16),
+            Expanded(child: cards[1]),
+          ],
+        );
+      }
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(cards));
+    });
+  }
+
+  Widget _dayCard(String title, String subtitle, List<_DayItem> items, Color color) {
+    final total = items.fold<double>(0, (s, i) => s + i.amount);
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFBEDEA),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFEBC4BC)),
-      ),
-      child: Row(
+      decoration: DashUi.panel(radius: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(Icons.error_outline_rounded, color: _C.loss),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(message,
-                style: const TextStyle(color: _C.loss, fontSize: 14)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(padding: const EdgeInsets.only(top: 5), child: _dot(color, size: 9)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+              Text(_fmt(total), style: _num(15, FontWeight.w800, color)),
+            ],
           ),
-          TextButton(
-            onPressed: isLoading ? null : generatePayroll,
-            child: const Text('Try again'),
-          ),
+          const SizedBox(height: 10),
+          for (final i in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
+                    child: Text(_day(i.date),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text('Job ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 13.5, color: DashUi.ink)),
+                  ),
+                  Text(_fmt(i.amount), style: _num(13.5, FontWeight.w700, DashUi.ink)),
+                ],
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  // ---- Retainage released ---------------------------------------------------
+
+  Widget _releasesPanel(_Tech t) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: DashUi.panel(radius: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(padding: const EdgeInsets.only(top: 5), child: _dot(DashUi.indigo, size: 9)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Commercial Retainage Released',
+                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    SizedBox(height: 2),
+                    Text('Paid out in these dates. Callback charges against retainage are netted in.',
+                        style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+              Text(_fmt(t.totals.retainageReleased),
+                  style: _num(15, FontWeight.w800,
+                      t.totals.retainageReleased < 0 ? DashUi.red : DashUi.indigo)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final r in t.releases)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
+                    child: Text(_day(r.releasedOn),
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${r.jobId.isEmpty ? 'No job' : 'Job ${r.jobId}'}   '
+                      '${r.type == 'callback_deduction' ? 'Callback charge' : 'Retainage held'}',
+                      style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
+                    ),
+                  ),
+                  Text(_fmt(r.amount),
+                      style: _num(13.5, FontWeight.w700, r.amount < 0 ? DashUi.red : DashUi.ink)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _footnote(_Report report) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+      child: Text(
+        'Amounts show what each pay week is worth before any advance shortfall is carried forward. '
+        'This report does not record or pay a payroll run. A job pays in the week it is closed. '
+        'Advances are ${_fmt(report.dailyAdvance)} per day on multi-week jobs, callbacks pay ${_fmt(report.callbackPay)}, '
+        'and the weekly hurdle is ${_fmt(report.weeklyThreshold)}. Line amounts are rounded to the cent.',
+        style: const TextStyle(fontSize: 12, color: DashUi.muted, height: 1.45, fontWeight: FontWeight.w500),
       ),
     );
   }
 }
 
-// ---------------------------------------------------------------------------
-// Summary tile
-// ---------------------------------------------------------------------------
-class _StatTile extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color color;
-  final bool big;
-
-  const _StatTile({
-    required this.label,
-    required this.value,
-    required this.color,
-    this.big = false,
-  });
+/// Reveals a bar from left to right as [t] goes from 0 to 1.
+class _WipeClipper extends CustomClipper<Rect> {
+  final double t;
+  const _WipeClipper(this.t);
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: _C.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _C.line),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label,
-              style: const TextStyle(
-                  fontSize: 13, color: _C.muted, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 6),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              value,
-              style: TextStyle(
-                fontSize: big ? 32 : 24,
-                fontWeight: FontWeight.w800,
-                color: color,
-                letterSpacing: -0.5,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Rect getClip(Size size) => Rect.fromLTWH(0, 0, size.width * t, size.height);
+
+  @override
+  bool shouldReclip(covariant _WipeClipper oldClipper) => oldClipper.t != t;
 }
