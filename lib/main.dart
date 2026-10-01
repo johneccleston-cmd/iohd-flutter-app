@@ -1,7 +1,9 @@
 ﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-
+import 'product_catalog_screen.dart';
+import 'purchase_orders_screen.dart';
+import 'vendors_screen.dart';
 import 'jobs_screen.dart'; 
 import 'payroll_screen.dart'; 
 import 'estimates_screen.dart'; 
@@ -17,6 +19,7 @@ import 'jobs_dashboard_screen.dart';
 import 'estimates_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
 import 'commission_tester_page.dart'; // 🔥 Added import
+import 'inventory_screen.dart';
 
 // Retainage Imports
 import 'company_pool_screen.dart';
@@ -51,6 +54,29 @@ final GoRouter _router = GoRouter(
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/calendar', builder: (context, state) => const CalendarScreen()),
+        ]),
+       // INVENTORY BRANCH (Index 6)
+        StatefulShellBranch(routes: [
+          GoRoute(
+            path: '/inventory', 
+            builder: (context, state) => const InventoryScreen(), // "Stock Levels"
+            routes: [
+              GoRoute(
+                path: 'catalog', 
+                builder: (context, state) => const ProductCatalogScreen(), 
+              ),
+              // 🔥 UPDATED: Live Purchase Orders Screen
+              GoRoute(
+                path: 'purchase-orders', 
+                builder: (context, state) => const PurchaseOrdersScreen(),
+              ),
+              // 🔥 UPDATED: Live Vendors Screen
+              GoRoute(
+                path: 'vendors', 
+                builder: (context, state) => const VendorsScreen(),
+              ),
+            ],
+          ),
         ]),
         
         // HR BRANCH

@@ -181,6 +181,20 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       },
     );
   }
+  Widget _menuSectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(left: 14, right: 14, top: 12, bottom: 4),
+      child: Text(
+        title.toUpperCase(),
+        style: const TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          color: _slateColor,
+          letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -248,26 +262,40 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                   Container(width: 1, height: 28, color: _strokeBorder),
                   const SizedBox(width: 12),
 
-                  // --- Primary nav ---
+                // --- Primary nav ---
                   Expanded(
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
-                          _navItem(
+                          // 🔥 UPDATED: My Office Mega-Dropdown
+                          _navDropdown(
                             icon: Icons.home_work_rounded,
                             label: "My Office",
-                            isSelected: current == 0,
-                            onTap: () => _goBranch(0),
+                            isSelected: [1, 3, 4].contains(current),
+                            items: (controller) => [
+                              _menuSectionHeader("Operations"),
+                              _dropdownMenuItem(icon: Icons.groups_rounded, label: 'Customers', route: '/customers', controller: controller),
+                              _dropdownMenuItem(icon: Icons.request_quote_rounded, label: 'Estimates', route: '/estimates', controller: controller),
+                              _dropdownMenuItem(icon: Icons.build_rounded, label: 'Jobs', route: '/jobs', controller: controller),
+                              _dropdownMenuItem(icon: Icons.timeline_rounded, label: 'Estimate & Job Statuses', route: '/statuses', controller: controller),
+                              
+                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
+                              
+                              _menuSectionHeader("Financial"),
+                              _dropdownMenuItem(icon: Icons.payment_rounded, label: 'Payments', route: '/payments', controller: controller),
+                              _dropdownMenuItem(icon: Icons.receipt_long_rounded, label: 'Invoices', route: '/invoices', controller: controller),
+                              
+                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
+                              
+                              _menuSectionHeader("Commercial"),
+                              _dropdownMenuItem(icon: Icons.assignment_turned_in_rounded, label: 'Site Checks', route: '/site-checks', controller: controller),
+                              _dropdownMenuItem(icon: Icons.architecture_rounded, label: 'Takeoffs', route: '/takeoffs', controller: controller),
+                            ],
                           ),
                           const SizedBox(width: 4),
-                          _navItem(
-                            icon: Icons.groups_rounded,
-                            label: "Customers",
-                            isSelected: current == 1,
-                            onTap: () => _goBranch(1),
-                          ),
-                          const SizedBox(width: 4),
+                          
+                          // Projects remains standalone
                           _navItem(
                             icon: Icons.folder_copy_rounded,
                             label: "Projects",
@@ -275,20 +303,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                             onTap: () => _goBranch(2),
                           ),
                           const SizedBox(width: 4),
-                          _navItem(
-                            icon: Icons.request_quote_rounded,
-                            label: "Estimates",
-                            isSelected: current == 3,
-                            onTap: () => _goBranch(3),
-                          ),
-                          const SizedBox(width: 4),
-                          _navItem(
-                            icon: Icons.build_rounded,
-                            label: "Jobs",
-                            isSelected: current == 4,
-                            onTap: () => _goBranch(4),
-                          ),
-                          const SizedBox(width: 4),
+                          
                           _navItem(
                             icon: Icons.calendar_month_rounded,
                             label: "Calendar",
@@ -296,37 +311,75 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                             onTap: () => _goBranch(5),
                           ),
                           const SizedBox(width: 4),
+                          
                           _navDropdown(
-  icon: Icons.badge_rounded,
-  label: "HR",
-  isSelected: current == 6,
-  items: (controller) => [
-    _dropdownMenuItem(
-      icon: Icons.payments_rounded,
-      label: 'Payroll',
-      route: '/hr',
-      controller: controller,
-    ),
-    _dropdownMenuItem(
-      icon: Icons.speed_outlined,
-      label: "KPI's",
-      route: '/hr/kpis',
-      controller: controller,
-    ),
-    // 🔥 NEW: Added Commission Simulator item
-    _dropdownMenuItem(
-      icon: Icons.calculate_outlined,
-      label: 'Commission Simulator',
-      route: '/hr/simulator',
-      controller: controller,
-    ),
-  ],
-),
+                            icon: Icons.inventory_2_rounded,
+                            label: "Inventory",
+                            isSelected: current == 6, 
+                            items: (controller) => [
+                              _dropdownMenuItem(
+                                icon: Icons.stacked_bar_chart_rounded,
+                                label: 'Stock Levels',
+                                route: '/inventory', // Routes to your new InventoryScreen
+                                controller: controller,
+                              ),
+                              _dropdownMenuItem(
+                                icon: Icons.category_rounded,
+                                label: 'Product Catalog', // 🔥 Renamed
+                                route: '/inventory/catalog', // Updated route
+                                controller: controller,
+                              ),
+                              
+                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
+                              
+                              _menuSectionHeader("Purchasing"),
+                              _dropdownMenuItem(
+                                icon: Icons.shopping_cart_checkout_rounded,
+                                label: 'Purchase Orders',
+                                route: '/inventory/purchase-orders',
+                                controller: controller,
+                              ),
+                              _dropdownMenuItem(
+                                icon: Icons.storefront_rounded,
+                                label: 'Vendors',
+                                route: '/inventory/vendors',
+                                controller: controller,
+                              ),
+                            ],
+                          ),
                           const SizedBox(width: 4),
+                          
+                          _navDropdown(
+                            icon: Icons.badge_rounded,
+                            label: "HR",
+                            isSelected: current == 7,
+                            items: (controller) => [
+                              _dropdownMenuItem(
+                                icon: Icons.payments_rounded,
+                                label: 'Payroll',
+                                route: '/hr',
+                                controller: controller,
+                              ),
+                              _dropdownMenuItem(
+                                icon: Icons.speed_outlined,
+                                label: "KPI's",
+                                route: '/hr/kpis',
+                                controller: controller,
+                              ),
+                              _dropdownMenuItem(
+                                icon: Icons.calculate_outlined,
+                                label: 'Commission Simulator',
+                                route: '/hr/simulator',
+                                controller: controller,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(width: 4),
+                          
                           _navDropdown(
                             icon: Icons.insights_rounded,
                             label: "Dashboards",
-                            isSelected: current == 7,
+                            isSelected: current == 8, // Shifted from 7 to 8
                             items: (controller) => [
                               _dropdownMenuItem(
                                 icon: Icons.attach_money_rounded,
@@ -450,6 +503,7 @@ class _HoverMenuState extends State<_HoverMenu> {
   final MenuController _controller = MenuController();
   bool _isHovering = false;
   bool _isOpen = false;
+  
 
   void _onEnter() {
     _isHovering = true;
