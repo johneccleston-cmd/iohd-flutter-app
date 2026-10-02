@@ -372,6 +372,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                                 route: '/hr/simulator',
                                 controller: controller,
                               ),
+                              _dropdownMenuItem(
+                                icon: Icons.manage_accounts_rounded,
+                                label: 'Team',
+                                route: '/hr/team',
+                                controller: controller,
+                              ),
                             ],
                           ),
                           const SizedBox(width: 4),

@@ -23,6 +23,7 @@ import 'inventory_screen.dart';
 import 'statuses_screen.dart';
 import 'payments_screen.dart';
 import 'invoices_screen.dart';
+import 'team_admin_screen.dart';
 
 // Retainage Imports
 import 'company_pool_screen.dart';
@@ -96,6 +97,7 @@ final GoRouter _router = GoRouter(
               GoRoute(path: 'kpis', builder: (context, state) => const KPIDashboardScreen()),
               // 🔥 FIX: Relative path matches 'kpis' pattern
               GoRoute(path: 'simulator', builder: (context, state) => const CommissionTesterPage()),
+              GoRoute(path: 'team', builder: (context, state) => const TeamAdminScreen()),
             ],
           ),
         ]),

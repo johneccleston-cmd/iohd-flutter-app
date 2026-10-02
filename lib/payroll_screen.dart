@@ -623,14 +623,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
       }),
     );
   }
-
-  Widget _body() {
+Widget _body() {
     return LayoutBuilder(builder: (context, c) {
       final wide = c.maxWidth >= 1000;
       final top = <Widget>[
         _toolbar(),
         const SizedBox(height: 12),
-        if (_sample) ...[_sampleBanner(), const SizedBox(height: 12)],
+        // Removed the _sampleBanner() check from here
       ];
 
       if (wide) {
@@ -828,29 +827,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
-  Widget _sampleBanner() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: _P.sampleBg,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _P.sampleLine),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.science_outlined, size: 18, color: _P.sampleFg),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Sample data. Every name, job and amount here is made up so you can preview the report '
-              'before go-live. Switch to Live Data to see real payroll.',
-              style: TextStyle(fontSize: 12.5, color: _P.sampleFg, fontWeight: FontWeight.w600, height: 1.35),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 
   // ---- Results -------------------------------------------------------------
 
