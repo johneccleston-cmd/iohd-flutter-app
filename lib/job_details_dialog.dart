@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class JobDetailsDialog extends StatelessWidget {
   final Map<String, dynamic> job;
 
-  const JobDetailsDialog({Key? key, required this.job}) : super(key: key);
+  const JobDetailsDialog({super.key, required this.job});
 
   // Exact color palette from Android XML
   static const Color bgColor = Color(0xFFF8F9FB);

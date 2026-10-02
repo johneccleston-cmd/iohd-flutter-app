@@ -5,9 +5,9 @@ class AppNavBar extends StatelessWidget {
   final String currentPath;
 
   const AppNavBar({
-    Key? key,
+    super.key,
     required this.currentPath,
-  }) : super(key: key);
+  });
 
   @override
   Widget build(BuildContext context) {

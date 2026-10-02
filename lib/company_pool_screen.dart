@@ -8,10 +8,10 @@ class CompanyPoolScreen extends StatefulWidget {
   final String authToken;
 
   const CompanyPoolScreen({
-    Key? key,
+    super.key,
     required this.apiBaseUrl,
     required this.authToken,
-  }) : super(key: key);
+  });
 
   @override
   _CompanyPoolScreenState createState() => _CompanyPoolScreenState();
@@ -61,8 +61,8 @@ class _CompanyPoolScreenState extends State<CompanyPoolScreen> {
 
   String _formatCurrency(double amount) {
     final reg = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
-    final mathFunc = (Match match) => '${match[1]},';
-    return '\$' + amount.toStringAsFixed(2).replaceAllMapped(reg, mathFunc);
+    String mathFunc(Match match) => '${match[1]},';
+    return '\$${amount.toStringAsFixed(2).replaceAllMapped(reg, mathFunc)}';
   }
 
   String _formatDate(String? isoString) {

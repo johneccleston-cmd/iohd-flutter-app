@@ -7,10 +7,10 @@ class AdminRetainageScreen extends StatefulWidget {
   final String authToken;
 
   const AdminRetainageScreen({
-    Key? key,
+    super.key,
     required this.apiBaseUrl,
     required this.authToken,
-  }) : super(key: key);
+  });
 
   @override
   _AdminRetainageScreenState createState() => _AdminRetainageScreenState();
@@ -110,7 +110,7 @@ class _AdminRetainageScreenState extends State<AdminRetainageScreen> {
           child: ListView.separated(
             shrinkWrap: true,
             itemCount: details.length,
-            separatorBuilder: (_, __) => const Divider(),
+            separatorBuilder: (_, _) => const Divider(),
             itemBuilder: (context, index) {
               final item = details[index];
               final isDeduction = item['type'] == 'callback_deduction';

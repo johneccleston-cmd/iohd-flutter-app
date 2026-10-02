@@ -8,11 +8,11 @@ class TechRetainageScreen extends StatefulWidget {
   final String techName; // The logged-in technician's name
 
   const TechRetainageScreen({
-    Key? key,
+    super.key,
     required this.apiBaseUrl,
     required this.authToken,
     required this.techName,
-  }) : super(key: key);
+  });
 
   @override
   _TechRetainageScreenState createState() => _TechRetainageScreenState();
