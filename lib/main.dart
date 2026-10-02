@@ -24,13 +24,13 @@ import 'statuses_screen.dart';
 import 'payments_screen.dart';
 import 'invoices_screen.dart';
 import 'team_admin_screen.dart';
-
-// Retainage Imports
 import 'company_pool_screen.dart';
 import 'admin_retainage_screen.dart';
-
-// Single source of truth for API config
 import 'config/api_config.dart';
+import 'widgets/smooth_wheel_scroll.dart';
+
+
+
 
 // --- ROUTER CONFIGURATION ---
 final GoRouter _router = GoRouter(
@@ -125,6 +125,8 @@ final GoRouter _router = GoRouter(
 );
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  SmoothWheelScroll.install();
   runApp(const IohdHubApp());
 }
 
