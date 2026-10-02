@@ -4,7 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
-import '../config/api_config.dart';
+import 'config/api_config.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
 
@@ -169,7 +169,7 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      );
+      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || requestId != _requestId) return;
 
@@ -195,6 +195,12 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
         _ranked = _rankByCallbacks(techs);
         _chartData = chartRaw.map((e) => _MonthlyChartPoint.fromJson(e as Map<String, dynamic>)).toList();
 
+        _isLoading = false;
+      });
+    } on TimeoutException {
+      if (!mounted || requestId != _requestId) return;
+      setState(() {
+        _errorMessage = 'The dashboard took too long to load.';
         _isLoading = false;
       });
     } catch (e) {
@@ -1720,6 +1726,7 @@ class _AutoHorizontalTechListState extends State<_AutoHorizontalTechList> with S
     super.initState();
     _ticker = createTicker(_onTick);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       _measureRow();
       _ticker.start();
     });
@@ -1776,7 +1783,9 @@ class _AutoHorizontalTechListState extends State<_AutoHorizontalTechList> with S
   void didUpdateWidget(covariant _AutoHorizontalTechList oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.techs != widget.techs) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _measureRow());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _measureRow();
+      });
     }
   }
 
@@ -1896,15 +1905,22 @@ class _AutoHorizontalTechListState extends State<_AutoHorizontalTechList> with S
           child: ValueListenableBuilder<double>(
             valueListenable: _offset,
             builder: (context, offset, child) {
+              // OverflowBox lets the doubled row be wider than the viewport without a
+              // RenderFlex overflow warning; ClipRect above trims what's off-screen.
               return Transform.translate(
                 offset: Offset(-offset, 0),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildTechRow(key: _rowKey),
-                    const SizedBox(width: _cardGap),
-                    _buildTechRow(),
-                  ],
+                child: OverflowBox(
+                  alignment: Alignment.centerLeft,
+                  minWidth: 0,
+                  maxWidth: double.infinity,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildTechRow(key: _rowKey),
+                      const SizedBox(width: _cardGap),
+                      _buildTechRow(),
+                    ],
+                  ),
                 ),
               );
             },

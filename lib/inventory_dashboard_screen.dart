@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
@@ -131,9 +132,10 @@ class _InventorySummary {
     double num_(dynamic v) => v is num ? v.toDouble() : double.tryParse('$v') ?? 0.0;
     int int_(dynamic v) => v is int ? v : int.tryParse('$v') ?? 0;
 
+    // A malformed colorHex from the API falls back to blue instead of failing the whole screen.
     Color parseColor(String? hex) {
-      if (hex == null || !hex.startsWith('#')) return DashUi.blue;
-      return Color(int.parse(hex.replaceFirst('#', '0xFF')));
+      if (hex == null || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(hex)) return DashUi.blue;
+      return Color(int.parse('FF${hex.substring(1)}', radix: 16));
     }
 
     final catList = (json['categories'] as List? ?? [])
@@ -218,7 +220,7 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      );
+      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || requestId != _requestId) return;
 
@@ -231,6 +233,12 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
       } else {
         throw Exception('The server returned status ${response.statusCode}.');
       }
+    } on TimeoutException {
+      if (!mounted || requestId != _requestId) return;
+      setState(() {
+        _errorMessage = 'The dashboard took too long to load.';
+        _isLoading = false;
+      });
     } catch (e) {
       if (!mounted || requestId != _requestId) return;
       setState(() {
@@ -473,7 +481,7 @@ class _InventoryStrikePodiumPanel extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
                           if (rank2 != null) _PodiumStep(tech: rank2, rank: 2, scale: scale) else const Spacer(),
-                          if (rank1 != null) _PodiumStep(tech: rank1, rank: 1, scale: scale),
+                          _PodiumStep(tech: rank1, rank: 1, scale: scale),
                           if (rank3 != null) _PodiumStep(tech: rank3, rank: 3, scale: scale) else const Spacer(),
                         ],
                       );

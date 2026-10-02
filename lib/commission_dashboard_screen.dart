@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import '../config/api_config.dart';
+import 'config/api_config.dart';
 import 'widgets/dashboard_layout.dart';
 
 // =============================================================================
@@ -21,8 +21,6 @@ class _Ui {
   static const emeraldDeep = Color(0xFF059669);
   static const indigo = Color(0xFF6366F1);
   static const sky = Color(0xFF0284C7);
-  static const amber = Color(0xFFD97706);
-  static const red = Color(0xFFDC2626);
 
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
         color: Colors.white,
@@ -177,7 +175,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      );
+      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> body = json.decode(response.body);
@@ -199,6 +197,13 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
         }
       } else {
         throw Exception('The server returned status ${response.statusCode}.');
+      }
+    } on TimeoutException {
+      if (mounted) {
+        setState(() {
+          _errorMessage = 'The dashboard took too long to load.';
+          _isLoading = false;
+        });
       }
     } catch (e) {
       if (mounted) {
@@ -344,7 +349,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
           SizedBox(
             width: 72,
             child: Image.network(
-              person.imageUrl.isNotEmpty ? person.imageUrl : 'https://ui-avatars.com/api/?name=${person.name}&background=random',
+              person.imageUrl.isNotEmpty ? person.imageUrl : 'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(person.name)}&background=random',
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) => Container(
                 color: const Color(0xFFE2E8F0),

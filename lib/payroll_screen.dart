@@ -1,21 +1,28 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:math' as math;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:pdf/pdf.dart';
+import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 
 import 'config/api_config.dart';
 import 'payroll_sample_data.dart';
 import 'widgets/dashboard_kit.dart';
+
+part 'payroll_pdf.dart';
 
 // ---------------------------------------------------------------------------
 // Payroll: commission detail by pay week (office use).
 //
 // Built on the same pieces as the finished dashboards (DashUi, AnimatedMetricCard and DashAvatar from
 // dashboard_kit.dart), without the dashboard header bar: the page name already lives in the app navigation.
+//
+// Click any scorecard to see every log behind that number for the dates. Export PDF writes every
+// technician's breakdown.
 //
 // Pick dates, then pick "Everyone" for a one-line-per-person register, or a technician for the
 // full breakdown: every pay week, every closed job, every commission line item, the 1% company
@@ -32,13 +39,12 @@ const bool _showSampleToggle = true;
 
 class _P {
   static const wash = Color(0xFFF8FAFC);
-  static const toggleActive = Color(0xFF1D4ED8);
   static const goodBg = Color(0xFFECFDF5);
   static const goodFg = Color(0xFF047857);
+  static const toggleActive = Color(0xFF1D4ED8);
   static const badBg = Color(0xFFFEF2F2);
   static const badFg = Color(0xFFB91C1C);
   static const sampleBg = Color(0xFFFFFBEB);
-  static const sampleLine = Color(0xFFFDE68A);
   static const sampleFg = Color(0xFF92400E);
 }
 
@@ -94,11 +100,11 @@ class _Line {
   final double techShare;
 
   _Line(Map<String, dynamic> j)
-      : name = _s(j['name']),
-        category = _s(j['category']),
-        isPool = j['kind'] == 'company_pool',
-        jobAmount = _d(j['jobAmount']),
-        techShare = _d(j['techShare']);
+    : name = _s(j['name']),
+      category = _s(j['category']),
+      isPool = j['kind'] == 'company_pool',
+      jobAmount = _d(j['jobAmount']),
+      techShare = _d(j['techShare']);
 }
 
 class _Job {
@@ -119,23 +125,21 @@ class _Job {
   final List<_Line> lines;
 
   _Job(Map<String, dynamic> j)
-      : jobId = _s(j['jobId']),
-        customer = _s(j['customer']),
-        status = _s(j['status']),
-        closedOn = _s(j['closedOn']),
-        firstWorked = _s(j['firstWorked']),
-        lastWorked = _s(j['lastWorked']),
-        daysWorked = _d(j['daysWorked']).round(),
-        jobRevenue = _d(j['jobRevenue']),
-        splitPct = _d(j['splitPct']),
-        adjustment = _d(j['adjustment']),
-        share = _d(j['share']),
-        retainage = _d(j['retainage']),
-        advancesRepaid = _d(j['advancesRepaid']),
-        net = _d(j['net']),
-        lines = ((j['lines'] as List?) ?? const [])
-            .map((e) => _Line(Map<String, dynamic>.from(e as Map)))
-            .toList();
+    : jobId = _s(j['jobId']),
+      customer = _s(j['customer']),
+      status = _s(j['status']),
+      closedOn = _s(j['closedOn']),
+      firstWorked = _s(j['firstWorked']),
+      lastWorked = _s(j['lastWorked']),
+      daysWorked = _d(j['daysWorked']).round(),
+      jobRevenue = _d(j['jobRevenue']),
+      splitPct = _d(j['splitPct']),
+      adjustment = _d(j['adjustment']),
+      share = _d(j['share']),
+      retainage = _d(j['retainage']),
+      advancesRepaid = _d(j['advancesRepaid']),
+      net = _d(j['net']),
+      lines = ((j['lines'] as List?) ?? const []).map((e) => _Line(Map<String, dynamic>.from(e as Map))).toList();
 }
 
 class _DayItem {
@@ -145,10 +149,10 @@ class _DayItem {
   final double amount;
 
   _DayItem(Map<String, dynamic> j)
-      : jobId = _s(j['jobId']),
-        customer = _s(j['customer']),
-        date = _s(j['date']),
-        amount = _d(j['amount']);
+    : jobId = _s(j['jobId']),
+      customer = _s(j['customer']),
+      date = _s(j['date']),
+      amount = _d(j['amount']);
 }
 
 class _Week {
@@ -168,26 +172,24 @@ class _Week {
   final List<_DayItem> callbacks;
 
   _Week(Map<String, dynamic> j)
-      : weekStart = _s(j['weekStart']),
-        weekEnd = _s(j['weekEnd']),
-        jobNet = _d(j['jobNet']),
-        advancesPaid = _d(j['advancesPaid']),
-        callbackPay = _d(j['callbackPay']),
-        otherAdjustments = _d(j['otherAdjustments']),
-        weeklyGross = _d(j['weeklyGross']),
-        hurdleApplied = _d(j['hurdleApplied']),
-        hurdleRule = _d(j['hurdleRule']),
-        cashPay = _d(j['cashPay']),
-        advanceShortfall = _d(j['advanceShortfall']),
-        jobs = ((j['jobs'] as List?) ?? const [])
-            .map((e) => _Job(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-        advances = ((j['advances'] as List?) ?? const [])
-            .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-        callbacks = ((j['callbacks'] as List?) ?? const [])
-            .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
-            .toList();
+    : weekStart = _s(j['weekStart']),
+      weekEnd = _s(j['weekEnd']),
+      jobNet = _d(j['jobNet']),
+      advancesPaid = _d(j['advancesPaid']),
+      callbackPay = _d(j['callbackPay']),
+      otherAdjustments = _d(j['otherAdjustments']),
+      weeklyGross = _d(j['weeklyGross']),
+      hurdleApplied = _d(j['hurdleApplied']),
+      hurdleRule = _d(j['hurdleRule']),
+      cashPay = _d(j['cashPay']),
+      advanceShortfall = _d(j['advanceShortfall']),
+      jobs = ((j['jobs'] as List?) ?? const []).map((e) => _Job(Map<String, dynamic>.from(e as Map))).toList(),
+      advances = ((j['advances'] as List?) ?? const [])
+          .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+      callbacks = ((j['callbacks'] as List?) ?? const [])
+          .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
+          .toList();
 }
 
 class _Release {
@@ -197,10 +199,10 @@ class _Release {
   final String releasedOn;
 
   _Release(Map<String, dynamic> j)
-      : jobId = _s(j['jobId']),
-        type = _s(j['type']),
-        amount = _d(j['amount']),
-        releasedOn = _s(j['releasedOn']);
+    : jobId = _s(j['jobId']),
+      type = _s(j['type']),
+      amount = _d(j['amount']),
+      releasedOn = _s(j['releasedOn']);
 }
 
 class _Totals {
@@ -215,15 +217,15 @@ class _Totals {
   final double totalDue;
 
   _Totals(Map<String, dynamic> j)
-      : companyPool = _d(j['companyPool']),
-        retainage = _d(j['retainage']),
-        advancesPaid = _d(j['advancesPaid']),
-        callbackPay = _d(j['callbackPay']),
-        weeklyGross = _d(j['weeklyGross']),
-        hurdleApplied = _d(j['hurdleApplied']),
-        cashPay = _d(j['cashPay']),
-        retainageReleased = _d(j['retainageReleased']),
-        totalDue = _d(j['totalDue']);
+    : companyPool = _d(j['companyPool']),
+      retainage = _d(j['retainage']),
+      advancesPaid = _d(j['advancesPaid']),
+      callbackPay = _d(j['callbackPay']),
+      weeklyGross = _d(j['weeklyGross']),
+      hurdleApplied = _d(j['hurdleApplied']),
+      cashPay = _d(j['cashPay']),
+      retainageReleased = _d(j['retainageReleased']),
+      totalDue = _d(j['totalDue']);
 }
 
 class _Tech {
@@ -237,18 +239,16 @@ class _Tech {
   final List<_Release> releases;
 
   _Tech(Map<String, dynamic> j)
-      : userId = _d(j['userId']).round(),
-        name = _s(j['name']),
-        role = _s(j['role']),
-        isSales = j['isSales'] == true,
-        isCallbackOnly = j['isCallbackOnly'] == true,
-        totals = _Totals(Map<String, dynamic>.from((j['totals'] as Map?) ?? const {})),
-        weeks = ((j['weeks'] as List?) ?? const [])
-            .map((e) => _Week(Map<String, dynamic>.from(e as Map)))
-            .toList(),
-        releases = ((j['retainageReleases'] as List?) ?? const [])
-            .map((e) => _Release(Map<String, dynamic>.from(e as Map)))
-            .toList();
+    : userId = _d(j['userId']).round(),
+      name = _s(j['name']),
+      role = _s(j['role']),
+      isSales = j['isSales'] == true,
+      isCallbackOnly = j['isCallbackOnly'] == true,
+      totals = _Totals(Map<String, dynamic>.from((j['totals'] as Map?) ?? const {})),
+      weeks = ((j['weeks'] as List?) ?? const []).map((e) => _Week(Map<String, dynamic>.from(e as Map))).toList(),
+      releases = ((j['retainageReleases'] as List?) ?? const [])
+          .map((e) => _Release(Map<String, dynamic>.from(e as Map)))
+          .toList();
 
   int get jobCount => weeks.fold<int>(0, (n, w) => n + w.jobs.length);
 
@@ -272,16 +272,14 @@ class _Report {
   final List<_Tech> techs;
 
   _Report(Map<String, dynamic> j)
-      : start = _s((j['range'] as Map?)?['start']),
-        end = _s((j['range'] as Map?)?['end']),
-        weeklyThreshold = _d((j['rules'] as Map?)?['weeklyThreshold']),
-        dailyAdvance = _d((j['rules'] as Map?)?['dailyAdvance']),
-        callbackPay = _d((j['rules'] as Map?)?['callbackPay']),
-        companyPoolRate = _d((j['rules'] as Map?)?['companyPoolRate']),
-        retainageRate = _d((j['rules'] as Map?)?['retainageRate']),
-        techs = ((j['techs'] as List?) ?? const [])
-            .map((e) => _Tech(Map<String, dynamic>.from(e as Map)))
-            .toList();
+    : start = _s((j['range'] as Map?)?['start']),
+      end = _s((j['range'] as Map?)?['end']),
+      weeklyThreshold = _d((j['rules'] as Map?)?['weeklyThreshold']),
+      dailyAdvance = _d((j['rules'] as Map?)?['dailyAdvance']),
+      callbackPay = _d((j['rules'] as Map?)?['callbackPay']),
+      companyPoolRate = _d((j['rules'] as Map?)?['companyPoolRate']),
+      retainageRate = _d((j['rules'] as Map?)?['retainageRate']),
+      techs = ((j['techs'] as List?) ?? const []).map((e) => _Tech(Map<String, dynamic>.from(e as Map))).toList();
 }
 
 class _Opt {
@@ -290,11 +288,27 @@ class _Opt {
   const _Opt(this.key, this.label);
 }
 
-class _Seg {
+/// The scorecards that open a log of the entries behind their number.
+enum _Metric {
+  totalDue('Total Due', 'Weekly cash pay and retainage released', DashUi.emeraldDeep),
+  commission('Closed-Job Commission', 'Net to the tech from every closed job', DashUi.ink),
+  retainage('Retainage Held', 'Commercial retainage held back on closed jobs', DashUi.indigo),
+  pool('Company Pool', 'Pool contribution taken from each closed job', DashUi.slate),
+  advCallbacks('Advances & Callbacks', 'Flat advance days and callback pay', DashUi.amber);
+
   final String label;
-  final double value;
+  final String blurb;
   final Color color;
-  const _Seg(this.label, this.value, this.color);
+  const _Metric(this.label, this.blurb, this.color);
+}
+
+class _LogRow {
+  final String date;
+  final String tech;
+  final String title;
+  final String detail;
+  final double amount;
+  const _LogRow(this.date, this.tech, this.title, this.detail, this.amount);
 }
 
 const List<_Opt> _kPresets = [
@@ -345,6 +359,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
   int _requestId = 0;
   bool _sample = false;
   int? _selectedId; // null = everyone (the register)
+  _Metric? _metric; // scorecard whose log is open
+  bool _exporting = false;
   String? _weekStart; // which pay week is open for the selected technician
   final Set<String> _collapsedJobs = {}; // jobs the user has folded away
 
@@ -378,18 +394,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   bool get _canStep =>
-      !_sample &&
-      _range.start.weekday == DateTime.monday &&
-      (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
+      !_sample && _range.start.weekday == DateTime.monday && (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
 
   void _step(int dir) {
     if (!_canStep) return;
     final days = _daysBetween(_range.start, _range.end) + 1;
     setState(() {
-      _range = DateTimeRange(
-        start: _addDays(_range.start, dir * days),
-        end: _addDays(_range.end, dir * days),
-      );
+      _range = DateTimeRange(start: _addDays(_range.start, dir * days), end: _addDays(_range.end, dir * days));
     });
     _load();
   }
@@ -430,9 +441,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
   // ---- Data ----------------------------------------------------------------
 
   void _selectTech(int? id) => setState(() {
-        _selectedId = id;
-        _weekStart = null;
-      });
+    _selectedId = id;
+    _weekStart = null;
+    _metric = null;
+  });
+
+  void _toggleMetric(_Metric m) => setState(() => _metric = _metric == m ? null : m);
 
   void _setSample(bool on) {
     if (on == _sample) return;
@@ -440,6 +454,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       _sample = on;
       _selectedId = null;
       _weekStart = null;
+      _metric = null;
       _report = null;
       _error = null;
     });
@@ -468,16 +483,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
     });
 
     try {
-      final uri = Uri.parse('$kApiBaseUrl/api/payroll/commission-detail').replace(
-        queryParameters: {'start': _ymd(_range.start), 'end': _ymd(_range.end)},
-      );
-      final response = await http.get(
-        uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
-      ).timeout(const Duration(seconds: 90)); // the hosted server can be slow to wake up
+      final uri = Uri.parse('$kApiBaseUrl/api/payroll/commission-detail')
+          .replace(queryParameters: {'start': _ymd(_range.start), 'end': _ymd(_range.end)});
+      final response = await http
+          .get(
+            uri,
+            headers: {
+              'Content-Type': 'application/json',
+              if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
+            },
+          )
+          .timeout(const Duration(seconds: 90)); // the hosted server can be slow to wake up
 
       if (!mounted || id != _requestId) return;
 
@@ -539,69 +555,26 @@ class _PayrollScreenState extends State<PayrollScreen> {
     });
   }
 
-  // ---- Copy for Excel ------------------------------------------------------
+  // ---- PDF export ----------------------------------------------------------
 
-  String _tsv(List<_Tech> techs) {
-    final rows = <List<String>>[
-      [
-        'Pay week start', 'Technician', 'Row type', 'Job #', 'Customer', 'Job closed',
-        'Line item', 'Category', 'Job line amount', 'Tech %', 'Tech amount',
-      ],
-    ];
-    String n(double v) => v.toStringAsFixed(2);
-
-    for (final t in techs) {
-      for (final w in t.weeks) {
-        for (final j in w.jobs) {
-          for (final l in j.lines) {
-            rows.add([
-              w.weekStart, t.name, l.isPool ? 'Company pool' : 'Line item', j.jobId, j.customer,
-              j.closedOn, l.name, l.category, n(l.jobAmount), _pct(j.splitPct), n(l.techShare),
-            ]);
-          }
-          if (j.adjustment != 0) {
-            rows.add([w.weekStart, t.name, 'Adjustment', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.adjustment)]);
-          }
-          rows.add([w.weekStart, t.name, 'Net pool share', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.share)]);
-          if (j.retainage != 0) {
-            rows.add([w.weekStart, t.name, 'Commercial retainage held', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(-j.retainage)]);
-          }
-          if (j.advancesRepaid != 0) {
-            rows.add([w.weekStart, t.name, 'Advances repaid', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(-j.advancesRepaid)]);
-          }
-          rows.add([w.weekStart, t.name, 'Net to tech', j.jobId, j.customer, j.closedOn, '', '', '', _pct(j.splitPct), n(j.net)]);
-        }
-        for (final a in w.advances) {
-          rows.add([w.weekStart, t.name, 'Advance paid', a.jobId, a.customer, a.date, '', '', '', '', n(a.amount)]);
-        }
-        for (final c in w.callbacks) {
-          rows.add([w.weekStart, t.name, 'Callback pay', c.jobId, c.customer, c.date, '', '', '', '', n(c.amount)]);
-        }
-        if (w.otherAdjustments != 0) {
-          rows.add([w.weekStart, t.name, 'Other adjustments', '', '', '', '', '', '', '', n(w.otherAdjustments)]);
-        }
-        rows.add([w.weekStart, t.name, 'Week gross', '', '', '', '', '', '', '', n(w.weeklyGross)]);
-        rows.add([w.weekStart, t.name, 'Weekly hurdle', '', '', '', '', '', '', '', n(-w.hurdleApplied)]);
-        rows.add([w.weekStart, t.name, 'Week cash pay', '', '', '', '', '', '', '', n(w.cashPay)]);
-      }
-      for (final r in t.releases) {
-        rows.add(['', t.name, 'Retainage released', r.jobId, '', r.releasedOn, '', r.type, '', '', n(r.amount)]);
-      }
-      rows.add(['', t.name, 'TOTAL DUE', '', '', '', '', '', '', '', n(t.totals.totalDue)]);
-    }
-
-    String clean(String v) => v.replaceAll(RegExp(r'[\t\r\n]+'), ' ');
-    return rows.map((r) => r.map(clean).join('\t')).join('\n');
-  }
-
-  Future<void> _copy() async {
+  Future<void> _exportPdf() async {
     final r = _report;
-    if (r == null || r.techs.isEmpty) return;
-    await Clipboard.setData(ClipboardData(text: _tsv(_visibleTechs(r))));
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Copied. Paste into Excel or Google Sheets.')),
-    );
+    if (r == null || r.techs.isEmpty || _exporting) return;
+    setState(() => _exporting = true);
+    try {
+      final bytes = await _buildPayrollPdf(r, sample: _sample);
+      if (!mounted) return;
+      await Printing.layoutPdf(
+        name: 'Payroll ${r.start} to ${r.end}.pdf',
+        format: PdfPageFormat.a4.landscape,
+        onLayout: (_) async => bytes,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Could not create the PDF. Try again.')));
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   // ---- Build ---------------------------------------------------------------
@@ -609,57 +582,44 @@ class _PayrollScreenState extends State<PayrollScreen> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFE2E8F0),
-      child: LayoutBuilder(builder: (context, c) {
-        final w = c.maxWidth;
-        final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 24.0);
-        return Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1600),
-            child: Padding(padding: EdgeInsets.all(pad), child: _body()),
-          ),
-        );
-      }),
+      color: DashUi.faint,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final w = c.maxWidth;
+          final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 20.0);
+          return SingleChildScrollView(
+            padding: EdgeInsets.all(pad),
+            child: Align(
+              alignment: Alignment.topCenter,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1600),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _toolbar(),
+                    const SizedBox(height: 12),
+                    _results(wide: w - pad * 2 >= 1000),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
     );
-  }
-Widget _body() {
-    return LayoutBuilder(builder: (context, c) {
-      final wide = c.maxWidth >= 1000;
-      final top = <Widget>[
-        _toolbar(),
-        const SizedBox(height: 12),
-        // Removed the _sampleBanner() check from here
-      ];
-
-      if (wide) {
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [...top, Expanded(child: _results(wide: true))],
-        );
-      }
-      return ListView(children: [...top, _results(wide: false)]);
-    });
   }
 
   // ---- Toolbar -------------------------------------------------------------
 
   Widget _toolbar() {
     final range = _shownRange;
-    final label =
-        '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
+    final label = '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
     final r = _report;
-    final widened = !_sample &&
-        r != null &&
-        (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
-    final String note = (widened && r != null)
-        ? 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}. '
-            'Pay weeks run Monday to Sunday and the weekly hurdle applies per week.'
-        : 'Pay weeks run Monday to Sunday and the weekly hurdle applies per week, '
-            'so reports always cover whole pay weeks.';
+    final widened = !_sample && r != null && (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
+    final String? note = widened ? 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.' : null;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
       decoration: DashUi.panel(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -672,11 +632,13 @@ Widget _body() {
               _toolbarActions(),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            note,
-            style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
-          ),
+          if (note != null) ...[
+            const SizedBox(height: 6),
+            Text(
+              note,
+              style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
+            ),
+          ],
         ],
       ),
     );
@@ -688,8 +650,14 @@ Widget _body() {
       mainAxisSize: MainAxisSize.min,
       children: [
         OutlinedButton.icon(
-          icon: const Icon(Icons.copy_all_outlined, size: 18),
-          label: const Text('Copy for Excel'),
+          icon: _exporting
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate),
+                )
+              : const Icon(Icons.picture_as_pdf_outlined, size: 18),
+          label: const Text('Export PDF'),
           style: OutlinedButton.styleFrom(
             minimumSize: const Size(0, 40),
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -699,7 +667,7 @@ Widget _body() {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
           ),
-          onPressed: hasData ? _copy : null,
+          onPressed: hasData && !_exporting ? _exportPdf : null,
         ),
         const SizedBox(width: 4),
         IconButton(
@@ -724,11 +692,7 @@ Widget _body() {
           opacity: _sample ? 0.45 : 1,
           child: IgnorePointer(
             ignoring: _sample,
-            child: _pillGroup(
-              items: _kPresets,
-              active: _activeKey,
-              onSelected: _selectPreset,
-            ),
+            child: _pillGroup(items: _kPresets, active: _activeKey, onSelected: _selectPreset),
           ),
         ),
         if (_showSampleToggle)
@@ -738,11 +702,7 @@ Widget _body() {
             onSelected: (k) => _setSample(k == 'sample'),
           ),
         if (_loading)
-          const SizedBox(
-            width: 18,
-            height: 18,
-            child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate),
-          ),
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate)),
       ],
     );
   }
@@ -750,13 +710,13 @@ Widget _body() {
   Widget _stepper(String label) {
     final can = _canStep;
     Widget btn(IconData icon, String tip, VoidCallback? onTap) => IconButton(
-          tooltip: tip,
-          visualDensity: VisualDensity.compact,
-          iconSize: 20,
-          color: DashUi.slate,
-          icon: Icon(icon),
-          onPressed: onTap,
-        );
+      tooltip: tip,
+      visualDensity: VisualDensity.compact,
+      iconSize: 20,
+      color: DashUi.slate,
+      icon: Icon(icon),
+      onPressed: onTap,
+    );
 
     return Container(
       decoration: BoxDecoration(
@@ -773,7 +733,11 @@ Widget _body() {
             child: Text(
               label,
               style: const TextStyle(
-                  fontSize: 14.5, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: _figures),
+                fontSize: 14.5,
+                fontWeight: FontWeight.w800,
+                color: DashUi.ink,
+                fontFeatures: _figures,
+              ),
             ),
           ),
           btn(Icons.chevron_right_rounded, 'Next pay weeks', can ? () => _step(1) : null),
@@ -782,20 +746,14 @@ Widget _body() {
     );
   }
 
-  Widget _pillGroup({
-    required List<_Opt> items,
-    required String active,
-    required ValueChanged<String> onSelected,
-  }) {
+  Widget _pillGroup({required List<_Opt> items, required String active, required ValueChanged<String> onSelected}) {
     return Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
       child: Wrap(
         spacing: 2,
         runSpacing: 2,
-        children: [
-          for (final o in items) _pill(o.label, o.key == active, () => onSelected(o.key)),
-        ],
+        children: [for (final o in items) _pill(o.label, o.key == active, () => onSelected(o.key))],
       ),
     );
   }
@@ -810,9 +768,9 @@ Widget _body() {
           curve: Curves.easeOut,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: selected ? Colors.white : Colors.transparent,
+            color: selected ? Colors.white : Colors.white.withValues(alpha: 0),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: selected ? DashUi.line : Colors.transparent),
+            border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
           ),
           child: Text(
             text,
@@ -827,55 +785,61 @@ Widget _body() {
     );
   }
 
-
   // ---- Results -------------------------------------------------------------
 
-  Widget _centered(bool wide, Widget child) {
-    if (wide) return Center(child: child);
-    return Padding(padding: const EdgeInsets.symmetric(vertical: 48), child: Center(child: child));
-  }
+  Widget _centered(Widget child) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 48),
+    child: Center(child: child),
+  );
 
   Widget _results({required bool wide}) {
     final report = _report;
 
     if (report == null) {
       if (_loading) {
-        return _centered(wide, const CircularProgressIndicator(color: DashUi.slate));
+        return _centered(const CircularProgressIndicator(color: DashUi.slate));
       }
       if (_error != null) {
-        return _centered(wide, _stateMessage(
-          icon: Icons.cloud_off_rounded,
-          title: 'Could not load the report',
-          message: _error!,
-          action: OutlinedButton(
-            style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
-            onPressed: _load,
-            child: const Text('Try again'),
+        return _centered(
+          _stateMessage(
+            icon: Icons.cloud_off_rounded,
+            title: 'Could not load the report',
+            message: _error!,
+            action: OutlinedButton(
+              style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
+              onPressed: _load,
+              child: const Text('Try again'),
+            ),
           ),
-        ));
+        );
       }
-      return _centered(wide, _stateMessage(
-        icon: Icons.request_quote_outlined,
-        title: 'No report yet',
-        message: 'Choose the dates above to load the report.',
-      ));
+      return _centered(
+        _stateMessage(
+          icon: Icons.request_quote_outlined,
+          title: 'No report yet',
+          message: 'Choose the dates above to load the report.',
+        ),
+      );
     }
 
     if (report.techs.isEmpty) {
-      return _centered(wide, _stateMessage(
-        icon: Icons.event_busy_rounded,
-        title: 'No commission activity for these dates',
-        message: 'Nothing was settled or paid from ${_day(report.start, year: true)} to ${_day(report.end, year: true)}. '
-            'Commission starts counting on the Oct 5 go-live, and a job pays in the week it is closed.',
-        action: _showSampleToggle && !_sample
-            ? OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
-                icon: const Icon(Icons.science_outlined, size: 18),
-                label: const Text('Preview with sample data'),
-                onPressed: () => _setSample(true),
-              )
-            : null,
-      ));
+      return _centered(
+        _stateMessage(
+          icon: Icons.event_busy_rounded,
+          title: 'No commission activity for these dates',
+          message:
+              'Nothing was settled or paid from ${_day(report.start, year: true)} to ${_day(report.end, year: true)}. '
+              'Commission starts counting on the Oct 5 go-live, and a job pays in the week it is closed.',
+          action: _showSampleToggle && !_sample
+              ? OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
+                  icon: const Icon(Icons.science_outlined, size: 18),
+                  label: const Text('Preview with sample data'),
+                  onPressed: () => _setSample(true),
+                )
+              : null,
+        ),
+      );
     }
 
     final visible = _visibleTechs(report);
@@ -886,36 +850,31 @@ Widget _body() {
     for (final t in report.techs) {
       if (t.userId == _selectedId) selected = t;
     }
-    final detail = selected == null ? <Widget>[_register(report)] : _techDetail(selected, report);
+    final metric = _metric;
+    final detail = metric != null
+        ? <Widget>[_metricLog(metric, visible, report)]
+        : (selected == null ? <Widget>[_register(report)] : _techDetail(selected, report));
 
-    final banner = _error == null
-        ? <Widget>[]
-        : <Widget>[_errorBanner(), const SizedBox(height: 12)];
+    final banner = _error == null ? <Widget>[] : <Widget>[_errorBanner(), const SizedBox(height: 12)];
+
+    final scorecards = _scorecards(totals, jobNet, report.companyPoolRate, wide);
 
     if (wide) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           ...banner,
-          _scorecards(totals, jobNet, report.companyPoolRate, true),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                SizedBox(width: 300, child: _techList(report)),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: SingleChildScrollView(
-                    key: ValueKey<int?>(_selectedId),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: _spaced(detail),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          scorecards,
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 280, child: _techList(report)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(detail)),
+              ),
+            ],
           ),
         ],
       );
@@ -925,12 +884,11 @@ Widget _body() {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ...banner,
-        _scorecards(totals, jobNet, report.companyPoolRate, false),
-        const SizedBox(height: 16),
+        scorecards,
+        const SizedBox(height: 12),
         _techChips(report),
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         ..._spaced(detail),
-        const SizedBox(height: 16),
       ],
     );
   }
@@ -938,18 +896,13 @@ Widget _body() {
   List<Widget> _spaced(List<Widget> items) {
     final out = <Widget>[];
     for (var i = 0; i < items.length; i++) {
-      if (i > 0) out.add(const SizedBox(height: 16));
+      if (i > 0) out.add(const SizedBox(height: 12));
       out.add(items[i]);
     }
     return out;
   }
 
-  Widget _stateMessage({
-    required IconData icon,
-    required String title,
-    required String message,
-    Widget? action,
-  }) {
+  Widget _stateMessage({required IconData icon, required String title, required String message, Widget? action}) {
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 520),
       child: Column(
@@ -965,13 +918,17 @@ Widget _body() {
             child: Icon(icon, size: 44, color: DashUi.muted),
           ),
           const SizedBox(height: 20),
-          Text(title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: DashUi.ink)),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: DashUi.ink),
+          ),
           const SizedBox(height: 6),
-          Text(message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.4)),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.4),
+          ),
           if (action != null) ...[const SizedBox(height: 18), action],
         ],
       ),
@@ -991,8 +948,10 @@ Widget _body() {
           const Icon(Icons.error_outline_rounded, size: 18, color: _P.badFg),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(_error ?? '',
-                style: const TextStyle(fontSize: 13, color: _P.badFg, fontWeight: FontWeight.w600)),
+            child: Text(
+              _error ?? '',
+              style: const TextStyle(fontSize: 13, color: _P.badFg, fontWeight: FontWeight.w600),
+            ),
           ),
           TextButton(onPressed: _loading ? null : _load, child: const Text('Try again')),
         ],
@@ -1003,23 +962,68 @@ Widget _body() {
   // ---- Scorecards ----------------------------------------------------------
 
   Widget _scorecards(_Totals t, double jobNet, double poolRate, bool wide) {
+    Widget tappable(_Metric m, Widget card) {
+      final on = _metric == m;
+      return Tooltip(
+        message: on ? 'Close the log' : 'See every entry behind ${m.label}',
+        waitDuration: const Duration(milliseconds: 500),
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _toggleMetric(m),
+            child: Stack(
+              children: [
+                Positioned.fill(child: card),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 160),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: on ? m.color : m.color.withValues(alpha: 0), width: 2),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     final cards = <Widget>[
-      AnimatedMetricCard(
-          title: 'Total Due', value: t.totalDue, valueColor: DashUi.emeraldDeep, index: 0),
-      AnimatedMetricCard(
-          title: 'Closed-Job Commission', value: jobNet, valueColor: DashUi.ink, index: 1),
-      AnimatedMetricCard(
-          title: 'Retainage Held', value: t.retainage, valueColor: DashUi.indigo, index: 2),
-      AnimatedMetricCard(
+      tappable(
+        _Metric.totalDue,
+        AnimatedMetricCard(title: 'Total Due', value: t.totalDue, valueColor: DashUi.emeraldDeep, index: 0),
+      ),
+      tappable(
+        _Metric.commission,
+        AnimatedMetricCard(title: 'Closed-Job Commission', value: jobNet, valueColor: DashUi.ink, index: 1),
+      ),
+      tappable(
+        _Metric.retainage,
+        AnimatedMetricCard(title: 'Retainage Held', value: t.retainage, valueColor: DashUi.indigo, index: 2),
+      ),
+      tappable(
+        _Metric.pool,
+        AnimatedMetricCard(
           title: 'Company Pool (${_pct(poolRate * 100)})',
           value: t.companyPool,
           valueColor: DashUi.slate,
-          index: 3),
-      AnimatedMetricCard(
+          index: 3,
+        ),
+      ),
+      tappable(
+        _Metric.advCallbacks,
+        AnimatedMetricCard(
           title: 'Advances & Callbacks',
           value: t.advancesPaid + t.callbackPay,
           valueColor: DashUi.amber,
-          index: 4),
+          index: 4,
+        ),
+      ),
     ];
 
     if (wide) {
@@ -1031,16 +1035,317 @@ Widget _body() {
       return SizedBox(height: 88, child: Row(children: row));
     }
 
-    return LayoutBuilder(builder: (context, c) {
-      final cols = c.maxWidth >= 620 ? 2 : 1;
-      const gap = 8.0;
-      final width = (c.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [for (final card in cards) SizedBox(width: width, height: 88, child: card)],
-      );
+    return LayoutBuilder(
+      builder: (context, c) {
+        final cols = c.maxWidth >= 620 ? 2 : 1;
+        const gap = 8.0;
+        final width = (c.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [for (final card in cards) SizedBox(width: width, height: 88, child: card)],
+        );
+      },
+    );
+  }
+
+  // ---- Scorecard log ---------------------------------------------------------
+
+  List<_LogRow> _logRows(_Metric m, List<_Tech> techs) {
+    final rows = <_LogRow>[];
+    for (final t in techs) {
+      for (final w in t.weeks) {
+        switch (m) {
+          case _Metric.totalDue:
+            if (w.cashPay != 0 || w.weeklyGross != 0) {
+              rows.add(
+                _LogRow(
+                  w.weekEnd,
+                  t.name,
+                  'Pay week ${_day(w.weekStart)} – ${_day(w.weekEnd)}',
+                  'Gross ${_fmt(w.weeklyGross)}, hurdle ${_fmt(-w.hurdleApplied)}',
+                  w.cashPay,
+                ),
+              );
+            }
+          case _Metric.commission:
+            for (final j in w.jobs) {
+              rows.add(
+                _LogRow(
+                  j.closedOn,
+                  t.name,
+                  _jobTitle(j),
+                  'Split ${_pct(j.splitPct)}${j.status.isEmpty ? '' : '  ·  ${j.status}'}',
+                  j.net,
+                ),
+              );
+            }
+          case _Metric.retainage:
+            for (final j in w.jobs.where((j) => j.retainage != 0)) {
+              rows.add(_LogRow(j.closedOn, t.name, _jobTitle(j), 'Held from pool share ${_fmt(j.share)}', j.retainage));
+            }
+          case _Metric.pool:
+            for (final j in w.jobs) {
+              for (final l in j.lines.where((l) => l.isPool)) {
+                rows.add(
+                  _LogRow(
+                    j.closedOn,
+                    t.name,
+                    _jobTitle(j),
+                    'On job total ${_fmt(j.jobRevenue)}, split ${_pct(j.splitPct)}',
+                    l.techShare,
+                  ),
+                );
+              }
+            }
+          case _Metric.advCallbacks:
+            for (final a in w.advances) {
+              rows.add(_LogRow(a.date, t.name, 'Advance day', _itemTitle(a), a.amount));
+            }
+            for (final c in w.callbacks) {
+              rows.add(_LogRow(c.date, t.name, 'Callback', _itemTitle(c), c.amount));
+            }
+        }
+      }
+      if (m == _Metric.totalDue) {
+        for (final r in t.releases) {
+          rows.add(
+            _LogRow(
+              r.releasedOn,
+              t.name,
+              r.type == 'callback_deduction' ? 'Callback charge against retainage' : 'Retainage released',
+              r.jobId.isEmpty ? '' : 'Job ${r.jobId}',
+              r.amount,
+            ),
+          );
+        }
+      }
+    }
+    rows.sort((a, b) {
+      final c = a.date.compareTo(b.date);
+      return c != 0 ? c : a.tech.compareTo(b.tech);
     });
+    return rows;
+  }
+
+  String _jobTitle(_Job j) => 'Job ${j.jobId}${j.customer.isEmpty ? '' : '  ${j.customer}'}';
+
+  String _itemTitle(_DayItem i) => 'Job ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}';
+
+  Widget _metricLog(_Metric m, List<_Tech> techs, _Report report) {
+    final rows = _logRows(m, techs);
+    final total = rows.fold<double>(0, (s, r) => s + r.amount);
+    final showTech = techs.length > 1;
+    final scope = techs.length == 1 ? techs.first.name : 'Everyone';
+    final range = '${_day(report.start)} – ${_day(report.end, year: true)}';
+
+    Color amountColor(double v) => v < 0 ? DashUi.red : DashUi.ink;
+
+    return Container(
+      decoration: DashUi.panel(radius: 12),
+      clipBehavior: Clip.antiAlias,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final narrow = c.maxWidth < 680;
+
+          final header = Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 12),
+            child: Row(
+              children: [
+                Padding(padding: const EdgeInsets.only(right: 10), child: _dot(m.color, size: 10)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Wrap(
+                        spacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          Text(
+                            m.label,
+                            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: DashUi.ink),
+                          ),
+                          _chip('${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}', DashUi.slate, DashUi.faint),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${m.blurb}  ·  $scope  ·  $range',
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'Total',
+                      style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+                    ),
+                    Text(_fmt(total), style: _num(22, FontWeight.w800, m.color)),
+                  ],
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  iconSize: 20,
+                  color: DashUi.slate,
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => setState(() => _metric = null),
+                ),
+              ],
+            ),
+          );
+
+          const head = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate);
+          final columns = narrow
+              ? null
+              : Container(
+                  color: DashUi.faint,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+                  child: Row(
+                    children: [
+                      const SizedBox(width: 72, child: Text('Date', style: head)),
+                      if (showTech) const Expanded(flex: 3, child: Text('Technician', style: head)),
+                      const Expanded(flex: 5, child: Text('Entry', style: head)),
+                      const Expanded(flex: 5, child: Text('Detail', style: head)),
+                      const SizedBox(
+                        width: 110,
+                        child: Text('Amount', textAlign: TextAlign.right, style: head),
+                      ),
+                    ],
+                  ),
+                );
+
+          Widget rowFor(_LogRow r) {
+            final amount = Text(
+              _fmt(r.amount),
+              textAlign: TextAlign.right,
+              style: _num(13.5, FontWeight.w800, amountColor(r.amount)),
+            );
+            if (narrow) {
+              return Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: DashUi.line)),
+                ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            r.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                          ),
+                          Text(
+                            [_day(r.date), if (showTech) r.tech, if (r.detail.isNotEmpty) r.detail].join('  ·  '),
+                            style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    amount,
+                  ],
+                ),
+              );
+            }
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: DashUi.line)),
+              ),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 72,
+                    child: Text(
+                      _day(r.date),
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.slate),
+                    ),
+                  ),
+                  if (showTech)
+                    Expanded(
+                      flex: 3,
+                      child: Row(
+                        children: [
+                          DashAvatar(name: r.tech, imageUrl: '', size: 22),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              r.tech,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13, color: DashUi.ink),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  Expanded(
+                    flex: 5,
+                    child: Text(
+                      r.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                    ),
+                  ),
+                  Expanded(
+                    flex: 5,
+                    child: Text(
+                      r.detail,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                  SizedBox(width: 110, child: amount),
+                ],
+              ),
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              header,
+              ?columns,
+              if (rows.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 36),
+                  child: Center(
+                    child: Text('Nothing logged for these dates.', style: TextStyle(fontSize: 14, color: DashUi.slate)),
+                  ),
+                )
+              else
+                for (final r in rows) rowFor(r),
+              if (rows.isNotEmpty)
+                Container(
+                  color: DashUi.faint,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Total  ·  ${rows.length} ${rows.length == 1 ? 'entry' : 'entries'}',
+                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink),
+                        ),
+                      ),
+                      Text(_fmt(total), style: _num(14.5, FontWeight.w800, m.color)),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        },
+      ),
+    );
   }
 
   // ---- Technician list -----------------------------------------------------
@@ -1056,41 +1361,43 @@ Widget _body() {
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
             child: Row(
               children: [
-                const Text('Technicians',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                const Text(
+                  'Technicians',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                ),
                 const SizedBox(width: 8),
-                Text('${report.techs.length}',
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
+                Text(
+                  '${report.techs.length}',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted),
+                ),
               ],
             ),
           ),
-          Expanded(
-            child: ListView(
-              children: [
-                _techRow(
-                  leading: Container(
-                    width: 34,
-                    height: 34,
-                    decoration: const BoxDecoration(color: DashUi.ink, shape: BoxShape.circle),
-                    child: const Icon(Icons.groups_rounded, size: 18, color: Colors.white),
-                  ),
-                  name: 'Everyone',
-                  subtitle: 'Payroll register',
-                  due: report.techs.fold<double>(0, (s, t) => s + t.totals.totalDue),
-                  selected: _selectedId == null,
-                  onTap: () => _selectTech(null),
+          Column(
+            children: [
+              _techRow(
+                leading: Container(
+                  width: 34,
+                  height: 34,
+                  decoration: const BoxDecoration(color: DashUi.ink, shape: BoxShape.circle),
+                  child: const Icon(Icons.groups_rounded, size: 18, color: Colors.white),
                 ),
-                for (final t in report.techs)
-                  _techRow(
-                    leading: DashAvatar(name: t.name, imageUrl: '', size: 34),
-                    name: t.name,
-                    subtitle: t.kindLabel,
-                    due: t.totals.totalDue,
-                    selected: _selectedId == t.userId,
-                    onTap: () => _selectTech(t.userId),
-                  ),
-              ],
-            ),
+                name: 'Everyone',
+                subtitle: 'Payroll register',
+                due: report.techs.fold<double>(0, (s, t) => s + t.totals.totalDue),
+                selected: _selectedId == null,
+                onTap: () => _selectTech(null),
+              ),
+              for (final t in report.techs)
+                _techRow(
+                  leading: DashAvatar(name: t.name, imageUrl: '', size: 34),
+                  name: t.name,
+                  subtitle: t.kindLabel,
+                  due: t.totals.totalDue,
+                  selected: _selectedId == t.userId,
+                  onTap: () => _selectTech(t.userId),
+                ),
+            ],
           ),
         ],
       ),
@@ -1123,27 +1430,35 @@ Widget _body() {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-                              color: DashUi.ink)),
-                      Text(subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                          color: DashUi.ink,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                      ),
                     ],
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text(_fmt(due),
-                    style: TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w800,
-                        color: due < 0 ? DashUi.red : DashUi.emeraldDeep,
-                        fontFeatures: _figures)),
+                Text(
+                  _fmt(due),
+                  style: TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w800,
+                    color: due < 0 ? DashUi.red : DashUi.emeraldDeep,
+                    fontFeatures: _figures,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1153,10 +1468,7 @@ Widget _body() {
   }
 
   Widget _techChips(_Report report) {
-    final items = <_Opt>[
-      const _Opt('all', 'Everyone'),
-      for (final t in report.techs) _Opt('${t.userId}', t.name),
-    ];
+    final items = <_Opt>[const _Opt('all', 'Everyone'), for (final t in report.techs) _Opt('${t.userId}', t.name)];
     return Align(
       alignment: Alignment.centerLeft,
       child: _pillGroup(
@@ -1176,18 +1488,28 @@ Widget _body() {
   Widget _registerText(int i, String text, {Color color = DashUi.ink, FontWeight weight = FontWeight.w600}) {
     return _registerCell(
       i,
-      Text(text,
-          textAlign: TextAlign.right,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(fontSize: 13.5, fontWeight: weight, color: color, fontFeatures: _figures)),
+      Text(
+        text,
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 13.5, fontWeight: weight, color: color, fontFeatures: _figures),
+      ),
     );
   }
 
   Widget _register(_Report report) {
     const heads = [
-      'Technician', 'Jobs', 'Closed-Job Net', 'Advances', 'Callbacks',
-      'Gross', 'Hurdle', 'Cash Pay', 'Retainage Released', 'Total Due',
+      'Technician',
+      'Jobs',
+      'Closed-Job Net',
+      'Advances',
+      'Callbacks',
+      'Gross',
+      'Hurdle',
+      'Cash Pay',
+      'Retainage Released',
+      'Total Due',
     ];
     const minWidth = 980.0;
 
@@ -1201,11 +1523,13 @@ Widget _body() {
           for (var i = 0; i < heads.length; i++)
             _registerCell(
               i,
-              Text(heads[i],
-                  textAlign: i == 0 ? TextAlign.left : TextAlign.right,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+              Text(
+                heads[i],
+                textAlign: i == 0 ? TextAlign.left : TextAlign.right,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
+              ),
             ),
         ],
       ),
@@ -1216,7 +1540,9 @@ Widget _body() {
         onTap: () => _selectTech(t.userId),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: DashUi.line)),
+          ),
           child: Row(
             children: [
               _registerCell(
@@ -1229,15 +1555,18 @@ Widget _body() {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(t.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                  fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                          Text(t.kindLabel,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 11.5, color: DashUi.muted)),
+                          Text(
+                            t.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                          ),
+                          Text(
+                            t.kindLabel,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11.5, color: DashUi.muted),
+                          ),
                         ],
                       ),
                     ),
@@ -1252,8 +1581,7 @@ Widget _body() {
               _registerText(6, _fmt(-t.totals.hurdleApplied), color: DashUi.slate),
               _registerText(7, _fmt(t.totals.cashPay), color: DashUi.emeraldDeep),
               _registerText(8, _fmt(t.totals.retainageReleased), color: DashUi.indigo),
-              _registerText(9, _fmt(t.totals.totalDue),
-                  color: DashUi.emeraldDeep, weight: FontWeight.w800),
+              _registerText(9, _fmt(t.totals.totalDue), color: DashUi.emeraldDeep, weight: FontWeight.w800),
             ],
           ),
         ),
@@ -1267,8 +1595,10 @@ Widget _body() {
         children: [
           _registerCell(
             0,
-            const Text('Total',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink)),
+            const Text(
+              'Total',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink),
+            ),
           ),
           _registerText(1, '${report.techs.fold<int>(0, (n, t) => n + t.jobCount)}', weight: FontWeight.w800),
           _registerText(2, _fmt(sum((t) => t.jobNet)), weight: FontWeight.w800),
@@ -1299,21 +1629,27 @@ Widget _body() {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Payroll register',
-                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                Text(
+                  'Payroll register',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                ),
                 SizedBox(height: 2),
-                Text('One line per person for these pay weeks. Select a technician for the full line-item breakdown.',
-                    style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                Text(
+                  'One line per person for these pay weeks. Select a technician for the full line-item breakdown.',
+                  style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                ),
               ],
             ),
           ),
-          LayoutBuilder(builder: (context, c) {
-            if (c.maxWidth >= minWidth) return table;
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(width: minWidth, child: table),
-            );
-          }),
+          LayoutBuilder(
+            builder: (context, c) {
+              if (c.maxWidth >= minWidth) return table;
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: minWidth, child: table),
+              );
+            },
+          ),
         ],
       ),
     );
@@ -1325,12 +1661,19 @@ Widget _body() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
       decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Text(text, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: fg)),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: fg),
+      ),
     );
   }
 
   Widget _dot(Color color, {double size = 8}) {
-    return Container(width: size, height: size, decoration: BoxDecoration(color: color, shape: BoxShape.circle));
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+    );
   }
 
   TextStyle _num(double size, FontWeight weight, Color color) =>
@@ -1358,48 +1701,44 @@ Widget _body() {
     if (t.releases.isNotEmpty) panels.add(_releasesPanel(t));
 
     if (t.weeks.isEmpty && t.releases.isEmpty) {
-      panels.add(Container(
-        padding: const EdgeInsets.all(20),
-        decoration: DashUi.panel(),
-        child: const Text('Nothing to report for this person in these dates.',
-            style: TextStyle(color: DashUi.slate, fontSize: 14)),
-      ));
+      panels.add(
+        Container(
+          padding: const EdgeInsets.all(20),
+          decoration: DashUi.panel(),
+          child: const Text(
+            'Nothing to report for this person in these dates.',
+            style: TextStyle(color: DashUi.slate, fontSize: 14),
+          ),
+        ),
+      );
     }
 
     panels.add(_footnote(report));
     return panels;
   }
 
-  // ---- Hero: who, how much, and where it comes from -------------------------
+  // ---- Hero: who and how much -------------------------------------------------
 
   Widget _techHero(_Tech t) {
     final tot = t.totals;
-    final segs = <_Seg>[
-      _Seg('Closed-job net', t.jobNet, DashUi.emeraldDeep),
-      _Seg('Advances', tot.advancesPaid, DashUi.sky),
-      _Seg('Callbacks', tot.callbackPay, DashUi.amber),
-      _Seg('Retainage released', tot.retainageReleased, DashUi.indigo),
-    ];
-    final positive = tot.totalDue > 0;
+    final parts = <(String, double, Color)>[
+      ('Closed-job net', t.jobNet, DashUi.emeraldDeep),
+      ('Advances', tot.advancesPaid, DashUi.sky),
+      ('Callbacks', tot.callbackPay, DashUi.amber),
+      ('Retainage released', tot.retainageReleased, DashUi.indigo),
+      ('Weekly hurdle kept', -tot.hurdleApplied, DashUi.muted),
+    ].where((p) => p.$2.abs() > 0.004).toList();
 
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: DashUi.panel(radius: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: DashUi.panel(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              DashAvatar(
-                name: t.name,
-                imageUrl: '',
-                size: 56,
-                ringColor: positive ? DashUi.emerald : DashUi.line,
-                ringWidth: 2,
-                glowColor: positive ? DashUi.emerald.withValues(alpha: 0.25) : null,
-              ),
-              const SizedBox(width: 16),
+              DashAvatar(name: t.name, imageUrl: '', size: 44),
+              const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1409,18 +1748,19 @@ Widget _body() {
                       runSpacing: 4,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text(t.name,
-                            style: const TextStyle(
-                                fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.3)),
+                        Text(
+                          t.name,
+                          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink),
+                        ),
                         if (t.kindLabel.isNotEmpty) _chip(t.kindLabel, DashUi.slate, DashUi.faint),
                         if (_sample) _chip('Sample', _P.sampleFg, _P.sampleBg),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 2),
                     Text(
                       '${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
                       '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed',
-                      style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500),
+                      style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -1429,88 +1769,45 @@ Widget _body() {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text('Total Due',
-                      style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(_fmt(tot.totalDue),
-                      style: _num(34, FontWeight.w800, tot.totalDue < 0 ? DashUi.red : DashUi.emeraldDeep)),
+                  const Text(
+                    'Total Due',
+                    style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    _fmt(tot.totalDue),
+                    style: _num(26, FontWeight.w800, tot.totalDue < 0 ? DashUi.red : DashUi.emeraldDeep),
+                  ),
                 ],
               ),
             ],
           ),
-          const SizedBox(height: 18),
-          _compositionBar(segs),
-          const SizedBox(height: 12),
-          _legend(segs, hurdleKept: tot.hurdleApplied),
-        ],
-      ),
-    );
-  }
-
-  Widget _compositionBar(List<_Seg> segs, {double height = 12}) {
-    final shown = segs.where((s) => s.value > 0.004).toList();
-    final total = shown.fold<double>(0, (a, s) => a + s.value);
-    if (total <= 0) {
-      return Container(
-        height: height,
-        decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(height / 2)),
-      );
-    }
-    final reduce = MediaQuery.of(context).disableAnimations;
-    return TweenAnimationBuilder<double>(
-      key: ValueKey<String>('bar|${total.toStringAsFixed(2)}|${shown.length}'),
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: reduce ? Duration.zero : const Duration(milliseconds: 700),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, _) => ClipRRect(
-        borderRadius: BorderRadius.circular(height / 2),
-        child: ClipRect(
-          clipper: _WipeClipper(t),
-          child: SizedBox(
-            height: height,
-            child: Row(
+          if (parts.isNotEmpty) ...[
+            const SizedBox(height: 12),
+            const Divider(height: 1, color: DashUi.line),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 24,
+              runSpacing: 6,
               children: [
-                for (var i = 0; i < shown.length; i++)
-                  Expanded(
-                    flex: math.max(1, (shown[i].value * 1000).round()),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: shown[i].color,
-                        border: i < shown.length - 1
-                            ? const Border(right: BorderSide(color: Colors.white, width: 2))
-                            : null,
+                for (final p in parts)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _dot(p.$3),
+                      const SizedBox(width: 7),
+                      Text(
+                        p.$1,
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600),
                       ),
-                    ),
+                      const SizedBox(width: 6),
+                      Text(_fmt(p.$2), style: _num(12.5, FontWeight.w800, DashUi.ink)),
+                    ],
                   ),
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _legend(List<_Seg> segs, {double hurdleKept = 0}) {
-    Widget item(Color color, String label, String value) => Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _dot(color),
-            const SizedBox(width: 7),
-            Text(label,
-                style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
-            const SizedBox(width: 6),
-            Text(value, style: _num(12.5, FontWeight.w800, DashUi.ink)),
           ],
-        );
-
-    return Wrap(
-      spacing: 22,
-      runSpacing: 8,
-      children: [
-        for (final s in segs)
-          if (s.value.abs() > 0.004) item(s.color, s.label, _fmt(s.value)),
-        if (hurdleKept > 0.004) item(DashUi.muted, 'Weekly hurdle kept', _fmt(-hurdleKept)),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1524,11 +1821,15 @@ Widget _body() {
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 10),
           child: Row(
             children: [
-              const Text('Pay Weeks',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              const Text(
+                'Pay Weeks',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+              ),
               const SizedBox(width: 8),
-              Text('${t.weeks.length}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
+              Text(
+                '${t.weeks.length}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted),
+              ),
             ],
           ),
         ),
@@ -1570,8 +1871,8 @@ Widget _body() {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           curve: Curves.easeOut,
-          width: 172,
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+          width: 160,
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(12),
@@ -1580,13 +1881,20 @@ Widget _body() {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('${_day(w.weekStart)} – ${_day(w.weekEnd)}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              Text(
+                '${_day(w.weekStart)} – ${_day(w.weekEnd)}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink),
+              ),
               const SizedBox(height: 4),
-              Text(_fmt(w.cashPay),
-                  style: _num(18, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted)),
+              Text(
+                _fmt(w.cashPay),
+                style: _num(16, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted),
+              ),
               const SizedBox(height: 2),
-              Text(flag, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: flagColor)),
+              Text(
+                flag,
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: flagColor),
+              ),
             ],
           ),
         ),
@@ -1594,21 +1902,14 @@ Widget _body() {
     );
   }
 
-  // ---- Week summary: bar against the hurdle, then the ledger ----------------
-
-  List<_Seg> _weekSegs(_Week w) => [
-        _Seg('Closed-job net', w.jobNet, DashUi.emeraldDeep),
-        _Seg('Advances', w.advancesPaid, DashUi.sky),
-        _Seg('Callbacks', w.callbackPay, DashUi.amber),
-      ].where((s) => s.value > 0.004).toList();
+  // ---- Week summary: the ledger --------------------------------------------
 
   Widget _weekSummary(_Week w) {
-    final segs = _weekSegs(w);
     final underHurdle = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
 
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: DashUi.panel(radius: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: DashUi.panel(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1619,42 +1920,46 @@ Widget _body() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Pay Week',
-                        style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text('${_day(w.weekStart)} – ${_day(w.weekEnd, year: true)}',
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    const Text(
+                      'Pay Week',
+                      style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+                    ),
+                    Text(
+                      '${_day(w.weekStart)} – ${_day(w.weekEnd, year: true)}',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
                   ],
                 ),
               ),
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  const Text('Cash Pay',
-                      style: TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 2),
-                  Text(_fmt(w.cashPay),
-                      style: _num(28, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted)),
+                  const Text(
+                    'Cash Pay',
+                    style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+                  ),
+                  Text(
+                    _fmt(w.cashPay),
+                    style: _num(22, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted),
+                  ),
                 ],
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          _hurdleBar(w, segs),
-          const SizedBox(height: 8),
-          _legend(segs),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           const Divider(height: 1, color: DashUi.line),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           _ledgerRow('Closed-job commission (net to tech)', w.jobNet, dot: DashUi.emeraldDeep),
-          if (w.advancesPaid != 0)
-            _ledgerRow('Advances paid this week', w.advancesPaid, dot: DashUi.sky, plus: true),
-          if (w.callbackPay != 0)
-            _ledgerRow('Callback pay', w.callbackPay, dot: DashUi.amber, plus: true),
+          if (w.advancesPaid != 0) _ledgerRow('Advances paid this week', w.advancesPaid, dot: DashUi.sky, plus: true),
+          if (w.callbackPay != 0) _ledgerRow('Callback pay', w.callbackPay, dot: DashUi.amber, plus: true),
           if (w.otherAdjustments != 0)
-            _ledgerRow('Other adjustments', w.otherAdjustments,
-                color: DashUi.muted, note: 'Counted in the weekly total but not one of the lines above'),
-          const Divider(height: 18, color: DashUi.line),
+            _ledgerRow(
+              'Other adjustments',
+              w.otherAdjustments,
+              color: DashUi.muted,
+              note: 'Counted in the weekly total but not one of the lines above',
+            ),
+          const Divider(height: 14, color: DashUi.line),
           _ledgerRow('Weekly gross', w.weeklyGross, bold: true),
           if (w.hurdleRule > 0)
             _ledgerRow(
@@ -1663,12 +1968,19 @@ Widget _body() {
               color: DashUi.slate,
             ),
           if (w.advanceShortfall > 0)
-            _ledgerRow('Advance shortfall', w.advanceShortfall,
-                color: DashUi.red,
-                note: 'Job commission did not cover the advances. Recovered from a later payroll run.'),
-          const Divider(height: 18, color: DashUi.line),
-          _ledgerRow('Cash pay for the week', w.cashPay,
-              color: w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted, bold: true),
+            _ledgerRow(
+              'Advance shortfall',
+              w.advanceShortfall,
+              color: DashUi.red,
+              note: 'Job commission did not cover the advances. Recovered from a later payroll run.',
+            ),
+          const Divider(height: 14, color: DashUi.line),
+          _ledgerRow(
+            'Cash pay for the week',
+            w.cashPay,
+            color: w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted,
+            bold: true,
+          ),
         ],
       ),
     );
@@ -1684,119 +1996,33 @@ Widget _body() {
     bool plus = false,
   }) {
     final style = TextStyle(
-        fontSize: 14,
-        color: color,
-        fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
-        fontFeatures: _figures);
+      fontSize: 13.5,
+      color: color,
+      fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+      fontFeatures: _figures,
+    );
     final text = plus && amount > 0 ? '+${_fmt(amount)}' : _fmt(amount);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 20,
-            child: dot == null
-                ? null
-                : Padding(padding: const EdgeInsets.only(top: 6), child: _dot(dot)),
+            child: dot == null ? null : Padding(padding: const EdgeInsets.only(top: 6), child: _dot(dot)),
           ),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(label, style: style),
-                if (note != null)
-                  Text(note, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
+                if (note != null) Text(note, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
               ],
             ),
           ),
           Text(text, style: style),
         ],
       ),
-    );
-  }
-
-  /// The week's gross as a bar, with the hurdle drawn as a line. Whatever sits past the line is cash.
-  Widget _hurdleBar(_Week w, List<_Seg> segs) {
-    final gross = segs.fold<double>(0, (a, s) => a + s.value);
-    final hurdle = w.hurdleRule;
-    final scale = math.max(gross, hurdle);
-    if (scale <= 0) return const SizedBox.shrink();
-    final reduce = MediaQuery.of(context).disableAnimations;
-
-    return TweenAnimationBuilder<double>(
-      key: ValueKey<String>('hb|${w.weekStart}|${gross.toStringAsFixed(2)}'),
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: reduce ? Duration.zero : const Duration(milliseconds: 650),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, _) => LayoutBuilder(builder: (context, c) {
-        final width = c.maxWidth;
-        final unit = (width - 8) / scale;
-        final hurdleX = hurdle * unit;
-        final labelLeft = (hurdleX - 44).clamp(0.0, math.max(0.0, width - 88)).toDouble();
-
-        return SizedBox(
-          height: 52,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 24,
-                height: 14,
-                child: Container(
-                  decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(7)),
-                ),
-              ),
-              Positioned(
-                left: 0,
-                top: 24,
-                height: 14,
-                width: gross * unit * t,
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(7),
-                  child: Row(
-                    children: [
-                      for (var i = 0; i < segs.length; i++)
-                        Expanded(
-                          flex: math.max(1, (segs[i].value * 1000).round()),
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: segs[i].color,
-                              border: i < segs.length - 1
-                                  ? const Border(right: BorderSide(color: Colors.white, width: 2))
-                                  : null,
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-              if (hurdle > 0) ...[
-                Positioned(
-                  left: labelLeft,
-                  top: 0,
-                  width: 88,
-                  child: Text(
-                    'Hurdle ${_fmt(hurdle)}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate),
-                  ),
-                ),
-                Positioned(
-                  left: hurdleX - 1,
-                  top: 16,
-                  height: 30,
-                  width: 2,
-                  child: Container(color: DashUi.ink),
-                ),
-              ],
-            ],
-          ),
-        );
-      }),
     );
   }
 
@@ -1813,11 +2039,15 @@ Widget _body() {
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
           child: Row(
             children: [
-              const Text('Closed Jobs',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              const Text(
+                'Closed Jobs',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+              ),
               const SizedBox(width: 8),
-              Text('${w.jobs.length}',
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted)),
+              Text(
+                '${w.jobs.length}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.muted),
+              ),
               const Spacer(),
               if (w.jobs.length > 1)
                 TextButton.icon(
@@ -1852,13 +2082,13 @@ Widget _body() {
     final worked = j.firstWorked.isEmpty
         ? ''
         : (j.firstWorked == j.lastWorked
-            ? 'Worked ${_day(j.firstWorked)}'
-            : 'Worked ${_day(j.firstWorked)} – ${_day(j.lastWorked)}');
+              ? 'Worked ${_day(j.firstWorked)}'
+              : 'Worked ${_day(j.firstWorked)} – ${_day(j.lastWorked)}');
 
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: DashUi.line),
       ),
       clipBehavior: Clip.antiAlias,
@@ -1889,10 +2119,12 @@ Widget _body() {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('Job ${j.jobId}${j.customer.isEmpty ? '' : '  ${j.customer}'}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                          Text(
+                            'Job ${j.jobId}${j.customer.isEmpty ? '' : '  ${j.customer}'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: DashUi.ink),
+                          ),
                           const SizedBox(height: 2),
                           Text(
                             [
@@ -1914,9 +2146,11 @@ Widget _body() {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        const Text('Net to Tech',
-                            style: TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600)),
-                        Text(_fmt(j.net), style: _num(18, FontWeight.w800, DashUi.emeraldDeep)),
+                        const Text(
+                          'Net to Tech',
+                          style: TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600),
+                        ),
+                        Text(_fmt(j.net), style: _num(16, FontWeight.w800, DashUi.emeraldDeep)),
                       ],
                     ),
                   ],
@@ -1926,15 +2160,17 @@ Widget _body() {
           ),
           if (open) ...[
             const Divider(height: 1, color: DashUi.line),
-            LayoutBuilder(builder: (context, c) {
-              const minWidth = 720.0;
-              final table = _lineTable(j, report);
-              if (c.maxWidth >= minWidth) return table;
-              return SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(width: minWidth, child: table),
-              );
-            }),
+            LayoutBuilder(
+              builder: (context, c) {
+                const minWidth = 720.0;
+                final table = _lineTable(j, report);
+                if (c.maxWidth >= minWidth) return table;
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(width: minWidth, child: table),
+                );
+              },
+            ),
             _payoutStrip(j, report),
           ],
         ],
@@ -1948,38 +2184,48 @@ Widget _body() {
       border: Border(top: BorderSide(color: DashUi.line.withValues(alpha: 0.7))),
     );
 
-    Widget cell(String text,
-        {TextAlign align = TextAlign.left, TextStyle? style, double top = 9, double bottom = 9}) {
+    Widget cell(String text, {TextAlign align = TextAlign.left, TextStyle? style, double top = 9, double bottom = 9}) {
       return Padding(
         padding: EdgeInsets.fromLTRB(16, top, 16, bottom),
-        child: Text(text,
-            textAlign: align,
-            style: style ?? const TextStyle(fontSize: 13.5, color: DashUi.ink, fontFeatures: _figures)),
+        child: Text(
+          text,
+          textAlign: align,
+          style: style ?? const TextStyle(fontSize: 13.5, color: DashUi.ink, fontFeatures: _figures),
+        ),
       );
     }
 
     TableRow headerRow() => TableRow(
-          decoration: BoxDecoration(color: DashUi.faint.withValues(alpha: 0.6)),
-          children: [
-            cell('Line Item', style: head, top: 8, bottom: 8),
-            cell('Category', style: head, top: 8, bottom: 8),
-            cell('Job Line', align: TextAlign.right, style: head, top: 8, bottom: 8),
-            cell('Tech %', align: TextAlign.right, style: head, top: 8, bottom: 8),
-            cell('Tech Share', align: TextAlign.right, style: head, top: 8, bottom: 8),
-          ],
-        );
+      decoration: BoxDecoration(color: DashUi.faint.withValues(alpha: 0.6)),
+      children: [
+        cell('Line Item', style: head, top: 8, bottom: 8),
+        cell('Category', style: head, top: 8, bottom: 8),
+        cell('Job Line', align: TextAlign.right, style: head, top: 8, bottom: 8),
+        cell('Tech %', align: TextAlign.right, style: head, top: 8, bottom: 8),
+        cell('Tech Share', align: TextAlign.right, style: head, top: 8, bottom: 8),
+      ],
+    );
 
     TableRow lineRow(_Line l) {
       final color = l.isPool ? DashUi.red : DashUi.ink;
       final base = TextStyle(fontSize: 13.5, color: color, fontFeatures: _figures);
-      return TableRow(decoration: hairline, children: [
-        cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of revenue)' : l.name, style: base),
-        cell(l.isPool ? '' : l.category,
-            style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
-        cell(_fmt(l.jobAmount), align: TextAlign.right, style: base),
-        cell(_pct(j.splitPct), align: TextAlign.right, style: base),
-        cell(_fmt(l.techShare), align: TextAlign.right, style: base.copyWith(fontWeight: FontWeight.w700)),
-      ]);
+      return TableRow(
+        decoration: hairline,
+        children: [
+          cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of revenue)' : l.name, style: base),
+          cell(
+            l.isPool ? '' : l.category,
+            style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+          ),
+          cell(_fmt(l.jobAmount), align: TextAlign.right, style: base),
+          cell(_pct(j.splitPct), align: TextAlign.right, style: base),
+          cell(
+            _fmt(l.techShare),
+            align: TextAlign.right,
+            style: base.copyWith(fontWeight: FontWeight.w700),
+          ),
+        ],
+      );
     }
 
     final adjust = TextStyle(fontSize: 13.5, color: DashUi.muted, fontFeatures: _figures);
@@ -1987,13 +2233,16 @@ Widget _body() {
       headerRow(),
       for (final l in j.lines) lineRow(l),
       if (j.adjustment != 0)
-        TableRow(decoration: hairline, children: [
-          cell('Adjustment', style: adjust),
-          cell(''),
-          cell(''),
-          cell(''),
-          cell(_fmt(j.adjustment), align: TextAlign.right, style: adjust),
-        ]),
+        TableRow(
+          decoration: hairline,
+          children: [
+            cell('Adjustment', style: adjust),
+            cell(''),
+            cell(''),
+            cell(''),
+            cell(_fmt(j.adjustment), align: TextAlign.right, style: adjust),
+          ],
+        ),
     ];
 
     return Table(
@@ -2010,8 +2259,10 @@ Widget _body() {
 
   /// Net pool share, minus what is held back, equals what the tech keeps from this job.
   Widget _payoutStrip(_Job j, _Report report) {
-    Widget op(String s) => Text(s,
-        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: DashUi.muted));
+    Widget op(String s) => Text(
+      s,
+      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: DashUi.muted),
+    );
 
     Widget chip(String label, double value, Color color, {bool strong = false}) {
       return Container(
@@ -2025,8 +2276,10 @@ Widget _body() {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label,
-                style: const TextStyle(fontSize: 11.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
+            Text(
+              label,
+              style: const TextStyle(fontSize: 11.5, color: DashUi.slate, fontWeight: FontWeight.w600),
+            ),
             const SizedBox(height: 1),
             Text(_fmt(value), style: _num(14.5, FontWeight.w800, color)),
           ],
@@ -2047,10 +2300,7 @@ Widget _body() {
             op('−'),
             chip('Retainage Held (${_pct(report.retainageRate * 100)})', j.retainage, DashUi.indigo),
           ],
-          if (j.advancesRepaid != 0) ...[
-            op('−'),
-            chip('Advances Repaid', j.advancesRepaid, DashUi.amber),
-          ],
+          if (j.advancesRepaid != 0) ...[op('−'), chip('Advances Repaid', j.advancesRepaid, DashUi.amber)],
           op('='),
           chip('Net to Tech', j.net, DashUi.emeraldDeep, strong: true),
         ],
@@ -2069,26 +2319,28 @@ Widget _body() {
     ];
     if (cards.isEmpty) return null;
 
-    return LayoutBuilder(builder: (context, c) {
-      if (cards.length == 2 && c.maxWidth >= 720) {
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: cards[0]),
-            const SizedBox(width: 16),
-            Expanded(child: cards[1]),
-          ],
-        );
-      }
-      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(cards));
-    });
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (cards.length == 2 && c.maxWidth >= 720) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: cards[0]),
+              const SizedBox(width: 16),
+              Expanded(child: cards[1]),
+            ],
+          );
+        }
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(cards));
+      },
+    );
   }
 
   Widget _dayCard(String title, String subtitle, List<_DayItem> items, Color color) {
     final total = items.fold<double>(0, (s, i) => s + i.amount);
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 14),
+      decoration: DashUi.panel(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2101,11 +2353,15 @@ Widget _body() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    Text(
+                      title,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
                     const SizedBox(height: 2),
-                    Text(subtitle,
-                        style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                    ),
                   ],
                 ),
               ),
@@ -2121,15 +2377,19 @@ Widget _body() {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
-                    child: Text(_day(i.date),
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+                    child: Text(
+                      _day(i.date),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: Text('Job ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13.5, color: DashUi.ink)),
+                    child: Text(
+                      'Job ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
+                    ),
                   ),
                   Text(_fmt(i.amount), style: _num(13.5, FontWeight.w700, DashUi.ink)),
                 ],
@@ -2145,7 +2405,7 @@ Widget _body() {
   Widget _releasesPanel(_Tech t) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 14),
+      decoration: DashUi.panel(radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2158,17 +2418,22 @@ Widget _body() {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Commercial Retainage Released',
-                        style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    Text(
+                      'Commercial Retainage Released',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
                     SizedBox(height: 2),
-                    Text('Paid out in these dates. Callback charges against retainage are netted in.',
-                        style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                    Text(
+                      'Paid out in these dates. Callback charges against retainage are netted in.',
+                      style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                    ),
                   ],
                 ),
               ),
-              Text(_fmt(t.totals.retainageReleased),
-                  style: _num(15, FontWeight.w800,
-                      t.totals.retainageReleased < 0 ? DashUi.red : DashUi.indigo)),
+              Text(
+                _fmt(t.totals.retainageReleased),
+                style: _num(15, FontWeight.w800, t.totals.retainageReleased < 0 ? DashUi.red : DashUi.indigo),
+              ),
             ],
           ),
           const SizedBox(height: 10),
@@ -2180,8 +2445,10 @@ Widget _body() {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                     decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
-                    child: Text(_day(r.releasedOn),
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+                    child: Text(
+                      _day(r.releasedOn),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
@@ -2191,8 +2458,7 @@ Widget _body() {
                       style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
                     ),
                   ),
-                  Text(_fmt(r.amount),
-                      style: _num(13.5, FontWeight.w700, r.amount < 0 ? DashUi.red : DashUi.ink)),
+                  Text(_fmt(r.amount), style: _num(13.5, FontWeight.w700, r.amount < 0 ? DashUi.red : DashUi.ink)),
                 ],
               ),
             ),
@@ -2213,16 +2479,4 @@ Widget _body() {
       ),
     );
   }
-}
-
-/// Reveals a bar from left to right as [t] goes from 0 to 1.
-class _WipeClipper extends CustomClipper<Rect> {
-  final double t;
-  const _WipeClipper(this.t);
-
-  @override
-  Rect getClip(Size size) => Rect.fromLTWH(0, 0, size.width * t, size.height);
-
-  @override
-  bool shouldReclip(covariant _WipeClipper oldClipper) => oldClipper.t != t;
 }

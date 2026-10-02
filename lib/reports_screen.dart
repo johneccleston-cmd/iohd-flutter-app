@@ -13,7 +13,7 @@ class ReportsScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DashboardLayout(
-      title: 'Financial Reports',
+      title: 'Financial',
       builder: (context, selectedYear) {
         return FinancialDashboardContent(selectedYear: selectedYear);
       },
@@ -248,7 +248,7 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      );
+      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || requestId != _requestId) return;
 
@@ -261,6 +261,12 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
       } else {
         throw Exception('The server returned status ${response.statusCode}.');
       }
+    } on TimeoutException {
+      if (!mounted || requestId != _requestId) return;
+      setState(() {
+        _errorMessage = 'The dashboard took too long to load.';
+        _isLoading = false;
+      });
     } catch (e) {
       if (!mounted || requestId != _requestId) return;
       setState(() {
@@ -1898,8 +1904,11 @@ class _FinancialChartPainter extends CustomPainter {
           if (prevP.hasData) {
             if (p.marginPct > prevP.marginPct) {
               marginTrends.add(1);
-            } else if (p.marginPct < prevP.marginPct) marginTrends.add(-1);
-            else marginTrends.add(0);
+            } else if (p.marginPct < prevP.marginPct) {
+              marginTrends.add(-1);
+            } else {
+              marginTrends.add(0);
+            }
           } else {
             marginTrends.add(0);
           }

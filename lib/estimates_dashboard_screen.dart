@@ -192,7 +192,7 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> body = json.decode(response.body);
@@ -1562,13 +1562,20 @@ class _AutoHorizontalStaleListState
           child: ValueListenableBuilder<double>(
             valueListenable: _offset,
             child: RepaintBoundary(
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildStaleRow(key: _rowKey),
-                  const SizedBox(width: _cardGap),
-                  _buildStaleRow(),
-                ],
+              // OverflowBox lets the doubled row be wider than the viewport without a
+              // RenderFlex overflow warning; ClipRect above trims what's off-screen.
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildStaleRow(key: _rowKey),
+                    const SizedBox(width: _cardGap),
+                    _buildStaleRow(),
+                  ],
+                ),
               ),
             ),
             builder: (context, offset, child) {

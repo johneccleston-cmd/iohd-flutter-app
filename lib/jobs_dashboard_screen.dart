@@ -208,7 +208,7 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> body = json.decode(response.body);

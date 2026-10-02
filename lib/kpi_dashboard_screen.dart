@@ -222,7 +222,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
           'Content-Type': 'application/json',
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
         },
-      ).timeout(const Duration(seconds: 15));
+      ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode != 200) {
         throw Exception('Failed to load users (status ${response.statusCode})');

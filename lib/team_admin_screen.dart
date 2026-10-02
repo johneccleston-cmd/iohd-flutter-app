@@ -30,7 +30,6 @@ class _T {
   static const field = Color(0xFFF8FAFC);
   static const changedFill = Color(0xFFEEF2FF);
   static const amberBg = Color(0xFFFFFBEB);
-  static const amberLine = Color(0xFFFDE68A);
   static const amberFg = Color(0xFF92400E);
   static const goodBg = Color(0xFFECFDF5);
   static const goodFg = Color(0xFF047857);
@@ -933,9 +932,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
         padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
         decoration: BoxDecoration(
-          color: selected ? DashUi.faint : (hover ? _T.wash : Colors.transparent),
+          color: selected ? DashUi.faint : (hover ? _T.wash : DashUi.faint.withValues(alpha: 0)),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: selected ? DashUi.line : Colors.transparent),
+          border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
         ),
         child: Opacity(
           opacity: u.active ? 1 : 0.55,
@@ -1107,48 +1106,61 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              DashAvatar(
-                name: name,
-                imageUrl: _s(_value('avatar_url')),
-                size: 64,
-                ringColor: active ? DashUi.emerald : DashUi.line,
-                ringWidth: 2.5,
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name.isEmpty ? 'Unnamed' : name,
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.4)),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 6,
-                      runSpacing: 6,
-                      children: [
-                        _chip('@${_s(_value('username'))}', DashUi.slate, DashUi.faint),
-                        _chip(role.isEmpty ? 'No role' : role, DashUi.ink, DashUi.faint),
-                        if (_grantsAdmin(role)) _chip('Admin access', DashUi.indigo, const Color(0xFFEEF2FF)),
-                        if (year != null) _chip('Joined $year', DashUi.slate, DashUi.faint),
-                      ],
-                    ),
-                  ],
+          LayoutBuilder(builder: (context, c) {
+            final narrow = c.maxWidth < 640;
+            final status = _segmented<String>(
+              value: active ? 'Active' : 'Inactive',
+              options: const [('Active', 'Active'), ('Inactive', 'Inactive')],
+              onChanged: (v) => _set('status', v),
+              activeColor: active ? DashUi.emeraldDeep : _T.badFg,
+            );
+            final identity = Row(
+              children: [
+                DashAvatar(
+                  name: name,
+                  imageUrl: _s(_value('avatar_url')),
+                  size: 64,
+                  ringColor: active ? DashUi.emerald : DashUi.line,
+                  ringWidth: 2.5,
                 ),
-              ),
-              const SizedBox(width: 12),
-              SizedBox(
-                width: 210,
-                child: _segmented<String>(
-                  value: active ? 'Active' : 'Inactive',
-                  options: const [('Active', 'Active'), ('Inactive', 'Inactive')],
-                  onChanged: (v) => _set('status', v),
-                  activeColor: active ? DashUi.emeraldDeep : _T.badFg,
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(name.isEmpty ? 'Unnamed' : name,
+                          style: const TextStyle(
+                              fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.4)),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [
+                          _chip('@${_s(_value('username'))}', DashUi.slate, DashUi.faint),
+                          _chip(role.isEmpty ? 'No role' : role, DashUi.ink, DashUi.faint),
+                          if (_grantsAdmin(role)) _chip('Admin access', DashUi.indigo, const Color(0xFFEEF2FF)),
+                          if (year != null) _chip('Joined $year', DashUi.slate, DashUi.faint),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            );
+            if (narrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [identity, const SizedBox(height: 14), status],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: identity),
+                const SizedBox(width: 12),
+                SizedBox(width: 210, child: status),
+              ],
+            );
+          }),
           if (_fieldErrors['status'] != null) ...[
             const SizedBox(height: 10),
             _note(Icons.error_outline_rounded, _fieldErrors['status']!, fg: _T.badFg, bg: _T.badBg),
@@ -1486,7 +1498,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                   ],
                 ),
               ),
-              if (trailing != null) trailing,
+              ?trailing,
             ],
           ),
           const SizedBox(height: 12),
@@ -1726,9 +1738,9 @@ Widget _segmented<V>({
                   padding: const EdgeInsets.symmetric(vertical: 7),
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color: o.$1 == value ? Colors.white : Colors.transparent,
+                    color: o.$1 == value ? Colors.white : Colors.white.withValues(alpha: 0),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: o.$1 == value ? DashUi.line : Colors.transparent),
+                    border: Border.all(color: o.$1 == value ? DashUi.line : DashUi.line.withValues(alpha: 0)),
                   ),
                   child: Text(
                     o.$2,
