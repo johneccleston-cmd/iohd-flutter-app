@@ -380,6 +380,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                                 route: '/hr/team',
                                 controller: controller,
                               ),
+                              _dropdownMenuItem(
+                                icon: Icons.rule_folder_outlined,
+                                label: 'Commission Corrections',
+                                route: '/hr/corrections',
+                                controller: controller,
+                              ),
                             ],
                           ),
                           const SizedBox(width: 4),

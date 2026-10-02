@@ -25,6 +25,7 @@ import 'payments_screen.dart';
 import 'invoices_screen.dart';
 import 'team_admin_screen.dart';
 import 'login_screen.dart';
+import 'commission_corrections_screen.dart';
 import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
 
@@ -108,6 +109,7 @@ final GoRouter _router = GoRouter(
               // 🔥 FIX: Relative path matches 'kpis' pattern
               GoRoute(path: 'simulator', builder: (context, state) => const CommissionTesterPage()),
               GoRoute(path: 'team', builder: (context, state) => const TeamAdminScreen()),
+              GoRoute(path: 'corrections', builder: (context, state) => const CommissionCorrectionsScreen()),
             ],
           ),
         ]),
