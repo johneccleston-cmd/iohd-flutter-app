@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
 
@@ -165,10 +166,7 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/api/tech_stats?year=${widget.selectedYear}'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || requestId != _requestId) return;

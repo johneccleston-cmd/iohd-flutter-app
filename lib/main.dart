@@ -24,6 +24,8 @@ import 'statuses_screen.dart';
 import 'payments_screen.dart';
 import 'invoices_screen.dart';
 import 'team_admin_screen.dart';
+import 'login_screen.dart';
+import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
 
 
@@ -32,7 +34,18 @@ import 'widgets/smooth_wheel_scroll.dart';
 // --- ROUTER CONFIGURATION ---
 final GoRouter _router = GoRouter(
   initialLocation: '/calendar',
+  // Everything except /login needs a signed-in office user. The router re-checks whenever the
+  // session changes (sign-in, sign-out, or the token expiring).
+  refreshListenable: AuthSession.instance,
+  redirect: (context, state) {
+    final signedIn = AuthSession.instance.isLoggedIn;
+    final atLogin = state.matchedLocation == '/login';
+    if (!signedIn && !atLogin) return '/login';
+    if (signedIn && atLogin) return '/calendar';
+    return null;
+  },
   routes: [
+    GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
         return MainNavigationShell(navigationShell: navigationShell);

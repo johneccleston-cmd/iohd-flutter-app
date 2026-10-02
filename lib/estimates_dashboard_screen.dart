@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
@@ -188,10 +189,7 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/api/dashboards/estimates?year=${widget.selectedYear}'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {

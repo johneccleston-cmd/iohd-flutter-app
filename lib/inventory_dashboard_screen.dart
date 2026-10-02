@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 
 class InventoryDashboardScreen extends StatelessWidget {
   const InventoryDashboardScreen({super.key});
@@ -216,10 +217,7 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
 
       final response = await http.get(
         Uri.parse(urlString),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || requestId != _requestId) return;

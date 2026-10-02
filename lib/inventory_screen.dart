@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 
 // --- Shared Design Tokens ---
 const Color _brandRed = Color(0xFFCC0007);
@@ -109,10 +110,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/get_full_inventory'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 15));
       if (!mounted) return;
 

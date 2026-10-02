@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
@@ -204,10 +205,7 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/api/dashboards/jobs?year=${widget.selectedYear}'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode == 200) {
@@ -238,14 +236,27 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
         }
 
         Map<int, Map<String, double>> monthlyRevSplit = {};
-        for (var item in rawWeekly) {
-          int week = _parseInt(item['week_num']);
-          int mNum = ((week - 1) / 4.33).floor() + 1;
-          mNum = mNum.clamp(1, 12);
+        final List<dynamic>? rawMonthlySplit = body['monthlySplit'] as List<dynamic>?;
+        if (rawMonthlySplit != null) {
+          // Exact per-month revenue from the backend.
+          for (var item in rawMonthlySplit) {
+            final mNum = _parseInt(item['month_num']).clamp(1, 12);
+            monthlyRevSplit[mNum] = {
+              'res': _parseDouble(item['residential_rev']),
+              'com': _parseDouble(item['commercial_rev']),
+            };
+          }
+        } else {
+          // Older backend: approximate months from week numbers.
+          for (var item in rawWeekly) {
+            int week = _parseInt(item['week_num']);
+            int mNum = ((week - 1) / 4.33).floor() + 1;
+            mNum = mNum.clamp(1, 12);
 
-          monthlyRevSplit.putIfAbsent(mNum, () => {'res': 0.0, 'com': 0.0});
-          monthlyRevSplit[mNum]!['res'] = (monthlyRevSplit[mNum]!['res'] ?? 0.0) + _parseDouble(item['residential_rev']);
-          monthlyRevSplit[mNum]!['com'] = (monthlyRevSplit[mNum]!['com'] ?? 0.0) + _parseDouble(item['commercial_rev']);
+            monthlyRevSplit.putIfAbsent(mNum, () => {'res': 0.0, 'com': 0.0});
+            monthlyRevSplit[mNum]!['res'] = (monthlyRevSplit[mNum]!['res'] ?? 0.0) + _parseDouble(item['residential_rev']);
+            monthlyRevSplit[mNum]!['com'] = (monthlyRevSplit[mNum]!['com'] ?? 0.0) + _parseDouble(item['commercial_rev']);
+          }
         }
 
         const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];

@@ -5,6 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/api_config.dart';
+import 'config/auth_session.dart';
+
 // ---------------------------------------------------------------------------
 // Design tokens
 // ---------------------------------------------------------------------------
@@ -21,7 +24,7 @@ class _C {
   static const moneySoft = Color(0xFFECFDF5);
 }
 
-const _baseUrl = 'https://integrity-backend-cr02.onrender.com';
+const _baseUrl = kApiBaseUrl;
 const _avatarPalette = [
   Color(0xFF2563EB),
   Color(0xFF7C3AED),
@@ -98,7 +101,15 @@ class _CustomersScreenState extends State<CustomersScreen>
       'dir': _sortDir,
     });
     // Generous timeout: Render free instances can take a while to wake up.
-    final res = await http.get(uri).timeout(const Duration(seconds: 40));
+    // Customer details need the signed-in user's token, not just the app's shared key.
+    final res = await http.get(uri, headers: AuthSession.instance.headers()).timeout(const Duration(seconds: 40));
+    if (res.statusCode == 401) {
+      AuthSession.instance.logout(); // sends the app back to the sign-in screen
+      throw Exception('Your session expired. Please sign in again.');
+    }
+    if (res.statusCode == 403) {
+      throw Exception('Your account does not have access to customer data.');
+    }
     if (res.statusCode != 200) {
       throw Exception('Server error (${res.statusCode})');
     }

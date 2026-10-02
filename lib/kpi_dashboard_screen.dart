@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_layout.dart';
 
 class KPIDashboardScreen extends StatelessWidget {
@@ -218,10 +219,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/users'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60));
 
       if (response.statusCode != 200) {

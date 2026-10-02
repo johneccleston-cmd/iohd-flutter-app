@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 
 class JobsScreen extends StatefulWidget {
   const JobsScreen({super.key});
@@ -38,7 +39,7 @@ class _JobsScreenState extends State<JobsScreen> with AutomaticKeepAliveClientMi
   Future<http.Response> _get(String pathAndQuery) {
     return http.get(
       Uri.parse('$kApiBaseUrl$pathAndQuery'),
-      headers: {'Authorization': 'Bearer $kAuthToken'},
+      headers: AuthSession.instance.headers(json: false),
     );
   }
 

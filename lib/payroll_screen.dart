@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'payroll_sample_data.dart';
 import 'widgets/dashboard_kit.dart';
 
@@ -488,10 +489,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       final response = await http
           .get(
             uri,
-            headers: {
-              'Content-Type': 'application/json',
-              if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-            },
+            headers: AuthSession.instance.headers(),
           )
           .timeout(const Duration(seconds: 90)); // the hosted server can be slow to wake up
 

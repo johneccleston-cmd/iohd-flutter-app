@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 
 // Kept public and unchanged in behavior: other screens may import it.
 Color getStatusColor(String? status) {
@@ -283,10 +284,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       );
       final response = await http.get(
         uri,
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (!mounted || id != _requestId) return; // a newer request superseded this one

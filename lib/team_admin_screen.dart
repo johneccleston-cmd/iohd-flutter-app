@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 
 // ---------------------------------------------------------------------------
@@ -237,11 +238,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     super.dispose();
   }
 
-  Map<String, String> _headers() => {
-        'Authorization': 'Bearer $kAuthToken',
-        'Content-Type': 'application/json',
-        // 'x-user-token': <session token>,  // add once desktop logins exist
-      };
+  Map<String, String> _headers() => AuthSession.instance.headers();
 
   Uri _uri(String path) => Uri.parse('$kApiBaseUrl/api/admin/users$path');
 

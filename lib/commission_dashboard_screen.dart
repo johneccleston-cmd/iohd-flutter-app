@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
+import 'config/auth_session.dart';
 import 'widgets/dashboard_layout.dart';
 
 // =============================================================================
@@ -147,6 +148,8 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   double _totalPayouts = 0;
   double _retainagePool = 0;
   double _avgPerTech = 0;
+  double _nextDisbursement = 0;
+  int _nextDisbursementTechs = 0;
 
   @override
   void initState() {
@@ -171,10 +174,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
     try {
       final response = await http.get(
         Uri.parse('$kApiBaseUrl/api/commissions_stats?year=${widget.selectedYear}'),
-        headers: {
-          'Content-Type': 'application/json',
-          if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
-        },
+        headers: AuthSession.instance.headers(),
       ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
 
       if (response.statusCode == 200) {
@@ -188,6 +188,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
             _totalPayouts = (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
             _retainagePool = (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
             _avgPerTech = (summary['avgCommissionPerTech'] as num?)?.toDouble() ?? 0.0;
+            final next = (summary['nextDisbursement'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+            _nextDisbursement = (next['amount'] as num?)?.toDouble() ?? 0.0;
+            _nextDisbursementTechs = (next['techCount'] as num?)?.toInt() ?? 0;
 
             _staff = techsData.map((e) => _StaffCommissionProfile.fromJson(e as Map<String, dynamic>)).toList();
             _chartData = chartRaw.map((e) => _MonthlyPayoutPoint.fromJson(e as Map<String, dynamic>)).toList();
@@ -233,6 +236,11 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
       return _ErrorPanel(message: _errorMessage!, onRetry: _fetchLiveCommissionData);
     }
 
+    // Effective rate uses the same monthly series as the chart so the two always agree.
+    final chartPayout = _chartData.fold<double>(0, (s, p) => s + p.payout);
+    final chartRevenue = _chartData.fold<double>(0, (s, p) => s + p.revenue);
+    final commissionRate = chartRevenue > 0 ? chartPayout / chartRevenue * 100 : 0.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -265,6 +273,16 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                   amount: _avgPerTech,
                   index: 2,
                   valueColor: _Ui.ink,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _MetricCard(
+                  title: 'Commission % of revenue',
+                  amount: commissionRate,
+                  index: 3,
+                  valueColor: _Ui.sky,
+                  format: (v) => '${v.toStringAsFixed(1)}%',
                 ),
               ),
             ],
@@ -316,11 +334,12 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                 flex: 7,
                 child: Column(
                   children: [
-                    const QuarterlyPayoutCountdownCard(),
+                    QuarterlyPayoutCountdownCard(amount: _nextDisbursement, techCount: _nextDisbursementTechs),
                     const SizedBox(height: 16),
                     Expanded(
                       child: _InteractivePayoutChart(
                         data: _chartData,
+                        staff: _staff,
                         year: widget.selectedYear,
                       ),
                     ),
@@ -363,18 +382,25 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      person.name,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF1E293B),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          person.name,
+                          style: const TextStyle(
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1E293B),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                      if (person.strikes > 0 || person.penalties != 0) ...[
+                        const SizedBox(width: 8),
+                        _StrikeChip(strikes: person.strikes, penalties: person.penalties),
+                      ],
+                    ],
                   ),
                   const Divider(height: 1, color: Color(0xFFE2E8F0)),
                   Row(
@@ -417,6 +443,43 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   }
 }
 
+class _StrikeChip extends StatelessWidget {
+  final int strikes;
+  final double penalties;
+  const _StrikeChip({required this.strikes, required this.penalties});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <String>[
+      if (strikes > 0) '$strikes ${strikes == 1 ? 'strike' : 'strikes'}',
+      // The ledger stores callback deductions as negative amounts.
+      if (penalties != 0) '-${_money(penalties.abs())}',
+    ];
+    return Tooltip(
+      message: 'Callback strikes and retainage penalties this year',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFEF2F2),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFFFECACA)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.warning_amber_rounded, size: 12, color: Color(0xFFDC2626)),
+            const SizedBox(width: 4),
+            Text(
+              parts.join(' · '),
+              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFFB91C1C)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 // =============================================================================
 // SCORECARD (Helper text removed)
 // =============================================================================
@@ -427,6 +490,7 @@ class _MetricCard extends StatefulWidget {
   final Color valueColor;
   final int index;
   final List<double>? trend;
+  final String Function(double)? format;
 
   const _MetricCard({
     required this.title,
@@ -434,6 +498,7 @@ class _MetricCard extends StatefulWidget {
     required this.valueColor,
     required this.index,
     this.trend,
+    this.format,
   });
 
   @override
@@ -499,7 +564,7 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              _money(v),
+              (w.format ?? _money)(v),
               style: TextStyle(
                 fontSize: 28,
                 fontWeight: FontWeight.w800,
@@ -811,7 +876,11 @@ class _ErrorPanel extends StatelessWidget {
 // =============================================================================
 
 class QuarterlyPayoutCountdownCard extends StatefulWidget {
-  const QuarterlyPayoutCountdownCard({super.key});
+  /// Retainage that will be released on the next quarter date, and how many techs receive it.
+  final double amount;
+  final int techCount;
+
+  const QuarterlyPayoutCountdownCard({super.key, required this.amount, required this.techCount});
 
   @override
   State<QuarterlyPayoutCountdownCard> createState() => _QuarterlyPayoutCountdownCardState();
@@ -923,6 +992,13 @@ class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownC
               const Text(
                 'Next Retainage Disbursement',
                 style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                widget.amount > 0
+                    ? '${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
+                    : 'Nothing scheduled to release',
+                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Color(0xFF34D399)),
               ),
             ],
           ),
@@ -1066,9 +1142,10 @@ TextPainter _layoutText(String text, TextStyle style, {double maxWidth = double.
 
 class _InteractivePayoutChart extends StatefulWidget {
   final List<_MonthlyPayoutPoint> data;
+  final List<_StaffCommissionProfile> staff;
   final int? year;
 
-  const _InteractivePayoutChart({required this.data, this.year});
+  const _InteractivePayoutChart({required this.data, required this.staff, this.year});
 
   @override
   State<_InteractivePayoutChart> createState() => _InteractivePayoutChartState();
@@ -1079,6 +1156,7 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
   late final AnimationController _hover;
 
   _ChartMetric _metric = _ChartMetric.payouts;
+  bool _byTech = false;
   int? _active;
   int? _paintedIndex;
 
@@ -1121,7 +1199,7 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
   }
 
   void _autoCycleMetric() {
-    if (!mounted || _chartHovering) return;
+    if (!mounted || _chartHovering || _byTech) return;
     _setMetric(_metric == _ChartMetric.payouts ? _ChartMetric.revenue : _ChartMetric.payouts);
   }
 
@@ -1161,9 +1239,28 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
 
   double? _pct(double prev, double cur) => prev > 0 ? (cur - prev) / prev * 100 : null;
 
+  void _setByTech(bool v) {
+    if (v == _byTech) return;
+    setState(() {
+      _byTech = v;
+      _active = null;
+      _paintedIndex = null;
+    });
+    _hover.value = 0;
+    if (!v) _intro.forward(from: 0);
+  }
+
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
+
+    if (_byTech) {
+      return _TechShareView(
+        staff: widget.staff,
+        year: widget.year,
+        toggle: _ViewToggle(byTech: true, onChanged: _setByTech),
+      );
+    }
 
     if (data.isEmpty) {
       return Container(
@@ -1248,7 +1345,14 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
                   ),
                 ],
               ),
-              _MetricToggle(value: _metric, onChanged: _setMetric),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _ViewToggle(byTech: false, onChanged: _setByTech),
+                  const SizedBox(width: 8),
+                  _MetricToggle(value: _metric, onChanged: _setMetric),
+                ],
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -1364,6 +1468,205 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
         const SizedBox(width: 8),
         Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _Ui.slate)),
       ],
+    );
+  }
+}
+
+class _ViewToggle extends StatelessWidget {
+  final bool byTech;
+  final ValueChanged<bool> onChanged;
+  const _ViewToggle({required this.byTech, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    Widget seg(String label, bool selected, bool value) => GestureDetector(
+          onTap: () => onChanged(value),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            decoration: BoxDecoration(
+              color: selected ? Colors.white : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? _Ui.line : Colors.transparent),
+            ),
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                color: selected ? _Ui.ink : _Ui.slate,
+              ),
+            ),
+          ),
+        );
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(color: _Ui.faint, borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [seg('By month', !byTech, false), seg('By tech', byTech, true)],
+      ),
+    );
+  }
+}
+
+/// Who is earning what: commission YTD per technician, ranked, with share of the total.
+/// Sales staff are excluded because the API doesn't report a commission amount for them.
+class _TechShareView extends StatefulWidget {
+  final List<_StaffCommissionProfile> staff;
+  final int? year;
+  final Widget toggle;
+  const _TechShareView({required this.staff, required this.year, required this.toggle});
+
+  @override
+  State<_TechShareView> createState() => _TechShareViewState();
+}
+
+class _TechShareViewState extends State<_TechShareView> {
+  int? _hovered;
+
+  @override
+  Widget build(BuildContext context) {
+    final techs = widget.staff.where((p) => !p.isSales).toList()
+      ..sort((a, b) => b.commission.compareTo(a.commission));
+    final total = techs.fold<double>(0, (s, p) => s + p.commission);
+    final maxV = techs.isEmpty ? 0.0 : techs.first.commission;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+      decoration: _Ui.panel(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text(
+                    'Commission earned by technician',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.slate),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _money(total),
+                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _Ui.ink, height: 1.1),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Total for ${widget.year}',
+                        style: const TextStyle(fontSize: 13, color: _Ui.muted, fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              widget.toggle,
+            ],
+          ),
+          const SizedBox(height: 14),
+          Expanded(
+            child: techs.isEmpty
+                ? const Center(
+                    child: Text('No technician commission recorded yet.',
+                        style: TextStyle(color: _Ui.muted, fontSize: 14)),
+                  )
+                : ListView.builder(
+                    itemCount: techs.length,
+                    itemExtent: 38,
+                    itemBuilder: (context, i) {
+                      final p = techs[i];
+                      final ratio = maxV > 0 ? (p.commission / maxV).clamp(0.0, 1.0) : 0.0;
+                      final share = total > 0 ? p.commission / total * 100 : 0.0;
+                      final hovered = _hovered == i;
+                      final faded = _hovered != null && !hovered;
+                      return MouseRegion(
+                        onEnter: (_) => setState(() => _hovered = i),
+                        onExit: (_) => setState(() => _hovered = null),
+                        child: AnimatedOpacity(
+                          duration: const Duration(milliseconds: 180),
+                          opacity: faded ? 0.4 : 1.0,
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 140,
+                                child: Text(
+                                  p.name,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 13.5,
+                                    fontWeight: hovered ? FontWeight.w800 : FontWeight.w600,
+                                    color: hovered ? _Ui.ink : _Ui.slate,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Stack(
+                                  alignment: Alignment.centerLeft,
+                                  children: [
+                                    Container(
+                                      height: 22,
+                                      decoration: BoxDecoration(color: _Ui.faint, borderRadius: BorderRadius.circular(6)),
+                                    ),
+                                    FractionallySizedBox(
+                                      widthFactor: p.commission > 0 ? math.max(ratio, 0.02) : 0.0,
+                                      child: TweenAnimationBuilder<double>(
+                                        tween: Tween(begin: 0, end: 1),
+                                        duration: const Duration(milliseconds: 600),
+                                        curve: Curves.easeOutCubic,
+                                        builder: (context, t, child) => FractionallySizedBox(
+                                          alignment: Alignment.centerLeft,
+                                          widthFactor: t,
+                                          child: child,
+                                        ),
+                                        child: Container(
+                                          height: 22,
+                                          decoration: BoxDecoration(
+                                            gradient: const LinearGradient(
+                                              colors: [Color(0xFF059669), Color(0xFF10B981)],
+                                            ),
+                                            borderRadius: BorderRadius.circular(6),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 14),
+                              SizedBox(
+                                width: 96,
+                                child: Text(
+                                  _money(p.commission),
+                                  textAlign: TextAlign.end,
+                                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: _Ui.ink),
+                                ),
+                              ),
+                              SizedBox(
+                                width: 52,
+                                child: Text(
+                                  '${share.toStringAsFixed(1)}%',
+                                  textAlign: TextAlign.end,
+                                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _Ui.emeraldDeep),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
     );
   }
 }

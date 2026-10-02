@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../config/auth_session.dart';
+
 
 // --- Design tokens ---------------------------------------------------------
 // A small, named palette instead of scattered hex literals. Keeping this at
@@ -479,6 +481,8 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                       ),
                     ),
                   ),
+                  const SizedBox(width: 12),
+                  _AccountMenu(),
                 ],
               ),
             ),
@@ -558,6 +562,69 @@ class _HoverMenuState extends State<_HoverMenu> {
         onExit: (_) => _onExit(),
         child: widget.trigger(_controller, _isOpen),
       ),
+    );
+  }
+}
+
+/// The signed-in user, with a sign-out action. Signing out sends the router back to /login.
+class _AccountMenu extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: AuthSession.instance,
+      builder: (context, _) {
+        final session = AuthSession.instance;
+        final parts = session.name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+        final initials = parts.isEmpty
+            ? '?'
+            : (parts.length == 1 ? parts.first[0] : parts.first[0] + parts.last[0]).toUpperCase();
+
+        return PopupMenuButton<String>(
+          tooltip: 'Account',
+          offset: const Offset(0, 46),
+          color: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+            side: const BorderSide(color: _strokeBorder),
+          ),
+          onSelected: (value) {
+            if (value == 'signout') session.logout();
+          },
+          itemBuilder: (context) => [
+            PopupMenuItem<String>(
+              enabled: false,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(session.name,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _inkColor)),
+                  if (session.role.isNotEmpty)
+                    Text(session.role, style: const TextStyle(fontSize: 12, color: _slateColor)),
+                ],
+              ),
+            ),
+            const PopupMenuDivider(),
+            const PopupMenuItem<String>(
+              value: 'signout',
+              child: Row(
+                children: [
+                  Icon(Icons.logout_rounded, size: 18, color: _slateColor),
+                  SizedBox(width: 10),
+                  Text('Sign out', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _inkColor)),
+                ],
+              ),
+            ),
+          ],
+          child: Container(
+            width: 36,
+            height: 36,
+            alignment: Alignment.center,
+            decoration: const BoxDecoration(color: _activeTint, shape: BoxShape.circle),
+            child: Text(initials,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _brandRed)),
+          ),
+        );
+      },
     );
   }
 }
