@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
 import 'config/api_config.dart';
+import 'config/access.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 
@@ -76,11 +77,20 @@ const Map<String, String> _labels = {
   'can_collect_payment': 'Can collect payment',
   'five_star': '5-Star badge',
   'no_recalls': 'No-recalls badge',
+  'access_denied': 'Access',
   'inventory_strikes': 'Inventory strikes',
   'warehouse_strikes': 'Warehouse strikes',
   'tech_id': 'Service Fusion tech ID',
   'avatar_url': 'Photo URL',
 };
+
+/// Draft value for `access_denied` is the list of keys that are ALLOWED (what the pills show); the
+/// server stores the opposite, the keys switched off. Keys come from config/access.dart.
+List<String> _allowedFrom(dynamic denied) => [for (final k in kAllAccessKeys) if (denied is! List || !denied.contains(k)) k];
+
+/// Admins (John and Ryan) see everything, so they get no permissions card. This is the Admin and
+/// Owner roles only: Office Manager (Heather) is not an admin.
+bool _isOwnerAdmin(String role) => const {'admin', 'owner'}.contains(role.trim().toLowerCase());
 
 const List<(double, String)> _weightPresets = [
   (0.0, 'No share'),
@@ -107,6 +117,7 @@ String _fmtW(double w) {
 }
 
 bool _same(dynamic a, dynamic b) {
+  if (a is List && b is List) return a.length == b.length && a.every(b.contains);
   if (a is num && b is num) return (a - b).abs() < 1e-9;
   return a == b;
 }
@@ -351,6 +362,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         return _d(v).round();
       case 'year_joined':
         return v == null ? null : _d(v).round();
+      case 'access_denied':
+        return _allowedFrom(v);
       case 'status':
         return _isActiveStatus(v) ? 'Active' : 'Inactive';
       case 'role':
@@ -416,7 +429,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Map<String, dynamic> _payload() {
     final out = <String, dynamic>{};
     _draft.forEach((k, v) {
-      out[k] = (_nullableText.contains(k) && v is String && v.isEmpty) ? null : v;
+      if (k == 'access_denied' && v is List) {
+        out[k] = [for (final key in kAllAccessKeys) if (!v.contains(key)) key];
+      } else {
+        out[k] = (_nullableText.contains(k) && v is String && v.isEmpty) ? null : v;
+      }
     });
     return out;
   }
@@ -737,10 +754,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     if (_boolKeys.contains(key)) return v == true ? 'On' : 'Off';
     if (key == 'tech_weight') return '${_fmtW(_d(v))}×';
     if (key == 'tool_allowance') return dashMoney(_d(v));
+    if (key == 'access_denied' && v is List) return '${v.length} of ${kAllAccessKeys.length} allowed';
     return '$v';
   }
 
   String _displayAudit(String field, String? v) {
+    if (field == 'access_denied') return (v == null || v.isEmpty) ? 'Everything allowed' : 'Off: ${v.replaceAll(',', ', ')}';
     if (v == null || v.isEmpty) return 'None';
     if (_boolKeys.contains(field)) return v == 'true' ? 'On' : (v == 'false' ? 'Off' : v);
     if (field == 'tech_weight') return '${_fmtW(_d(v))}×';
@@ -1020,6 +1039,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               _profileSection(e),
               const SizedBox(height: 12),
               _weightSection(),
+              if (!_isOwnerAdmin(_s(_value('role')))) ...[
+                const SizedBox(height: 12),
+                _permissionsSection(),
+              ],
               const SizedBox(height: 12),
               _historySection(),
             ],
@@ -1226,6 +1249,181 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
+  Widget _permissionsSection() {
+    final allowed = (_value('access_denied') as List).cast<String>().toSet();
+    final isTech = isTechnicianRole(_s(_value('role')));
+
+    void apply(Set<String> next) => _set('access_denied', [for (final k in kAllAccessKeys) if (next.contains(k)) k]);
+
+    // Turns one cell on or off and keeps View in step: Create/Update/Delete need View, and
+    // switching View off clears the rest of the row.
+    void setCell(Set<String> next, AccessResource r, AccessAction a, bool on) {
+      if (on) {
+        next.add(r.keyFor(a));
+        next.add(r.keyFor(AccessAction.view));
+      } else {
+        next.remove(r.keyFor(a));
+        if (a == AccessAction.view) {
+          for (final x in r.actions) {
+            next.remove(r.keyFor(x));
+          }
+        }
+      }
+    }
+
+    void toggleCell(AccessResource r, AccessAction a) {
+      final next = {...allowed};
+      setCell(next, r, a, !allowed.contains(r.keyFor(a)));
+      apply(next);
+    }
+
+    void toggleRow(AccessResource r) {
+      final next = {...allowed};
+      final all = r.actions.every((a) => allowed.contains(r.keyFor(a)));
+      for (final a in r.actions) {
+        setCell(next, r, a, !all);
+      }
+      apply(next);
+    }
+
+    void toggleColumn(AccessGroup g, AccessAction a) {
+      final rows = g.items.where((r) => r.actions.contains(a)).toList();
+      final all = rows.every((r) => allowed.contains(r.keyFor(a)));
+      final next = {...allowed};
+      for (final r in rows) {
+        setCell(next, r, a, !all);
+      }
+      apply(next);
+    }
+
+    return _section(
+      title: 'Permissions',
+      subtitle: isTech ? null : 'Tick what this person can do. Anything unticked is hidden from their menu or blocked.',
+      trailing: _changedTag('access_denied'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Technicians use the tech app, so desktop access doesn't apply to them.
+          if (!isTech) ...[
+            _subHeader('IOHD Hub permissions'),
+            for (var i = 0; i < kAccessGroups.length; i++) ...[
+              if (i > 0) const SizedBox(height: 12),
+              _accessMatrix(kAccessGroups[i], allowed, toggleCell, toggleRow, toggleColumn),
+            ],
+            _rule(),
+          ],
+          _subHeader('IOHD App permissions'),
+          _toggleRow('can_collect_payment', 'Can collect payment', 'Can take card payments on jobs in the tech app.'),
+        ],
+      ),
+    );
+  }
+
+  Widget _subHeader(String text) => Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 10),
+        child: Text(text, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink)),
+      );
+
+  static const double _cellW = 76;
+
+  /// One group as a table: a row per resource, a column per action. Click a column heading to tick or
+  /// clear the whole column, or a row's name to tick or clear the whole row.
+  Widget _accessMatrix(
+    AccessGroup group,
+    Set<String> allowed,
+    void Function(AccessResource, AccessAction) toggleCell,
+    void Function(AccessResource) toggleRow,
+    void Function(AccessGroup, AccessAction) toggleColumn,
+  ) {
+    final used = {for (final r in group.items) ...r.actions};
+    return Container(
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: DashUi.line)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            color: _T.wash,
+            padding: const EdgeInsets.fromLTRB(14, 6, 0, 6),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(group.title,
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: DashUi.slate)),
+                ),
+                for (final a in AccessAction.values)
+                  SizedBox(
+                    width: _cellW,
+                    child: used.contains(a)
+                        ? Tooltip(
+                            message: 'Tick or clear ${a.label.toLowerCase()} for everything in ${group.title}',
+                            child: TextButton(
+                              onPressed: () => toggleColumn(group, a),
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(horizontal: 4),
+                                foregroundColor: DashUi.slate,
+                              ),
+                              child: Text(a.label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+                            ),
+                          )
+                        : null,
+                  ),
+              ],
+            ),
+          ),
+          for (final r in group.items)
+            Container(
+              decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => toggleRow(r),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 9, 8, 9),
+                        child: Row(
+                          children: [
+                            Icon(r.icon, size: 16, color: DashUi.muted),
+                            const SizedBox(width: 9),
+                            Flexible(
+                              child: Text(r.label,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  for (final a in AccessAction.values)
+                    SizedBox(
+                      width: _cellW,
+                      child: r.actions.contains(a)
+                          ? Center(
+                              child: Semantics(
+                                label: '${r.label} ${a.label.toLowerCase()}',
+                                child: Checkbox(
+                                  value: allowed.contains(r.keyFor(a)),
+                                  onChanged: (_) => toggleCell(r, a),
+                                  activeColor: DashUi.emeraldDeep,
+                                  side: const BorderSide(color: DashUi.muted, width: 1.4),
+                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
+                                ),
+                              ),
+                            )
+                          : const Center(child: Text('\u2013', style: TextStyle(color: DashUi.line, fontSize: 14))),
+                    ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _profileSection(_Emp e) {
     final nameChanged = _draft.containsKey('name');
     final role = _s(_value('role'));
@@ -1314,8 +1512,6 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               ),
             ],
           ),
-          _rule(),
-          _toggleRow('can_collect_payment', 'Can collect payment', 'Can take card payments on jobs in the tech app.'),
           _rule(),
           _loginRow(e),
         ],

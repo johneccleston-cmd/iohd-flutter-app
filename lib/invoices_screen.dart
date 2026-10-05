@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'config/access.dart';
+import 'config/auth_session.dart';
 
 const Color _brandRed = Color(0xFFCC0007);
 const Color _inkColor = Color(0xFF181B1F);
@@ -48,7 +50,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text("Invoices", style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: _inkColor, letterSpacing: -0.5)),
-                ElevatedButton.icon(onPressed: () {}, icon: const Icon(Icons.add, color: Colors.white, size: 18), label: const Text("Create Invoice", style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)), style: ElevatedButton.styleFrom(backgroundColor: _brandRed, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)))),
+                if (AuthSession.instance.can('invoices', AccessAction.create)) ElevatedButton.icon(onPressed: () {}, icon: const Icon(Icons.add, color: Colors.white, size: 18), label: const Text("Create Invoice", style: TextStyle(fontWeight: FontWeight.w600, color: Colors.white)), style: ElevatedButton.styleFrom(backgroundColor: _brandRed, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)))),
               ],
             ),
             const SizedBox(height: 24),

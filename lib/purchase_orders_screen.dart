@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'config/access.dart';
+import 'config/auth_session.dart';
 
 // --- Shared Design Tokens ---
 const Color _brandRed = Color(0xFFCC0007);
@@ -97,7 +99,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
                   "Purchase Orders",
                   style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: _inkColor, letterSpacing: -0.5),
                 ),
-                ElevatedButton.icon(
+                if (AuthSession.instance.can('purchase_orders', AccessAction.create)) ElevatedButton.icon(
                   onPressed: () {},
                   icon: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
                   label: const Text("Create PO", style: TextStyle(fontWeight: FontWeight.w600)),

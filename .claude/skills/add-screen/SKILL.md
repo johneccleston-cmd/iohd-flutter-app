@@ -36,7 +36,7 @@ shell uses the index.
 | 4 | Jobs | `/jobs` |
 | 5 | Calendar | `/calendar` |
 | 6 | Inventory | `/inventory` (+ `catalog`, `purchase-orders`, `vendors`) |
-| 7 | HR | `/hr` (+ `kpis`, `simulator`, `team`, `corrections`) |
+| 7 | HR | `/hr` (+ `kpis`, `team`, `corrections`) |
 | 8 | Dashboards | `/dashboards` (+ `financial`, `commissions`, …) |
 
 - A sub-page of an existing area is a child `GoRoute` with a **relative** path (`'vendors'`, no leading slash).

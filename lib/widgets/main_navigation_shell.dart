@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import '../config/access.dart';
 import '../config/auth_session.dart';
 import 'app_dialog.dart';
 import 'assistant_panel.dart';
@@ -339,6 +340,29 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     Widget item(IconData icon, String label, String route, MenuController c) =>
         _dropdownMenuItem(icon: icon, label: label, route: route, controller: c, location: location);
 
+    final session = AuthSession.instance;
+    final can = _Can(session.canView);
+
+    // The rows of one menu section the user may open, under an optional header.
+    List<Widget> section(MenuController c, String? header, List<(String, IconData, String, String)> rows) {
+      final shown = [for (final r in rows) if (can(r.$1)) r];
+      if (shown.isEmpty) return const [];
+      return [
+        if (header != null) _menuSectionHeader(header),
+        for (final r in shown) item(r.$2, r.$3, r.$4, c),
+      ];
+    }
+
+    // Joins the non-empty sections with dividers.
+    List<Widget> joined(List<List<Widget>> parts) {
+      final out = <Widget>[];
+      for (final p in parts.where((p) => p.isNotEmpty)) {
+        if (out.isNotEmpty) out.add(_menuDivider());
+        out.addAll(p);
+      }
+      return out;
+    }
+
     return Container(
       // Explicit height: Scaffold gives the app bar loose constraints, so without this the bar
       // shrinks to the height of its contents.
@@ -405,97 +429,110 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: [
-                      _navDropdown(
-                        icon: Icons.home_work_rounded,
-                        label: 'My Office',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        // Branch 0 holds Statuses, Payments and Invoices.
-                        isSelected: [0, 1, 3, 4].contains(current),
-                        items: (c) => [
-                          _menuSectionHeader('Operations'),
-                          item(Icons.groups_rounded, 'Customers', '/customers', c),
-                          item(Icons.request_quote_rounded, 'Estimates', '/estimates', c),
-                          item(Icons.build_rounded, 'Jobs', '/jobs', c),
-                          item(Icons.timeline_rounded, 'Estimate & Job Statuses', '/statuses', c),
-                          _menuDivider(),
-                          _menuSectionHeader('Financial'),
-                          item(Icons.payment_rounded, 'Payments', '/payments', c),
-                          item(Icons.receipt_long_rounded, 'Invoices', '/invoices', c),
-                          _menuDivider(),
-                          _menuSectionHeader('Commercial'),
-                          item(Icons.assignment_turned_in_rounded, 'Site Checks', '/site-checks', c),
-                          item(Icons.architecture_rounded, 'Takeoffs', '/takeoffs', c),
-                        ],
-                      ),
-                      const SizedBox(width: 2),
-                      _navItem(
-                        icon: Icons.folder_copy_rounded,
-                        label: 'Projects',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        isSelected: current == 2,
-                        onTap: () => _goBranch(2),
-                      ),
-                      const SizedBox(width: 2),
-                      _navItem(
-                        icon: Icons.calendar_month_rounded,
-                        label: 'Calendar',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        isSelected: current == 5,
-                        onTap: () => _goBranch(5),
-                      ),
-                      const SizedBox(width: 2),
-                      _navDropdown(
-                        icon: Icons.inventory_2_rounded,
-                        label: 'Inventory',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        isSelected: current == 6,
-                        items: (c) => [
-                          item(Icons.stacked_bar_chart_rounded, 'Stock Levels', '/inventory', c),
-                          item(Icons.category_rounded, 'Product Catalog', '/inventory/catalog', c),
-                          _menuDivider(),
-                          _menuSectionHeader('Purchasing'),
-                          item(Icons.shopping_cart_checkout_rounded, 'Purchase Orders', '/inventory/purchase-orders', c),
-                          item(Icons.storefront_rounded, 'Vendors', '/inventory/vendors', c),
-                        ],
-                      ),
-                      const SizedBox(width: 2),
-                      _navDropdown(
-                        icon: Icons.badge_rounded,
-                        label: 'HR',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        isSelected: current == 7,
-                        items: (c) => [
-                          item(Icons.payments_rounded, 'Payroll', '/hr', c),
-                          item(Icons.speed_outlined, "KPI's", '/hr/kpis', c),
-                          item(Icons.calculate_outlined, 'Commission Simulator', '/hr/simulator', c),
-                          item(Icons.manage_accounts_rounded, 'Team', '/hr/team', c),
-                          _menuDivider(),
-                          item(Icons.rule_folder_outlined, 'Commission Corrections', '/hr/corrections', c),
-                        ],
-                      ),
-                      const SizedBox(width: 2),
-                      _navDropdown(
-                        icon: Icons.insights_rounded,
-                        label: 'Dashboards',
-                        compact: compact,
-                        iconOnly: iconOnly,
-                        isSelected: current == 8,
-                        items: (c) => [
-                          item(Icons.attach_money_rounded, 'Financial', '/dashboards/financial', c),
-                          item(Icons.payments_outlined, 'Commissions', '/dashboards/commissions', c),
-                          item(Icons.engineering_outlined, 'Technicians', '/dashboards/technicians', c),
-                          item(Icons.inventory_2_outlined, 'Inventory', '/dashboards/inventory', c),
-                          item(Icons.work_outline_rounded, 'Jobs', '/dashboards/jobs', c),
-                          item(Icons.request_quote_outlined, 'Estimates', '/dashboards/estimates', c),
-                          item(Icons.trending_up_rounded, 'Sales', '/dashboards/sales', c),
-                          item(Icons.account_balance_wallet_outlined, 'Collections', '/dashboards/collections', c),
-                        ],
-                      ),
+                      if (can.any(_officeKeys))
+                        _navDropdown(
+                          icon: Icons.home_work_rounded,
+                          label: 'My Office',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          // Branch 0 holds Statuses, Payments and Invoices.
+                          isSelected: [0, 1, 3, 4].contains(current),
+                          items: (c) => joined([
+                            section(c, 'Operations', [
+                              ('customers', Icons.groups_rounded, 'Customers', '/customers'),
+                              ('estimates', Icons.request_quote_rounded, 'Estimates', '/estimates'),
+                              ('jobs', Icons.build_rounded, 'Jobs', '/jobs'),
+                              ('statuses', Icons.timeline_rounded, 'Estimate & Job Statuses', '/statuses'),
+                            ]),
+                            section(c, 'Financial', [
+                              ('payments', Icons.payment_rounded, 'Payments', '/payments'),
+                              ('invoices', Icons.receipt_long_rounded, 'Invoices', '/invoices'),
+                            ]),
+                            section(c, 'Commercial', [
+                              ('site_checks', Icons.assignment_turned_in_rounded, 'Site Checks', '/site-checks'),
+                              ('takeoffs', Icons.architecture_rounded, 'Takeoffs', '/takeoffs'),
+                            ]),
+                          ]),
+                        ),
+                      if (can('projects')) ...[
+                        const SizedBox(width: 2),
+                        _navItem(
+                          icon: Icons.folder_copy_rounded,
+                          label: 'Projects',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          isSelected: current == 2,
+                          onTap: () => _goBranch(2),
+                        ),
+                      ],
+                      if (can('calendar')) ...[
+                        const SizedBox(width: 2),
+                        _navItem(
+                          icon: Icons.calendar_month_rounded,
+                          label: 'Calendar',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          isSelected: current == 5,
+                          onTap: () => _goBranch(5),
+                        ),
+                      ],
+                      if (can.any(_inventoryKeys)) ...[
+                        const SizedBox(width: 2),
+                        _navDropdown(
+                          icon: Icons.inventory_2_rounded,
+                          label: 'Inventory',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          isSelected: current == 6,
+                          items: (c) => joined([
+                            section(c, null, [
+                              ('stock', Icons.stacked_bar_chart_rounded, 'Stock Levels', '/inventory'),
+                              ('catalog', Icons.category_rounded, 'Product Catalog', '/inventory/catalog'),
+                            ]),
+                            section(c, 'Purchasing', [
+                              ('purchase_orders', Icons.shopping_cart_checkout_rounded, 'Purchase Orders', '/inventory/purchase-orders'),
+                              ('vendors', Icons.storefront_rounded, 'Vendors', '/inventory/vendors'),
+                            ]),
+                          ]),
+                        ),
+                      ],
+                      if (session.isAdmin || can.any(accessKeys('HR'))) ...[
+                        const SizedBox(width: 2),
+                        _navDropdown(
+                          icon: Icons.badge_rounded,
+                          label: 'HR',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          isSelected: current == 7,
+                          items: (c) => joined([
+                            [
+                              ...section(c, null, [
+                                ('hr_payroll', Icons.payments_rounded, 'Payroll', '/hr'),
+                                ('hr_kpis', Icons.speed_outlined, "KPI's", '/hr/kpis'),
+                              ]),
+                              if (session.isAdmin) item(Icons.manage_accounts_rounded, 'Team', '/hr/team', c),
+                            ],
+                            section(c, null, [
+                              ('hr_corrections', Icons.rule_folder_outlined, 'Commission Corrections', '/hr/corrections'),
+                            ]),
+                          ]),
+                        ),
+                      ],
+                      // Only the dashboards this user may view; the whole menu goes if none are allowed.
+                      if (can.any(accessKeys('Dashboards'))) ...[
+                        const SizedBox(width: 2),
+                        _navDropdown(
+                          icon: Icons.insights_rounded,
+                          label: 'Dashboards',
+                          compact: compact,
+                          iconOnly: iconOnly,
+                          isSelected: current == 8,
+                          items: (c) => [
+                            for (final d in kAccessGroups.first.items)
+                              if (can(d.key)) item(d.icon, d.label, d.route!, c),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -848,3 +885,14 @@ class _AccountMenu extends StatelessWidget {
     );
   }
 }
+
+/// `can('key')` for one page or action, `can.any(keys)` for "at least one of these".
+class _Can {
+  final bool Function(String key) _check;
+  const _Can(this._check);
+  bool call(String key) => _check(key);
+  bool any(Iterable<String> keys) => keys.any(_check);
+}
+
+final List<String> _officeKeys = accessKeys('My Office');
+final List<String> _inventoryKeys = accessKeys('Inventory');

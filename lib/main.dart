@@ -1,5 +1,6 @@
 ﻿import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'config/access.dart';
 import 'package:go_router/go_router.dart';
 import 'product_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
@@ -19,7 +20,6 @@ import 'jobs_dashboard_screen.dart';
 import 'estimates_dashboard_screen.dart';
 import 'sales_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
-import 'commission_tester_page.dart'; // 🔥 Added import
 import 'inventory_screen.dart';
 import 'statuses_screen.dart';
 import 'payments_screen.dart';
@@ -44,6 +44,19 @@ final GoRouter _router = GoRouter(
     final atLogin = state.matchedLocation == '/login';
     if (!signedIn && !atLogin) return '/login';
     if (signedIn && atLogin) return '/calendar';
+
+    // Page access follows the Permissions card on the Team screen. Someone who opens a page they're
+    // switched off from lands on the calendar, or on the first page they can use.
+    final session = AuthSession.instance;
+    final path = state.matchedLocation == '/dashboards' ? '/dashboards/financial' : state.matchedLocation;
+    if (signedIn && !session.isAdmin) {
+      if (path == '/hr/team') return '/calendar';
+      final page = kAccessPages.where((p) => p.route == path).firstOrNull;
+      if (page != null && !session.canView(page.key)) {
+        if (session.canView('calendar')) return '/calendar';
+        return kAccessPages.where((p) => session.canView(p.key)).firstOrNull?.route;
+      }
+    }
     return null;
   },
   routes: [
@@ -108,7 +121,6 @@ final GoRouter _router = GoRouter(
             routes: [
               GoRoute(path: 'kpis', builder: (context, state) => const KPIDashboardScreen()),
               // 🔥 FIX: Relative path matches 'kpis' pattern
-              GoRoute(path: 'simulator', builder: (context, state) => const CommissionTesterPage()),
               GoRoute(path: 'team', builder: (context, state) => const TeamAdminScreen()),
               GoRoute(path: 'corrections', builder: (context, state) => const CommissionCorrectionsScreen()),
             ],

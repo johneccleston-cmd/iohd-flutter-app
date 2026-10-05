@@ -11,6 +11,7 @@ import 'package:printing/printing.dart';
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'payroll_pending_panel.dart';
 import 'payroll_sample_data.dart';
 import 'widgets/dashboard_kit.dart';
 
@@ -596,6 +597,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   children: [
                     _toolbar(),
                     const SizedBox(height: 12),
+                    if (!_sample) ...[
+                      const PayrollPendingPanel(),
+                      const SizedBox(height: 12),
+                    ],
                     _results(wide: w - pad * 2 >= 1000),
                   ],
                 ),
