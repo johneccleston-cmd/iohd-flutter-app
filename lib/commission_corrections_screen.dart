@@ -7,6 +7,8 @@ import 'package:intl/intl.dart';
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'widgets/app_dialog.dart';
+import 'widgets/dashboard_kit.dart';
 
 // Fixes for commission data that Service Fusion statuses cannot undo on their own:
 // a day marked Completed by mistake, a visit stuck as a callback, a wrong day weight, or a job that
@@ -650,7 +652,7 @@ class _FixDayDialog extends StatefulWidget {
 class _FixDayDialogState extends State<_FixDayDialog> {
   _Pick _verified = _Pick.keep;
   _Pick _callback = _Pick.keep;
-  _Pick _weight = _Pick.keep; // keep | yes (set a value) | auto (back to the sync)
+  _Pick _weight = _Pick.keep; // keep | yes (set a value) | auto
   final _weightCtl = TextEditingController();
   final _reason = TextEditingController();
   String? _error;
@@ -658,7 +660,9 @@ class _FixDayDialogState extends State<_FixDayDialog> {
   @override
   void initState() {
     super.initState();
-    _weightCtl.text = _weightText(widget.day['day_weight']).replaceAll('—', '');
+    final w = _weightText(widget.day['day_weight']);
+    _weightCtl.text = w == '—' ? '' : w;
+    _reason.addListener(() => setState(() {}));
   }
 
   @override
@@ -668,30 +672,8 @@ class _FixDayDialogState extends State<_FixDayDialog> {
     super.dispose();
   }
 
-  Widget _pickRow(String label, _Pick value, ValueChanged<_Pick> onChanged, {required String yes, required String no}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink)),
-          const SizedBox(height: 6),
-          DropdownButtonFormField<_Pick>(
-            initialValue: value,
-            isDense: true,
-            decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-            items: [
-              const DropdownMenuItem(value: _Pick.keep, child: Text('Leave as it is')),
-              DropdownMenuItem(value: _Pick.yes, child: Text(yes)),
-              if (no.isNotEmpty) DropdownMenuItem(value: _Pick.no, child: Text(no)),
-              const DropdownMenuItem(value: _Pick.auto, child: Text('Back to automatic (let the sync decide)')),
-            ],
-            onChanged: (v) => onChanged(v ?? _Pick.keep),
-          ),
-        ],
-      ),
-    );
-  }
+  bool get _hasChange => _verified != _Pick.keep || _callback != _Pick.keep || _weight != _Pick.keep;
+  bool get _valid => _hasChange && _reason.text.trim().length >= 5;
 
   void _submit() {
     final body = <String, dynamic>{};
@@ -707,81 +689,134 @@ class _FixDayDialogState extends State<_FixDayDialog> {
       }
       body['weight'] = w;
     }
-    if (body.isEmpty) {
-      setState(() => _error = 'Choose at least one change.');
-      return;
-    }
-    final reason = _reason.text.trim();
-    if (reason.length < 5) {
-      setState(() => _error = 'Please give a reason (at least 5 characters).');
-      return;
-    }
-    body['reason'] = reason;
+    body['reason'] = _reason.text.trim();
     Navigator.pop(context, body);
   }
+
+  Widget _group(String label, String help, Widget control) => Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [AppFieldLabel(label, help: help), control],
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
     final d = widget.day;
-    return AlertDialog(
-      title: Text('${d['tech_name']} · ${_day(d['work_date']?.toString())}'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _pickRow('Verified (counts as worked)', _verified, (v) => setState(() => _verified = v),
-                  yes: 'Mark as verified', no: 'Mark as NOT verified'),
-              _pickRow('Callback / warranty visit', _callback, (v) => setState(() => _callback = v),
-                  yes: 'Mark as a callback', no: 'Mark as NOT a callback'),
-              _pickRow('Day weight', _weight, (v) => setState(() => _weight = v),
-                  yes: 'Set to a value…', no: ''),
-              if (_weight == _Pick.yes)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: TextField(
-                    controller: _weightCtl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(
-                      labelText: 'Weight (0 to 3)',
-                      helperText: 'Full day = 1, half day = 0.5, times the tech\'s own weight',
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-              TextField(
-                controller: _reason,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: 'Reason (required)',
-                  hintText: 'e.g. Tech tapped Completed by mistake; job is not done',
-                  border: OutlineInputBorder(),
-                ),
-              ),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(_error!, style: const TextStyle(color: _brandRed, fontSize: 12.5)),
-                ),
-              const SizedBox(height: 10),
-              const Text(
-                'A fixed value stays put through the 3-minute sync until you set it back to automatic.',
-                style: TextStyle(fontSize: 12, color: _slate),
-              ),
-            ],
+    final verified = d['is_verified'] == true;
+    final callback = d['is_callback'] == true;
+
+    return AppDialog(
+      title: 'Fix this visit',
+      subtitle: '${d['tech_name']} · ${_day(d['work_date']?.toString())}',
+      icon: Icons.rule_folder_outlined,
+      width: 500,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 18),
+            child: Wrap(spacing: 6, runSpacing: 6, children: [
+              AppTag('Weight ${_weightText(d['day_weight'])}'),
+              AppTag(verified ? 'Verified' : 'Not verified', color: verified ? _green : _slate),
+              AppTag(callback ? 'Callback' : 'Not a callback', color: callback ? _brandRed : _slate),
+            ]),
           ),
-        ),
+          _group(
+            'Counts as worked',
+            "The tech's Completed tap. It normally stays verified even if the status is changed back.",
+            AppSegmented<_Pick>(
+              value: _verified,
+              options: const [
+                (_Pick.keep, 'No change'),
+                (_Pick.yes, 'Verified'),
+                (_Pick.no, 'Not verified'),
+                (_Pick.auto, 'Automatic'),
+              ],
+              onChanged: (v) => setState(() => _verified = v),
+            ),
+          ),
+          _group(
+            'Callback or warranty visit',
+            'A callback pays the tech \$50 and charges the original techs. It normally stays a callback once flagged.',
+            AppSegmented<_Pick>(
+              value: _callback,
+              options: const [
+                (_Pick.keep, 'No change'),
+                (_Pick.yes, 'Callback'),
+                (_Pick.no, 'Not a callback'),
+                (_Pick.auto, 'Automatic'),
+              ],
+              onChanged: (v) => setState(() => _callback = v),
+            ),
+          ),
+          _group(
+            'Day weight',
+            "Full day is 1 and half day is 0.5, times the tech's own weight.",
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                AppSegmented<_Pick>(
+                  value: _weight,
+                  options: const [
+                    (_Pick.keep, 'No change'),
+                    (_Pick.yes, 'Set a value'),
+                    (_Pick.auto, 'Automatic'),
+                  ],
+                  onChanged: (v) => setState(() => _weight = v),
+                ),
+                if (_weight == _Pick.yes) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      SizedBox(
+                        width: 110,
+                        child: TextField(
+                          controller: _weightCtl,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: appFieldDecoration(hint: '0 to 3'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      for (final v in const ['0', '0.5', '1', '1.5'])
+                        Padding(
+                          padding: const EdgeInsets.only(right: 6),
+                          child: ActionChip(
+                            label: Text(v, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink)),
+                            onPressed: () => setState(() => _weightCtl.text = v),
+                            backgroundColor: DashUi.faint,
+                            side: BorderSide.none,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          _group(
+            'Why are you making this change?',
+            'Required. It is saved in the history with your name.',
+            TextField(
+              controller: _reason,
+              minLines: 2,
+              maxLines: 3,
+              decoration: appFieldDecoration(hint: 'e.g. Tech tapped Completed by mistake; the job is not done'),
+            ),
+          ),
+          if (_error != null) ...[
+            AppNotice(_error!, kind: AppNoticeKind.error),
+            const SizedBox(height: 10),
+          ],
+          const AppNotice('A fixed value stays put through the 3-minute sync until you set it back to Automatic.'),
+        ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: _submit,
-          style: FilledButton.styleFrom(backgroundColor: _brandRed),
-          child: const Text('Save correction'),
-        ),
+        AppButton.ghost('Cancel', () => Navigator.pop(context)),
+        AppButton.ink('Save correction', _valid ? _submit : null, icon: Icons.check_rounded),
       ],
     );
   }
@@ -799,7 +834,12 @@ class _ReasonDialog extends StatefulWidget {
 
 class _ReasonDialogState extends State<_ReasonDialog> {
   final _reason = TextEditingController();
-  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _reason.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
@@ -807,45 +847,33 @@ class _ReasonDialogState extends State<_ReasonDialog> {
     super.dispose();
   }
 
+  bool get _valid => _reason.text.trim().length >= 5;
+
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.title),
-      content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(widget.message, style: const TextStyle(fontSize: 13, color: _slate, height: 1.4)),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _reason,
-              maxLines: 2,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'Reason (required)',
-                border: const OutlineInputBorder(),
-                errorText: _error,
-              ),
-            ),
-          ],
-        ),
+    return AppDialog(
+      title: widget.title,
+      icon: Icons.lock_open_rounded,
+      iconColor: const Color(0xFFB91C1C),
+      width: 460,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          AppNotice(widget.message, kind: AppNoticeKind.warning),
+          const SizedBox(height: 18),
+          const AppFieldLabel('Why are you doing this?', help: 'Required. It is saved in the history with your name.'),
+          TextField(
+            controller: _reason,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 3,
+            decoration: appFieldDecoration(hint: 'e.g. Job was set to Close Job by mistake'),
+          ),
+        ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(
-          onPressed: () {
-            final r = _reason.text.trim();
-            if (r.length < 5) {
-              setState(() => _error = 'At least 5 characters.');
-              return;
-            }
-            Navigator.pop(context, r);
-          },
-          style: FilledButton.styleFrom(backgroundColor: _brandRed),
-          child: Text(widget.confirmLabel),
-        ),
+        AppButton.ghost('Cancel', () => Navigator.pop(context)),
+        AppButton.ink(widget.confirmLabel, _valid ? () => Navigator.pop(context, _reason.text.trim()) : null, danger: true),
       ],
     );
   }

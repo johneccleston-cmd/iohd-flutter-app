@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/auth_session.dart';
+
 class TechRetainageScreen extends StatefulWidget {
   final String apiBaseUrl;
   final String authToken;
@@ -33,7 +35,7 @@ class _TechRetainageScreenState extends State<TechRetainageScreen> {
     setState(() => _isLoading = true);
     try {
       final uri = Uri.parse('${widget.apiBaseUrl}/api/retainage/my-ledger?techName=${Uri.encodeComponent(widget.techName)}');
-      final response = await http.get(uri, headers: {'Authorization': 'Bearer ${widget.authToken}'});
+      final response = await http.get(uri, headers: AuthSession.instance.headers());
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);

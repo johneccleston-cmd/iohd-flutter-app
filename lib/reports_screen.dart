@@ -307,7 +307,9 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
             children: [
               Expanded(
                 child: AnimatedMetricCard(
-                  title: 'Revenue YTD',
+                  // Completed-job revenue plus deposits received on jobs not finished yet, so it is higher
+                  // than the chart below, which is completed jobs only.
+                  title: 'Revenue + deposits YTD',
                   value: _data.revenueYtd,
                   format: _moneyNoDecimals,
                   caption: '',
@@ -381,7 +383,7 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
         //    donut panel is narrower instead of stretching wide with empty
         //    space around the circle.
         Expanded(
-          flex: 11,
+          flex: _shortWindow(context) ? 10 : 11,
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -407,7 +409,7 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
 
         // 3. Bottom Row: Interactive Dynamic Revenue vs Profit Chart
         Expanded(
-          flex: 9,
+          flex: _shortWindow(context) ? 10 : 9,
           child: _InteractiveFinancialChart(
             data: chartData,
             year: widget.selectedYear,
@@ -416,6 +418,9 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
       ],
     );
   }
+
+  /// Under ~700px of window height the default split leaves the bottom chart too short to read.
+  bool _shortWindow(BuildContext context) => MediaQuery.sizeOf(context).height < 700;
 
   // ---- MIDDLE ROW COMPONENT A: EXPENSE / NET INCOME TOGGLE ----
   Widget _buildToggleableExpenseContainer(List<_MonthlyFinancials> chartData) {
@@ -489,6 +494,17 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
       ),
     );
   }
+}
+
+/// Shows [column] as is when the space fits [needed] pixels of rows; on a short window scales the whole
+/// list down a little instead of letting it overflow.
+Widget _fitColumn(BoxConstraints c, double needed, Widget column) {
+  if (c.maxHeight >= needed) return column;
+  return FittedBox(
+    fit: BoxFit.scaleDown,
+    alignment: Alignment.centerLeft,
+    child: SizedBox(width: c.maxWidth, height: needed, child: column),
+  );
 }
 
 // =============================================================================
@@ -725,7 +741,11 @@ class _RevenueSegmentPanelState extends State<_RevenueSegmentPanel> with SingleT
                       ),
                     ),
                     const SizedBox(width: 24),
-                    Expanded(child: _legend(slices, total)),
+                    Expanded(
+                      child: LayoutBuilder(
+                        builder: (context, lc) => _fitColumn(lc, slices.length * 40.0, _legend(slices, total)),
+                      ),
+                    ),
                   ],
                 );
               },
@@ -831,10 +851,27 @@ class _InteractiveOpExListState extends State<_InteractiveOpExList> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        // Every row stays readable. When the panel can't fit all categories (short windows), the biggest
+        // ones are shown and the rest are folded into one "Other categories" row, so the total still adds up.
+        final maxRows = math.max(3, (constraints.maxHeight / 24).floor());
+        final List<_ExpenseCategory> shown;
+        if (widget.expenses.length <= maxRows) {
+          shown = widget.expenses;
+        } else {
+          final rest = widget.expenses.skip(maxRows - 1).toList();
+          shown = [
+            ...widget.expenses.take(maxRows - 1),
+            _ExpenseCategory('Other categories (${rest.length})', rest.fold(0.0, (s, e) => s + e.amount), DashUi.slate),
+          ];
+        }
+        final n = shown.length;
+        final rowH = constraints.maxHeight / n;
+        final barH = (rowH - 6).clamp(10.0, 24.0);
+        final small = barH < 18;
         return Column(
           mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: List.generate(widget.expenses.length, (index) {
-            final exp = widget.expenses[index];
+          children: List.generate(shown.length, (index) {
+            final exp = shown[index];
             final double ratio = maxExpense > 0 ? (exp.amount / maxExpense).clamp(0.02, 1.0) : 0.0;
             final double pctOfTotal = totalExpense > 0 ? (exp.amount / totalExpense) * 100 : 0.0;
             
@@ -854,7 +891,7 @@ class _InteractiveOpExListState extends State<_InteractiveOpExList> {
                       child: Text(
                         exp.category,
                         style: TextStyle(
-                          fontSize: 13.5,
+                          fontSize: small ? 12 : 13.5,
                           fontWeight: isHovered ? FontWeight.w800 : FontWeight.w600,
                           color: isHovered ? DashUi.ink : DashUi.slate,
                         ),
@@ -868,7 +905,7 @@ class _InteractiveOpExListState extends State<_InteractiveOpExList> {
                         alignment: Alignment.centerLeft,
                         children: [
                           Container(
-                            height: isHovered ? 28 : 24, 
+                            height: isHovered ? barH + 4 : barH,
                             decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(7))
                           ),
                           FractionallySizedBox(
@@ -876,7 +913,7 @@ class _InteractiveOpExListState extends State<_InteractiveOpExList> {
                             child: AnimatedContainer(
                               duration: const Duration(milliseconds: 400),
                               curve: Curves.easeOutCubic,
-                              height: isHovered ? 28 : 24,
+                              height: isHovered ? barH + 4 : barH,
                               decoration: BoxDecoration(color: exp.color, borderRadius: BorderRadius.circular(7)),
                             ),
                           ),
@@ -890,7 +927,7 @@ class _InteractiveOpExListState extends State<_InteractiveOpExList> {
                         isHovered ? '${pctOfTotal.toStringAsFixed(1)}%' : '\$${_fmt(exp.amount)}',
                         textAlign: TextAlign.end,
                         style: TextStyle(
-                          fontSize: 14.5, 
+                          fontSize: small ? 12.5 : 14.5,
                           fontWeight: isHovered ? FontWeight.w900 : FontWeight.bold, 
                           color: isHovered ? exp.color : DashUi.ink,
                         ),
@@ -1521,9 +1558,14 @@ class _InteractiveFinancialChartState extends State<_InteractiveFinancialChart> 
 
     double? trendPct;
     String? trendLabel;
-    if (activeData.length >= 2) {
-      final last = activeData.last;
-      final prev = activeData[activeData.length - 2];
+    // Leave out the current month while it is still in progress.
+    final now = DateTime.now();
+    final completeData = widget.year == now.year
+        ? activeData.where((p) => widget.data.indexOf(p) < now.month - 1).toList()
+        : activeData;
+    if (completeData.length >= 2) {
+      final last = completeData.last;
+      final prev = completeData[completeData.length - 2];
       final valLast = _metric == _FinancialChartMetric.profit
           ? last.profit
           : _metric == _FinancialChartMetric.margin
@@ -1643,8 +1685,9 @@ class _InteractiveFinancialChartState extends State<_InteractiveFinancialChart> 
               },
             ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
+          // On short windows the legend would take height the plot needs; the toggles already name the series.
+          if (MediaQuery.sizeOf(context).height >= 700) const SizedBox(height: 12),
+          if (MediaQuery.sizeOf(context).height >= 700) Wrap(
             spacing: 18,
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
@@ -2267,8 +2310,6 @@ class _FinancialSkeleton extends StatelessWidget {
               SkeletonBox(h: 12, w: 80),
               SizedBox(height: 12),
               SkeletonBox(h: 26, w: 100),
-              SizedBox(height: 10),
-              SkeletonBox(h: 10, w: 60),
             ],
           ),
         ),

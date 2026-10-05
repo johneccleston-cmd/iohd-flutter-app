@@ -9,6 +9,7 @@ import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
+import 'widgets/estimate_list_dialog.dart';
 
 class EstimatesDashboardScreen extends StatelessWidget {
   const EstimatesDashboardScreen({Key? key}) : super(key: key);
@@ -326,9 +327,9 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
                 flex: 5,
                 child: Column(
                   children: [
-                    Expanded(flex: 9, child: _PipelineAgingPanel(buckets: _agingBuckets)),
+                    Expanded(flex: 9, child: _PipelineAgingPanel(buckets: _agingBuckets, year: widget.selectedYear)),
                     const SizedBox(height: 16),
-                    Expanded(flex: 11, child: _LostReasonsPanel(reasons: _lostReasons, loading: _isLoading)),
+                    Expanded(flex: 11, child: _LostReasonsPanel(reasons: _lostReasons, loading: _isLoading, year: widget.selectedYear)),
                   ],
                 ),
               ),
@@ -361,7 +362,7 @@ class _InteractiveSentWonChart extends StatefulWidget {
   State<_InteractiveSentWonChart> createState() => _InteractiveSentWonChartState();
 }
 
-class _InteractiveSentWonChartState extends State<_InteractiveSentWonChart> with SingleTickerProviderStateMixin {
+class _InteractiveSentWonChartState extends State<_InteractiveSentWonChart> with TickerProviderStateMixin {
   late final AnimationController _intro;
   late final AnimationController _hover;
 
@@ -824,7 +825,7 @@ class _AvgEstimateValueChart extends StatefulWidget {
   State<_AvgEstimateValueChart> createState() => _AvgEstimateValueChartState();
 }
 
-class _AvgEstimateValueChartState extends State<_AvgEstimateValueChart> with SingleTickerProviderStateMixin {
+class _AvgEstimateValueChartState extends State<_AvgEstimateValueChart> with TickerProviderStateMixin {
   late final AnimationController _intro;
   late final AnimationController _hover;
   int? _paintedIndex;
@@ -1095,7 +1096,8 @@ class _AvgEstValuePainter extends CustomPainter {
 
 class _PipelineAgingPanel extends StatefulWidget {
   final List<_AgingBucket> buckets;
-  const _PipelineAgingPanel({required this.buckets});
+  final int year;
+  const _PipelineAgingPanel({required this.buckets, required this.year});
 
   @override
   State<_PipelineAgingPanel> createState() => _PipelineAgingPanelState();
@@ -1103,6 +1105,26 @@ class _PipelineAgingPanel extends StatefulWidget {
 
 class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTickerProviderStateMixin {
   late final AnimationController _intro;
+  int? _hovered;
+
+  /// Opens the list of open estimates in this age bucket.
+  void _open(_AgingBucket b, Color color) {
+    showDialog(
+      context: context,
+      builder: (_) => EstimateListDialog(
+        year: widget.year,
+        heading: 'Open estimates · ${b.label}',
+        totalLabel: 'open',
+        color: color,
+        icon: Icons.hourglass_bottom_rounded,
+        uri: Uri.parse(
+          '$kApiBaseUrl/api/dashboards/estimates/drill'
+          '?year=${widget.year}&kind=aging&bucket=${Uri.encodeQueryComponent(b.label)}',
+        ),
+        initialSort: EstimateListSort.oldest,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -1144,38 +1166,67 @@ class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTic
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       crossAxisAlignment: CrossAxisAlignment.end,
-                      children: widget.buckets.map((b) {
+                      children: widget.buckets.asMap().entries.map((entry) {
+                        final i = entry.key;
+                        final b = entry.value;
                         final double hRatio = (b.value / maxVal).clamp(0.05, 1.0);
                         final isRed = b.label.contains('31');
                         final color = isRed ? DashUi.red : DashUi.blue;
+                        final hovered = _hovered == i;
+                        final dim = _hovered != null && !hovered;
+                        final clickable = b.count > 0;
 
                         return Expanded(
-                          child: Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.end,
-                              children: [
-                                Text('\$${NumberFormat('#,##0').format(b.value)}', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: color)),
-                                const SizedBox(height: 4),
-                                Expanded(
-                                  child: Stack(
-                                    alignment: Alignment.bottomCenter,
+                          child: MouseRegion(
+                            cursor: clickable ? SystemMouseCursors.click : MouseCursor.defer,
+                            onEnter: (_) => setState(() => _hovered = i),
+                            onExit: (_) => setState(() => _hovered = null),
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: clickable ? () => _open(b, color) : null,
+                              child: AnimatedOpacity(
+                                duration: const Duration(milliseconds: 150),
+                                opacity: dim ? 0.4 : 1,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.end,
                                     children: [
-                                      Container(width: 32, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
-                                      AnimatedBuilder(
-                                        animation: _intro,
-                                        builder: (context, child) => FractionallySizedBox(
-                                          heightFactor: hRatio * Curves.easeOutCubic.transform(_intro.value),
-                                          child: Container(width: 32, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6))),
-                                        )
+                                      Text('\$${NumberFormat('#,##0').format(b.value)}', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: color)),
+                                      const SizedBox(height: 4),
+                                      Expanded(
+                                        child: Stack(
+                                          alignment: Alignment.bottomCenter,
+                                          children: [
+                                            Container(width: 32, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
+                                            AnimatedBuilder(
+                                              animation: _intro,
+                                              builder: (context, child) => FractionallySizedBox(
+                                                heightFactor: hRatio * Curves.easeOutCubic.transform(_intro.value),
+                                                child: AnimatedContainer(
+                                                  duration: const Duration(milliseconds: 150),
+                                                  width: hovered ? 38 : 32,
+                                                  decoration: BoxDecoration(
+                                                    color: color,
+                                                    borderRadius: BorderRadius.circular(6),
+                                                    boxShadow: hovered ? [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 2))] : null,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      const SizedBox(height: 8),
+                                      Text(b.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: hovered ? color : DashUi.slate)),
+                                      Text(
+                                        hovered && clickable ? 'View list ›' : '${b.count} ests',
+                                        style: TextStyle(fontSize: 10, color: hovered && clickable ? color : DashUi.muted, fontWeight: hovered ? FontWeight.w700 : FontWeight.w400),
                                       ),
                                     ],
                                   ),
                                 ),
-                                const SizedBox(height: 8),
-                                Text(b.label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: DashUi.slate)),
-                                Text('${b.count} ests', style: const TextStyle(fontSize: 10, color: DashUi.muted)),
-                              ],
+                              ),
                             ),
                           ),
                         );
@@ -1197,7 +1248,8 @@ class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTic
 class _LostReasonsPanel extends StatefulWidget {
   final List<_LostReason> reasons;
   final bool loading;
-  const _LostReasonsPanel({required this.reasons, required this.loading});
+  final int year;
+  const _LostReasonsPanel({required this.reasons, required this.loading, required this.year});
 
   @override
   State<_LostReasonsPanel> createState() => _LostReasonsPanelState();
@@ -1206,6 +1258,25 @@ class _LostReasonsPanel extends StatefulWidget {
 class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerProviderStateMixin {
   late final AnimationController _intro;
   int? _hoveredIndex;
+
+  /// Opens the list of lost estimates with this reason.
+  void _open(_LostReason r) {
+    showDialog(
+      context: context,
+      builder: (_) => EstimateListDialog(
+        year: widget.year,
+        heading: 'Lost estimates · ${r.reason}',
+        totalLabel: 'lost',
+        color: r.color,
+        icon: Icons.highlight_off_rounded,
+        uri: Uri.parse(
+          '$kApiBaseUrl/api/dashboards/estimates/drill'
+          '?year=${widget.year}&kind=lost&reason=${Uri.encodeQueryComponent(r.reason)}',
+        ),
+        initialSort: EstimateListSort.value,
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -1257,9 +1328,13 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                               final double pct = totalLost > 0 ? (reason.lostValue / totalLost * 100) : 0.0;
 
                               return MouseRegion(
+                                cursor: reason.count > 0 ? SystemMouseCursors.click : MouseCursor.defer,
                                 onEnter: (_) => setState(() => _hoveredIndex = index),
                                 onExit: (_) => setState(() => _hoveredIndex = null),
-                                child: AnimatedOpacity(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: reason.count == 0 ? null : () => _open(reason),
+                                  child: AnimatedOpacity(
                                   duration: const Duration(milliseconds: 150),
                                   opacity: dim ? 0.35 : 1.0,
                                   child: Row(
@@ -1313,8 +1388,13 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                                           ),
                                         ),
                                       ),
+                                      SizedBox(
+                                        width: 18,
+                                        child: Icon(Icons.chevron_right_rounded, size: 18, color: isHovered && reason.count > 0 ? reason.color : Colors.transparent),
+                                      ),
                                     ],
                                   ),
+                                ),
                                 ),
                               );
                             }).toList(),

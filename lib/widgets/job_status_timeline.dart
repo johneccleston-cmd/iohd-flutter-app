@@ -3,6 +3,8 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
 
+import '../config/auth_session.dart';
+
 /// Typed model for a single history row. The original widget indexed the
 /// decoded JSON map directly inside `build()` (`record['new_status']`,
 /// `DateTime.parse(record['changed_at'])` with no null check) — any
@@ -68,10 +70,7 @@ class _JobStatusTimelineState extends State<JobStatusTimeline> {
     final response = await http
         .get(
           Uri.parse('${widget.apiBaseUrl}/jobs/${widget.jobId}/history'),
-          headers: {
-            'Authorization': 'Bearer ${widget.authToken}',
-            'Content-Type': 'application/json',
-          },
+          headers: AuthSession.instance.headers(),
         )
         .timeout(const Duration(seconds: 15));
 

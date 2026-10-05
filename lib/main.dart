@@ -17,6 +17,7 @@ import 'widgets/generic_dashboard_screen.dart';
 import 'widgets/main_navigation_shell.dart';
 import 'jobs_dashboard_screen.dart';
 import 'estimates_dashboard_screen.dart';
+import 'sales_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
 import 'commission_tester_page.dart'; // 🔥 Added import
 import 'inventory_screen.dart';
@@ -126,7 +127,7 @@ final GoRouter _router = GoRouter(
               GoRoute(path: 'inventory', builder: (context, state) => const InventoryDashboardScreen()),
               GoRoute(path: 'jobs', builder: (context, state) => const JobsDashboardScreen()),
               GoRoute(path: 'estimates', builder: (context, state) => const EstimatesDashboardScreen()),
-              GoRoute(path: 'sales', builder: (context, state) => const GenericDashboardScreen(title: "Sales")),
+              GoRoute(path: 'sales', builder: (context, state) => const SalesDashboardScreen()),
               GoRoute(path: 'collections', builder: (context, state) => const GenericDashboardScreen(title: "Collections")),
             ],
           ),
@@ -181,6 +182,81 @@ class IohdHubApp extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             side: const BorderSide(color: strokeBorder, width: 1),
           ),
+        ),
+
+        // ---- Pop-ups: one look everywhere (dialogs, menus, dropdowns, tooltips, snackbars) ----
+        dialogTheme: DialogThemeData(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          elevation: 12,
+          shadowColor: Colors.black.withValues(alpha: 0.18),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: const BorderSide(color: Color(0xFFE2E8F0)),
+          ),
+          titleTextStyle: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.w800,
+            color: Color(0xFF0F172A),
+            letterSpacing: -0.3,
+          ),
+          contentTextStyle: const TextStyle(fontSize: 14, color: Color(0xFF475569), height: 1.45),
+          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
+        ),
+        popupMenuTheme: PopupMenuThemeData(
+          color: Colors.white,
+          surfaceTintColor: Colors.transparent,
+          elevation: 8,
+          shadowColor: Colors.black.withValues(alpha: 0.14),
+          menuPadding: const EdgeInsets.all(6),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Color(0xFFE2E8F0)),
+          ),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+        ),
+        menuTheme: MenuThemeData(
+          style: MenuStyle(
+            backgroundColor: const WidgetStatePropertyAll(Colors.white),
+            surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+            elevation: const WidgetStatePropertyAll(8),
+            shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.14)),
+            padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+            ),
+          ),
+        ),
+        dropdownMenuTheme: DropdownMenuThemeData(
+          menuStyle: MenuStyle(
+            backgroundColor: const WidgetStatePropertyAll(Colors.white),
+            surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+            elevation: const WidgetStatePropertyAll(8),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: const BorderSide(color: Color(0xFFE2E8F0)),
+              ),
+            ),
+          ),
+        ),
+        tooltipTheme: TooltipThemeData(
+          waitDuration: const Duration(milliseconds: 450),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
+          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+        ),
+        snackBarTheme: SnackBarThemeData(
+          behavior: SnackBarBehavior.floating,
+          backgroundColor: const Color(0xFF0F172A),
+          contentTextStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.white),
+          actionTextColor: const Color(0xFF93C5FD),
+          elevation: 6,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          insetPadding: const EdgeInsets.all(20),
         ),
       ),
     );

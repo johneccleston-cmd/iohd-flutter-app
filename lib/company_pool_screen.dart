@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/auth_session.dart';
+
 class CompanyPoolScreen extends StatefulWidget {
   final String apiBaseUrl;
   final String authToken;
@@ -33,7 +35,7 @@ class _CompanyPoolScreenState extends State<CompanyPoolScreen> {
     try {
       final response = await http.get(
         Uri.parse('${widget.apiBaseUrl}/api/retainage/company-pool'),
-        headers: {'Authorization': 'Bearer ${widget.authToken}'},
+        headers: AuthSession.instance.headers(),
       );
 
       if (response.statusCode == 200) {

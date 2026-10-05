@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/auth_session.dart';
+
 class AdminRetainageScreen extends StatefulWidget {
   final String apiBaseUrl; // e.g., 'http://localhost:3000'
   final String authToken;
@@ -31,7 +33,7 @@ class _AdminRetainageScreenState extends State<AdminRetainageScreen> {
     try {
       final response = await http.get(
         Uri.parse('${widget.apiBaseUrl}/api/retainage/ready-for-release'),
-        headers: {'Authorization': 'Bearer ${widget.authToken}'},
+        headers: AuthSession.instance.headers(),
       );
 
       if (response.statusCode == 200) {
@@ -75,10 +77,7 @@ class _AdminRetainageScreenState extends State<AdminRetainageScreen> {
     try {
       final response = await http.post(
         Uri.parse('${widget.apiBaseUrl}/api/retainage/confirm-release'),
-        headers: {
-          'Authorization': 'Bearer ${widget.authToken}',
-          'Content-Type': 'application/json',
-        },
+        headers: AuthSession.instance.headers(),
         body: json.encode({'techName': techName}),
       );
 

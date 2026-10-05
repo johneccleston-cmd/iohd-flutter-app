@@ -8,6 +8,7 @@ import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
+import 'widgets/estimate_list_dialog.dart';
 
 class JobsDashboardScreen extends StatelessWidget {
   const JobsDashboardScreen({Key? key}) : super(key: key);
@@ -148,6 +149,7 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
   List<_MonthlyJobData> _monthlyData = [];
   List<_PipelineStage>? _pipelineStages;
   List<_JobStatusCount>? _statusCounts;
+  ({int completed, int withCategories, int? withLineItems})? _splitCoverage;
 
   @override
   void initState() {
@@ -220,6 +222,14 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
         
         _pipelineStages = _parsePipelineStages(body['pipelineStages']);
         _statusCounts = _parseStatusCounts(body['statusCounts']);
+        final cov = body['splitCoverage'];
+        _splitCoverage = cov is Map
+            ? (
+                completed: _parseInt(cov['completedJobs']),
+                withCategories: _parseInt(cov['jobsWithCategories']),
+                withLineItems: cov['jobsWithLineItems'] == null ? null : _parseInt(cov['jobsWithLineItems']),
+              )
+            : null;
 
         final List<dynamic> rawMonthly = body['monthlyVolume'] ?? [];
         final List<dynamic> rawWeekly = body['weeklySplit'] ?? [];
@@ -353,6 +363,7 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
                   statusCounts: _statusCounts,
                   loading: _isLoading,
                   monthly: _monthlyData,
+                  splitCoverage: _splitCoverage,
                 ),
               ),
             ],
@@ -1047,7 +1058,7 @@ class _AvgJobValueChart extends StatefulWidget {
   State<_AvgJobValueChart> createState() => _AvgJobValueChartState();
 }
 
-class _AvgJobValueChartState extends State<_AvgJobValueChart> with SingleTickerProviderStateMixin {
+class _AvgJobValueChartState extends State<_AvgJobValueChart> with TickerProviderStateMixin {
   late final AnimationController _intro;
   late final AnimationController _hover;
   int? _paintedIndex;
@@ -1420,7 +1431,10 @@ class _JobSegSlice {
   final String name;
   final double amount;
   final Color color;
-  const _JobSegSlice(this.name, this.amount, this.color);
+
+  /// The real statuses this slice stands for (one, or several for "Other").
+  final List<String> statuses;
+  const _JobSegSlice(this.name, this.amount, this.color, this.statuses);
 }
 
 class _JobsStatusPanel extends StatefulWidget {
@@ -1428,10 +1442,14 @@ class _JobsStatusPanel extends StatefulWidget {
   final bool loading;
   final List<_MonthlyJobData> monthly;
 
+  /// How many of the year's completed jobs carry category data; null when the server didn't say.
+  final ({int completed, int withCategories, int? withLineItems})? splitCoverage;
+
   const _JobsStatusPanel({
     required this.statusCounts,
     required this.loading,
     required this.monthly,
+    this.splitCoverage,
   });
 
   @override
@@ -1451,9 +1469,11 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
     final restSum = sorted.skip(_topN).fold<int>(0, (s, c) => s + c.count);
     final slices = <_JobSegSlice>[
       for (var i = 0; i < top.length; i++)
-        _JobSegSlice(top[i].status, top[i].count.toDouble(), _categoricalPalette[i % _categoricalPalette.length]),
+        _JobSegSlice(top[i].status, top[i].count.toDouble(), _categoricalPalette[i % _categoricalPalette.length], [top[i].status]),
     ];
-    if (restSum > 0) slices.add(_JobSegSlice('Other', restSum.toDouble(), DashUi.slate));
+    if (restSum > 0) {
+      slices.add(_JobSegSlice('Other', restSum.toDouble(), DashUi.slate, [for (final c in sorted.skip(_topN)) c.status]));
+    }
     return slices;
   }
 
@@ -1481,6 +1501,24 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
   void _setActive(int? i) {
     if (i == _active) return;
     setState(() => _active = i);
+  }
+
+  /// Opens the list of active jobs behind a slice (all-time, same "active" rule as the chart).
+  void _open(_JobSegSlice s) {
+    showDialog(
+      context: context,
+      builder: (_) => EstimateListDialog(
+        year: DateTime.now().year,
+        periodLabel: 'All time',
+        noun: 'job',
+        heading: s.name == 'Other' ? 'Other active jobs' : '${s.name} · active jobs',
+        totalLabel: 'in jobs',
+        color: s.color,
+        icon: Icons.work_outline_rounded,
+        uri: Uri.parse('$kApiBaseUrl/api/dashboards/jobs/drill').replace(queryParameters: {'status': s.statuses}),
+        initialSort: EstimateListSort.oldest,
+      ),
+    );
   }
 
   int? _hit(Offset p, double side, List<_JobSegSlice> slices, double total) {
@@ -1515,6 +1553,10 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
           const SizedBox(height: 2),
           Text(s.name, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate), maxLines: 1, overflow: TextOverflow.ellipsis),
           Text('${fmt.format(s.amount)} jobs', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted)),
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Text('Click for list', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: DashUi.sky)),
+          ),
         ],
       );
     } else {
@@ -1541,11 +1583,12 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 5),
           child: MouseRegion(
+            cursor: SystemMouseCursors.click,
             onEnter: (_) => _setActive(i),
             onExit: (_) => _setActive(null),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTap: () => _setActive(isActive ? null : i),
+              onTap: () => _open(s),
               child: AnimatedOpacity(
                 duration: const Duration(milliseconds: 180),
                 opacity: faded ? 0.35 : 1.0,
@@ -1667,13 +1710,37 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
     final totalRes = active.fold<double>(0, (s, m) => s + m.resRevenue);
     final totalCom = active.fold<double>(0, (s, m) => s + m.comRevenue);
 
+    // These splits come from commission line items, which only exist for some jobs. Showing them when most
+    // jobs lack the data would be wrong (e.g. 100% residential just because nothing could be tagged commercial).
+    // Install vs Service needs commission items; Residential vs Commercial reads the job's line items (and falls
+    // back to commission items on an older server). Each is shown only when most completed jobs have its data.
+    final cov = widget.splitCoverage;
+    bool covered(int? n) => cov == null || (cov.completed > 0 && (n ?? 0) / cov.completed >= 0.5);
+    final installReliable = covered(cov?.withCategories);
+    final comReliable = covered(cov?.withLineItems ?? cov?.withCategories);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _statRow('Busiest month', '${busiest.month} · ${NumberFormat('#,##0').format(busiest.completedTotal)} jobs', valueColor: DashUi.emeraldDeep),
         _statRow('Avg jobs / month', avgPerMonth.toStringAsFixed(1)),
         const SizedBox(height: 2),
-        if (totalInstall + totalService > 0)
+        if (cov != null && (!installReliable || !comReliable))
+          Container(
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(8)),
+            child: Text(
+              [
+                if (!installReliable)
+                  'Install vs Service is hidden: only ${cov.withCategories} of ${cov.completed} completed jobs this year have install/service data.',
+                if (!comReliable)
+                  'Residential vs Commercial is hidden: only ${cov.withLineItems ?? cov.withCategories} of ${cov.completed} completed jobs this year have line items.',
+              ].join('\n'),
+              style: const TextStyle(fontSize: 11, color: DashUi.slate, fontWeight: FontWeight.w600, height: 1.35),
+            ),
+          ),
+        if (installReliable && totalInstall + totalService > 0)
           _splitBar(
             leftLabel: 'Install',
             leftColor: DashUi.indigo,
@@ -1682,7 +1749,7 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
             rightColor: DashUi.sky,
             rightValue: totalService.toDouble(),
           ),
-        if (totalRes + totalCom > 0)
+        if (comReliable && totalRes + totalCom > 0)
           _splitBar(
             leftLabel: 'Residential',
             leftColor: DashUi.sky,
@@ -1731,11 +1798,15 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
                                 width: side,
                                 height: side,
                                 child: MouseRegion(
+                                  cursor: _active != null ? SystemMouseCursors.click : MouseCursor.defer,
                                   onHover: (e) => _setActive(_hit(e.localPosition, side, slices, total)),
                                   onExit: (_) => _setActive(null),
                                   child: GestureDetector(
                                     behavior: HitTestBehavior.opaque,
-                                    onTapDown: (d) => _setActive(_hit(d.localPosition, side, slices, total)),
+                                    onTapUp: (d) {
+                                      final i = _hit(d.localPosition, side, slices, total);
+                                      if (i != null) _open(slices[i]);
+                                    },
                                     child: Stack(
                                       alignment: Alignment.center,
                                       children: [

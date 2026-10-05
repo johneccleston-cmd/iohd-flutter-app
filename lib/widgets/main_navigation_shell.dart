@@ -1,13 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
 import '../config/auth_session.dart';
-
+import 'app_dialog.dart';
+import 'assistant_panel.dart';
 
 // --- Design tokens ---------------------------------------------------------
-// A small, named palette instead of scattered hex literals. Keeping this at
-// file scope (rather than duplicated static consts on two classes) means the
-// nav items and the dropdown menu share one source of truth for color.
+// Dropdown panels and rows stay light (white cards, like the dashboards' pop-ups).
 const Color _brandRed = Color(0xFFCC0007);
 const Color _inkColor = Color(0xFF181B1F);
 const Color _slateColor = Color(0xFF5B6572);
@@ -15,6 +15,46 @@ const Color _mutedIconColor = Color(0xFF9199A6);
 const Color _strokeBorder = Color(0xFFE4E7EC);
 const Color _activeTint = Color(0xFFFCEEEE);
 const Color _fieldFill = Color(0xFFF6F7F9);
+
+// The bar itself. true = dark slate like the dashboard headers, false = the old white bar.
+const bool _darkBar = false;
+
+class _Bar {
+  _Bar._();
+
+  static const bg = _darkBar ? Color(0xFF0F172A) : Colors.white;
+  static const border = _darkBar ? Color(0xFF1E293B) : Color(0xFFE4E7EC);
+  static const divider = _darkBar ? Color(0xFF334155) : Color(0xFFE4E7EC);
+
+  static const text = _darkBar ? Color(0xFFCBD5E1) : Color(0xFF5B6572);
+  static const textActive = _darkBar ? Colors.white : Color(0xFF181B1F);
+  static const icon = _darkBar ? Color(0xFF94A3B8) : Color(0xFF9199A6);
+  static const iconActive = _darkBar ? Colors.white : _brandRed;
+
+  static const activeFill = _darkBar ? Color(0x1AFFFFFF) : Color(0xFFFCEEEE); // white at 10%
+  static const hoverFill = _darkBar ? Color(0x0FFFFFFF) : Color(0xFFF3F4F6); // white at 6%
+
+  static const brandSub = _darkBar ? Color(0xFF94A3B8) : Color(0xFF5B6572);
+
+  static const field = _darkBar ? Color(0xFF1E293B) : Color(0xFFF6F7F9);
+  static const fieldBorder = _darkBar ? Color(0xFF334155) : Colors.transparent;
+  static const fieldText = _darkBar ? Colors.white : Color(0xFF181B1F);
+  static const fieldHint = _darkBar ? Color(0xFF64748B) : Color(0xFF9CA3AF);
+  static const fieldIcon = _darkBar ? Color(0xFF94A3B8) : Color(0xFF5B6572);
+  static const keyHintBg = _darkBar ? Color(0xFF0F172A) : Colors.white;
+  static const keyHintBorder = _darkBar ? Color(0xFF334155) : Color(0xFFE4E7EC);
+  static const keyHintText = _darkBar ? Color(0xFF64748B) : Color(0xFF9199A6);
+
+  static const avatarBg = _darkBar ? Color(0xFF1E293B) : Color(0xFFFCEEEE);
+  static const avatarText = _darkBar ? Colors.white : _brandRed;
+}
+
+const double _barHeight = 60;
+
+// Below these widths the bar trims itself instead of overflowing.
+const double _compactWidth = 1320;
+const double _tightWidth = 1040;
+const double _iconOnlyWidth = 900;
 
 class MainNavigationShell extends StatefulWidget {
   final StatefulNavigationShell navigationShell;
@@ -27,10 +67,13 @@ class MainNavigationShell extends StatefulWidget {
 
 class _MainNavigationShellState extends State<MainNavigationShell> {
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
+  bool _tight = false;
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -51,49 +94,65 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     context.go('$path?q=${Uri.encodeQueryComponent(query)}');
   }
 
+  // Ctrl+K (Cmd+K on Mac) jumps to search. On a narrow window the field is hidden, so it opens a dialog.
+  void _focusSearch() {
+    if (_tight) {
+      _showSearchDialog();
+      return;
+    }
+    _searchFocus.requestFocus();
+    _searchController.selection = TextSelection(baseOffset: 0, extentOffset: _searchController.text.length);
+  }
+
+  Future<void> _showSearchDialog() async {
+    final controller = TextEditingController();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'Search',
+        subtitle: 'A job number opens Jobs. Anything else searches Customers.',
+        icon: Icons.search_rounded,
+        width: 440,
+        body: TextField(
+          controller: controller,
+          autofocus: true,
+          textInputAction: TextInputAction.search,
+          decoration: appFieldDecoration(hint: 'Search jobs or customers'),
+          onSubmitted: (v) {
+            Navigator.pop(ctx);
+            _handleSearch(v);
+          },
+        ),
+        actions: [
+          AppButton.ghost('Cancel', () => Navigator.pop(ctx)),
+          AppButton.ink('Search', () {
+            Navigator.pop(ctx);
+            _handleSearch(controller.text);
+          }, icon: Icons.search_rounded),
+        ],
+      ),
+    );
+    controller.dispose();
+  }
+
   // A top-level destination that navigates directly on tap.
   Widget _navItem({
     required IconData icon,
     required String label,
     required bool isSelected,
     required VoidCallback onTap,
+    required bool compact,
+    required bool iconOnly,
   }) {
-    return InkWell(
+    final item = _NavPill(
+      icon: icon,
+      label: label,
+      active: isSelected,
+      compact: compact,
+      iconOnly: iconOnly,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 140),
-        height: 42,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: isSelected ? _activeTint : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: Border(
-            bottom: BorderSide(
-              color: isSelected ? _brandRed : Colors.transparent,
-              width: 2.5,
-            ),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 17, color: isSelected ? _brandRed : _mutedIconColor),
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 13.5,
-                fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                color: isSelected ? _inkColor : _slateColor,
-                letterSpacing: -0.1,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
+    return iconOnly ? Tooltip(message: label, child: item) : item;
   }
 
   // A top-level destination that opens a dropdown of sub-routes on tap/hover.
@@ -101,98 +160,145 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     required IconData icon,
     required String label,
     required bool isSelected,
+    required bool compact,
+    required bool iconOnly,
     required List<Widget> Function(MenuController controller) items,
   }) {
     return _HoverMenu(
       items: items,
       trigger: (controller, isOpen) {
-        final bool highlighted = isSelected || isOpen;
-        return InkWell(
+        final trigger = _NavPill(
+          icon: icon,
+          label: label,
+          active: isSelected,
+          open: isOpen,
+          chevron: true,
+          compact: compact,
+          iconOnly: iconOnly,
           onTap: () => controller.isOpen ? controller.close() : controller.open(),
-          borderRadius: BorderRadius.circular(8),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 140),
-            height: 42,
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: highlighted ? _activeTint : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: Border(
-                bottom: BorderSide(
-                  color: isSelected ? _brandRed : Colors.transparent,
-                  width: 2.5,
-                ),
-              ),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 17, color: highlighted ? _brandRed : _mutedIconColor),
-                const SizedBox(width: 7),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w600,
-                    color: highlighted ? _inkColor : _slateColor,
-                    letterSpacing: -0.1,
-                  ),
-                ),
-                const SizedBox(width: 2),
-                AnimatedRotation(
-                  turns: isOpen ? 0.5 : 0,
-                  duration: const Duration(milliseconds: 140),
-                  child: Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 16,
-                    color: highlighted ? _brandRed : _mutedIconColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
         );
+        // With the labels hidden, the tooltip is the only name the button has.
+        return iconOnly ? Tooltip(message: label, child: trigger) : trigger;
       },
     );
   }
 
+  // One row in a dropdown. The page you are on is tinted and carries a check, so the menu answers
+  // "where am I" at a glance. Built on MenuItemButton so keyboard navigation still works.
   Widget _dropdownMenuItem({
     required IconData icon,
     required String label,
     required String route,
     required MenuController controller,
+    required String location,
   }) {
+    final bool here = location == route || (route == '/dashboards/financial' && location == '/dashboards');
     return MenuItemButton(
       style: MenuItemButton.styleFrom(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        backgroundColor: here ? _activeTint : Colors.transparent,
+        overlayColor: _inkColor,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        minimumSize: const Size(0, 42),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
-      leadingIcon: Icon(icon, size: 18, color: _mutedIconColor),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          color: _inkColor,
+      leadingIcon: Container(
+        width: 28,
+        height: 28,
+        decoration: BoxDecoration(
+          color: here ? Colors.white : _fieldFill,
+          borderRadius: BorderRadius.circular(8),
         ),
+        child: Icon(icon, size: 16, color: here ? _brandRed : _mutedIconColor),
+      ),
+      trailingIcon: SizedBox(
+        width: 16,
+        child: here ? const Icon(Icons.check_rounded, size: 16, color: _brandRed) : null,
       ),
       onPressed: () {
         controller.close();
         context.go(route);
       },
+      child: SizedBox(
+        width: 188,
+        child: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: here ? FontWeight.w700 : FontWeight.w600,
+            color: _inkColor,
+          ),
+        ),
+      ),
     );
   }
+
   Widget _menuSectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.only(left: 14, right: 14, top: 12, bottom: 4),
+      padding: const EdgeInsets.only(left: 10, right: 10, top: 12, bottom: 4),
       child: Text(
         title.toUpperCase(),
         style: const TextStyle(
           fontSize: 10.5,
           fontWeight: FontWeight.w800,
-          color: _slateColor,
+          color: _mutedIconColor,
           letterSpacing: 0.8,
+        ),
+      ),
+    );
+  }
+
+  Widget _menuDivider() => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+        child: Divider(height: 1, color: _strokeBorder),
+      );
+
+  Widget _searchField(double maxWidth, {required bool compact}) {
+    OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
+          borderRadius: BorderRadius.circular(10),
+          borderSide: c == Colors.transparent ? BorderSide.none : BorderSide(color: c, width: w),
+        );
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth, minWidth: 150),
+      child: SizedBox(
+        height: 38,
+        child: TextField(
+          controller: _searchController,
+          focusNode: _searchFocus,
+          onSubmitted: _handleSearch,
+          textInputAction: TextInputAction.search,
+          cursorColor: _Bar.fieldText,
+          style: const TextStyle(fontSize: 13, color: _Bar.fieldText),
+          decoration: InputDecoration(
+            hintText: compact ? 'Search…' : 'Search jobs or customers',
+            hintStyle: const TextStyle(fontSize: 12.5, color: _Bar.fieldHint),
+            prefixIcon: const Icon(Icons.search_rounded, size: 18, color: _Bar.fieldIcon),
+            suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+            suffixIcon: ListenableBuilder(
+              listenable: _searchController,
+              builder: (context, _) {
+                if (_searchController.text.isEmpty) {
+                  return const Padding(padding: EdgeInsets.only(right: 8), child: _KeyHint('Ctrl K'));
+                }
+                return IconButton(
+                  tooltip: 'Clear',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.close_rounded, size: 16, color: _Bar.fieldIcon),
+                  onPressed: _searchController.clear,
+                );
+              },
+            ),
+            filled: true,
+            fillColor: _Bar.field,
+            contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
+            border: border(_Bar.fieldBorder),
+            enabledBorder: border(_Bar.fieldBorder),
+            focusedBorder: border(_brandRed, 1.5),
+          ),
         ),
       ),
     );
@@ -201,301 +307,373 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   @override
   Widget build(BuildContext context) {
     final int current = widget.navigationShell.currentIndex;
+    final String location = GoRouterState.of(context).uri.path;
 
-    return Scaffold(
-      appBar: PreferredSize(
-        preferredSize: const Size.fromHeight(72),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            border: const Border(bottom: BorderSide(color: _strokeBorder, width: 1)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.03),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              ),
-            ],
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true): _focusSearch,
+        const SingleActivator(LogicalKeyboardKey.keyK, meta: true): _focusSearch,
+      },
+      child: Focus(
+        autofocus: true,
+        skipTraversal: true,
+        child: Scaffold(
+          appBar: PreferredSize(
+            preferredSize: const Size.fromHeight(_barHeight),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final double w = constraints.maxWidth;
+                final bool compact = w < _compactWidth;
+                _tight = w < _tightWidth;
+                return _buildBar(current, location, compact: compact, tight: _tight, iconOnly: w < _iconOnlyWidth);
+              },
+            ),
           ),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: Row(
+          body: widget.navigationShell,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBar(int current, String location, {required bool compact, required bool tight, required bool iconOnly}) {
+    Widget item(IconData icon, String label, String route, MenuController c) =>
+        _dropdownMenuItem(icon: icon, label: label, route: route, controller: c, location: location);
+
+    return Container(
+      // Explicit height: Scaffold gives the app bar loose constraints, so without this the bar
+      // shrinks to the height of its contents.
+      height: _barHeight,
+      decoration: BoxDecoration(
+        color: _Bar.bg,
+        border: const Border(bottom: BorderSide(color: _Bar.border, width: 1)),
+        // The dark bar stays flat, like the dashboard headers; only the light bar casts a shadow.
+        boxShadow: _darkBar
+            ? null
+            : [BoxShadow(color: Colors.black.withValues(alpha: 0.03), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: compact ? 14 : 20),
+          child: Row(
+            children: [
+              // --- Brand lockup ---
+              Container(
+                width: 34,
+                height: 34,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _brandRed,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.garage_rounded, size: 18, color: Colors.white),
+              ),
+              const SizedBox(width: 10),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // --- Brand lockup ---
-                  Container(
-                    width: 36,
-                    height: 36,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(
-                      color: _brandRed,
-                      borderRadius: BorderRadius.circular(10),
+                  const Text(
+                    'IOHD',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      color: _Bar.textActive,
+                      letterSpacing: 0.4,
+                      height: 1.15,
                     ),
-                    child: const Icon(Icons.garage_rounded, size: 19, color: Colors.white),
                   ),
-                  const SizedBox(width: 10),
-                  const Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "IOHD",
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w800,
-                          color: _inkColor,
-                          letterSpacing: -0.2,
-                          height: 1.15,
-                        ),
+                  if (!compact)
+                    const Text(
+                      'Operations Hub',
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                        color: _Bar.brandSub,
+                        height: 1.15,
                       ),
-                      Text(
-                        "Operations Hub",
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w500,
-                          color: _slateColor,
-                          height: 1.15,
-                        ),
+                    ),
+                ],
+              ),
+              SizedBox(width: compact ? 14 : 22),
+              Container(width: 1, height: 26, color: _Bar.divider),
+              const SizedBox(width: 10),
+
+              // --- Primary nav ---
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _navDropdown(
+                        icon: Icons.home_work_rounded,
+                        label: 'My Office',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        // Branch 0 holds Statuses, Payments and Invoices.
+                        isSelected: [0, 1, 3, 4].contains(current),
+                        items: (c) => [
+                          _menuSectionHeader('Operations'),
+                          item(Icons.groups_rounded, 'Customers', '/customers', c),
+                          item(Icons.request_quote_rounded, 'Estimates', '/estimates', c),
+                          item(Icons.build_rounded, 'Jobs', '/jobs', c),
+                          item(Icons.timeline_rounded, 'Estimate & Job Statuses', '/statuses', c),
+                          _menuDivider(),
+                          _menuSectionHeader('Financial'),
+                          item(Icons.payment_rounded, 'Payments', '/payments', c),
+                          item(Icons.receipt_long_rounded, 'Invoices', '/invoices', c),
+                          _menuDivider(),
+                          _menuSectionHeader('Commercial'),
+                          item(Icons.assignment_turned_in_rounded, 'Site Checks', '/site-checks', c),
+                          item(Icons.architecture_rounded, 'Takeoffs', '/takeoffs', c),
+                        ],
+                      ),
+                      const SizedBox(width: 2),
+                      _navItem(
+                        icon: Icons.folder_copy_rounded,
+                        label: 'Projects',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        isSelected: current == 2,
+                        onTap: () => _goBranch(2),
+                      ),
+                      const SizedBox(width: 2),
+                      _navItem(
+                        icon: Icons.calendar_month_rounded,
+                        label: 'Calendar',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        isSelected: current == 5,
+                        onTap: () => _goBranch(5),
+                      ),
+                      const SizedBox(width: 2),
+                      _navDropdown(
+                        icon: Icons.inventory_2_rounded,
+                        label: 'Inventory',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        isSelected: current == 6,
+                        items: (c) => [
+                          item(Icons.stacked_bar_chart_rounded, 'Stock Levels', '/inventory', c),
+                          item(Icons.category_rounded, 'Product Catalog', '/inventory/catalog', c),
+                          _menuDivider(),
+                          _menuSectionHeader('Purchasing'),
+                          item(Icons.shopping_cart_checkout_rounded, 'Purchase Orders', '/inventory/purchase-orders', c),
+                          item(Icons.storefront_rounded, 'Vendors', '/inventory/vendors', c),
+                        ],
+                      ),
+                      const SizedBox(width: 2),
+                      _navDropdown(
+                        icon: Icons.badge_rounded,
+                        label: 'HR',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        isSelected: current == 7,
+                        items: (c) => [
+                          item(Icons.payments_rounded, 'Payroll', '/hr', c),
+                          item(Icons.speed_outlined, "KPI's", '/hr/kpis', c),
+                          item(Icons.calculate_outlined, 'Commission Simulator', '/hr/simulator', c),
+                          item(Icons.manage_accounts_rounded, 'Team', '/hr/team', c),
+                          _menuDivider(),
+                          item(Icons.rule_folder_outlined, 'Commission Corrections', '/hr/corrections', c),
+                        ],
+                      ),
+                      const SizedBox(width: 2),
+                      _navDropdown(
+                        icon: Icons.insights_rounded,
+                        label: 'Dashboards',
+                        compact: compact,
+                        iconOnly: iconOnly,
+                        isSelected: current == 8,
+                        items: (c) => [
+                          item(Icons.attach_money_rounded, 'Financial', '/dashboards/financial', c),
+                          item(Icons.payments_outlined, 'Commissions', '/dashboards/commissions', c),
+                          item(Icons.engineering_outlined, 'Technicians', '/dashboards/technicians', c),
+                          item(Icons.inventory_2_outlined, 'Inventory', '/dashboards/inventory', c),
+                          item(Icons.work_outline_rounded, 'Jobs', '/dashboards/jobs', c),
+                          item(Icons.request_quote_outlined, 'Estimates', '/dashboards/estimates', c),
+                          item(Icons.trending_up_rounded, 'Sales', '/dashboards/sales', c),
+                          item(Icons.account_balance_wallet_outlined, 'Collections', '/dashboards/collections', c),
+                        ],
                       ),
                     ],
                   ),
-                  const SizedBox(width: 24),
-                  Container(width: 1, height: 28, color: _strokeBorder),
-                  const SizedBox(width: 12),
-
-                // --- Primary nav ---
-                  Expanded(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          // 🔥 UPDATED: My Office Mega-Dropdown
-                          _navDropdown(
-                            icon: Icons.home_work_rounded,
-                            label: "My Office",
-                            isSelected: [1, 3, 4].contains(current),
-                            items: (controller) => [
-                              _menuSectionHeader("Operations"),
-                              _dropdownMenuItem(icon: Icons.groups_rounded, label: 'Customers', route: '/customers', controller: controller),
-                              _dropdownMenuItem(icon: Icons.request_quote_rounded, label: 'Estimates', route: '/estimates', controller: controller),
-                              _dropdownMenuItem(icon: Icons.build_rounded, label: 'Jobs', route: '/jobs', controller: controller),
-                              _dropdownMenuItem(icon: Icons.timeline_rounded, label: 'Estimate & Job Statuses', route: '/statuses', controller: controller),
-                              
-                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
-                              
-                              _menuSectionHeader("Financial"),
-                              _dropdownMenuItem(icon: Icons.payment_rounded, label: 'Payments', route: '/payments', controller: controller),
-                              _dropdownMenuItem(icon: Icons.receipt_long_rounded, label: 'Invoices', route: '/invoices', controller: controller),
-                              
-                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
-                              
-                              _menuSectionHeader("Commercial"),
-                              _dropdownMenuItem(icon: Icons.assignment_turned_in_rounded, label: 'Site Checks', route: '/site-checks', controller: controller),
-                              _dropdownMenuItem(icon: Icons.architecture_rounded, label: 'Takeoffs', route: '/takeoffs', controller: controller),
-                            ],
-                          ),
-                          const SizedBox(width: 4),
-                          
-                          // Projects remains standalone
-                          _navItem(
-                            icon: Icons.folder_copy_rounded,
-                            label: "Projects",
-                            isSelected: current == 2,
-                            onTap: () => _goBranch(2),
-                          ),
-                          const SizedBox(width: 4),
-                          
-                          _navItem(
-                            icon: Icons.calendar_month_rounded,
-                            label: "Calendar",
-                            isSelected: current == 5,
-                            onTap: () => _goBranch(5),
-                          ),
-                          const SizedBox(width: 4),
-                          
-                          _navDropdown(
-                            icon: Icons.inventory_2_rounded,
-                            label: "Inventory",
-                            isSelected: current == 6, 
-                            items: (controller) => [
-                              _dropdownMenuItem(
-                                icon: Icons.stacked_bar_chart_rounded,
-                                label: 'Stock Levels',
-                                route: '/inventory', // Routes to your new InventoryScreen
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.category_rounded,
-                                label: 'Product Catalog', // 🔥 Renamed
-                                route: '/inventory/catalog', // Updated route
-                                controller: controller,
-                              ),
-                              
-                              const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Divider(height: 1, color: _strokeBorder)),
-                              
-                              _menuSectionHeader("Purchasing"),
-                              _dropdownMenuItem(
-                                icon: Icons.shopping_cart_checkout_rounded,
-                                label: 'Purchase Orders',
-                                route: '/inventory/purchase-orders',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.storefront_rounded,
-                                label: 'Vendors',
-                                route: '/inventory/vendors',
-                                controller: controller,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 4),
-                          
-                          _navDropdown(
-                            icon: Icons.badge_rounded,
-                            label: "HR",
-                            isSelected: current == 7,
-                            items: (controller) => [
-                              _dropdownMenuItem(
-                                icon: Icons.payments_rounded,
-                                label: 'Payroll',
-                                route: '/hr',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.speed_outlined,
-                                label: "KPI's",
-                                route: '/hr/kpis',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.calculate_outlined,
-                                label: 'Commission Simulator',
-                                route: '/hr/simulator',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.manage_accounts_rounded,
-                                label: 'Team',
-                                route: '/hr/team',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.rule_folder_outlined,
-                                label: 'Commission Corrections',
-                                route: '/hr/corrections',
-                                controller: controller,
-                              ),
-                            ],
-                          ),
-                          const SizedBox(width: 4),
-                          
-                          _navDropdown(
-                            icon: Icons.insights_rounded,
-                            label: "Dashboards",
-                            isSelected: current == 8, // Shifted from 7 to 8
-                            items: (controller) => [
-                              _dropdownMenuItem(
-                                icon: Icons.attach_money_rounded,
-                                label: 'Financial',
-                                route: '/dashboards/financial',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.payments_outlined,
-                                label: 'Commissions',
-                                route: '/dashboards/commissions',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.engineering_outlined,
-                                label: 'Technicians',
-                                route: '/dashboards/technicians',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.inventory_2_outlined,
-                                label: 'Inventory',
-                                route: '/dashboards/inventory',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.work_outline_rounded,
-                                label: 'Jobs',
-                                route: '/dashboards/jobs',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.request_quote_outlined,
-                                label: 'Estimates',
-                                route: '/dashboards/estimates',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.trending_up_rounded,
-                                label: 'Sales',
-                                route: '/dashboards/sales',
-                                controller: controller,
-                              ),
-                              _dropdownMenuItem(
-                                icon: Icons.account_balance_wallet_outlined,
-                                label: 'Collections',
-                                route: '/dashboards/collections',
-                                controller: controller,
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(width: 16),
-                  Container(width: 1, height: 28, color: _strokeBorder),
-                  const SizedBox(width: 16),
-
-                  // --- Search ---
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 240, minWidth: 170),
-                    child: SizedBox(
-                      height: 38,
-                      child: TextField(
-                        controller: _searchController,
-                        onSubmitted: _handleSearch,
-                        textInputAction: TextInputAction.search,
-                        style: const TextStyle(fontSize: 13, color: _inkColor),
-                        decoration: InputDecoration(
-                          hintText: 'Search jobs or customers',
-                          hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
-                          prefixIcon: const Icon(Icons.search_rounded, size: 18, color: _slateColor),
-                          filled: true,
-                          fillColor: _fieldFill,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 12),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: BorderSide.none,
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: BorderSide.none,
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(9),
-                            borderSide: const BorderSide(color: _brandRed, width: 1.5),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  _AccountMenu(),
-                ],
+                ),
               ),
-            ),
+
+              const SizedBox(width: 12),
+              Container(width: 1, height: 26, color: _Bar.divider),
+              const SizedBox(width: 14),
+
+              // --- Search ---
+              if (tight)
+                IconButton(
+                  tooltip: 'Search (Ctrl K)',
+                  icon: const Icon(Icons.search_rounded, size: 20, color: _Bar.fieldIcon),
+                  onPressed: _showSearchDialog,
+                )
+              else
+                _searchField(compact ? 200 : 290, compact: compact),
+
+              const SizedBox(width: 10),
+              _AskButton(iconOnly: tight),
+              const SizedBox(width: 12),
+              const _AccountMenu(),
+            ],
           ),
         ),
       ),
-      body: widget.navigationShell,
+    );
+  }
+}
+
+/// One destination in the bar: icon, label and (for dropdowns) a chevron. The page you are in gets a
+/// soft pill and a short red bar underneath, the bar's single bold element.
+class _NavPill extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final bool open;
+  final bool chevron;
+  final bool compact;
+  final bool iconOnly;
+  final VoidCallback onTap;
+
+  const _NavPill({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.compact,
+    required this.iconOnly,
+    required this.onTap,
+    this.open = false,
+    this.chevron = false,
+  });
+
+  @override
+  State<_NavPill> createState() => _NavPillState();
+}
+
+class _NavPillState extends State<_NavPill> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool lit = widget.active || widget.open;
+    final Color fill = lit ? _Bar.activeFill : (_hover ? _Bar.hoverFill : Colors.transparent);
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          height: 40,
+          padding: EdgeInsets.symmetric(horizontal: widget.compact ? 10 : 13),
+          decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(10)),
+          child: Stack(
+            alignment: Alignment.center,
+            clipBehavior: Clip.none,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(widget.icon, size: 17, color: lit || _hover ? _Bar.iconActive : _Bar.icon),
+                  if (!widget.iconOnly) ...[
+                    const SizedBox(width: 8),
+                    Text(
+                      widget.label,
+                      style: TextStyle(
+                        fontSize: 13.5,
+                        fontWeight: widget.active ? FontWeight.w700 : FontWeight.w600,
+                        color: lit || _hover ? _Bar.textActive : _Bar.text,
+                        letterSpacing: -0.1,
+                      ),
+                    ),
+                  ],
+                  if (widget.chevron) ...[
+                    const SizedBox(width: 2),
+                    AnimatedRotation(
+                      turns: widget.open ? 0.5 : 0,
+                      duration: const Duration(milliseconds: 140),
+                      child: Icon(Icons.keyboard_arrow_down_rounded, size: 16, color: lit || _hover ? _Bar.iconActive : _Bar.icon),
+                    ),
+                  ],
+                ],
+              ),
+              // Sits on the bottom edge of the bar (the pill is centered in it), like a tab underline.
+              Positioned(
+                bottom: -10,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOut,
+                  width: widget.active ? 22 : 0,
+                  height: 3,
+                  decoration: const BoxDecoration(
+                    color: _brandRed,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(3)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Opens the read-only AI assistant panel.
+class _AskButton extends StatelessWidget {
+  final bool iconOnly;
+  const _AskButton({required this.iconOnly});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Ask the assistant',
+      child: InkWell(
+        onTap: () => showAssistantPanel(context),
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: 38,
+          padding: EdgeInsets.symmetric(horizontal: iconOnly ? 10 : 13),
+          decoration: BoxDecoration(color: _activeTint, borderRadius: BorderRadius.circular(10)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.auto_awesome_rounded, size: 16, color: _brandRed),
+              if (!iconOnly) ...[
+                const SizedBox(width: 7),
+                const Text('Ask',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _brandRed)),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small keyboard hint shown inside the empty search field.
+class _KeyHint extends StatelessWidget {
+  final String text;
+  const _KeyHint(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: _Bar.keyHintBg,
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: _Bar.keyHintBorder),
+      ),
+      child: Text(text, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: _Bar.keyHintText)),
     );
   }
 }
@@ -519,7 +697,6 @@ class _HoverMenuState extends State<_HoverMenu> {
   final MenuController _controller = MenuController();
   bool _isHovering = false;
   bool _isOpen = false;
-  
 
   void _onEnter() {
     _isHovering = true;
@@ -528,7 +705,8 @@ class _HoverMenuState extends State<_HoverMenu> {
 
   void _onExit() {
     _isHovering = false;
-    Future.delayed(const Duration(milliseconds: 180), () {
+    // A short grace period lets the pointer cross the gap between the button and the menu.
+    Future.delayed(const Duration(milliseconds: 220), () {
       if (!_isHovering && _controller.isOpen && mounted) _controller.close();
     });
   }
@@ -537,18 +715,19 @@ class _HoverMenuState extends State<_HoverMenu> {
   Widget build(BuildContext context) {
     return MenuAnchor(
       controller: _controller,
+      alignmentOffset: const Offset(0, 6),
       onOpen: () => setState(() => _isOpen = true),
       onClose: () => setState(() => _isOpen = false),
       style: MenuStyle(
         backgroundColor: const WidgetStatePropertyAll(Colors.white),
-        elevation: const WidgetStatePropertyAll(8),
-        shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.12)),
+        elevation: const WidgetStatePropertyAll(10),
+        shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.18)),
         surfaceTintColor: const WidgetStatePropertyAll(Colors.white),
-        minimumSize: const WidgetStatePropertyAll(Size(220, 0)),
-        padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
+        minimumSize: const WidgetStatePropertyAll(Size(260, 0)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.all(8)),
         shape: WidgetStatePropertyAll(
           RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(14),
             side: const BorderSide(color: _strokeBorder, width: 1),
           ),
         ),
@@ -559,6 +738,7 @@ class _HoverMenuState extends State<_HoverMenu> {
           onExit: (_) => _onExit(),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: widget.items(_controller),
           ),
         ),
@@ -574,6 +754,8 @@ class _HoverMenuState extends State<_HoverMenu> {
 
 /// The signed-in user, with a sign-out action. Signing out sends the router back to /login.
 class _AccountMenu extends StatelessWidget {
+  const _AccountMenu();
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -586,37 +768,66 @@ class _AccountMenu extends StatelessWidget {
             : (parts.length == 1 ? parts.first[0] : parts.first[0] + parts.last[0]).toUpperCase();
 
         return PopupMenuButton<String>(
-          tooltip: 'Account',
+          tooltip: session.name.isEmpty ? 'Account' : session.name,
           offset: const Offset(0, 46),
-          color: Colors.white,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-            side: const BorderSide(color: _strokeBorder),
-          ),
           onSelected: (value) {
             if (value == 'signout') session.logout();
           },
           itemBuilder: (context) => [
             PopupMenuItem<String>(
               enabled: false,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(session.name,
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _inkColor)),
-                  if (session.role.isNotEmpty)
-                    Text(session.role, style: const TextStyle(fontSize: 12, color: _slateColor)),
-                ],
+              height: 0,
+              padding: EdgeInsets.zero,
+              child: Container(
+                width: 220,
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(color: _activeTint, shape: BoxShape.circle),
+                      child: Text(initials,
+                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _brandRed)),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(session.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: _inkColor)),
+                          if (session.role.isNotEmpty)
+                            Text(session.role,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 12, color: _slateColor)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const PopupMenuDivider(),
-            const PopupMenuItem<String>(
+            const PopupMenuDivider(height: 1),
+            PopupMenuItem<String>(
               value: 'signout',
+              height: 42,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
               child: Row(
                 children: [
-                  Icon(Icons.logout_rounded, size: 18, color: _slateColor),
-                  SizedBox(width: 10),
-                  Text('Sign out', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _inkColor)),
+                  Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(color: const Color(0xFFFEF2F2), borderRadius: BorderRadius.circular(8)),
+                    child: const Icon(Icons.logout_rounded, size: 16, color: Color(0xFFB91C1C)),
+                  ),
+                  const SizedBox(width: 10),
+                  const Text('Sign out',
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFFB91C1C))),
                 ],
               ),
             ),
@@ -625,9 +836,12 @@ class _AccountMenu extends StatelessWidget {
             width: 36,
             height: 36,
             alignment: Alignment.center,
-            decoration: const BoxDecoration(color: _activeTint, shape: BoxShape.circle),
-            child: Text(initials,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _brandRed)),
+            decoration: BoxDecoration(
+              color: _Bar.avatarBg,
+              shape: BoxShape.circle,
+              border: _darkBar ? Border.all(color: _Bar.divider) : null,
+            ),
+            child: Text(initials, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _Bar.avatarText)),
           ),
         );
       },

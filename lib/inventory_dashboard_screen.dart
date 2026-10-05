@@ -76,13 +76,11 @@ class _InventoryStrikeTech {
   final String name;
   final String imageUrl;
   final int strikeCount;
-  final double accuracyPct;
 
   const _InventoryStrikeTech({
     required this.name,
     required this.imageUrl,
     required this.strikeCount,
-    required this.accuracyPct,
   });
 }
 
@@ -110,23 +108,31 @@ class _InventoryMonth {
 
 class _InventorySummary {
   final double totalValuation;
-  final double deadStockValue;
+
+  /// Null when not tracked yet (needs a stock movement history the system doesn't record yet).
+  final double? deadStockValue;
   final int lowStockCount;
-  final double accuracyPct;
+
+  /// Null when not tracked yet (needs completed cycle counts with expected vs counted quantities).
+  final double? accuracyPct;
   final DateTime? lastCycleCount;
   final List<_CategoryData> categories;
   final List<_InventoryMonth> monthly;
   final List<_InventoryStrikeTech> topStrikeTechs;
 
+  /// False when the server says stock received/used by month isn't recorded yet.
+  final bool movementTracked;
+
   const _InventorySummary({
     this.totalValuation = 0,
-    this.deadStockValue = 0,
+    this.deadStockValue,
     this.lowStockCount = 0,
-    this.accuracyPct = 0,
+    this.accuracyPct,
     this.lastCycleCount,
     this.categories = const [],
     this.monthly = const [],
     this.topStrikeTechs = const [],
+    this.movementTracked = true,
   });
 
   factory _InventorySummary.fromJson(Map<String, dynamic> json) {
@@ -154,7 +160,6 @@ class _InventorySummary {
               name: t['name']?.toString() ?? 'Tech',
               imageUrl: t['imageUrl']?.toString() ?? '',
               strikeCount: int_(t['strikeCount']),
-              accuracyPct: num_(t['accuracyPct']),
             ))
         .toList();
 
@@ -170,13 +175,14 @@ class _InventorySummary {
 
     return _InventorySummary(
       totalValuation: num_(json['totalValuation']),
-      deadStockValue: num_(json['deadStockValue']),
+      deadStockValue: json['deadStockValue'] == null ? null : num_(json['deadStockValue']),
       lowStockCount: int_(json['lowStockCount']),
-      accuracyPct: num_(json['accuracyPct']),
+      accuracyPct: json['accuracyPct'] == null ? null : num_(json['accuracyPct']),
       lastCycleCount: json['lastCycleCount'] != null ? DateTime.tryParse(json['lastCycleCount'].toString()) : null,
       categories: catList,
       topStrikeTechs: techList,
       monthly: monthList,
+      movementTracked: json['movementTracked'] != false,
     );
   }
 }
@@ -308,7 +314,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
               const SizedBox(width: 8),
               Expanded(
                 child: AnimatedMetricCard(
-                  title: 'Dead Stock (90+ Days)',
+                  // Shows "—" until stock movement is recorded (it used to always say $0).
+                  title: data.deadStockValue == null ? 'Dead stock (not tracked yet)' : 'Dead Stock (90+ Days)',
                   value: data.deadStockValue,
                   format: _moneyFull,
                   caption: '', // Pass empty string to hide it
@@ -319,7 +326,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
               const SizedBox(width: 8),
               Expanded(
                 child: AnimatedMetricCard(
-                  title: 'Low Stock Items',
+                  // Items at or below a reorder point that has been set.
+                  title: 'At or below reorder point',
                   value: data.lowStockCount.toDouble(),
                   format: (v) => v.round().toString(),
                   caption: '', // Pass empty string to hide it
@@ -330,7 +338,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
               const SizedBox(width: 8),
               Expanded(
                 child: AnimatedMetricCard(
-                  title: 'Inventory Accuracy',
+                  // Shows "—" until cycle counts record expected vs counted (it used to be a fixed 98.4%).
+                  title: data.accuracyPct == null ? 'Accuracy (not tracked yet)' : 'Inventory Accuracy',
                   value: data.accuracyPct,
                   format: (v) => '${v.toStringAsFixed(1)}%',
                   caption: '', // Pass empty string to hide it
@@ -342,7 +351,7 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
               Expanded(
                 child: _StaticInfoCard(
                   title: 'Last Cycle Count',
-                  value: _dateLabel(data.lastCycleCount),
+                  value: data.lastCycleCount == null ? 'Not yet' : _dateLabel(data.lastCycleCount),
                   icon: Icons.fact_check_outlined,
                   iconColor: DashUi.slate,
                 ),
@@ -376,10 +385,61 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
 
         // 3. Bottom row: Received/Used/On-Hand trend
         Expanded(
-          flex: 4,
-          child: _InventoryTrendChart(data: data.monthly, year: widget.selectedYear),
+          flex: data.movementTracked ? 4 : 2,
+          child: data.movementTracked
+              ? _InventoryTrendChart(data: data.monthly, year: widget.selectedYear)
+              : const _NotTrackedPanel(
+                  title: 'Stock received, used and on hand by month',
+                  message: 'Not tracked yet. Stock movement (receiving and parts used on jobs) is not recorded in the '
+                      'system yet, so there is nothing real to chart. This fills in once it is.',
+                ),
         ),
       ],
+    );
+  }
+}
+
+// =============================================================================
+// NOT-TRACKED-YET PANEL (instead of charting made-up numbers)
+// =============================================================================
+
+class _NotTrackedPanel extends StatelessWidget {
+  final String title;
+  final String message;
+  const _NotTrackedPanel({required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      decoration: DashUi.panel(),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(12)),
+            child: const Icon(Icons.hourglass_empty_rounded, color: DashUi.muted, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink)),
+                const SizedBox(height: 4),
+                Text(
+                  message,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.35),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -468,13 +528,21 @@ class _InventoryStrikePodiumPanel extends StatelessWidget {
               Icon(Icons.inventory_2_outlined, color: DashUi.amber, size: 18),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 2),
+          // Strikes are a running total per tech (users.inventory_strikes), not per year.
+          const Text(
+            'Fewest strikes ranks first · all-time',
+            style: TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
+          ),
+          const SizedBox(height: 10),
           Expanded(
             child: (rank1 == null)
                 ? const Center(child: Text('No inventory strike data recorded.', style: TextStyle(color: DashUi.muted)))
                 : LayoutBuilder(
                     builder: (context, constraints) {
-                      final scale = (constraints.maxHeight / 240.0).clamp(0.65, 1.0);
+                      // 1st place is 167px of avatar + step at full size plus ~66px of fixed text, ring and
+                      // spacing. The old 0.65 minimum overflowed on short windows.
+                      final scale = ((constraints.maxHeight - 66) / 167.0).clamp(0.3, 1.0);
                       return Row(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
@@ -531,7 +599,7 @@ class _PodiumStep extends StatelessWidget {
             ),
           ),
           Text(
-            '$strikes ${strikes == 1 ? 'strike' : 'strikes'} (${tech.accuracyPct.toStringAsFixed(1)}%)',
+            '$strikes ${strikes == 1 ? 'strike' : 'strikes'}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(

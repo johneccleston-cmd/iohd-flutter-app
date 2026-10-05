@@ -362,9 +362,11 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
                   )
                 : LayoutBuilder(
                     builder: (context, c) {
-                      final scaleH = (c.maxHeight - 87) / 264;
+                      // The tallest step (1st) is 254px of avatar + step at full scale, plus ~90px of fixed text,
+                      // ring and spacing, plus 24px of padding. The old minimum of 0.45 overflowed on short windows.
+                      final scaleH = (c.maxHeight - 24 - 90) / 254;
                       final scaleW = (c.maxWidth / 3) / 160;
-                      final scale = math.min(scaleH, scaleW).clamp(0.45, 1.0).toDouble();
+                      final scale = math.min(scaleH, scaleW).clamp(0.2, 1.0).toDouble();
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 12),
                         child: Row(
@@ -443,7 +445,8 @@ class _TechCard extends StatelessWidget {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
-                        if (tech.role.isNotEmpty)
+                        // The role line is dropped on short windows so the card's numbers keep their room.
+                        if (tech.role.isNotEmpty && MediaQuery.sizeOf(context).height >= 700)
                           Text(
                             tech.role,
                             style: const TextStyle(
@@ -1095,11 +1098,14 @@ class _InteractiveProfitChartState extends State<_InteractiveProfitChart> with T
                         _metric.format(headlineValue),
                         style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1),
                       ),
-                      const SizedBox(width: 10),
-                      Text(
-                        '$headlineLabel for $yearText',
-                        style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500),
-                      ),
+                      // Dropped on short windows so the header fits on one line and the plot keeps its height.
+                      if (MediaQuery.sizeOf(context).height >= 700) ...[
+                        const SizedBox(width: 10),
+                        Text(
+                          '$headlineLabel for $yearText',
+                          style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500),
+                        ),
+                      ],
                       if (trendPct != null) ...[
                         const SizedBox(width: 10),
                         _TrendChip(pct: trendPct, label: trendLabel!),
@@ -1183,13 +1189,16 @@ class _InteractiveProfitChartState extends State<_InteractiveProfitChart> with T
               },
             ),
           ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 18,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: legend,
-          ),
+          // On short windows the legend would take the height the plot needs.
+          if (MediaQuery.sizeOf(context).height >= 700) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 18,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: legend,
+            ),
+          ],
         ],
       ),
     );

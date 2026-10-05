@@ -20,8 +20,6 @@ class _C {
   static const subtle = Color(0xFFF9FAFB);
   static const primary = Color(0xFF2563EB);
   static const primarySoft = Color(0xFFEFF4FF);
-  static const money = Color(0xFF047857);
-  static const moneySoft = Color(0xFFECFDF5);
 }
 
 const _baseUrl = kApiBaseUrl;
@@ -199,7 +197,7 @@ class _CustomersScreenState extends State<CustomersScreen>
         _sortDir = _sortDir == 'asc' ? 'desc' : 'asc';
       } else {
         _sortBy = key;
-        _sortDir = (key == 'jobs' || key == 'spent') ? 'desc' : 'asc';
+        _sortDir = key == 'jobs' ? 'desc' : 'asc';
       }
     });
     _load(1);
@@ -379,7 +377,6 @@ class _CustomersScreenState extends State<CustomersScreen>
               _sortItem('name', 'Name'),
               _sortItem('city', 'City'),
               _sortItem('jobs', 'Number of jobs'),
-              _sortItem('spent', 'Lifetime revenue'),
             ],
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -436,7 +433,6 @@ class _CustomersScreenState extends State<CustomersScreen>
       'name': 'Name',
       'city': 'City',
       'jobs': 'Jobs',
-      'spent': 'Revenue',
       'contact': 'Contact',
     };
     return '${names[_sortBy] ?? 'Name'} ${_sortDir == 'asc' ? '↑' : '↓'}';
@@ -490,11 +486,9 @@ class _CustomersScreenState extends State<CustomersScreen>
           child: Row(
             children: [
               _headerCell('CUSTOMER', 'name', flex: 30),
-              _headerCell('CONTACT INFO', null, flex: 28),
-              _headerCell('SERVICE LOCATION', 'city', flex: 26),
-              _headerCell('JOBS', 'jobs', flex: 8, align: MainAxisAlignment.center),
-              _headerCell('LIFETIME REVENUE', 'spent',
-                  flex: 14, align: MainAxisAlignment.end),
+              _headerCell('CONTACT INFO', null, flex: 30),
+              _headerCell('SERVICE LOCATION', 'city', flex: 30),
+              _headerCell('JOBS', 'jobs', flex: 10, align: MainAxisAlignment.center),
             ],
           ),
         ),
@@ -602,26 +596,29 @@ class _CustomersScreenState extends State<CustomersScreen>
               ),
             ),
             Expanded(
-              flex: 28,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _ContactLine(
-                    icon: Icons.phone_outlined,
-                    text: phone,
-                    onCopy: phone == null ? null : () => _copy(phone, 'Phone'),
-                  ),
-                  const SizedBox(height: 4),
-                  _ContactLine(
-                    icon: Icons.mail_outline_rounded,
-                    text: email,
-                    onCopy: email == null ? null : () => _copy(email, 'Email'),
-                  ),
-                ],
+              flex: 30,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _ContactLine(
+                      icon: Icons.phone_outlined,
+                      text: phone,
+                      onCopy: phone == null ? null : () => _copy(phone, 'Phone'),
+                    ),
+                    const SizedBox(height: 4),
+                    _ContactLine(
+                      icon: Icons.mail_outline_rounded,
+                      text: email,
+                      onCopy: email == null ? null : () => _copy(email, 'Email'),
+                    ),
+                  ],
+                ),
               ),
             ),
             Expanded(
-              flex: 26,
+              flex: 30,
               child: Padding(
                 padding: const EdgeInsets.only(right: 12),
                 child: Column(
@@ -643,15 +640,8 @@ class _CustomersScreenState extends State<CustomersScreen>
               ),
             ),
             Expanded(
-              flex: 8,
+              flex: 10,
               child: Center(child: _JobsChip(count: _toInt(c['total_jobs']))),
-            ),
-            Expanded(
-              flex: 14,
-              child: Align(
-                alignment: Alignment.centerRight,
-                child: _Money(amount: _toNum(c['total_spent'])),
-              ),
             ),
           ],
         ),
@@ -711,7 +701,7 @@ class _CustomersScreenState extends State<CustomersScreen>
                   ],
                 ),
               ),
-              _Money(amount: _toNum(c['total_spent'])),
+              _JobsChip(count: _toInt(c['total_jobs']), expanded: true),
             ],
           ),
           const SizedBox(height: 12),
@@ -727,9 +717,11 @@ class _CustomersScreenState extends State<CustomersScreen>
             onCopy: email == null ? null : () => _copy(email, 'Email'),
           ),
           const SizedBox(height: 4),
-          _ContactLine(icon: Icons.place_outlined, text: address.isEmpty ? null : address),
-          const SizedBox(height: 10),
-          _JobsChip(count: _toInt(c['total_jobs']), expanded: true),
+          _ContactLine(
+            icon: Icons.place_outlined,
+            text: address.isEmpty ? null : address,
+            onCopy: address.isEmpty ? null : () => _copy(address, 'Address'),
+          ),
         ],
       ),
     );
@@ -836,11 +828,6 @@ int _toInt(dynamic v) => _toNum(v).toInt();
 String _fmtInt(int n) => n.toString().replaceAllMapped(
     RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
 
-String _fmtMoney(num n) {
-  if (n <= 0) return '\$0';
-  return '\$${_fmtInt(n.round())}';
-}
-
 // ---------------------------------------------------------------------------
 // Small widgets
 // ---------------------------------------------------------------------------
@@ -933,32 +920,6 @@ class _JobsChip extends StatelessWidget {
                   fontWeight: FontWeight.w700,
                   color: has ? _C.primary : _C.muted)),
         ],
-      ),
-    );
-  }
-}
-
-class _Money extends StatelessWidget {
-  final num amount;
-  const _Money({required this.amount});
-
-  @override
-  Widget build(BuildContext context) {
-    final has = amount > 0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: has ? _C.moneySoft : _C.subtle,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        _fmtMoney(amount),
-        style: TextStyle(
-          fontSize: 13.5,
-          fontWeight: FontWeight.w700,
-          color: has ? _C.money : _C.muted,
-          fontFeatures: const [FontFeature.tabularFigures()],
-        ),
       ),
     );
   }
