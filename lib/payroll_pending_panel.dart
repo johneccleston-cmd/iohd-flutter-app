@@ -37,6 +37,7 @@ class _PendingJob {
 class _PendingTech {
   final String name;
   final String role;
+  final String imageUrl;
   final double share;
   final double retainage;
   final double net;
@@ -45,6 +46,7 @@ class _PendingTech {
   _PendingTech(Map<String, dynamic> t)
       : name = '${t['name'] ?? ''}',
         role = '${t['role'] ?? ''}',
+        imageUrl = '${t['imageUrl'] ?? ''}',
         share = _n((t['totals'] as Map?)?['share']),
         retainage = _n((t['totals'] as Map?)?['retainage']),
         net = _n((t['totals'] as Map?)?['net']),
@@ -66,16 +68,17 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
   double _total = 0;
   double _retainage = 0;
   int _jobCount = 0;
-  bool _loading = true;
+  bool _loading = false;
+  bool _loaded = false; // the panel starts collapsed, so it only fetches once opened or refreshed
   String? _error;
-  bool _open = true;
+  bool _open = false;
   final Set<String> _expanded = {};
   int _req = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    if (_open) _load();
   }
 
   Future<void> _load() async {
@@ -104,6 +107,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
         _retainage = _n(totals['retainage']);
         _jobCount = _n((body['counts'] as Map?)?['jobs']).round();
         _loading = false;
+        _loaded = true;
       });
     } on TimeoutException {
       if (!mounted || id != _req) return;
@@ -153,7 +157,10 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
 
   Widget _header() {
     return InkWell(
-      onTap: () => setState(() => _open = !_open),
+      onTap: () {
+        setState(() => _open = !_open);
+        if (_open && !_loaded && !_loading) _load();
+      },
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
         child: Row(
@@ -175,7 +182,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
                 ],
               ),
             ),
-            if (!_loading && _error == null)
+            if (_loaded && !_loading && _error == null)
               Text(_money.format(_total),
                   style: const TextStyle(
                       fontSize: 20,
@@ -223,7 +230,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
               child: Row(
                 children: [
-                  DashAvatar(name: t.name, imageUrl: '', size: 30),
+                  DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 30),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(

@@ -1,6 +1,10 @@
-﻿import 'package:flutter/foundation.dart';
+﻿import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'config/access.dart';
+import 'config/api_config.dart';
 import 'package:go_router/go_router.dart';
 import 'product_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
@@ -119,7 +123,19 @@ final GoRouter _router = GoRouter(
             path: '/hr', 
             builder: (context, state) => const PayrollScreen(),
             routes: [
-              GoRoute(path: 'kpis', builder: (context, state) => const KPIDashboardScreen()),
+              GoRoute(
+                path: 'kpis',
+                builder: (context, state) => const KPIDashboardScreen(),
+                routes: [
+                  GoRoute(
+                    path: ':id',
+                    builder: (context, state) => EmployeeKpiScreen(
+                      employeeId: state.pathParameters['id'] ?? '',
+                      extra: state.extra,
+                    ),
+                  ),
+                ],
+              ),
               // 🔥 FIX: Relative path matches 'kpis' pattern
               GoRoute(path: 'team', builder: (context, state) => const TeamAdminScreen()),
               GoRoute(path: 'corrections', builder: (context, state) => const CommissionCorrectionsScreen()),
@@ -152,6 +168,13 @@ final GoRouter _router = GoRouter(
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   SmoothWheelScroll.install();
+  // The hosted backend sleeps when idle; waking it now means the first real screen doesn't pay for it.
+  unawaited(
+    http
+        .get(Uri.parse('$kApiBaseUrl/health'))
+        .timeout(const Duration(seconds: 90))
+        .then<void>((_) {}, onError: (_) {}),
+  );
   runApp(const IohdHubApp());
 }
 

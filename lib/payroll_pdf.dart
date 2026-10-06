@@ -72,12 +72,12 @@ pw.Widget _pdfTable(
   );
 }
 
-Future<Uint8List> _buildPayrollPdf(_Report r, {required bool sample}) async {
+Future<Uint8List> _buildPayrollPdf(_Report r) async {
   final doc = pw.Document(title: 'Payroll commission report', author: 'IOHD');
   final range = '${_day(r.start, year: true)} to ${_day(r.end, year: true)}';
 
   final children = <pw.Widget>[
-    ..._pdfCover(r, range, sample),
+    ..._pdfCover(r, range),
     for (final t in r.techs) ...[pw.NewPage(), ..._pdfTech(t, r)],
   ];
 
@@ -90,7 +90,7 @@ Future<Uint8List> _buildPayrollPdf(_Report r, {required bool sample}) async {
         child: pw.Row(
           mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           children: [
-            _pt('Payroll commission report  |  $range${sample ? '  |  SAMPLE DATA' : ''}', size: 8, color: _pMuted),
+            _pt('Payroll commission report  |  $range', size: 8, color: _pMuted),
             _pt('Page ${ctx.pageNumber} of ${ctx.pagesCount}', size: 8, color: _pMuted),
           ],
         ),
@@ -101,13 +101,13 @@ Future<Uint8List> _buildPayrollPdf(_Report r, {required bool sample}) async {
   return doc.save();
 }
 
-List<pw.Widget> _pdfCover(_Report r, String range, bool sample) {
+List<pw.Widget> _pdfCover(_Report r, String range) {
   double sum(double Function(_Tech) f) => r.techs.fold<double>(0, (s, t) => s + f(t));
 
   return [
     _pt('Payroll Commission Report', size: 22, bold: true),
     pw.SizedBox(height: 4),
-    _pt('Pay weeks $range${sample ? '   (sample data)' : ''}', size: 11, color: _pSlate),
+    _pt('Pay weeks $range', size: 11, color: _pSlate),
     pw.SizedBox(height: 3),
     _pt(
       'Pay weeks run Monday to Sunday. Weekly hurdle ${_fmt(r.weeklyThreshold)}, advance ${_fmt(r.dailyAdvance)} per day, '

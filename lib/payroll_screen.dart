@@ -12,7 +12,6 @@ import 'package:printing/printing.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'payroll_pending_panel.dart';
-import 'payroll_sample_data.dart';
 import 'widgets/dashboard_kit.dart';
 
 part 'payroll_pdf.dart';
@@ -35,10 +34,6 @@ part 'payroll_pdf.dart';
 // not record or pay a payroll run.
 // ---------------------------------------------------------------------------
 
-/// Shows the Live / Sample switch so the screen can be previewed with made-up data.
-/// Set to false after go-live (and delete payroll_sample_data.dart).
-const bool _showSampleToggle = true;
-
 class _P {
   static const wash = Color(0xFFF8FAFC);
   static const goodBg = Color(0xFFECFDF5);
@@ -46,8 +41,6 @@ class _P {
   static const toggleActive = Color(0xFF1D4ED8);
   static const badBg = Color(0xFFFEF2F2);
   static const badFg = Color(0xFFB91C1C);
-  static const sampleBg = Color(0xFFFFFBEB);
-  static const sampleFg = Color(0xFF92400E);
 }
 
 const List<FontFeature> _figures = [FontFeature.tabularFigures()];
@@ -262,6 +255,7 @@ class _Tech {
   final int userId;
   final String name;
   final String role;
+  final String imageUrl;
   final bool isSales;
   final bool isCallbackOnly;
   final _Totals totals;
@@ -272,6 +266,7 @@ class _Tech {
     : userId = _d(j['userId']).round(),
       name = _s(j['name']),
       role = _s(j['role']),
+      imageUrl = _s(j['imageUrl']),
       isSales = j['isSales'] == true,
       isCallbackOnly = j['isCallbackOnly'] == true,
       totals = _Totals(Map<String, dynamic>.from((j['totals'] as Map?) ?? const {})),
@@ -387,7 +382,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
   bool _loading = false;
   String? _error;
   int _requestId = 0;
-  bool _sample = false;
   int? _selectedId; // null = everyone (the register)
   _Metric? _metric; // scorecard whose log is open
   bool _exporting = false;
@@ -405,12 +399,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
   // ---- Range ---------------------------------------------------------------
 
   DateTimeRange get _shownRange {
-    final r = _report;
-    if (_sample && r != null) {
-      final s = _parseDay(r.start);
-      final e = _parseDay(r.end);
-      if (s != null && e != null) return DateTimeRange(start: s, end: e);
-    }
     return _range;
   }
 
@@ -424,7 +412,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   bool get _canStep =>
-      !_sample && _range.start.weekday == DateTime.monday && (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
+      _range.start.weekday == DateTime.monday && (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
 
   void _step(int dir) {
     if (!_canStep) return;
@@ -436,7 +424,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Future<void> _selectPreset(String key) async {
-    if (_sample) return;
     if (key == 'custom') {
       await _pickCustom();
       return;
@@ -478,34 +465,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   void _toggleMetric(_Metric m) => setState(() => _metric = _metric == m ? null : m);
 
-  void _setSample(bool on) {
-    if (on == _sample) return;
-    setState(() {
-      _sample = on;
-      _selectedId = null;
-      _weekStart = null;
-      _metric = null;
-      _report = null;
-      _error = null;
-    });
-    _load();
-  }
-
-  void _applySample() {
-    _requestId++; // ignore any live request still in flight
-    final report = _Report(json.decode(kPayrollSampleJson) as Map<String, dynamic>);
-    setState(() {
-      _report = report;
-      _loading = false;
-      _error = null;
-    });
-  }
-
   Future<void> _load() async {
-    if (_sample) {
-      _applySample();
-      return;
-    }
     final id = ++_requestId;
     setState(() {
       _loading = true;
@@ -589,7 +549,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (r == null || r.techs.isEmpty || _exporting) return;
     setState(() => _exporting = true);
     try {
-      final bytes = await _buildPayrollPdf(r, sample: _sample);
+      final bytes = await _buildPayrollPdf(r);
       if (!mounted) return;
       await Printing.layoutPdf(
         name: 'Payroll ${r.start} to ${r.end}.pdf',
@@ -625,10 +585,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   children: [
                     _toolbar(),
                     const SizedBox(height: 12),
-                    if (!_sample) ...[
-                      const PayrollPendingPanel(),
-                      const SizedBox(height: 12),
-                    ],
+                    const PayrollPendingPanel(),
+                    const SizedBox(height: 12),
                     _results(wide: w - pad * 2 >= 1000),
                   ],
                 ),
@@ -646,7 +604,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final range = _shownRange;
     final label = '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
     final r = _report;
-    final widened = !_sample && r != null && (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
+    final widened = r != null && (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
     final String? note = widened ? 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.' : null;
 
     return Container(
@@ -719,19 +677,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         _stepper(label),
-        Opacity(
-          opacity: _sample ? 0.45 : 1,
-          child: IgnorePointer(
-            ignoring: _sample,
-            child: _pillGroup(items: _kPresets, active: _activeKey, onSelected: _selectPreset),
-          ),
-        ),
-        if (_showSampleToggle)
-          _pillGroup(
-            items: const [_Opt('live', 'Live Data'), _Opt('sample', 'Sample Data')],
-            active: _sample ? 'sample' : 'live',
-            onSelected: (k) => _setSample(k == 'sample'),
-          ),
+        _pillGroup(items: _kPresets, active: _activeKey, onSelected: _selectPreset),
         if (_loading)
           const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate)),
       ],
@@ -861,14 +807,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
           message:
               'Nothing was settled or paid from ${_day(report.start, year: true)} to ${_day(report.end, year: true)}. '
               'Commission starts counting on the Oct 5 go-live, and a job pays in the week it is closed.',
-          action: _showSampleToggle && !_sample
-              ? OutlinedButton.icon(
-                  style: OutlinedButton.styleFrom(minimumSize: const Size(0, 42)),
-                  icon: const Icon(Icons.science_outlined, size: 18),
-                  label: const Text('Preview with sample data'),
-                  onPressed: () => _setSample(true),
-                )
-              : null,
         ),
       );
     }
@@ -1041,7 +979,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         _Metric.pool,
         AnimatedMetricCard(
           title: 'Company Pool (${_pct(poolRate * 100)})',
-          value: t.companyPool,
+          value: t.companyPool.abs(),
           valueColor: DashUi.slate,
           index: 3,
         ),
@@ -1167,6 +1105,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final rows = _logRows(m, techs);
     final total = rows.fold<double>(0, (s, r) => s + r.amount);
     final showTech = techs.length > 1;
+    final photos = {for (final t in techs) t.name: t.imageUrl};
     final scope = techs.length == 1 ? techs.first.name : 'Everyone';
     final range = '${_day(report.start)} – ${_day(report.end, year: true)}';
 
@@ -1305,7 +1244,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       flex: 3,
                       child: Row(
                         children: [
-                          DashAvatar(name: r.tech, imageUrl: '', size: 22),
+                          DashAvatar(name: r.tech, imageUrl: photos[r.tech] ?? '', size: 22),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -1421,7 +1360,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               ),
               for (final t in report.techs)
                 _techRow(
-                  leading: DashAvatar(name: t.name, imageUrl: '', size: 34),
+                  leading: DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 34),
                   name: t.name,
                   subtitle: t.kindLabel,
                   due: t.totals.totalDue,
@@ -1529,6 +1468,44 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
+  /// Thin progress bar of the latest pay week's gross toward the weekly hurdle. Nothing for techs with no hurdle.
+  Widget _hurdleBar(_Tech t) {
+    if (t.weeks.isEmpty) return const SizedBox.shrink();
+    final w = t.weeks.last;
+    if (w.hurdleRule <= 0) return const SizedBox.shrink();
+    final met = w.weeklyGross >= w.hurdleRule;
+    final color = met ? DashUi.emeraldDeep : DashUi.amber;
+    final pct = (w.weeklyGross / w.hurdleRule).clamp(0.0, 1.0);
+    return Tooltip(
+      message:
+          'Week of ${_day(w.weekStart)}: ${_fmt(w.weeklyGross)} of the ${_fmt(w.hurdleRule)} hurdle'
+          '${met ? ' (cleared)' : ''}',
+      child: Padding(
+        padding: const EdgeInsets.only(top: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(3),
+                child: LinearProgressIndicator(
+                  value: pct,
+                  minHeight: 5,
+                  backgroundColor: DashUi.line,
+                  valueColor: AlwaysStoppedAnimation(color),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '${_fmt(w.weeklyGross)} / ${_fmt(w.hurdleRule)}',
+              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: color, fontFeatures: _figures),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _register(_Report report) {
     const heads = [
       'Technician',
@@ -1580,7 +1557,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 0,
                 Row(
                   children: [
-                    DashAvatar(name: t.name, imageUrl: '', size: 30),
+                    DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 30),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -1598,6 +1575,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 11.5, color: DashUi.muted),
                           ),
+                          _hurdleBar(t),
                         ],
                       ),
                     ),
@@ -1768,7 +1746,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         children: [
           Row(
             children: [
-              DashAvatar(name: t.name, imageUrl: '', size: 44),
+              DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 44),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -1784,7 +1762,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink),
                         ),
                         if (t.kindLabel.isNotEmpty) _chip(t.kindLabel, DashUi.slate, DashUi.faint),
-                        if (_sample) _chip('Sample', _P.sampleFg, _P.sampleBg),
                       ],
                     ),
                     const SizedBox(height: 2),

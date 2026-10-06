@@ -5,10 +5,14 @@ import 'dart:ui';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
+
+part 'employee_kpi_screen.dart';
 
 class KPIDashboardScreen extends StatelessWidget {
   const KPIDashboardScreen({super.key});
@@ -143,6 +147,61 @@ class _Entry {
   const _Entry(this.user, this.rank);
 }
 
+/// Loads active employees, sorted by score, with ranks (ties share a rank).
+Future<List<_Entry>> _loadEntries() async {
+  final response = await http.get(
+    Uri.parse('$kApiBaseUrl/users'),
+    headers: AuthSession.instance.headers(),
+  ).timeout(const Duration(seconds: 60));
+
+  if (response.statusCode != 200) {
+    throw Exception('Failed to load users (status ${response.statusCode})');
+  }
+
+  final dynamic body = json.decode(response.body);
+  final dynamic raw = (body is List) ? body : (body is Map ? (body['data'] ?? body['users']) : null);
+  final List<dynamic> dataList = raw is List ? raw : const [];
+
+  final users = <_EmployeeUser>[];
+  for (final item in dataList) {
+    if (item is! Map) continue;
+    final map = Map<String, dynamic>.from(item);
+    if (_EmployeeUser.isInactive(map)) continue;
+    users.add(_EmployeeUser.fromJson(map));
+  }
+
+  // Always sort by Score desc (unscored last) -> tenure desc -> name
+  users.sort((a, b) {
+    final sa = a.integrityScore, sb = b.integrityScore;
+    if (sa == null && sb != null) return 1;
+    if (sa != null && sb == null) return -1;
+    if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
+    final ya = a.yearsWorked ?? 0, yb = b.yearsWorked ?? 0;
+    if (ya != yb) return yb.compareTo(ya);
+    return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+  });
+
+  // Ties share a rank (1, 1, 3, ...); unscored users are unranked.
+  final entries = <_Entry>[];
+  int? prevRank;
+  double? prevScore;
+  for (var i = 0; i < users.length; i++) {
+    final s = users[i].integrityScore;
+    int? rank;
+    if (s != null) {
+      if (prevScore != null && s == prevScore) {
+        rank = prevRank;
+      } else {
+        rank = i + 1;
+        prevRank = rank;
+        prevScore = s;
+      }
+    }
+    entries.add(_Entry(users[i], rank));
+  }
+  return entries;
+}
+
 // =============================================================================
 // SCREEN STATE
 // =============================================================================
@@ -217,56 +276,8 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
     });
 
     try {
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/users'),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60));
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to load users (status ${response.statusCode})');
-      }
-
-      final dynamic body = json.decode(response.body);
-      final dynamic raw = (body is List) ? body : (body is Map ? (body['data'] ?? body['users']) : null);
-      final List<dynamic> dataList = raw is List ? raw : const [];
-
-      final users = <_EmployeeUser>[];
-      for (final item in dataList) {
-        if (item is! Map) continue;
-        final map = Map<String, dynamic>.from(item);
-        if (_EmployeeUser.isInactive(map)) continue;
-        users.add(_EmployeeUser.fromJson(map));
-      }
-
-      // Always sort by Score desc (unscored last) -> tenure desc -> name
-      users.sort((a, b) {
-        final sa = a.integrityScore, sb = b.integrityScore;
-        if (sa == null && sb != null) return 1;
-        if (sa != null && sb == null) return -1;
-        if (sa != null && sb != null && sa != sb) return sb.compareTo(sa);
-        final ya = a.yearsWorked ?? 0, yb = b.yearsWorked ?? 0;
-        if (ya != yb) return yb.compareTo(ya);
-        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-      });
-
-      // Ties share a rank (1, 1, 3, ...); unscored users are unranked.
-      final entries = <_Entry>[];
-      int? prevRank;
-      double? prevScore;
-      for (var i = 0; i < users.length; i++) {
-        final s = users[i].integrityScore;
-        int? rank;
-        if (s != null) {
-          if (prevScore != null && s == prevScore) {
-            rank = prevRank;
-          } else {
-            rank = i + 1;
-            prevRank = rank;
-            prevScore = s;
-          }
-        }
-        entries.add(_Entry(users[i], rank));
-      }
+      final entries = await _loadEntries();
+      final users = entries.map((e) => e.user).toList();
 
       final scores = users.map((u) => u.integrityScore).whereType<double>().toList();
       final tenures = users.map((u) => u.yearsWorked).whereType<double>().toList();
@@ -429,6 +440,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
                           user: e.user,
                           rank: e.rank,
                           teamAvg: _teamAvgScore,
+                          teamSize: _entries.length,
                           index: index,
                           animate: _seen.add(key),
                         );
@@ -576,6 +588,7 @@ class _EmployeeFullHeightCard extends StatefulWidget {
   final _EmployeeUser user;
   final int? rank;
   final double? teamAvg;
+  final int teamSize;
   final int index;
   final bool animate;
 
@@ -584,6 +597,7 @@ class _EmployeeFullHeightCard extends StatefulWidget {
     required this.user,
     required this.rank,
     required this.teamAvg,
+    required this.teamSize,
     required this.index,
     required this.animate,
   });
@@ -699,6 +713,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
         child: LayoutBuilder(
           builder: (context, c) {
             return MouseRegion(
+              cursor: SystemMouseCursors.click,
               onEnter: (_) => setState(() => _hovered = true),
               onExit: (_) => setState(() {
                 _hovered = false;
@@ -710,7 +725,13 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                   (e.localPosition.dy / c.maxHeight * 2 - 1).clamp(-1.0, 1.0),
                 );
               }),
-              child: TweenAnimationBuilder<double>(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => context.go(
+                  '/hr/kpis/${Uri.encodeComponent(widget.user.id)}',
+                  extra: _EmployeeKpiArgs(_Entry(widget.user, widget.rank), widget.teamAvg, widget.teamSize),
+                ),
+                child: TweenAnimationBuilder<double>(
                 tween: Tween<double>(end: _hovered ? 1.0 : 0.0),
                 duration: const Duration(milliseconds: 220),
                 curve: Curves.easeOutCubic,
@@ -748,6 +769,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                     ),
                   ),
                 ),
+              ),
               ),
             );
           },
