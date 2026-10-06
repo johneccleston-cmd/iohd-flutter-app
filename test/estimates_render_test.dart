@@ -36,9 +36,10 @@ Map<String, dynamic> _payload() => {
         {'bucket': '15-30 days', 'count': 31, 'value': 433864.0},
         {'bucket': '31+ days', 'count': 290, 'value': 5865223.0},
       ],
+      'history': {'openValue': [for (var i = 0; i < 30; i++) 6000000.0 + i * 25000 + (i % 5) * 40000]},
       'monthlyValue': [
         for (var m = 1; m <= 10; m++)
-          {'month_num': m, 'sent_value': 300000.0 + m * 20000, 'won_value': 120000.0 + m * 9000, 'sent_count': 30 + m, 'won_count': 12 + m ~/ 2},
+          {'month_num': m, 'sent_value': 300000.0 + m * 20000, 'won_value': 120000.0 + m * 9000, 'sent_count': 30 + m, 'won_count': 12 + m ~/ 2, 'lost_value': 15000.0 + (m % 4) * 12000},
       ],
       'lostReasons': [
         {'reason': 'Other', 'lost_value': 241962.0, 'count': 31},

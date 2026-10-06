@@ -147,6 +147,12 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
   int _newCustomersYtd = 0;
 
   List<_MonthlyJobData> _monthlyData = [];
+
+  /// Profit margin % and first-time customers per calendar month (January first), and daily snapshots of the
+  /// active open job count (oldest first), for the scorecards' trend lines.
+  List<double> _marginMonthly = List.filled(12, 0);
+  List<double> _newCustMonthly = List.filled(12, 0);
+  List<double> _activeHistory = [];
   List<_PipelineStage>? _pipelineStages;
   List<_JobStatusCount>? _statusCounts;
   ({int completed, int withCategories, int? withLineItems})? _splitCoverage;
@@ -219,6 +225,20 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
         _avgProfitMargin = _parseDouble(scorecards['avgProfitMargin']);
         _avgJobRevenue = _parseDouble(scorecards['avgJobRevenue']);
         _newCustomersYtd = _parseInt(scorecards['newCustomersYtd']);
+
+        final hist = body['history'];
+        _activeHistory = [
+          for (final v in (hist is Map ? (hist['activeOpenJobs'] as List<dynamic>? ?? const []) : const <dynamic>[])) _parseDouble(v),
+        ];
+        _marginMonthly = List<double>.filled(12, 0);
+        _newCustMonthly = List<double>.filled(12, 0);
+        for (final e in (body['monthlyMetrics'] as List<dynamic>? ?? const [])) {
+          final m = _parseInt(e['month_num']);
+          if (m >= 1 && m <= 12) {
+            _marginMonthly[m - 1] = _parseDouble(e['profit_margin']);
+            _newCustMonthly[m - 1] = _parseDouble(e['new_customers']);
+          }
+        }
         
         _pipelineStages = _parsePipelineStages(body['pipelineStages']);
         _statusCounts = _parseStatusCounts(body['statusCounts']);
@@ -326,15 +346,15 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
           height: 86,
           child: Row(
             children: [
-              Expanded(child: AnimatedMetricCard(title: 'Completed YTD', value: _completedYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.emeraldDeep, index: 0)),
+              Expanded(child: AnimatedMetricCard(title: 'Completed YTD', value: _completedYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.emeraldDeep, index: 0, trend: dashTrend([for (final m in _monthlyData) m.completedTotal.toDouble()], widget.selectedYear), sparkMinWidth: 215)),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Active Open Jobs', value: _activeOpenJobs.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 1)),
+              Expanded(child: AnimatedMetricCard(title: 'Active Open Jobs', value: _activeOpenJobs.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 1, trend: _activeHistory.length >= 2 ? _activeHistory : null, sparkMinWidth: 215)),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Profit Margin', value: _avgProfitMargin, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.indigo, index: 2)),
+              Expanded(child: AnimatedMetricCard(title: 'Avg Profit Margin', value: _avgProfitMargin, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.indigo, index: 2, trend: dashTrend(_marginMonthly, widget.selectedYear), sparkMinWidth: 215)),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Job Revenue', value: _avgJobRevenue, format: (v) => _money(v), caption: '', valueColor: DashUi.amber, index: 3)),
+              Expanded(child: AnimatedMetricCard(title: 'Avg Job Revenue', value: _avgJobRevenue, format: (v) => _money(v), caption: '', valueColor: DashUi.amber, index: 3, trend: dashTrend([for (final m in _monthlyData) m.completedTotal > 0 ? m.totalRevenue / m.completedTotal : 0.0], widget.selectedYear), sparkMinWidth: 215)),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'New Customers YTD', value: _newCustomersYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.blue, index: 4)),
+              Expanded(child: AnimatedMetricCard(title: 'New Customers YTD', value: _newCustomersYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.blue, index: 4, trend: dashTrend(_newCustMonthly, widget.selectedYear), sparkMinWidth: 215)),
             ],
           ),
         ),

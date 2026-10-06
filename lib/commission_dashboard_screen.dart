@@ -22,6 +22,7 @@ class _Ui {
   static const emeraldDeep = Color(0xFF059669);
   static const indigo = Color(0xFF6366F1);
   static const sky = Color(0xFF0284C7);
+  static const amber = Color(0xFFD97706);
 
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
         color: Colors.white,
@@ -147,7 +148,13 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
 
   double _totalPayouts = 0;
   double _retainagePool = 0;
+
+  /// Daily snapshots of the pool (oldest first) for its trend line; empty until there are a couple of days.
+  List<double> _retainageHistory = [];
   double _avgPerTech = 0;
+
+  /// Sales rep commission on estimates won this year (a percent of labor on each).
+  double _salesCommission = 0;
   double _nextDisbursement = 0;
   int _nextDisbursementTechs = 0;
 
@@ -187,7 +194,14 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
           setState(() {
             _totalPayouts = (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
             _retainagePool = (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
+            final hist = body['history'];
+            _retainageHistory = [
+              for (final v in (hist is Map ? (hist['retainagePool'] as List<dynamic>? ?? const []) : const <dynamic>[]))
+                (v as num).toDouble(),
+            ];
             _avgPerTech = (summary['avgCommissionPerTech'] as num?)?.toDouble() ?? 0.0;
+            final sales = (summary['salesCommission'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+            _salesCommission = (sales['total'] as num?)?.toDouble() ?? 0.0;
             final next = (summary['nextDisbursement'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
             _nextDisbursement = (next['amount'] as num?)?.toDouble() ?? 0.0;
             _nextDisbursementTechs = (next['techCount'] as num?)?.toInt() ?? 0;
@@ -216,6 +230,17 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
         });
       }
     }
+  }
+
+  /// Commission as a % of revenue, month by month, trimmed the same way as the payout trend.
+  List<double>? _rateTrend() {
+    if (_chartData.isEmpty) return null;
+    final now = DateTime.now();
+    final upTo = widget.selectedYear == now.year ? now.month : _chartData.length;
+    final pts = _chartData.take(upTo).map((p) => p.revenue > 0 ? p.payout / p.revenue * 100 : 0.0).toList();
+    final first = pts.indexWhere((v) => v > 0);
+    final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
+    return trimmed.length >= 2 ? trimmed : null;
   }
 
   List<double> _payoutTrend() {
@@ -260,9 +285,19 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
               const SizedBox(width: 12),
               Expanded(
                 child: _MetricCard(
+                  title: 'Sales commission YTD',
+                  amount: _salesCommission,
+                  index: 1,
+                  valueColor: _Ui.amber,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _MetricCard(
                   title: 'Commercial retainage pool',
                   amount: _retainagePool,
-                  index: 1,
+                  index: 2,
+                  trend: _retainageHistory.length >= 2 ? _retainageHistory : null,
                   valueColor: _Ui.indigo,
                 ),
               ),
@@ -271,7 +306,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                 child: _MetricCard(
                   title: 'Average commission per tech',
                   amount: _avgPerTech,
-                  index: 2,
+                  index: 3,
                   valueColor: _Ui.ink,
                 ),
               ),
@@ -280,8 +315,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                 child: _MetricCard(
                   title: 'Commission % of revenue',
                   amount: commissionRate,
-                  index: 3,
+                  index: 4,
                   valueColor: _Ui.sky,
+                  trend: _rateTrend(),
                   format: (v) => '${v.toStringAsFixed(1)}%',
                 ),
               ),

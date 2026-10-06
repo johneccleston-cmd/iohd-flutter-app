@@ -14,11 +14,11 @@ import 'reports_screen.dart';
 import 'commission_dashboard_screen.dart';
 import 'technicians_dashboard_screen.dart';
 import 'inventory_dashboard_screen.dart';
-import 'widgets/generic_dashboard_screen.dart';
 import 'widgets/main_navigation_shell.dart';
 import 'jobs_dashboard_screen.dart';
 import 'estimates_dashboard_screen.dart';
 import 'sales_dashboard_screen.dart';
+import 'collections_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
 import 'inventory_screen.dart';
 import 'statuses_screen.dart';
@@ -140,7 +140,7 @@ final GoRouter _router = GoRouter(
               GoRoute(path: 'jobs', builder: (context, state) => const JobsDashboardScreen()),
               GoRoute(path: 'estimates', builder: (context, state) => const EstimatesDashboardScreen()),
               GoRoute(path: 'sales', builder: (context, state) => const SalesDashboardScreen()),
-              GoRoute(path: 'collections', builder: (context, state) => const GenericDashboardScreen(title: "Collections")),
+              GoRoute(path: 'collections', builder: (context, state) => const CollectionsDashboardScreen()),
             ],
           ),
         ]),

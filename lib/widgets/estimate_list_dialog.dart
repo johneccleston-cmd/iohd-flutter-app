@@ -100,6 +100,9 @@ class EstimateListDialog extends StatefulWidget {
   final String noun;
   final String? periodLabel;
 
+  /// Word after the day count on each row: "12 days old" (estimates) or "12 days overdue" (unpaid balances).
+  final String ageLabel;
+
   const EstimateListDialog({
     super.key,
     required this.year,
@@ -113,6 +116,7 @@ class EstimateListDialog extends StatefulWidget {
     this.initialOutcome = 'all',
     this.noun = 'estimate',
     this.periodLabel,
+    this.ageLabel = 'old',
   });
 
   @override
@@ -391,7 +395,7 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
       if (it.startDate != null) _dateFmt.format(it.startDate!),
       if (it.daysOld != null)
         it.daysOld! >= 0
-            ? '${it.daysOld} ${it.daysOld == 1 ? 'day' : 'days'} old'
+            ? '${it.daysOld} ${it.daysOld == 1 ? 'day' : 'days'} ${widget.ageLabel}'
             : 'starts in ${-it.daysOld!} ${it.daysOld == -1 ? 'day' : 'days'}',
     ].join(' · ');
 

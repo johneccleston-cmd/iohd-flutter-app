@@ -96,8 +96,9 @@ class _MonthlyValueData {
   final int sentCount;
   final int wonCount;
   final bool hasData;
+  final double lostValue;
 
-  const _MonthlyValueData(this.month, this.sentValue, this.wonValue, this.sentCount, this.wonCount, this.hasData);
+  const _MonthlyValueData(this.month, this.sentValue, this.wonValue, this.sentCount, this.wonCount, this.hasData, [this.lostValue = 0.0]);
 
   double get avgSentValue => sentCount > 0 ? sentValue / sentCount : 0.0;
   double get winRate => sentCount > 0 ? (wonCount / sentCount) * 100 : 0.0;
@@ -152,6 +153,9 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
   int _sentYtd = 0;
 
   List<_MonthlyValueData> _valueData = [];
+
+  /// Daily snapshots of the open value (oldest first) for its trend line; empty until there are a couple of days.
+  List<double> _openHistory = [];
   List<_LostReason> _lostReasons = [];
   List<_AgingBucket> _agingBuckets = [];
   List<_StaleEstimate> _staleEstimates = [];
@@ -201,6 +205,10 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
         _lostValue = _parseDouble(scorecards['lostValue']);
         _winRate = _parseDouble(scorecards['winRate']);
         _sentYtd = _parseInt(scorecards['sentYtd']);
+        final hist = body['history'];
+        _openHistory = [
+          for (final v in (hist is Map ? (hist['openValue'] as List<dynamic>? ?? const []) : const <dynamic>[])) _parseDouble(v),
+        ];
 
         // Parse Stale Pipeline Ticker
         final List<dynamic> rawStale = body['stalePipeline'] ?? [];
@@ -229,6 +237,7 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
             'won_value': _parseDouble(item['won_value']),
             'sent_count': _parseInt(item['sent_count']),
             'won_count': _parseInt(item['won_count']),
+            'lost_value': _parseDouble(item['lost_value']),
           };
         }
 
@@ -239,7 +248,8 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
           double wv = monthlyMap[mNum]?['won_value'] ?? 0.0;
           int sc = monthlyMap[mNum]?['sent_count'] ?? 0;
           int wc = monthlyMap[mNum]?['won_count'] ?? 0;
-          return _MonthlyValueData(monthNames[i], sv, wv, sc, wc, sv > 0 || wv > 0 || sc > 0);
+          final lv = monthlyMap[mNum]?['lost_value'] ?? 0.0;
+          return _MonthlyValueData(monthNames[i], sv, wv, sc, wc, sv > 0 || wv > 0 || sc > 0, lv);
         });
 
         // Parse Lost Reasons
@@ -293,13 +303,13 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
           height: 86,
           child: Row(
             children: [
-              Expanded(child: AnimatedMetricCard(title: 'Open Value', value: _openValue, format: (v) => _money(v), caption: '', valueColor: DashUi.indigo, index: 0)),
+              Expanded(child: AnimatedMetricCard(title: 'Open Value', value: _openValue, format: (v) => _money(v), caption: '', valueColor: DashUi.indigo, index: 0, trend: _openHistory.length >= 2 ? _openHistory : null)),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Lost Value', value: _lostValue, format: (v) => _money(v), caption: '', valueColor: DashUi.red, index: 1)),
+              Expanded(child: AnimatedMetricCard(title: 'Lost Value', value: _lostValue, format: (v) => _money(v), caption: '', valueColor: DashUi.red, index: 1, trend: dashTrend([for (final m in _valueData) m.lostValue], widget.selectedYear))),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Win Rate', value: _winRate, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.emeraldDeep, index: 2)),
+              Expanded(child: AnimatedMetricCard(title: 'Avg Win Rate', value: _winRate, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.emeraldDeep, index: 2, trend: dashTrend([for (final m in _valueData) m.winRate], widget.selectedYear))),
               const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Estimates Sent YTD', value: _sentYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 3)),
+              Expanded(child: AnimatedMetricCard(title: 'Estimates Sent YTD', value: _sentYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 3, trend: dashTrend([for (final m in _valueData) m.sentCount.toDouble()], widget.selectedYear))),
             ],
           ),
         ),

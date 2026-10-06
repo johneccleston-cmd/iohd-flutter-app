@@ -157,12 +157,35 @@ class _DayItem {
       amount = _d(j['amount']);
 }
 
+/// A Won estimate a sales rep is paid on: labor x rate, in the week the estimate became Won.
+class _RepItem {
+  final String jobId;
+  final String customer;
+  final String wonOn;
+  final String closedOn;
+  final String basisLabel;
+  final double labor;
+  final double ratePct;
+  final double amount;
+
+  _RepItem(Map<String, dynamic> j)
+    : jobId = _s(j['jobId']),
+      customer = _s(j['customer']),
+      wonOn = _s(j['wonOn']),
+      closedOn = _s(j['closedOn']),
+      basisLabel = _s(j['basisLabel']),
+      labor = _d(j['labor']),
+      ratePct = _d(j['ratePct']),
+      amount = _d(j['amount']);
+}
+
 class _Week {
   final String weekStart;
   final String weekEnd;
   final double jobNet;
   final double advancesPaid;
   final double callbackPay;
+  final double repPay;
   final double otherAdjustments;
   final double weeklyGross;
   final double hurdleApplied;
@@ -172,6 +195,7 @@ class _Week {
   final List<_Job> jobs;
   final List<_DayItem> advances;
   final List<_DayItem> callbacks;
+  final List<_RepItem> repCommissions;
 
   _Week(Map<String, dynamic> j)
     : weekStart = _s(j['weekStart']),
@@ -179,6 +203,7 @@ class _Week {
       jobNet = _d(j['jobNet']),
       advancesPaid = _d(j['advancesPaid']),
       callbackPay = _d(j['callbackPay']),
+      repPay = _d(j['repPay']),
       otherAdjustments = _d(j['otherAdjustments']),
       weeklyGross = _d(j['weeklyGross']),
       hurdleApplied = _d(j['hurdleApplied']),
@@ -191,6 +216,9 @@ class _Week {
           .toList(),
       callbacks = ((j['callbacks'] as List?) ?? const [])
           .map((e) => _DayItem(Map<String, dynamic>.from(e as Map)))
+          .toList(),
+      repCommissions = ((j['repCommissions'] as List?) ?? const [])
+          .map((e) => _RepItem(Map<String, dynamic>.from(e as Map)))
           .toList();
 }
 
@@ -1955,6 +1983,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           _ledgerRow('Closed-job commission (net to tech)', w.jobNet, dot: DashUi.emeraldDeep),
           if (w.advancesPaid != 0) _ledgerRow('Advances paid this week', w.advancesPaid, dot: DashUi.sky, plus: true),
           if (w.callbackPay != 0) _ledgerRow('Callback pay', w.callbackPay, dot: DashUi.amber, plus: true),
+          if (w.repPay != 0) _ledgerRow('Sales commission (closed jobs)', w.repPay, dot: DashUi.indigo, plus: true),
           if (w.otherAdjustments != 0)
             _ledgerRow(
               'Other adjustments',
@@ -2319,6 +2348,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         _dayCard('Advance Days', 'Flat daily advance. Counts toward the weekly hurdle.', w.advances, DashUi.sky),
       if (w.callbacks.isNotEmpty)
         _dayCard('Callbacks', 'Flat callback pay, outside any job pool.', w.callbacks, DashUi.amber),
+      if (w.repCommissions.isNotEmpty) _repCard(w.repCommissions),
     ];
     if (cards.isEmpty) return null;
 
@@ -2390,6 +2420,71 @@ class _PayrollScreenState extends State<PayrollScreen> {
                     child: Text(
                       'Job ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}',
                       maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
+                    ),
+                  ),
+                  Text(_fmt(i.amount), style: _num(13.5, FontWeight.w700, DashUi.ink)),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _repCard(List<_RepItem> items) {
+    final total = items.fold<double>(0, (s, i) => s + i.amount);
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: DashUi.panel(radius: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(padding: const EdgeInsets.only(top: 5), child: _dot(DashUi.indigo, size: 9)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Sales Commission',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      'Percent of labor on won estimates, paid once the job closes (first payroll of the next month).',
+                      style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                    ),
+                  ],
+                ),
+              ),
+              Text(_fmt(total), style: _num(15, FontWeight.w800, DashUi.indigo)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (final i in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
+                    child: Text(
+                      _day(i.closedOn),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Est ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}, closed  '
+                      '(${_fmt(i.labor)} labor x ${_pct(i.ratePct)}, ${i.basisLabel})',
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
                     ),

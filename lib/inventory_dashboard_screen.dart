@@ -123,6 +123,9 @@ class _InventorySummary {
   /// False when the server says stock received/used by month isn't recorded yet.
   final bool movementTracked;
 
+  /// Daily snapshots of the total valuation (oldest first) for its trend line.
+  final List<double> valuationHistory;
+
   const _InventorySummary({
     this.totalValuation = 0,
     this.deadStockValue,
@@ -133,6 +136,7 @@ class _InventorySummary {
     this.monthly = const [],
     this.topStrikeTechs = const [],
     this.movementTracked = true,
+    this.valuationHistory = const [],
   });
 
   factory _InventorySummary.fromJson(Map<String, dynamic> json) {
@@ -183,6 +187,10 @@ class _InventorySummary {
       topStrikeTechs: techList,
       monthly: monthList,
       movementTracked: json['movementTracked'] != false,
+      valuationHistory: [
+        for (final v in ((json['history'] is Map ? (json['history'] as Map)['valuation'] : null) as List? ?? const []))
+          num_(v),
+      ],
     );
   }
 }
@@ -309,6 +317,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
                   caption: '', // Pass empty string to hide it
                   valueColor: DashUi.blue,
                   index: 0,
+                  trend: data.valuationHistory.length >= 2 ? data.valuationHistory : null,
+                  sparkMinWidth: 215,
                 ),
               ),
               const SizedBox(width: 8),

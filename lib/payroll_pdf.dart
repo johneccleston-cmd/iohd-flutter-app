@@ -296,6 +296,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r) {
     ['Closed-job commission (net to tech)', _fmt(w.jobNet)],
     if (w.advancesPaid != 0) ['Advances paid', _fmt(w.advancesPaid)],
     if (w.callbackPay != 0) ['Callback pay', _fmt(w.callbackPay)],
+    if (w.repPay != 0) ['Sales commission (closed jobs)', _fmt(w.repPay)],
     if (w.otherAdjustments != 0) ['Other adjustments', _fmt(w.otherAdjustments)],
     ['Weekly gross', _fmt(w.weeklyGross)],
     if (w.hurdleRule > 0)
@@ -331,6 +332,20 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r) {
         ],
         flex: const [1, 1.4, 1.6, 4, 1.2],
         right: const {4},
+      ),
+    );
+  }
+  if (w.repCommissions.isNotEmpty) {
+    out.add(pw.SizedBox(height: 10));
+    out.add(
+      _pdfTable(
+        const ['Closed', 'Estimate', 'Customer', 'Basis', 'Labor', 'Rate', 'Amount'],
+        [
+          for (final c in w.repCommissions)
+            [_day(c.closedOn), c.jobId, c.customer, c.basisLabel, _fmt(c.labor), _pct(c.ratePct), _fmt(c.amount)],
+        ],
+        flex: const [1, 1.6, 3, 3, 1.2, 0.8, 1.2],
+        right: const {4, 5, 6},
       ),
     );
   }

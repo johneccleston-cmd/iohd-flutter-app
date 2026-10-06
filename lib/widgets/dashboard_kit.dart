@@ -7,7 +7,9 @@
 // Structure stays quiet (hairline borders, no shadows); each screen gets one bold element.
 
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 class DashUi {
   static const ink = Color(0xFF0F172A);
@@ -25,18 +27,18 @@ class DashUi {
   static const red = Color(0xFFDC2626);
 
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: line),
-      );
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: line),
+  );
 }
 
 String dashMoney(double v) {
   final neg = v < 0;
-  final s = v.abs().toStringAsFixed(2).replaceAllMapped(
-        RegExp(r'(\d)(?=(\d{3})+\.)'),
-        (m) => '${m[1]},',
-      );
+  final s = v
+      .abs()
+      .toStringAsFixed(2)
+      .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+\.)'), (m) => '${m[1]},');
   return '${neg ? '-' : ''}\$$s';
 }
 
@@ -63,20 +65,28 @@ class DashAvatar extends StatelessWidget {
   });
 
   String get _initials {
-    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
   Widget _fallback() => Container(
-        color: DashUi.faint,
-        alignment: Alignment.center,
-        child: Text(
-          _initials,
-          style: TextStyle(fontSize: size * 0.34, fontWeight: FontWeight.w700, color: DashUi.slate),
-        ),
-      );
+    color: DashUi.faint,
+    alignment: Alignment.center,
+    child: Text(
+      _initials,
+      style: TextStyle(
+        fontSize: size * 0.34,
+        fontWeight: FontWeight.w700,
+        color: DashUi.slate,
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -99,10 +109,18 @@ class DashAvatar extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        border: ringWidth > 0 ? Border.all(color: ringColor ?? DashUi.line, width: ringWidth) : null,
+        border: ringWidth > 0
+            ? Border.all(color: ringColor ?? DashUi.line, width: ringWidth)
+            : null,
         boxShadow: glowColor == null
             ? null
-            : [BoxShadow(color: glowColor!, blurRadius: 18, offset: const Offset(0, 6))],
+            : [
+                BoxShadow(
+                  color: glowColor!,
+                  blurRadius: 18,
+                  offset: const Offset(0, 6),
+                ),
+              ],
       ),
       child: image,
     );
@@ -134,7 +152,11 @@ class _HoverLiftState extends State<HoverLift> {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         curve: Curves.easeOut,
-        transform: Matrix4.translationValues(0, _hovering ? -widget.lift : 0, 0),
+        transform: Matrix4.translationValues(
+          0,
+          _hovering ? -widget.lift : 0,
+          0,
+        ),
         child: widget.builder(context, _hovering),
       ),
     );
@@ -161,6 +183,9 @@ class AnimatedMetricCard extends StatefulWidget {
   final int index;
   final List<double>? trend;
 
+  /// The trend line is hidden when the card's inner width is below this (it needs room beside the number).
+  final double sparkMinWidth;
+
   const AnimatedMetricCard({
     super.key,
     required this.title,
@@ -170,13 +195,15 @@ class AnimatedMetricCard extends StatefulWidget {
     required this.index,
     this.format = dashMoney,
     this.trend,
+    this.sparkMinWidth = 250,
   });
 
   @override
   State<AnimatedMetricCard> createState() => _AnimatedMetricCardState();
 }
 
-class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTickerProviderStateMixin {
+class _AnimatedMetricCardState extends State<AnimatedMetricCard>
+    with SingleTickerProviderStateMixin {
   static const _baseMs = 520;
   static const _staggerMs = 110;
   static const _countUpMs = 1100;
@@ -190,10 +217,17 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
   void initState() {
     super.initState();
     final totalMs = _baseMs + widget.index * _staggerMs;
-    _enter = AnimationController(vsync: this, duration: Duration(milliseconds: totalMs));
+    _enter = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: totalMs),
+    );
     _t = CurvedAnimation(
       parent: _enter,
-      curve: Interval(widget.index * _staggerMs / totalMs, 1.0, curve: Curves.easeOutCubic),
+      curve: Interval(
+        widget.index * _staggerMs / totalMs,
+        1.0,
+        curve: Curves.easeOutCubic,
+      ),
     );
     _enter.forward();
   }
@@ -212,19 +246,19 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
   }
 
   Widget _valueText(double v) => FittedBox(
-        fit: BoxFit.scaleDown,
-        alignment: Alignment.centerLeft,
-        child: Text(
-          widget.format(v),
-          style: TextStyle(
-            fontSize: 28,
-            fontWeight: FontWeight.w800,
-            height: 1.1,
-            color: widget.valueColor,
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      );
+    fit: BoxFit.scaleDown,
+    alignment: Alignment.centerLeft,
+    child: Text(
+      widget.format(v),
+      style: TextStyle(
+        fontSize: 28,
+        fontWeight: FontWeight.w800,
+        height: 1.1,
+        color: widget.valueColor,
+        fontFeatures: const [FontFeature.tabularFigures()],
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -239,18 +273,29 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
           w.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate),
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: DashUi.slate,
+          ),
         ),
         const SizedBox(height: 6),
         if (v == null)
           const Text(
             '—',
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.w800, height: 1.1, color: DashUi.muted),
+            style: TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w800,
+              height: 1.1,
+              color: DashUi.muted,
+            ),
           )
         else
           TweenAnimationBuilder<double>(
             tween: Tween<double>(begin: 0, end: v),
-            duration: _reduceMotion ? Duration.zero : const Duration(milliseconds: _countUpMs),
+            duration: _reduceMotion
+                ? Duration.zero
+                : const Duration(milliseconds: _countUpMs),
             curve: Curves.easeOutCubic,
             builder: (context, value, _) => _valueText(value),
           ),
@@ -260,19 +305,26 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
     return FadeTransition(
       opacity: _t,
       child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.12), end: Offset.zero).animate(_t),
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.12),
+          end: Offset.zero,
+        ).animate(_t),
         child: HoverLift(
           builder: (context, hovering) => Container(
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: hovering ? w.valueColor.withValues(alpha: 0.55) : DashUi.line),
+              border: Border.all(
+                color: hovering
+                    ? w.valueColor.withValues(alpha: 0.55)
+                    : DashUi.line,
+              ),
             ),
             child: LayoutBuilder(
               builder: (context, c) {
                 // Skip the sparkline when the card is too narrow to fit it beside the number.
-                final showSpark = w.trend != null && c.maxWidth > 250;
+                final showSpark = w.trend != null && c.maxWidth > w.sparkMinWidth;
                 return Row(
                   children: [
                     Expanded(child: textColumn),
@@ -285,12 +337,21 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard> with SingleTick
                           tween: Tween<double>(begin: 0, end: 1),
                           duration: _reduceMotion
                               ? Duration.zero
-                              : const Duration(milliseconds: _countUpMs + _sparkDrawMs),
+                              : const Duration(
+                                  milliseconds: _countUpMs + _sparkDrawMs,
+                                ),
                           builder: (context, t, _) {
                             final progress =
-                                ((t * (_countUpMs + _sparkDrawMs) - _countUpMs) / _sparkDrawMs).clamp(0.0, 1.0);
+                                ((t * (_countUpMs + _sparkDrawMs) -
+                                            _countUpMs) /
+                                        _sparkDrawMs)
+                                    .clamp(0.0, 1.0);
                             return CustomPaint(
-                              painter: _SparklinePainter(values: w.trend!, color: w.valueColor, progress: progress),
+                              painter: _SparklinePainter(
+                                values: w.trend!,
+                                color: w.valueColor,
+                                progress: progress,
+                              ),
                             );
                           },
                         ),
@@ -312,7 +373,11 @@ class _SparklinePainter extends CustomPainter {
   final Color color;
   final double progress;
 
-  const _SparklinePainter({required this.values, required this.color, required this.progress});
+  const _SparklinePainter({
+    required this.values,
+    required this.color,
+    required this.progress,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -329,7 +394,11 @@ class _SparklinePainter extends CustomPainter {
       final y = size.height / 2;
       var x = pad;
       while (x < size.width - pad) {
-        canvas.drawLine(Offset(x, y), Offset(math.min(x + 4, size.width - pad), y), base);
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(math.min(x + 4, size.width - pad), y),
+          base,
+        );
         x += 8;
       }
       return;
@@ -337,7 +406,10 @@ class _SparklinePainter extends CustomPainter {
 
     final pts = <Offset>[
       for (var i = 0; i < values.length; i++)
-        Offset(pad + w * i / (values.length - 1), pad + h * (1 - values[i] / maxV)),
+        Offset(
+          pad + w * i / (values.length - 1),
+          pad + h * (1 - values[i] / maxV),
+        ),
     ];
 
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);
@@ -362,7 +434,11 @@ class _SparklinePainter extends CustomPainter {
       final head = metric.getTangentForOffset(len * progress);
       if (head != null) {
         if (progress >= 1) {
-          canvas.drawCircle(head.position, 6, Paint()..color = color.withValues(alpha: 0.18));
+          canvas.drawCircle(
+            head.position,
+            6,
+            Paint()..color = color.withValues(alpha: 0.18),
+          );
         }
         canvas.drawCircle(head.position, 3.2, Paint()..color = color);
       }
@@ -387,9 +463,12 @@ class SkeletonPulse extends StatefulWidget {
   State<SkeletonPulse> createState() => _SkeletonPulseState();
 }
 
-class _SkeletonPulseState extends State<SkeletonPulse> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+class _SkeletonPulseState extends State<SkeletonPulse>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
 
   @override
   void dispose() {
@@ -400,7 +479,10 @@ class _SkeletonPulseState extends State<SkeletonPulse> with SingleTickerProvider
   @override
   Widget build(BuildContext context) {
     return FadeTransition(
-      opacity: Tween<double>(begin: 0.45, end: 1).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
+      opacity: Tween<double>(
+        begin: 0.45,
+        end: 1,
+      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
       child: widget.child,
     );
   }
@@ -414,10 +496,13 @@ class SkeletonBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Container(
-        height: h,
-        width: w,
-        decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(r)),
-      );
+    height: h,
+    width: w,
+    decoration: BoxDecoration(
+      color: DashUi.line,
+      borderRadius: BorderRadius.circular(r),
+    ),
+  );
 }
 
 class DashErrorPanel extends StatelessWidget {
@@ -425,7 +510,12 @@ class DashErrorPanel extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
 
-  const DashErrorPanel({super.key, required this.title, required this.message, required this.onRetry});
+  const DashErrorPanel({
+    super.key,
+    required this.title,
+    required this.message,
+    required this.onRetry,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -439,7 +529,14 @@ class DashErrorPanel extends StatelessWidget {
           children: [
             const Icon(Icons.cloud_off_rounded, size: 34, color: DashUi.muted),
             const SizedBox(height: 14),
-            Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: DashUi.ink)),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: DashUi.ink,
+              ),
+            ),
             const SizedBox(height: 6),
             Text(
               message.replaceFirst('Exception: ', ''),
@@ -459,11 +556,175 @@ class DashErrorPanel extends StatelessWidget {
               onPressed: onRetry,
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text('Try again'),
-              style: FilledButton.styleFrom(backgroundColor: DashUi.emeraldDeep),
+              style: FilledButton.styleFrom(
+                backgroundColor: DashUi.emeraldDeep,
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+// =============================================================================
+// AUTO-SCROLLING TICKER
+// =============================================================================
+
+/// A strip of [items] that scrolls sideways and loops forever. It pauses while the cursor is over it
+/// and stands still when the OS asks for reduced motion.
+class AutoScrollTicker extends StatefulWidget {
+  final List<Widget> items;
+  final double height;
+  const AutoScrollTicker({super.key, required this.items, this.height = 56});
+
+  @override
+  State<AutoScrollTicker> createState() => _AutoScrollTickerState();
+}
+
+class _AutoScrollTickerState extends State<AutoScrollTicker>
+    with SingleTickerProviderStateMixin {
+  static const double _speed = 45.0; // px/sec
+  static const double _gap = 12.0;
+
+  late final Ticker _ticker;
+  final GlobalKey _rowKey = GlobalKey();
+  final ValueNotifier<double> _offset = ValueNotifier<double>(0.0);
+
+  double _cycleWidth = 1.0;
+  Duration? _last;
+  bool _hovered = false;
+  bool _reduceMotion = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker(_onTick);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _measure();
+      if (!_reduceMotion) _ticker.start();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final reduce = MediaQuery.of(context).disableAnimations;
+    if (reduce == _reduceMotion) return;
+    _reduceMotion = reduce;
+    if (reduce) {
+      _ticker.stop();
+      _last = null;
+      _offset.value = 0.0;
+    } else if (!_ticker.isActive) {
+      _last = null;
+      _ticker.start();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant AutoScrollTicker old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.items, widget.items)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    }
+  }
+
+  void _onTick(Duration elapsed) {
+    if (_hovered || _reduceMotion || _cycleWidth <= 1.0) {
+      _last = elapsed;
+      return;
+    }
+    final prev = _last;
+    _last = elapsed;
+    if (prev == null) return;
+    final dt = (elapsed - prev).inMicroseconds / Duration.microsecondsPerSecond;
+    if (dt <= 0) return;
+    final next = _offset.value + _speed * math.min(dt, 0.05);
+    _offset.value = next >= _cycleWidth ? next % _cycleWidth : next;
+  }
+
+  void _measure() {
+    if (!mounted) return;
+    final ro = _rowKey.currentContext?.findRenderObject();
+    if (ro is! RenderBox || !ro.hasSize || ro.size.width <= 0) return;
+    _cycleWidth = ro.size.width + _gap;
+    if (_offset.value >= _cycleWidth) _offset.value %= _cycleWidth;
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    _offset.dispose();
+    super.dispose();
+  }
+
+  Widget _row({Key? key}) => Row(
+    key: key,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (var i = 0; i < widget.items.length; i++) ...[
+        if (i > 0) const SizedBox(width: _gap),
+        widget.items[i],
+      ],
+    ],
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.items.isEmpty) return const SizedBox.shrink();
+
+    return MouseRegion(
+      onEnter: (_) {
+        _hovered = true;
+        _last = null;
+      },
+      onExit: (_) {
+        _hovered = false;
+        _last = null;
+      },
+      child: SizedBox(
+        height: widget.height,
+        width: double.infinity,
+        child: ClipRect(
+          child: ValueListenableBuilder<double>(
+            valueListenable: _offset,
+            // The row is drawn twice so the loop has no gap; OverflowBox lets it be wider than the viewport.
+            child: RepaintBoundary(
+              child: OverflowBox(
+                alignment: Alignment.centerLeft,
+                minWidth: 0,
+                maxWidth: double.infinity,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _row(key: _rowKey),
+                    const SizedBox(width: _gap),
+                    _row(),
+                  ],
+                ),
+              ),
+            ),
+            builder: (context, offset, child) =>
+                Transform.translate(offset: Offset(-offset, 0), child: child),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Trend line for a scorecard, from a 12-entry monthly series (January first).
+///
+/// Only months that have happened are used (the current year stops at this month), and the line starts
+/// one month before the first non-zero value so it doesn't open with a long flat stretch.
+/// Returns null when there are fewer than two points, so the card shows no line rather than a dot.
+List<double>? dashTrend(List<double> monthly, int year) {
+  final now = DateTime.now();
+  final upTo = year == now.year ? now.month : monthly.length;
+  final pts = monthly.take(upTo).toList();
+  final first = pts.indexWhere((v) => v > 0);
+  final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
+  return trimmed.length >= 2 ? trimmed : null;
 }

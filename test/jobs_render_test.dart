@@ -26,6 +26,8 @@ Map<String, dynamic> _payload({bool coverage = true}) => {
       'success': true,
       'year': 2026,
       'scorecards': {'completedYtd': 1506, 'activeOpenJobs': 239, 'avgJobRevenue': 1597.0, 'newCustomersYtd': 412, 'avgProfitMargin': 38.2},
+      'history': {'activeOpenJobs': [for (var i = 0; i < 30; i++) 200.0 + i + (i % 4) * 3]},
+      'monthlyMetrics': [for (var m = 1; m <= 10; m++) {'month_num': m, 'profit_margin': 40.0 + (m % 4) * 3, 'new_customers': 20 + (m % 5) * 4}],
       'monthlyVolume': [
         for (final r in const [(1, 159, 104, 42), (2, 131, 75, 41), (3, 159, 102, 38), (4, 168, 122, 35), (5, 183, 127, 34), (6, 196, 137, 37), (7, 178, 114, 38), (8, 167, 107, 45), (9, 157, 108, 39), (10, 8, 4, 0)])
           {'month_num': r.$1, 'completed_count': r.$2, 'install_count': r.$3, 'service_count': r.$4},

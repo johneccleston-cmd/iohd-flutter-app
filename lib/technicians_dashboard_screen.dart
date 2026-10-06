@@ -210,6 +210,15 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
     }
   }
 
+  /// One value per calendar month (January first) from the chart data, for the scorecard trend lines.
+  List<double> _monthlySeries(double Function(_MonthlyChartPoint) pick) {
+    final out = List<double>.filled(12, 0);
+    for (var i = 0; i < _chartData.length && i < 12; i++) {
+      out[i] = pick(_chartData[i]);
+    }
+    return out;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) return const _TechSkeleton();
@@ -236,6 +245,7 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
                   caption: '',
                   valueColor: DashUi.blue,
                   index: 0,
+                  trend: dashTrend(_monthlySeries((p) => p.totalProfit.toDouble()), widget.selectedYear),
                 ),
               ),
               const SizedBox(width: 12),
@@ -246,6 +256,7 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
                   caption: '',
                   valueColor: DashUi.blue,
                   index: 1,
+                  trend: dashTrend(_monthlySeries((p) => p.avgProfitPerDay.toDouble()), widget.selectedYear),
                 ),
               ),
               const SizedBox(width: 12),

@@ -94,6 +94,11 @@ class _FinancialSummary {
   final List<_MonthlyFinancials> chartData;
   final List<_ExpenseCategory> expenses;
 
+  /// Daily history of the balance cards (oldest first), for their trend lines. Empty until the backend has
+  /// a couple of days of snapshots.
+  final List<double> outstandingHistory;
+  final List<double> projectedHistory;
+
   const _FinancialSummary({
     this.revenueYtd = 0.0,
     this.outstandingMoney = 0.0,
@@ -107,6 +112,8 @@ class _FinancialSummary {
     this.otherRevenue = 0.0,
     this.chartData = const [],
     this.expenses = const [],
+    this.outstandingHistory = const [],
+    this.projectedHistory = const [],
   });
 
   factory _FinancialSummary.fromJson(Map<String, dynamic> json) {
@@ -127,6 +134,11 @@ class _FinancialSummary {
         _ExpenseCategory(sorted[i].category, sorted[i].amount, palette[i % palette.length]),
     ];
 
+    List<double> history(String key) => [
+      for (final v in ((json['history'] as Map<String, dynamic>?)?[key] as List<dynamic>? ?? const []))
+        (v as num).toDouble(),
+    ];
+
     return _FinancialSummary(
       revenueYtd: _parseMoney(json['revenueYtd']),
       outstandingMoney: _parseMoney(json['outstandingMoney']),
@@ -140,6 +152,8 @@ class _FinancialSummary {
       otherRevenue: _parseMoney(json['otherRevenue']),
       chartData: parsedChart,
       expenses: parsedExpenses,
+      outstandingHistory: history('outstanding'),
+      projectedHistory: history('projected'),
     );
   }
 }
@@ -300,25 +314,31 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // 1. Top 6 Financial Scorecards
+        // 1. Financial scorecards, all on one line. The four main cards get more width and show a trend line;
+        //    the two pool cards are smaller and have none. (Below ~250px of inner width a card hides its line,
+        //    so sparkMinWidth is lowered for these; the number scales down a little to make room.)
         SizedBox(
           height: 86,
           child: Row(
             children: [
               Expanded(
+                flex: 8,
                 child: AnimatedMetricCard(
                   // Completed-job revenue plus deposits received on jobs not finished yet, so it is higher
-                  // than the chart below, which is completed jobs only.
+                  // than the chart below, which is completed jobs only. The line is the monthly completed revenue.
                   title: 'Revenue + deposits YTD',
                   value: _data.revenueYtd,
                   format: _moneyNoDecimals,
                   caption: '',
                   valueColor: DashUi.sky,
                   index: 0,
+                  trend: dashTrend([for (final m in chartData) m.revenue], widget.selectedYear),
+                  sparkMinWidth: 185,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
+                flex: 8,
                 child: AnimatedMetricCard(
                   title: 'Outstanding',
                   value: _data.outstandingMoney,
@@ -326,10 +346,13 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
                   caption: '',
                   valueColor: DashUi.amber,
                   index: 1,
+                  trend: _historyTrend(_data.outstandingHistory),
+                  sparkMinWidth: 185,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
+                flex: 8,
                 child: AnimatedMetricCard(
                   title: 'Gross Profit YTD',
                   value: _data.grossProfitYtd,
@@ -337,10 +360,13 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
                   caption: '',
                   valueColor: DashUi.emeraldDeep,
                   index: 2,
+                  trend: dashTrend([for (final m in chartData) m.profit], widget.selectedYear),
+                  sparkMinWidth: 185,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
+                flex: 8,
                 child: AnimatedMetricCard(
                   title: 'Yearly Projected',
                   value: _data.yearlyProjected,
@@ -348,10 +374,13 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
                   caption: '',
                   valueColor: DashUi.blue,
                   index: 3,
+                  trend: _historyTrend(_data.projectedHistory),
+                  sparkMinWidth: 185,
                 ),
               ),
               const SizedBox(width: 8),
               Expanded(
+                flex: 4,
                 child: AnimatedMetricCard(
                   title: 'Company Pool',
                   value: _data.companyPool,
@@ -363,6 +392,7 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
               ),
               const SizedBox(width: 8),
               Expanded(
+                flex: 4,
                 child: AnimatedMetricCard(
                   title: 'Commercial Pool',
                   value: _data.commercialPool,
@@ -418,6 +448,9 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent> {
       ],
     );
   }
+
+  /// A daily-history line needs at least two days of snapshots; with fewer the card shows no line.
+  List<double>? _historyTrend(List<double> history) => history.length >= 2 ? history : null;
 
   /// Under ~700px of window height the default split leaves the bottom chart too short to read.
   bool _shortWindow(BuildContext context) => MediaQuery.sizeOf(context).height < 700;
@@ -2299,7 +2332,8 @@ if (metric == _FinancialChartMetric.both &&
 class _FinancialSkeleton extends StatelessWidget {
   const _FinancialSkeleton();
 
-  Widget _metric() => Expanded(
+  Widget _metric(int flex) => Expanded(
+        flex: flex,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
           decoration: DashUi.panel(radius: 12),
@@ -2322,15 +2356,15 @@ class _FinancialSkeleton extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            height: 92,
+            height: 86,
             child: Row(
               children: [
-                _metric(), const SizedBox(width: 8),
-                _metric(), const SizedBox(width: 8),
-                _metric(), const SizedBox(width: 8),
-                _metric(), const SizedBox(width: 8),
-                _metric(), const SizedBox(width: 8),
-                _metric(),
+                _metric(8), const SizedBox(width: 8),
+                _metric(8), const SizedBox(width: 8),
+                _metric(8), const SizedBox(width: 8),
+                _metric(8), const SizedBox(width: 8),
+                _metric(4), const SizedBox(width: 8),
+                _metric(4),
               ],
             ),
           ),
