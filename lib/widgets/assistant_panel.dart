@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import '../utils/status_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
@@ -237,6 +238,16 @@ class _Stats extends _Block {
   _Stats(this.items);
 }
 
+/// A `::: chart` block: one or more series over labelled points (months, customers, ...).
+class _Chart extends _Block {
+  final String kind; // line | bar | hbar
+  final String title;
+  final String format; // money | count | percent
+  final List<String> series;
+  final List<(String label, List<double> values)> points;
+  _Chart(this.kind, this.title, this.format, this.series, this.points);
+}
+
 class _Parsed {
   final List<_Block> blocks;
   final List<String> followUps;
@@ -248,7 +259,46 @@ final RegExp _bulletRe = RegExp(r'^\s*[-*•]\s+');
 final RegExp _numberedRe = RegExp(r'^\s*(\d+)[.)]\s+');
 final RegExp _headingRe = RegExp(r'^\s{0,3}#{1,4}\s+(.*)$');
 final RegExp _dashCellRe = RegExp(r'^:?-{2,}:?$');
-final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups)\s*$', caseSensitive: false);
+final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups|chart)\s*$', caseSensitive: false);
+
+/// Reads the body of a `::: chart` block:
+///   type: line | bar | hbar      title: ...      format: money | count | percent      series: Revenue | Profit
+///   then one "label | value | value" line per point. Returns null when there are fewer than two usable points.
+_Chart? _parseChart(List<String> body) {
+  var kind = 'bar';
+  var title = '';
+  var format = 'count';
+  var series = <String>[];
+  final points = <(String, List<double>)>[];
+  for (final b in body) {
+    final kv = RegExp(r'^(type|title|format|series)\s*:\s*(.*)$', caseSensitive: false).firstMatch(b);
+    if (kv != null) {
+      final k = kv.group(1)!.toLowerCase();
+      final v = kv.group(2)!.trim();
+      if (k == 'type') kind = v.toLowerCase();
+      if (k == 'title') title = v;
+      if (k == 'format') format = v.toLowerCase();
+      if (k == 'series') series = v.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      continue;
+    }
+    final parts = b.split('|').map((p) => p.trim()).toList();
+    if (parts.length < 2) continue;
+    final values = <double>[];
+    for (final p in parts.skip(1)) {
+      final n = double.tryParse(p.replaceAll(RegExp(r'[\$,%\s]'), ''));
+      if (n != null) values.add(n);
+    }
+    if (values.isEmpty) continue;
+    points.add((parts.first, values));
+  }
+  if (points.length < 2) return null;
+  final width = points.map((p) => p.$2.length).reduce((a, b) => a < b ? a : b).clamp(1, 3);
+  final trimmed = [for (final p in points.take(24)) (p.$1, p.$2.take(width).toList())];
+  if (!const {'line', 'bar', 'hbar'}.contains(kind)) kind = 'bar';
+  if (kind == 'hbar' && width > 1) kind = 'bar';
+  if (series.length != width) series = width == 1 ? [] : [for (var i = 0; i < width; i++) 'Series ${i + 1}'];
+  return _Chart(kind, title, format, series, trimmed);
+}
 
 bool _isRow(String l) {
   final t = l.trim();
@@ -283,7 +333,20 @@ _Parsed _parse(String text) {
         i++;
       }
       i++; // closing :::
-      if (kind == 'stats') {
+      if (kind == 'chart') {
+        final chart = _parseChart(body);
+        if (chart != null) {
+          blocks.add(chart);
+          // Copied text: the chart as a small list with formatted values, e.g. "Jan: Revenue $213,573, Profit $111,840".
+          plain.add(chart.title.isEmpty ? 'Chart' : chart.title);
+          for (final p in chart.points) {
+            final values = [
+              for (var s = 0; s < p.$2.length; s++) '${chart.series.length > s ? '${chart.series[s]} ' : ''}${_chartFull(p.$2[s], chart.format)}',
+            ];
+            plain.add('- ${p.$1}: ${values.join(', ')}');
+          }
+        }
+      } else if (kind == 'stats') {
         final items = <(String, String)>[];
         for (final b in body) {
           final parts = b.split('|');
@@ -455,7 +518,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('Ask IOHD', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink, height: 1.2)),
+                Text('Ask Jarvis', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink, height: 1.2)),
                 Text('Read-only. Answers come from your live data.',
                     style: TextStyle(fontSize: 12, color: _slate, height: 1.3)),
               ],
@@ -894,6 +957,7 @@ class _AnswerViewState extends State<_AnswerView> {
         ),
       _Table() => Padding(padding: const EdgeInsets.only(top: 4, bottom: 14), child: _ChatTable(rows: b.rows)),
       _Stats() => Padding(padding: const EdgeInsets.only(top: 2, bottom: 14), child: _StatRow(items: b.items, animate: _animate)),
+      _Chart() => Padding(padding: const EdgeInsets.only(top: 2, bottom: 14), child: _ChatChart(chart: b, animate: _animate)),
     };
   }
 
@@ -1117,7 +1181,398 @@ class _CountUp extends StatelessWidget {
   }
 }
 
+String _chartFull(double v, String format) {
+  final neg = v < 0;
+  final a = v.abs();
+  final s = _CountUp._fmt(a, format == 'percent' && a % 1 != 0 ? 1 : 0, true);
+  final body = switch (format) { 'money' => '\$$s', 'percent' => '$s%', _ => s };
+  return neg ? '-$body' : body;
+}
+
+String _chartCompact(double v, String format) {
+  final neg = v < 0;
+  final a = v.abs();
+  String s;
+  if (a >= 1e6) {
+    s = '${(a / 1e6).toStringAsFixed(a >= 1e7 ? 0 : 1).replaceAll(RegExp(r'\.0$'), '')}M';
+  } else if (a >= 1e4) {
+    s = '${(a / 1e3).toStringAsFixed(0)}K';
+  } else if (a >= 1e3) {
+    s = '${(a / 1e3).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}K';
+  } else {
+    s = a % 1 == 0 ? a.toStringAsFixed(0) : a.toStringAsFixed(1);
+  }
+  final body = switch (format) { 'money' => '\$$s', 'percent' => '$s%', _ => s };
+  return neg ? '-$body' : body;
+}
+
+/// A chart the assistant asked for with a `::: chart` block: line or vertical bars (several series allowed)
+/// for trends and comparisons, horizontal bars for rankings. Hover shows exact values.
+class _ChatChart extends StatefulWidget {
+  final _Chart chart;
+  final bool animate;
+  const _ChatChart({required this.chart, required this.animate});
+
+  @override
+  State<_ChatChart> createState() => _ChatChartState();
+}
+
+class _ChatChartState extends State<_ChatChart> {
+  static const _palette = [_brandRed, _info, _teal];
+  static const double _plotHeight = 210;
+  int? _hover;
+
+  _Chart get c => widget.chart;
+
+  String get _summary => '${c.title.isEmpty ? 'Chart' : c.title}. ${[
+        for (final p in c.points) '${p.$1}: ${[for (var i = 0; i < p.$2.length; i++) '${c.series.isEmpty ? '' : '${c.series[i]} '}${_chartFull(p.$2[i], c.format)}'].join(', ')}'
+      ].join('; ')}';
+
+  @override
+  Widget build(BuildContext context) {
+    final animate = widget.animate && !MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      label: _summary,
+      child: ExcludeSemantics(
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _stroke),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (c.title.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Text(c.title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink)),
+                ),
+              if (c.series.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Wrap(spacing: 14, runSpacing: 4, children: [
+                    for (var i = 0; i < c.series.length; i++)
+                      Row(mainAxisSize: MainAxisSize.min, children: [
+                        Container(width: 9, height: 9, decoration: BoxDecoration(color: _palette[i], borderRadius: BorderRadius.circular(3))),
+                        const SizedBox(width: 6),
+                        Text(c.series[i], style: const TextStyle(fontSize: 12, color: _slate)),
+                      ]),
+                  ]),
+                ),
+              if (c.kind == 'hbar') _hbars(animate) else _plot(animate),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _hbars(bool animate) {
+    final maxV = c.points.map((p) => p.$2.first).fold<double>(0, (a, b) => b > a ? b : a);
+    return Column(
+      children: [
+        for (var i = 0; i < c.points.length; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 3.5),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 150,
+                  child: Text(c.points[i].$1, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: _ink)),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TweenAnimationBuilder<double>(
+                    tween: Tween(begin: animate ? 0 : 1, end: 1),
+                    duration: Duration(milliseconds: 650 + i * 40),
+                    curve: Curves.easeOutCubic,
+                    builder: (_, t, _) => Align(
+                      alignment: Alignment.centerLeft,
+                      child: FractionallySizedBox(
+                        widthFactor: maxV <= 0 ? 0.0 : ((c.points[i].$2.first.abs() / maxV) * t).clamp(0.0, 1.0),
+                        child: Container(
+                          height: 16,
+                          decoration: BoxDecoration(
+                            color: i == 0 ? _brandRed : _brandRed.withValues(alpha: 0.55),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 78,
+                  child: Text(
+                    _chartFull(c.points[i].$2.first, c.format),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _ink, fontFeatures: [FontFeature.tabularFigures()]),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _plot(bool animate) {
+    return SizedBox(
+      height: _plotHeight,
+      child: LayoutBuilder(builder: (context, box) {
+        final geo = _ChartGeometry(Size(box.maxWidth, _plotHeight), c);
+        return TweenAnimationBuilder<double>(
+          tween: Tween(begin: animate ? 0 : 1, end: 1),
+          duration: const Duration(milliseconds: 750),
+          curve: Curves.easeOutCubic,
+          builder: (_, t, _) => MouseRegion(
+            onHover: (e) => setState(() => _hover = geo.indexAt(e.localPosition.dx)),
+            onExit: (_) => setState(() => _hover = null),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style))),
+                if (_hover != null) _tooltip(geo, _hover!),
+              ],
+            ),
+          ),
+        );
+      }),
+    );
+  }
+
+  Widget _tooltip(_ChartGeometry geo, int i) {
+    final p = c.points[i];
+    final x = geo.xCenter(i);
+    const w = 150.0;
+    final left = (x - w / 2).clamp(0.0, (geo.size.width - w).clamp(0.0, double.infinity));
+    return Positioned(
+      left: left,
+      top: 0,
+      width: w,
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+          decoration: BoxDecoration(
+            color: _ink,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.18), blurRadius: 10, offset: const Offset(0, 3))],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(p.$1, style: const TextStyle(fontSize: 11.5, color: Colors.white70)),
+              for (var s = 0; s < p.$2.length; s++)
+                Text(
+                  c.series.isEmpty ? _chartFull(p.$2[s], c.format) : '${c.series[s]}  ${_chartFull(p.$2[s], c.format)}',
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Colors.white),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Shared layout maths for the plot, so hover hit-testing and painting agree.
+class _ChartGeometry {
+  static const double left = 46, right = 8, top = 8, bottom = 24;
+  final Size size;
+  final _Chart chart;
+  late final double lo;
+  late final double hi;
+  late final int ticks; // number of gridline intervals between lo and hi
+
+  _ChartGeometry(this.size, this.chart) {
+    var maxV = 0.0, minV = 0.0;
+    for (final p in chart.points) {
+      for (final v in p.$2) {
+        if (v > maxV) maxV = v;
+        if (v < minV) minV = v;
+      }
+    }
+    // Round the axis to a tidy step (1, 2, 2.5, 5 x 10^n), going below zero when there are negative values.
+    final range = maxV - minV <= 0 ? 1.0 : maxV - minV;
+    final step = _niceCeil(range / 5);
+    lo = (minV / step).floor() * step;
+    var top = (maxV / step).ceil() * step;
+    if (top <= lo) top = lo + step;
+    hi = top;
+    ticks = ((hi - lo) / step).round().clamp(1, 8);
+  }
+
+  static double _niceCeil(double v) {
+    if (v <= 0) return 1;
+    var pow = 1.0;
+    while (v / pow >= 10) {
+      pow *= 10;
+    }
+    while (v / pow < 1) {
+      pow /= 10;
+    }
+    final f = v / pow;
+    final nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+    return nice * pow;
+  }
+
+  double get plotW => (size.width - left - right).clamp(1.0, double.infinity);
+  double get plotH => (size.height - top - bottom).clamp(1.0, double.infinity);
+  int get n => chart.points.length;
+  double get slot => plotW / n;
+  double xCenter(int i) => left + slot * (i + 0.5);
+  double y(double v) => top + plotH * (1 - (v - lo) / (hi - lo));
+  int? indexAt(double dx) {
+    if (dx < left || dx > size.width - right) return null;
+    return ((dx - left) / slot).floor().clamp(0, n - 1);
+  }
+}
+
+class _ChartPainter extends CustomPainter {
+  final _Chart chart;
+  final _ChartGeometry g;
+  final double t; // 0..1 grow-in
+  final int? hover;
+  final TextStyle base; // the app's text style, so axis labels use the same font as the rest of the answer
+  _ChartPainter(this.chart, this.g, this.t, this.hover, this.base);
+
+  static const _colors = _ChatChartState._palette;
+
+  void _text(Canvas canvas, String s, Offset at, {bool rightAlign = false, bool centre = false}) {
+    final tp = TextPainter(
+      text: TextSpan(text: s, style: base.copyWith(fontSize: 11, color: _muted, fontWeight: FontWeight.w400, fontFeatures: const [FontFeature.tabularFigures()])),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final dx = rightAlign ? at.dx - tp.width : (centre ? at.dx - tp.width / 2 : at.dx);
+    tp.paint(canvas, Offset(dx, at.dy - tp.height / 2));
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = _stroke
+      ..strokeWidth = 1;
+    for (var k = 0; k <= g.ticks; k++) {
+      final v = g.lo + (g.hi - g.lo) * k / g.ticks;
+      final yy = g.y(v);
+      canvas.drawLine(Offset(_ChartGeometry.left, yy), Offset(size.width - _ChartGeometry.right, yy), grid);
+      _text(canvas, _chartCompact(v, chart.format), Offset(_ChartGeometry.left - 8, yy), rightAlign: true);
+    }
+    if (g.lo < 0 && g.hi >= 0) {
+      // the zero line, so bars above and below it read correctly
+      canvas.drawLine(
+        Offset(_ChartGeometry.left, g.y(0)),
+        Offset(size.width - _ChartGeometry.right, g.y(0)),
+        Paint()
+          ..color = _slate.withValues(alpha: 0.55)
+          ..strokeWidth = 1.2,
+      );
+    }
+
+    // x labels, thinned so they never overlap
+    final step = (g.n * 46 / g.plotW).ceil().clamp(1, g.n);
+    for (var i = 0; i < g.n; i += step) {
+      _text(canvas, chart.points[i].$1, Offset(g.xCenter(i), size.height - 9), centre: true);
+    }
+
+    if (hover != null) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(_ChartGeometry.left + g.slot * hover!, _ChartGeometry.top, g.slot, g.plotH),
+          const Radius.circular(6),
+        ),
+        Paint()..color = _fill,
+      );
+      // grid lines sit under the highlight; redraw them lightly so the band does not hide them
+      for (var k = 0; k <= g.ticks; k++) {
+        final yy = g.y(g.lo + (g.hi - g.lo) * k / g.ticks);
+        canvas.drawLine(Offset(_ChartGeometry.left + g.slot * hover!, yy), Offset(_ChartGeometry.left + g.slot * (hover! + 1), yy), grid);
+      }
+    }
+
+    final seriesCount = chart.points.first.$2.length;
+    final base = g.y(g.lo < 0 ? 0 : g.lo);
+    double grow(double v) => base + (g.y(v) - base) * t;
+
+    if (chart.kind == 'line') {
+      for (var s = 0; s < seriesCount; s++) {
+        final color = _colors[s];
+        final path = Path();
+        for (var i = 0; i < g.n; i++) {
+          final p = Offset(g.xCenter(i), grow(chart.points[i].$2[s]));
+          i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
+        }
+        if (seriesCount == 1) {
+          final area = Path.from(path)
+            ..lineTo(g.xCenter(g.n - 1), base)
+            ..lineTo(g.xCenter(0), base)
+            ..close();
+          canvas.drawPath(
+            area,
+            Paint()
+              ..shader = LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [color.withValues(alpha: 0.16), color.withValues(alpha: 0.0)],
+              ).createShader(Rect.fromLTWH(0, _ChartGeometry.top, size.width, g.plotH)),
+          );
+        }
+        canvas.drawPath(
+          path,
+          Paint()
+            ..color = color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.5
+            ..strokeJoin = StrokeJoin.round
+            ..strokeCap = StrokeCap.round,
+        );
+        for (var i = 0; i < g.n; i++) {
+          final p = Offset(g.xCenter(i), grow(chart.points[i].$2[s]));
+          final on = hover == i;
+          if (g.n <= 14 || on) {
+            canvas.drawCircle(p, on ? 5 : 3.5, Paint()..color = Colors.white);
+            canvas.drawCircle(
+              p,
+              on ? 5 : 3.5,
+              Paint()
+                ..color = color
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = 2,
+            );
+          }
+        }
+      }
+    } else {
+      final groupW = g.slot * 0.68;
+      final barW = (groupW / seriesCount).clamp(4.0, 30.0);
+      for (var i = 0; i < g.n; i++) {
+        final startX = g.xCenter(i) - barW * seriesCount / 2;
+        for (var s = 0; s < seriesCount; s++) {
+          final v = chart.points[i].$2[s];
+          final top = grow(v);
+          final rect = Rect.fromLTRB(startX + barW * s + 1, v >= 0 ? top : base, startX + barW * (s + 1) - 1, v >= 0 ? base : top);
+          final color = _colors[s].withValues(alpha: hover == null || hover == i ? 1 : 0.45);
+          canvas.drawRRect(
+            RRect.fromRectAndCorners(rect, topLeft: const Radius.circular(4), topRight: const Radius.circular(4)),
+            Paint()..color = color,
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ChartPainter old) => old.t != t || old.hover != hover || old.chart != chart || old.base != base;
+}
+
 Color _statusColor(String s) {
+  final known = knownStatusColor(s);
+  if (known != null) return known;
   final t = s.toLowerCase();
   if (RegExp(r'delay|cancel|lost|write-off|overdue|90 day|60 day').hasMatch(t)) return _bad;
   if (RegExp(r'paid|closed|review sent|won').hasMatch(t)) return _good;

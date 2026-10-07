@@ -1,4 +1,4 @@
-# IOHD Hub (`iohd_desktop`)
+# IOHD Desktop (`iohd_desktop`)
 
 Flutter desktop/web back-office app for IOHD office staff: jobs, estimates, customers,
 calendar, inventory, payroll/commissions and dashboards. Talks to a Node backend on Render.

@@ -121,6 +121,8 @@ void main() {
     await _loadFont('Ahem', ['$root/bin/cache/artifacts/material_fonts/roboto-regular.ttf']);
   });
 
+  testWidgets('estimates 1280x600', (t) async => _shot(t, const Size(1280, 600), 'estimates_1280x600'));
+  testWidgets('estimates 1366x700', (t) async => _shot(t, const Size(1366, 700), 'estimates_1366x700'));
   testWidgets('estimates default', (t) async => _shot(t, const Size(1500, 800), 'estimates_default'));
   testWidgets('estimates hover aging bar', (t) async => _shot(t, const Size(1500, 800), 'estimates_hover_aging', hoverText: '31+ days'));
   testWidgets('estimates hover lost reason', (t) async => _shot(t, const Size(1500, 800), 'estimates_hover_lost', hoverText: 'Other'));

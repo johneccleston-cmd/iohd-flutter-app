@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import '../utils/status_colors.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart' hide TextDirection;
 
@@ -388,7 +389,7 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
     final sub = doorSummary.isNotEmpty
         ? doorSummary
         : (it.description.trim().isNotEmpty ? it.description.trim() : it.location.trim());
-    final tagColor = _outcomeColor(it.outcome);
+    final tagColor = knownStatusColor(it.status) ?? _outcomeColor(it.outcome); // the status's own colour
     final meta = [
       if (it.owner.isNotEmpty) it.owner,
       '#${it.jobId}',

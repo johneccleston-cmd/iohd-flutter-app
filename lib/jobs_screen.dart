@@ -3,6 +3,7 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:intl/intl.dart';
 import 'config/api_config.dart';
+import 'utils/status_colors.dart';
 import 'config/auth_session.dart';
 
 class JobsScreen extends StatefulWidget {
@@ -190,64 +191,7 @@ class _JobsScreenState extends State<JobsScreen> with AutomaticKeepAliveClientMi
     _fetchJobs(status: _selectedStatus, query: searchController.text, page: 1);
   }
 
-  Color _getStatusColor(String status) {
-    switch (status.trim().toLowerCase()) {
-      case 'need deposit':
-        return const Color(0xFFDC2626);
-      case 'need to order':
-        return const Color(0xFF0284C7);
-      case 'manage project':
-      case 'verify delivery':
-        return const Color(0xFF2563EB);
-      case 'need to schedule':
-        return const Color(0xFF059669);
-      case 'site check':
-      case 'scheduled':
-      case 'warranty work':
-      case 'callback':
-        return const Color(0xFF16A34A);
-      case 'appointment':
-        return const Color(0xFF10B981);
-      case 'delayed':
-      case 'need to warranty':
-      case 'partially complete':
-        return const Color(0xFFD97706);
-      case 'need to sell':
-      case 'google review sent':
-        return const Color(0xFF4338CA);
-      case 'cancelled':
-        return const Color(0xFF78350F);
-      case 'complete':
-        return const Color(0xFF64748B);
-      case 'final invoice sent':
-        return const Color(0xFFE11D48);
-      case 'write-off':
-        return const Color(0xFFB91C1C);
-      case 'close job':
-      case 'paid & closed':
-        return const Color(0xFF0F172A);
-      case 'part ordered':
-        return const Color(0xFF6366F1);
-      case 'estimate requested':
-      case 'estimate follow up':
-      case 'estimate accepted':
-        return const Color(0xFFC084FC);
-      case 'estimate provided':
-        return const Color(0xFF9333EA);
-      case 'estimate won':
-        return const Color(0xFF7E22CE);
-      case 'lost':
-        return const Color(0xFF9A3412);
-      case '14 day notice':
-      case '30 day notice':
-      case '60 day notice':
-      case '90 day notice':
-      case 'check on payment':
-        return const Color(0xFFEF4444);
-      default:
-        return const Color(0xFF64748B);
-    }
-  }
+  Color _getStatusColor(String status) => statusColor(status);
 
   @override
   Widget build(BuildContext context) {

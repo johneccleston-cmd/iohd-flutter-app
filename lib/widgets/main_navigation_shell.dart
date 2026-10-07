@@ -409,7 +409,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                   ),
                   if (!compact)
                     const Text(
-                      'Operations Hub',
+                      'IOHD Desktop',
                       style: TextStyle(
                         fontSize: 10.5,
                         fontWeight: FontWeight.w500,
@@ -443,6 +443,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                               ('estimates', Icons.request_quote_rounded, 'Estimates', '/estimates'),
                               ('jobs', Icons.build_rounded, 'Jobs', '/jobs'),
                               ('statuses', Icons.timeline_rounded, 'Estimate & Job Statuses', '/statuses'),
+                              ('documents', Icons.folder_shared_rounded, 'Documents', '/documents'),
                             ]),
                             section(c, 'Financial', [
                               ('payments', Icons.payment_rounded, 'Payments', '/payments'),
@@ -671,7 +672,7 @@ class _AskButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Ask the assistant',
+      message: 'Ask Jarvis',
       child: InkWell(
         onTap: () => showAssistantPanel(context),
         borderRadius: BorderRadius.circular(10),
@@ -685,7 +686,7 @@ class _AskButton extends StatelessWidget {
               const Icon(Icons.auto_awesome_rounded, size: 16, color: _brandRed),
               if (!iconOnly) ...[
                 const SizedBox(width: 7),
-                const Text('Ask',
+                const Text('Ask Jarvis',
                     style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _brandRed)),
               ],
             ],

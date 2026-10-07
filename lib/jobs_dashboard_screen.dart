@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'utils/status_colors.dart';
 import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
@@ -1489,7 +1490,7 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
     final restSum = sorted.skip(_topN).fold<int>(0, (s, c) => s + c.count);
     final slices = <_JobSegSlice>[
       for (var i = 0; i < top.length; i++)
-        _JobSegSlice(top[i].status, top[i].count.toDouble(), _categoricalPalette[i % _categoricalPalette.length], [top[i].status]),
+        _JobSegSlice(top[i].status, top[i].count.toDouble(), knownStatusColor(top[i].status) ?? _categoricalPalette[i % _categoricalPalette.length], [top[i].status]),
     ];
     if (restSum > 0) {
       slices.add(_JobSegSlice('Other', restSum.toDouble(), DashUi.slate, [for (final c in sorted.skip(_topN)) c.status]));

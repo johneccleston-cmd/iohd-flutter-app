@@ -1,6 +1,6 @@
 {
-    "name": "IOHD Hub",
-    "short_name": "IOHD Hub",
+    "name": "IOHD Desktop",
+    "short_name": "IOHD Desktop",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#F5F5F5",

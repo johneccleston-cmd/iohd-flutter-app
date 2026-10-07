@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -11,6 +12,7 @@ import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
+import 'widgets/status_pill.dart';
 
 part 'employee_kpi_screen.dart';
 
@@ -21,6 +23,7 @@ class KPIDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashboardLayout(
       title: 'KPI\'s',
+      showHeader: false,
       showYearSelector: false,
       builder: (context, selectedYear) {
         return const KPIDashboardContent();
@@ -94,6 +97,7 @@ class _EmployeeUser {
   final String avatarUrl;
   final double? integrityScore; // null = no score recorded
   final double? yearsWorked; // null = unknown
+  final double? moraleScore; // 1-5, null until morale is tracked (the API doesn't send it yet)
 
   const _EmployeeUser({
     required this.id,
@@ -102,6 +106,7 @@ class _EmployeeUser {
     required this.avatarUrl,
     required this.integrityScore,
     required this.yearsWorked,
+    required this.moraleScore,
   });
 
   /// Only skips a user when the API explicitly says they're inactive.
@@ -136,6 +141,7 @@ class _EmployeeUser {
       ),
       integrityScore: _num(json['integrityScore'] ?? json['integrity_score'] ?? json['score']),
       yearsWorked: _num(json['yearsWorked'] ?? json['years_worked'] ?? json['tenure']),
+      moraleScore: _num(json['moraleScore'] ?? json['morale_score']),
     );
   }
 }
@@ -213,7 +219,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
   List<_Entry> _entries = [];
   double? _teamAvgScore;
   double? _avgTenure;
-  String _topPerformer = '—';
+  double? _avgMorale; // average of the morale scores that exist; null while none are tracked
 
   /// Cards that already played their entrance animation (so they don't replay on scroll-back).
   final Set<String> _seen = {};
@@ -281,16 +287,14 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
 
       final scores = users.map((u) => u.integrityScore).whereType<double>().toList();
       final tenures = users.map((u) => u.yearsWorked).whereType<double>().toList();
-      final topNames = entries.where((e) => e.rank == 1).map((e) => e.user.name).toList();
+      final morales = users.map((u) => u.moraleScore).whereType<double>().toList();
 
       if (!mounted) return;
       setState(() {
         _entries = entries;
         _teamAvgScore = scores.isEmpty ? null : scores.reduce((a, b) => a + b) / scores.length;
         _avgTenure = tenures.isEmpty ? null : tenures.reduce((a, b) => a + b) / tenures.length;
-        _topPerformer = topNames.isEmpty
-            ? '—'
-            : (topNames.length == 1 ? topNames.first : '${topNames.first} +${topNames.length - 1}');
+        _avgMorale = morales.isEmpty ? null : morales.reduce((a, b) => a + b) / morales.length;
         _seen.clear();
         _isLoading = false;
       });
@@ -365,10 +369,12 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
             const SizedBox(width: 12),
             Expanded(
               child: _StatTile(
-                icon: Icons.emoji_events_rounded,
-                color: _gold,
-                label: 'TOP PERFORMER',
-                value: _StatText(_topPerformer),
+                icon: Icons.monitor_heart_rounded,
+                color: _avgMorale == null ? _muted : (_avgMorale! >= 4 ? const Color(0xFF10B981) : (_avgMorale! >= 3 ? const Color(0xFFD97706) : const Color(0xFFDC2626))),
+                label: 'AVG EMPLOYEE MORALE',
+                value: _avgMorale == null
+                    ? const _StatText('Not tracked yet', muted: true)
+                    : _CountUp(value: _avgMorale!, format: (v) => '${_fmtNum(v)} / 5'),
               ),
             ),
             const SizedBox(width: 12),
@@ -479,7 +485,8 @@ class _CountUp extends StatelessWidget {
 
 class _StatText extends StatelessWidget {
   final String text;
-  const _StatText(this.text);
+  final bool muted;
+  const _StatText(this.text, {this.muted = false});
 
   @override
   Widget build(BuildContext context) {
@@ -487,7 +494,7 @@ class _StatText extends StatelessWidget {
       text,
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
-      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink, height: 1.15),
+      style: TextStyle(fontSize: muted ? 16 : 20, fontWeight: FontWeight.w800, color: muted ? _muted : _ink, height: 1.15),
     );
   }
 }

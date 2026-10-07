@@ -26,6 +26,7 @@ import 'collections_dashboard_screen.dart';
 import 'kpi_dashboard_screen.dart';
 import 'inventory_screen.dart';
 import 'statuses_screen.dart';
+import 'documents_screen.dart';
 import 'payments_screen.dart';
 import 'invoices_screen.dart';
 import 'team_admin_screen.dart';
@@ -77,6 +78,7 @@ final GoRouter _router = GoRouter(
           GoRoute(path: '/statuses', builder: (context, state) => const StatusesScreen()),
           GoRoute(path: '/payments', builder: (context, state) => const PaymentsScreen()),
           GoRoute(path: '/invoices', builder: (context, state) => const InvoicesScreen()),
+          GoRoute(path: '/documents', builder: (context, state) => const DocumentsScreen()),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/customers', builder: (context, state) => const CustomersScreen()),

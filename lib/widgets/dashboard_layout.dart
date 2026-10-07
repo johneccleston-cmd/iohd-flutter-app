@@ -37,6 +37,9 @@ class DashboardLayout extends StatefulWidget {
   final String? subtitle;
   final bool showYearSelector;
 
+  /// Set false to drop the dark title bar entirely (the page then starts at the top).
+  final bool showHeader;
+
   /// Years offered in the selector. Defaults to the current year and the two before it.
   final List<int>? years;
 
@@ -55,6 +58,7 @@ class DashboardLayout extends StatefulWidget {
     required this.title,
     this.subtitle,
     this.showYearSelector = true,
+    this.showHeader = true,
     this.years,
     this.initialYear,
     this.onYearChanged,
@@ -109,7 +113,8 @@ class _DashboardLayoutState extends State<DashboardLayout> {
       color: _DashTokens.background,
       child: Column(
         children: [
-          _HeaderBar(
+          if (widget.showHeader)
+            _HeaderBar(
             title: widget.title,
             subtitle: widget.subtitle,
             actions: widget.actions,

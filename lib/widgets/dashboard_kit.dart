@@ -54,6 +54,9 @@ class DashAvatar extends StatelessWidget {
   final double ringWidth;
   final Color? glowColor;
 
+  /// Tints the initials fallback (soft gradient + coloured letters) instead of flat grey.
+  final Color? accent;
+
   const DashAvatar({
     super.key,
     required this.name,
@@ -62,6 +65,7 @@ class DashAvatar extends StatelessWidget {
     this.ringColor,
     this.ringWidth = 0,
     this.glowColor,
+    this.accent,
   });
 
   String get _initials {
@@ -76,14 +80,22 @@ class DashAvatar extends StatelessWidget {
   }
 
   Widget _fallback() => Container(
-    color: DashUi.faint,
+    decoration: accent == null
+        ? const BoxDecoration(color: DashUi.faint)
+        : BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [accent!.withValues(alpha: 0.10), accent!.withValues(alpha: 0.26)],
+            ),
+          ),
     alignment: Alignment.center,
     child: Text(
       _initials,
       style: TextStyle(
         fontSize: size * 0.34,
         fontWeight: FontWeight.w700,
-        color: DashUi.slate,
+        color: accent == null ? DashUi.slate : Color.lerp(accent, Colors.black, 0.25),
       ),
     ),
   );

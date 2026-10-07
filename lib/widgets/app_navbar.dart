@@ -37,7 +37,7 @@ class AppNavBar extends StatelessWidget {
                 ),
                 const SizedBox(width: 12),
                 const Text(
-                  'IOHD HUB',
+                  'IOHD DESKTOP',
                   style: TextStyle(
                     fontSize: 18,
                     fontWeight: FontWeight.bold,

@@ -310,7 +310,13 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> {
               for (var i = 0; i < _people.length; i++) ...[
                 Expanded(
                   flex: 3,
-                  child: _SalesPersonCard(person: _people[i], rank: i + 1, year: widget.selectedYear, index: i),
+                  child: _SalesPersonCard(
+                    person: _people[i],
+                    rank: i + 1,
+                    year: widget.selectedYear,
+                    index: i,
+                    teamWon: _people.fold<double>(0, (a, b) => a + b.wonValue),
+                  ),
                 ),
                 const SizedBox(width: 16),
               ],
@@ -361,7 +367,17 @@ class _SalesPersonCard extends StatelessWidget {
   final int rank;
   final int year;
   final int index;
-  const _SalesPersonCard({required this.person, required this.rank, required this.year, required this.index});
+  final double teamWon;
+  const _SalesPersonCard({
+    required this.person,
+    required this.rank,
+    required this.year,
+    required this.index,
+    required this.teamWon,
+  });
+
+  double get _share => teamWon > 0 ? (person.wonValue / teamWon).clamp(0.0, 1.0) : 0;
+  Color get _accent => rank == 1 ? _gold : DashUi.sky;
 
   @override
   Widget build(BuildContext context) {
@@ -428,6 +444,29 @@ class _SalesPersonCard extends StatelessWidget {
       ),
     );
   }
+  /// Thin bar showing this rep's share of the team's won revenue.
+  Widget _shareBar() => SizedBox(
+        width: 190,
+        child: Column(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _share,
+                minHeight: 6,
+                backgroundColor: DashUi.faint,
+                valueColor: AlwaysStoppedAnimation(_accent),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${(_share * 100).round()}% of team won revenue',
+              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate),
+            ),
+          ],
+        ),
+      );
+
   Widget _rankPill(bool leader, {bool short = false}) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
@@ -455,7 +494,7 @@ class _SalesPersonCard extends StatelessWidget {
     final p = person;
     // Avatar grows with the spare height (72..170 including its ring) so tall windows don't leave a small icon in a void.
     // Matches the side-by-side layout (about 150) where the two meet, then keeps growing with the space.
-    final spare = height - 100;
+    final spare = height - 100 - 34; // 34 = share bar
     final avatar = (spare * (1 - ((height - 258) / 1000).clamp(0.0, 0.25))).clamp(72.0, 230.0) - 6; // minus the ring
     return Stack(
       children: [
@@ -471,6 +510,7 @@ class _SalesPersonCard extends StatelessWidget {
                   size: avatar,
                   ringColor: leader ? _gold : DashUi.line,
                   ringWidth: leader ? 3 : 1.5,
+                  accent: _accent,
                 ),
                 const SizedBox(height: 10),
                 Text(
@@ -487,6 +527,8 @@ class _SalesPersonCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: DashUi.slate),
                 ),
+                const SizedBox(height: 10),
+                _shareBar(),
               ],
             ),
           ),
@@ -509,6 +551,7 @@ class _SalesPersonCard extends StatelessWidget {
             size: avatar - (leader ? 6 : 3), // the ring is drawn outside the image
             ringColor: leader ? _gold : DashUi.line,
             ringWidth: leader ? 3 : 1.5,
+            accent: _accent,
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -529,7 +572,22 @@ class _SalesPersonCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: DashUi.slate),
                 ),
                 const SizedBox(height: 8),
-                _rankPill(leader),
+                Row(
+                  children: [
+                    _rankPill(leader),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          '${(_share * 100).round()}% of team',
+                          maxLines: 1,
+                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),

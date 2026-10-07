@@ -386,7 +386,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   _Metric? _metric; // scorecard whose log is open
   bool _exporting = false;
   String? _weekStart; // which pay week is open for the selected technician
-  final Set<String> _collapsedJobs = {}; // jobs the user has folded away
+  final Set<String> _expandedJobs = {}; // closed-job cards the user has opened (collapsed by default)
 
   @override
   void initState() {
@@ -2039,7 +2039,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _jobsSection(_Tech t, _Week w, _Report report) {
     final keys = [for (final j in w.jobs) '${t.userId}|${w.weekStart}|${j.jobId}'];
-    final allOpen = keys.every((k) => !_collapsedJobs.contains(k));
+    final allOpen = keys.every(_expandedJobs.contains);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2068,9 +2068,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   ),
                   onPressed: () => setState(() {
                     if (allOpen) {
-                      _collapsedJobs.addAll(keys);
+                      _expandedJobs.removeAll(keys);
                     } else {
-                      _collapsedJobs.removeAll(keys);
+                      _expandedJobs.addAll(keys);
                     }
                   }),
                 ),
@@ -2087,7 +2087,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _jobCard(_Tech t, _Week w, _Job j, _Report report) {
     final key = '${t.userId}|${w.weekStart}|${j.jobId}';
-    final open = !_collapsedJobs.contains(key);
+    final open = _expandedJobs.contains(key);
     final worked = j.firstWorked.isEmpty
         ? ''
         : (j.firstWorked == j.lastWorked
@@ -2109,9 +2109,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
             child: InkWell(
               onTap: () => setState(() {
                 if (open) {
-                  _collapsedJobs.add(key);
+                  _expandedJobs.remove(key);
                 } else {
-                  _collapsedJobs.remove(key);
+                  _expandedJobs.add(key);
                 }
               }),
               child: Padding(

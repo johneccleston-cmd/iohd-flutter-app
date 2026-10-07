@@ -57,6 +57,7 @@ const List<AccessGroup> kAccessGroups = [
     AccessResource('statuses', 'Statuses', Icons.timeline_rounded, route: '/statuses'),
     AccessResource('payments', 'Payments', Icons.payment_rounded, route: '/payments', actions: _crud),
     AccessResource('invoices', 'Invoices', Icons.receipt_long_rounded, route: '/invoices', actions: _crud),
+    AccessResource('documents', 'Documents', Icons.folder_shared_rounded, route: '/documents'),
     AccessResource('site_checks', 'Site Checks', Icons.assignment_turned_in_rounded, route: '/site-checks', actions: _crud),
     AccessResource('takeoffs', 'Takeoffs', Icons.architecture_rounded, route: '/takeoffs', actions: _crud),
   ]),

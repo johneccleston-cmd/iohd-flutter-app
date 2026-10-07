@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           children: [
                             Text('IOHD',
                                 style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink, height: 1.1)),
-                            Text('Operations Hub', style: TextStyle(fontSize: 12.5, color: _slate)),
+                            Text('IOHD Desktop', style: TextStyle(fontSize: 12.5, color: _slate)),
                           ],
                         ),
                       ],

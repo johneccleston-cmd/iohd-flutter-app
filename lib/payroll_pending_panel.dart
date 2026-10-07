@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'widgets/status_pill.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
@@ -285,7 +286,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
                 Text(j.customer.isEmpty ? 'Job ${j.jobId}' : j.customer,
                     style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink)),
                 Text('#${j.jobId}', style: const TextStyle(fontSize: 12, color: DashUi.muted)),
-                if (j.status.isNotEmpty) Text(j.status, style: const TextStyle(fontSize: 12, color: DashUi.slate)),
+                if (j.status.isNotEmpty) StatusPill(j.status, fontSize: 11.5),
                 if (j.unverifiedDays > 0)
                   Text('${j.unverifiedDays} more ${j.unverifiedDays == 1 ? 'visit' : 'visits'} not verified',
                       style: const TextStyle(fontSize: 12, color: DashUi.amber, fontWeight: FontWeight.w600)),

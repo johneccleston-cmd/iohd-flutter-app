@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'utils/status_colors.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
@@ -449,7 +450,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
               style: const TextStyle(fontSize: 13, color: _slate)),
           const SizedBox(height: 10),
           Wrap(spacing: 8, runSpacing: 6, children: [
-            _chip(job['status']?.toString() ?? 'No status', closing ? _green : _slate),
+            _chip(job['status']?.toString() ?? 'No status', knownStatusColor(job['status']?.toString()) ?? (closing ? _green : _slate)),
             if (closing) _chip('Closing status', _green),
             if (job['inScope'] != true) _chip('Started before go-live, ignored for commission', _brandRed),
             if (lock != null) _chip('Locked', _amber),

@@ -1172,6 +1172,8 @@ class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTic
                     double maxVal = 0.0;
                     for (var b in widget.buckets) { if (b.value > maxVal) maxVal = b.value; }
                     if (maxVal == 0) maxVal = 1;
+                    // Short panel (small window): drop the "N ests" line and tighten the gaps so the bars always fit.
+                    final bool compact = c.maxHeight < 130;
 
                     return Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -1227,12 +1229,16 @@ class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTic
                                           ],
                                         ),
                                       ),
-                                      const SizedBox(height: 8),
-                                      Text(b.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: hovered ? color : DashUi.slate)),
+                                      SizedBox(height: compact ? 4 : 8),
                                       Text(
-                                        hovered && clickable ? 'View list ›' : '${b.count} ests',
-                                        style: TextStyle(fontSize: 10, color: hovered && clickable ? color : DashUi.muted, fontWeight: hovered ? FontWeight.w700 : FontWeight.w400),
+                                        compact ? '${b.label} · ${b.count}' : b.label,
+                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: hovered ? color : DashUi.slate),
                                       ),
+                                      if (!compact)
+                                        Text(
+                                          hovered && clickable ? 'View list ›' : '${b.count} ests',
+                                          style: TextStyle(fontSize: 10, color: hovered && clickable ? color : DashUi.muted, fontWeight: hovered ? FontWeight.w700 : FontWeight.w400),
+                                        ),
                                     ],
                                   ),
                                 ),
@@ -1326,8 +1332,13 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                           final double maxLostValue = widget.reasons.fold(0.0, (max, item) => item.lostValue > max ? item.lostValue : max) * 1.1;
                           final double totalLost = widget.reasons.fold(0.0, (sum, item) => sum + item.lostValue);
 
+                          // Each reason gets an equal slice of the panel's height, so the rows always fit: the bar and
+                          // text shrink with the slice, and the "N Estimates" line gives way to an inline count when
+                          // a slice gets too short for two lines. Rows are capped so a few reasons don't look stretched.
+                          final double slice = constraints.maxHeight / widget.reasons.length;
+                          final double barH = (slice * 0.6).clamp(8.0, 28.0).toDouble();
+                          final bool twoLines = slice >= 40;
                           return Column(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                             children: widget.reasons.asMap().entries.map((entry) {
                               final int index = entry.key;
                               final _LostReason reason = entry.value;
@@ -1337,7 +1348,8 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                               final double ratio = maxLostValue > 0 ? (reason.lostValue / maxLostValue).clamp(0.05, 1.0) : 0.05;
                               final double pct = totalLost > 0 ? (reason.lostValue / totalLost * 100) : 0.0;
 
-                              return MouseRegion(
+                              return Expanded(
+                                child: MouseRegion(
                                 cursor: reason.count > 0 ? SystemMouseCursors.click : MouseCursor.defer,
                                 onEnter: (_) => setState(() => _hoveredIndex = index),
                                 onExit: (_) => setState(() => _hoveredIndex = null),
@@ -1351,14 +1363,24 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                                     children: [
                                       SizedBox(
                                         width: 100,
-                                        child: Column(
+                                        child: Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: Column(
+                                          mainAxisSize: MainAxisSize.min,
                                           crossAxisAlignment: CrossAxisAlignment.start,
-                                          mainAxisAlignment: MainAxisAlignment.center,
                                           children: [
-                                            Text(reason.reason, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: DashUi.ink), maxLines: 1, overflow: TextOverflow.ellipsis),
-                                            const SizedBox(height: 2),
-                                            Text('${reason.count} Estimates', style: const TextStyle(fontSize: 11, color: DashUi.muted, fontWeight: FontWeight.w600)),
+                                            Text(
+                                              twoLines ? reason.reason : '${reason.reason} · ${reason.count}',
+                                              style: TextStyle(fontSize: twoLines ? 13 : 12, height: twoLines ? null : 1.05, fontWeight: FontWeight.bold, color: DashUi.ink),
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                            if (twoLines) ...[
+                                              const SizedBox(height: 2),
+                                              Text('${reason.count} Estimates', style: const TextStyle(fontSize: 11, color: DashUi.muted, fontWeight: FontWeight.w600)),
+                                            ],
                                           ],
+                                        ),
                                         ),
                                       ),
                                       const SizedBox(width: 8),
@@ -1366,14 +1388,14 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                                         child: Stack(
                                           alignment: Alignment.centerLeft,
                                           children: [
-                                            Container(height: 28, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
+                                            Container(height: barH, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
                                             AnimatedBuilder(
                                               animation: _intro,
                                               builder: (context, child) => FractionallySizedBox(
                                                 widthFactor: ratio * Curves.easeOutCubic.transform(_intro.value),
                                                 child: AnimatedContainer(
                                                   duration: const Duration(milliseconds: 150),
-                                                  height: 28, 
+                                                  height: barH,
                                                   decoration: BoxDecoration(
                                                     color: reason.color, 
                                                     borderRadius: BorderRadius.circular(6),
@@ -1404,6 +1426,7 @@ class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerP
                                       ),
                                     ],
                                   ),
+                                ),
                                 ),
                                 ),
                               );

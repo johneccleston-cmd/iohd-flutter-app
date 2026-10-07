@@ -1305,7 +1305,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         children: [
           // Technicians use the tech app, so desktop access doesn't apply to them.
           if (!isTech) ...[
-            _subHeader('IOHD Hub permissions'),
+            _subHeader('IOHD Desktop permissions'),
             for (var i = 0; i < kAccessGroups.length; i++) ...[
               if (i > 0) const SizedBox(height: 12),
               _accessMatrix(kAccessGroups[i], allowed, toggleCell, toggleRow, toggleColumn),
