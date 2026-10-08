@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'payroll_run_dialog.dart';
 import 'widgets/dashboard_layout.dart';
 
 // =============================================================================
@@ -25,18 +28,18 @@ class _Ui {
   static const amber = Color(0xFFD97706);
 
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(radius),
-        border: Border.all(color: line),
-      );
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(radius),
+    border: Border.all(color: line),
+  );
 }
 
 String _money(double v) {
   final neg = v < 0;
-  final s = v.abs().toStringAsFixed(2).replaceAllMapped(
-        RegExp(r'(\d)(?=(\d{3})+\.)'),
-        (m) => '${m[1]},',
-      );
+  final s = v
+      .abs()
+      .toStringAsFixed(2)
+      .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+\.)'), (m) => '${m[1]},');
   return '${neg ? '-' : ''}\$$s';
 }
 
@@ -63,7 +66,8 @@ class CommissionDashboardContent extends StatefulWidget {
   const CommissionDashboardContent({super.key, required this.selectedYear});
 
   @override
-  State<CommissionDashboardContent> createState() => _CommissionDashboardContentState();
+  State<CommissionDashboardContent> createState() =>
+      _CommissionDashboardContentState();
 }
 
 // =============================================================================
@@ -81,6 +85,13 @@ class _StaffCommissionProfile {
   final int strikes;
   final double penalties;
 
+  /// Gross for the current pay week, which the hurdle meters compare with the weekly hurdle.
+  final double weekGross;
+
+  /// Pay weeks in a row at or above the hurdle (the week in progress counts once cleared), and how many in total.
+  final int hurdleStreak;
+  final int hurdleWeeksHit;
+
   const _StaffCommissionProfile({
     required this.id,
     required this.name,
@@ -91,10 +102,17 @@ class _StaffCommissionProfile {
     required this.lockedRetainage,
     required this.strikes,
     required this.penalties,
+    this.weekGross = 0,
+    this.hurdleStreak = 0,
+    this.hurdleWeeksHit = 0,
   });
 
   String get initials {
-    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
@@ -111,6 +129,9 @@ class _StaffCommissionProfile {
       lockedRetainage: (json['lockedBalance'] as num?)?.toDouble() ?? 0.0,
       strikes: (json['strikes'] as num?)?.toInt() ?? 0,
       penalties: (json['totalPenalties'] as num?)?.toDouble() ?? 0.0,
+      weekGross: (json['weekGross'] as num?)?.toDouble() ?? 0.0,
+      hurdleStreak: (json['hurdleStreak'] as num?)?.toInt() ?? 0,
+      hurdleWeeksHit: (json['hurdleWeeksHit'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -139,7 +160,8 @@ class _MonthlyPayoutPoint {
 // DASHBOARD STATE
 // =============================================================================
 
-class _CommissionDashboardContentState extends State<CommissionDashboardContent> {
+class _CommissionDashboardContentState
+    extends State<CommissionDashboardContent> {
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -152,6 +174,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   /// Daily snapshots of the pool (oldest first) for its trend line; empty until there are a couple of days.
   List<double> _retainageHistory = [];
   double _avgPerTech = 0;
+  double _weeklyHurdle = 750;
 
   /// Sales rep commission on estimates won this year (a percent of labor on each).
   double _salesCommission = 0;
@@ -172,42 +195,75 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
     }
   }
 
-  Future<void> _fetchLiveCommissionData() async {
+  Future<void> _fetchLiveCommissionData({bool fresh = false}) async {
     setState(() {
       _isLoading = true;
       _errorMessage = null;
     });
 
     try {
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/api/commissions_stats?year=${widget.selectedYear}'),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
+      final response = await http
+          .get(
+            Uri.parse(
+              '$kApiBaseUrl/api/commissions_stats?year=${widget.selectedYear}${fresh ? '&fresh=1' : ''}',
+            ),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(
+            const Duration(seconds: 60),
+          ); // free-tier hosts can take ~30s+ to wake up
 
       if (response.statusCode == 200) {
         final Map<String, dynamic> body = json.decode(response.body);
-        final summary = (body['summary'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+        final summary =
+            (body['summary'] as Map<String, dynamic>?) ??
+            const <String, dynamic>{};
         final List<dynamic> techsData = body['technicians'] ?? [];
         final List<dynamic> chartRaw = body['monthlyData'] ?? [];
 
         if (mounted) {
           setState(() {
-            _totalPayouts = (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
-            _retainagePool = (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
+            _totalPayouts =
+                (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
+            _retainagePool =
+                (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
             final hist = body['history'];
             _retainageHistory = [
-              for (final v in (hist is Map ? (hist['retainagePool'] as List<dynamic>? ?? const []) : const <dynamic>[]))
+              for (final v
+                  in (hist is Map
+                      ? (hist['retainagePool'] as List<dynamic>? ?? const [])
+                      : const <dynamic>[]))
                 (v as num).toDouble(),
             ];
-            _avgPerTech = (summary['avgCommissionPerTech'] as num?)?.toDouble() ?? 0.0;
-            final sales = (summary['salesCommission'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+            _avgPerTech =
+                (summary['avgCommissionPerTech'] as num?)?.toDouble() ?? 0.0;
+            _weeklyHurdle =
+                ((body['meta'] as Map?)?['weeklyThreshold'] as num?)
+                    ?.toDouble() ??
+                750;
+            final sales =
+                (summary['salesCommission'] as Map<String, dynamic>?) ??
+                const <String, dynamic>{};
             _salesCommission = (sales['total'] as num?)?.toDouble() ?? 0.0;
-            final next = (summary['nextDisbursement'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+            final next =
+                (summary['nextDisbursement'] as Map<String, dynamic>?) ??
+                const <String, dynamic>{};
             _nextDisbursement = (next['amount'] as num?)?.toDouble() ?? 0.0;
             _nextDisbursementTechs = (next['techCount'] as num?)?.toInt() ?? 0;
 
-            _staff = techsData.map((e) => _StaffCommissionProfile.fromJson(e as Map<String, dynamic>)).toList();
-            _chartData = chartRaw.map((e) => _MonthlyPayoutPoint.fromJson(e as Map<String, dynamic>)).toList();
+            _staff = techsData
+                .map(
+                  (e) => _StaffCommissionProfile.fromJson(
+                    e as Map<String, dynamic>,
+                  ),
+                )
+                .toList();
+            _chartData = chartRaw
+                .map(
+                  (e) =>
+                      _MonthlyPayoutPoint.fromJson(e as Map<String, dynamic>),
+                )
+                .toList();
 
             _isLoading = false;
           });
@@ -236,8 +292,13 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   List<double>? _rateTrend() {
     if (_chartData.isEmpty) return null;
     final now = DateTime.now();
-    final upTo = widget.selectedYear == now.year ? now.month : _chartData.length;
-    final pts = _chartData.take(upTo).map((p) => p.revenue > 0 ? p.payout / p.revenue * 100 : 0.0).toList();
+    final upTo = widget.selectedYear == now.year
+        ? now.month
+        : _chartData.length;
+    final pts = _chartData
+        .take(upTo)
+        .map((p) => p.revenue > 0 ? p.payout / p.revenue * 100 : 0.0)
+        .toList();
     final first = pts.indexWhere((v) => v > 0);
     final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
     return trimmed.length >= 2 ? trimmed : null;
@@ -246,7 +307,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   List<double> _payoutTrend() {
     if (_chartData.isEmpty) return const [];
     final now = DateTime.now();
-    final upTo = widget.selectedYear == now.year ? now.month : _chartData.length;
+    final upTo = widget.selectedYear == now.year
+        ? now.month
+        : _chartData.length;
     final pts = _chartData.take(upTo).map((p) => p.payout).toList();
     final first = pts.indexWhere((v) => v > 0);
     if (first < 0) return pts;
@@ -258,13 +321,18 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
     if (_isLoading) return const _DashboardSkeleton();
 
     if (_errorMessage != null) {
-      return _ErrorPanel(message: _errorMessage!, onRetry: _fetchLiveCommissionData);
+      return _ErrorPanel(
+        message: _errorMessage!,
+        onRetry: _fetchLiveCommissionData,
+      );
     }
 
     // Effective rate uses the same monthly series as the chart so the two always agree.
     final chartPayout = _chartData.fold<double>(0, (s, p) => s + p.payout);
     final chartRevenue = _chartData.fold<double>(0, (s, p) => s + p.revenue);
-    final commissionRate = chartRevenue > 0 ? chartPayout / chartRevenue * 100 : 0.0;
+    final commissionRate = chartRevenue > 0
+        ? chartPayout / chartRevenue * 100
+        : 0.0;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -297,7 +365,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                   title: 'Commercial retainage pool',
                   amount: _retainagePool,
                   index: 2,
-                  trend: _retainageHistory.length >= 2 ? _retainageHistory : null,
+                  trend: _retainageHistory.length >= 2
+                      ? _retainageHistory
+                      : null,
                   valueColor: _Ui.indigo,
                 ),
               ),
@@ -331,7 +401,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
             children: [
               // --- ORIGINAL LEFT COLUMN: Stacked Staff Cards ---
               Expanded(
-                flex: 5,
+                flex: 3,
                 child: Container(
                   padding: const EdgeInsets.all(12.0),
                   decoration: BoxDecoration(
@@ -348,7 +418,10 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                   ),
                   child: _staff.isEmpty
                       ? const Center(
-                          child: Text('No staff data available.', style: TextStyle(color: Colors.grey, fontSize: 14)),
+                          child: Text(
+                            'No staff data available.',
+                            style: TextStyle(color: Colors.grey, fontSize: 14),
+                          ),
                         )
                       : Column(
                           children: [
@@ -356,7 +429,8 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                               Expanded(
                                 child: _buildStaffCard(_staff[i], i + 1),
                               ),
-                              if (i < _staff.length - 1) const SizedBox(height: 6),
+                              if (i < _staff.length - 1)
+                                const SizedBox(height: 6),
                             ],
                           ],
                         ),
@@ -370,13 +444,59 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                 flex: 7,
                 child: Column(
                   children: [
-                    QuarterlyPayoutCountdownCard(amount: _nextDisbursement, techCount: _nextDisbursementTechs),
-                    const SizedBox(height: 16),
                     Expanded(
-                      child: _InteractivePayoutChart(
-                        data: _chartData,
-                        staff: _staff,
-                        year: widget.selectedYear,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            flex: 6,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  flex: 5,
+                                  child: _InteractivePayoutChart(
+                                    data: _chartData,
+                                    staff: _staff,
+                                    year: widget.selectedYear,
+                                  ),
+                                ),
+                                // The meters are for the CURRENT pay week, so they only show for the current year.
+                                if (widget.selectedYear ==
+                                    DateTime.now().year) ...[
+                                  const SizedBox(height: 12),
+                                  Expanded(
+                                    flex: 4,
+                                    child: _HurdleMetersCard(
+                                      staff: _staff,
+                                      hurdle: _weeklyHurdle,
+                                    ),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 4,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                QuarterlyPayoutCountdownCard(
+                                  amount: _nextDisbursement,
+                                  techCount: _nextDisbursementTechs,
+                                ),
+                                const SizedBox(height: 12),
+                                Expanded(
+                                  child: _PayrollRunsCard(
+                                    onChanged: () =>
+                                        _fetchLiveCommissionData(fresh: true),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
@@ -404,17 +524,26 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
           SizedBox(
             width: 72,
             child: Image.network(
-              person.imageUrl.isNotEmpty ? person.imageUrl : 'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(person.name)}&background=random',
+              person.imageUrl.isNotEmpty
+                  ? person.imageUrl
+                  : 'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(person.name)}&background=random',
               fit: BoxFit.cover,
               errorBuilder: (context, error, stackTrace) => Container(
                 color: const Color(0xFFE2E8F0),
-                child: const Icon(Icons.person, color: Color(0xFF94A3B8), size: 26),
+                child: const Icon(
+                  Icons.person,
+                  color: Color(0xFF94A3B8),
+                  size: 26,
+                ),
               ),
             ),
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 3.0),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 12.0,
+                vertical: 3.0,
+              ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -434,7 +563,10 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                       ),
                       if (person.strikes > 0 || person.penalties != 0) ...[
                         const SizedBox(width: 8),
-                        _StrikeChip(strikes: person.strikes, penalties: person.penalties),
+                        _StrikeChip(
+                          strikes: person.strikes,
+                          penalties: person.penalties,
+                        ),
                       ],
                     ],
                   ),
@@ -443,15 +575,21 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       const Text(
-                        'COMMISSION EARNED YTD',
-                        style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.bold),
+                        'PAID YTD',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: Color(0xFF94A3B8),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       Text(
                         person.isSales ? 'Sales' : _money(person.commission),
                         style: TextStyle(
-                          fontSize: 14.5, 
-                          fontWeight: FontWeight.w900, 
-                          color: person.isSales ? const Color(0xFF94A3B8) : const Color(0xFF059669)
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w900,
+                          color: person.isSales
+                              ? const Color(0xFF94A3B8)
+                              : const Color(0xFF059669),
                         ),
                       ),
                     ],
@@ -461,11 +599,19 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
                     children: [
                       const Text(
                         'LOCKED RETAINAGE',
-                        style: TextStyle(fontSize: 10.5, color: Color(0xFF94A3B8), fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: Color(0xFF94A3B8),
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       Text(
                         _money(person.lockedRetainage),
-                        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: Color(0xFF6366F1)),
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF6366F1),
+                        ),
                       ),
                     ],
                   ),
@@ -503,11 +649,19 @@ class _StrikeChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.warning_amber_rounded, size: 12, color: Color(0xFFDC2626)),
+            const Icon(
+              Icons.warning_amber_rounded,
+              size: 12,
+              color: Color(0xFFDC2626),
+            ),
             const SizedBox(width: 4),
             Text(
               parts.join(' · '),
-              style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: Color(0xFFB91C1C)),
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFB91C1C),
+              ),
             ),
           ],
         ),
@@ -541,7 +695,8 @@ class _MetricCard extends StatefulWidget {
   State<_MetricCard> createState() => _MetricCardState();
 }
 
-class _MetricCardState extends State<_MetricCard> with SingleTickerProviderStateMixin {
+class _MetricCardState extends State<_MetricCard>
+    with SingleTickerProviderStateMixin {
   static const _baseMs = 520;
   static const _staggerMs = 110;
   static const _countUpMs = 1100;
@@ -556,10 +711,17 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
   void initState() {
     super.initState();
     final totalMs = _baseMs + widget.index * _staggerMs;
-    _enter = AnimationController(vsync: this, duration: Duration(milliseconds: totalMs));
+    _enter = AnimationController(
+      vsync: this,
+      duration: Duration(milliseconds: totalMs),
+    );
     _t = CurvedAnimation(
       parent: _enter,
-      curve: Interval(widget.index * _staggerMs / totalMs, 1.0, curve: Curves.easeOutCubic),
+      curve: Interval(
+        widget.index * _staggerMs / totalMs,
+        1.0,
+        curve: Curves.easeOutCubic,
+      ),
     );
     _enter.forward();
   }
@@ -589,12 +751,18 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
           w.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.slate),
+          style: const TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: _Ui.slate,
+          ),
         ),
         const SizedBox(height: 6),
         TweenAnimationBuilder<double>(
           tween: Tween<double>(begin: 0, end: w.amount),
-          duration: _reduceMotion ? Duration.zero : const Duration(milliseconds: _countUpMs),
+          duration: _reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: _countUpMs),
           curve: Curves.easeOutCubic,
           builder: (context, v, _) => FittedBox(
             fit: BoxFit.scaleDown,
@@ -617,7 +785,10 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
     return FadeTransition(
       opacity: _t,
       child: SlideTransition(
-        position: Tween<Offset>(begin: const Offset(0, 0.12), end: Offset.zero).animate(_t),
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.12),
+          end: Offset.zero,
+        ).animate(_t),
         child: MouseRegion(
           onEnter: (_) => setState(() => _hovering = true),
           onExit: (_) => setState(() => _hovering = false),
@@ -629,7 +800,11 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _hovering ? w.valueColor.withValues(alpha: 0.55) : _Ui.line),
+              border: Border.all(
+                color: _hovering
+                    ? w.valueColor.withValues(alpha: 0.55)
+                    : _Ui.line,
+              ),
             ),
             child: LayoutBuilder(
               builder: (context, c) {
@@ -646,10 +821,15 @@ class _MetricCardState extends State<_MetricCard> with SingleTickerProviderState
                           tween: Tween<double>(begin: 0, end: 1),
                           duration: _reduceMotion
                               ? Duration.zero
-                              : const Duration(milliseconds: _countUpMs + _sparkDrawMs),
+                              : const Duration(
+                                  milliseconds: _countUpMs + _sparkDrawMs,
+                                ),
                           builder: (context, t, _) {
                             final progress =
-                                ((t * (_countUpMs + _sparkDrawMs) - _countUpMs) / _sparkDrawMs).clamp(0.0, 1.0);
+                                ((t * (_countUpMs + _sparkDrawMs) -
+                                            _countUpMs) /
+                                        _sparkDrawMs)
+                                    .clamp(0.0, 1.0);
                             return CustomPaint(
                               painter: _SparklinePainter(
                                 values: w.trend!,
@@ -677,7 +857,11 @@ class _SparklinePainter extends CustomPainter {
   final Color color;
   final double progress;
 
-  const _SparklinePainter({required this.values, required this.color, required this.progress});
+  const _SparklinePainter({
+    required this.values,
+    required this.color,
+    required this.progress,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -694,7 +878,11 @@ class _SparklinePainter extends CustomPainter {
       final y = size.height / 2;
       var x = pad;
       while (x < size.width - pad) {
-        canvas.drawLine(Offset(x, y), Offset(math.min(x + 4, size.width - pad), y), base);
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(math.min(x + 4, size.width - pad), y),
+          base,
+        );
         x += 8;
       }
       return;
@@ -702,7 +890,10 @@ class _SparklinePainter extends CustomPainter {
 
     final pts = <Offset>[
       for (var i = 0; i < values.length; i++)
-        Offset(pad + w * i / (values.length - 1), pad + h * (1 - values[i] / maxV)),
+        Offset(
+          pad + w * i / (values.length - 1),
+          pad + h * (1 - values[i] / maxV),
+        ),
     ];
 
     final path = Path()..moveTo(pts.first.dx, pts.first.dy);
@@ -728,7 +919,11 @@ class _SparklinePainter extends CustomPainter {
       final head = metric.getTangentForOffset(len * progress);
       if (head != null) {
         if (progress >= 1) {
-          canvas.drawCircle(head.position, 6, Paint()..color = color.withValues(alpha: 0.18));
+          canvas.drawCircle(
+            head.position,
+            6,
+            Paint()..color = color.withValues(alpha: 0.18),
+          );
         }
         canvas.drawCircle(head.position, 3.2, Paint()..color = color);
       }
@@ -751,9 +946,12 @@ class _DashboardSkeleton extends StatefulWidget {
   State<_DashboardSkeleton> createState() => _DashboardSkeletonState();
 }
 
-class _DashboardSkeletonState extends State<_DashboardSkeleton> with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 1100))..repeat(reverse: true);
+class _DashboardSkeletonState extends State<_DashboardSkeleton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1100),
+  )..repeat(reverse: true);
 
   @override
   void dispose() {
@@ -762,36 +960,50 @@ class _DashboardSkeletonState extends State<_DashboardSkeleton> with SingleTicke
   }
 
   Widget _box({double? h, double? w, double r = 8}) => Container(
-        height: h,
-        width: w,
-        decoration: BoxDecoration(color: _Ui.line, borderRadius: BorderRadius.circular(r)),
-      );
+    height: h,
+    width: w,
+    decoration: BoxDecoration(
+      color: _Ui.line,
+      borderRadius: BorderRadius.circular(r),
+    ),
+  );
 
   Widget _metric() => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          decoration: _Ui.panel(radius: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              _box(h: 12, w: 120),
-              const SizedBox(height: 12),
-              _box(h: 26, w: 170),
-            ],
-          ),
-        ),
-      );
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      decoration: _Ui.panel(radius: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          _box(h: 12, w: 120),
+          const SizedBox(height: 12),
+          _box(h: 26, w: 170),
+        ],
+      ),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     return FadeTransition(
-      opacity: Tween<double>(begin: 0.45, end: 1).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
+      opacity: Tween<double>(
+        begin: 0.45,
+        end: 1,
+      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
       child: Column(
         children: [
           SizedBox(
             height: 104,
-            child: Row(children: [_metric(), const SizedBox(width: 12), _metric(), const SizedBox(width: 12), _metric()]),
+            child: Row(
+              children: [
+                _metric(),
+                const SizedBox(width: 12),
+                _metric(),
+                const SizedBox(width: 12),
+                _metric(),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           Expanded(
@@ -877,7 +1089,11 @@ class _ErrorPanel extends StatelessWidget {
             const SizedBox(height: 14),
             const Text(
               "Couldn't load commissions",
-              style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: _Ui.ink),
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: _Ui.ink,
+              ),
             ),
             const SizedBox(height: 6),
             Text(
@@ -908,7 +1124,7 @@ class _ErrorPanel extends StatelessWidget {
 }
 
 // =============================================================================
-// QUARTERLY PAYOUT COUNTDOWN CARD 
+// QUARTERLY PAYOUT COUNTDOWN CARD
 // =============================================================================
 
 class QuarterlyPayoutCountdownCard extends StatefulWidget {
@@ -916,13 +1132,19 @@ class QuarterlyPayoutCountdownCard extends StatefulWidget {
   final double amount;
   final int techCount;
 
-  const QuarterlyPayoutCountdownCard({super.key, required this.amount, required this.techCount});
+  const QuarterlyPayoutCountdownCard({
+    super.key,
+    required this.amount,
+    required this.techCount,
+  });
 
   @override
-  State<QuarterlyPayoutCountdownCard> createState() => _QuarterlyPayoutCountdownCardState();
+  State<QuarterlyPayoutCountdownCard> createState() =>
+      _QuarterlyPayoutCountdownCardState();
 }
 
-class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownCard> {
+class _QuarterlyPayoutCountdownCardState
+    extends State<QuarterlyPayoutCountdownCard> {
   late Timer _timer;
   late Duration _timeRemaining;
   late String _nextQuarterName;
@@ -978,137 +1200,128 @@ class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownC
     final minutes = _timeRemaining.inMinutes % 60;
     final seconds = _timeRemaining.inSeconds % 60;
 
+    // The next release on top, the clock underneath. Sits above the paid-by-technician card.
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 18),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
       decoration: BoxDecoration(
         gradient: const LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
         ),
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(color: const Color(0xFF334155)),
-        boxShadow: [
-          BoxShadow(
-            color: const Color(0xFF0F172A).withValues(alpha: 0.15),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
-          ),
-        ],
       ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    width: 9,
-                    height: 9,
-                    decoration: const BoxDecoration(
-                      color: Color(0xFF10B981),
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    _nextQuarterName,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF10B981),
-                      letterSpacing: 1.1,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Next Retainage Disbursement',
-                style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: Colors.white),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                widget.amount > 0
-                    ? '${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
-                    : 'Nothing scheduled to release',
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Color(0xFF34D399)),
-              ),
-            ],
-          ),
           Row(
             children: [
-              _buildTickerBlock(days.toString().padLeft(2, '0'), 'DAYS'),
-              _buildColonSeparator(),
-              _buildTickerBlock(hours.toString().padLeft(2, '0'), 'HRS'),
-              _buildColonSeparator(),
-              _buildTickerBlock(minutes.toString().padLeft(2, '0'), 'MIN'),
-              _buildColonSeparator(),
-              _buildTickerBlock(seconds.toString().padLeft(2, '0'), 'SEC', isAccent: true),
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: Color(0xFF10B981),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _nextQuarterName,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF10B981),
+                  letterSpacing: 1.0,
+                ),
+              ),
             ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            widget.amount > 0
+                ? 'Retainage release: ${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
+                : 'Retainage release: nothing scheduled',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 10),
+          // The clock's digits change every second. Kept out of text selection: a selectable whose text keeps
+          // changing stops mouse selection from working elsewhere on the page (seen in Chrome).
+          SelectionContainer.disabled(
+            child: Row(
+              children: [
+                Expanded(
+                  child: _clockUnit(days.toString().padLeft(2, '0'), 'd'),
+                ),
+                Expanded(
+                  child: _clockUnit(hours.toString().padLeft(2, '0'), 'h'),
+                ),
+                Expanded(
+                  child: _clockUnit(minutes.toString().padLeft(2, '0'), 'm'),
+                ),
+                Expanded(
+                  child: _clockUnit(
+                    seconds.toString().padLeft(2, '0'),
+                    's',
+                    isAccent: true,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildColonSeparator() {
-    return const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4.0),
-      child: Text(
-        ':',
-        style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: Color(0xFF64748B)),
-      ),
-    );
-  }
-
-  Widget _buildTickerBlock(String val, String label, {bool isAccent = false}) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-            color: isAccent ? const Color(0xFF059669).withValues(alpha: 0.2) : const Color(0xFF1E293B),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: isAccent ? const Color(0xFF059669) : const Color(0xFF334155)),
+  Widget _clockUnit(String val, String unit, {bool isAccent = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: Container(
+        alignment: Alignment.center,
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        decoration: BoxDecoration(
+          color: isAccent
+              ? const Color(0xFF059669).withValues(alpha: 0.2)
+              : const Color(0xFF1E293B),
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+            color: isAccent ? const Color(0xFF059669) : const Color(0xFF334155),
           ),
-          child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 250),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, animation) {
-              return FadeTransition(
-                opacity: animation,
-                child: SlideTransition(
-                  position: Tween<Offset>(
-                    begin: const Offset(0, 0.12),
-                    end: Offset.zero,
-                  ).animate(animation),
-                  child: child,
-                ),
-              );
-            },
-            child: Text(
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.baseline,
+          textBaseline: TextBaseline.alphabetic,
+          children: [
+            Text(
               val,
-              key: ValueKey(val),
               style: TextStyle(
-                fontSize: 22,
+                fontSize: 16,
                 fontWeight: FontWeight.w900,
                 color: isAccent ? const Color(0xFF34D399) : Colors.white,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
-          ),
+            const SizedBox(width: 2),
+            Text(
+              unit,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF94A3B8),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 0.5),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -1123,24 +1336,32 @@ extension _ChartMetricX on _ChartMetric {
   bool get _isPayouts => this == _ChartMetric.payouts;
 
   String get toggleLabel => _isPayouts ? 'Commissions' : 'Revenue';
-  String get caption => _isPayouts ? 'Monthly commission payouts' : 'Gross revenue by month';
+  String get caption => _isPayouts ? 'Paid by month' : 'Revenue by month';
   String get rowLabel => _isPayouts ? 'Disbursed' : 'Revenue';
   String get legendLabel => _isPayouts ? 'Monthly payout' : 'Monthly revenue';
 
   Color get accent => _isPayouts ? _Ui.emerald : _Ui.sky;
-  Color get accentDeep => _isPayouts ? _Ui.emeraldDeep : const Color(0xFF075985);
-  Color get tint => _isPayouts ? const Color(0xFFECFDF5) : const Color(0xFFF0F9FF);
-  List<Color> get barColors =>
-      _isPayouts ? const [Color(0xFF059669), Color(0xFF10B981)] : const [Color(0xFF0369A1), Color(0xFF0284C7)];
-  List<Color> get focusColors =>
-      _isPayouts ? const [Color(0xFF047857), Color(0xFF34D399)] : const [Color(0xFF075985), Color(0xFF38BDF8)];
+  Color get accentDeep =>
+      _isPayouts ? _Ui.emeraldDeep : const Color(0xFF075985);
+  Color get tint =>
+      _isPayouts ? const Color(0xFFECFDF5) : const Color(0xFFF0F9FF);
+  List<Color> get barColors => _isPayouts
+      ? const [Color(0xFF059669), Color(0xFF10B981)]
+      : const [Color(0xFF0369A1), Color(0xFF0284C7)];
+  List<Color> get focusColors => _isPayouts
+      ? const [Color(0xFF047857), Color(0xFF34D399)]
+      : const [Color(0xFF075985), Color(0xFF38BDF8)];
 
   double valueOf(_MonthlyPayoutPoint p) => _isPayouts ? p.payout : p.revenue;
 
   String format(num v) {
     final a = v.abs();
-    if (a >= 1000000) return '\$${(v / 1000000).toStringAsFixed(1).replaceAll('.0', '')}M';
-    if (a >= 1000) return '\$${(v / 1000).toStringAsFixed(1).replaceAll('.0', '')}k';
+    if (a >= 1000000) {
+      return '\$${(v / 1000000).toStringAsFixed(1).replaceAll('.0', '')}M';
+    }
+    if (a >= 1000) {
+      return '\$${(v / 1000).toStringAsFixed(1).replaceAll('.0', '')}k';
+    }
     return '\$${v.round()}';
   }
 
@@ -1166,7 +1387,12 @@ _AxisScale _niceScale(double maxV) {
   return _AxisScale(top, step);
 }
 
-TextPainter _layoutText(String text, TextStyle style, {double maxWidth = double.infinity, TextAlign align = TextAlign.left}) {
+TextPainter _layoutText(
+  String text,
+  TextStyle style, {
+  double maxWidth = double.infinity,
+  TextAlign align = TextAlign.left,
+}) {
   return TextPainter(
     text: TextSpan(text: text, style: style),
     textDirection: TextDirection.ltr,
@@ -1181,18 +1407,23 @@ class _InteractivePayoutChart extends StatefulWidget {
   final List<_StaffCommissionProfile> staff;
   final int? year;
 
-  const _InteractivePayoutChart({required this.data, required this.staff, this.year});
+  const _InteractivePayoutChart({
+    required this.data,
+    required this.staff,
+    this.year,
+  });
 
   @override
-  State<_InteractivePayoutChart> createState() => _InteractivePayoutChartState();
+  State<_InteractivePayoutChart> createState() =>
+      _InteractivePayoutChartState();
 }
 
-class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with TickerProviderStateMixin {
+class _InteractivePayoutChartState extends State<_InteractivePayoutChart>
+    with TickerProviderStateMixin {
   late final AnimationController _intro;
   late final AnimationController _hover;
 
   _ChartMetric _metric = _ChartMetric.payouts;
-  bool _byTech = false;
   int? _active;
   int? _paintedIndex;
 
@@ -1202,8 +1433,14 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
   @override
   void initState() {
     super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
+    _intro = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..forward();
+    _hover = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 160),
+    );
     _restartMetricCycleTimer();
   }
 
@@ -1235,8 +1472,12 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
   }
 
   void _autoCycleMetric() {
-    if (!mounted || _chartHovering || _byTech) return;
-    _setMetric(_metric == _ChartMetric.payouts ? _ChartMetric.revenue : _ChartMetric.payouts);
+    if (!mounted || _chartHovering) return;
+    _setMetric(
+      _metric == _ChartMetric.payouts
+          ? _ChartMetric.revenue
+          : _ChartMetric.payouts,
+    );
   }
 
   void _setActive(int? i) {
@@ -1273,30 +1514,12 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
     return i;
   }
 
-  double? _pct(double prev, double cur) => prev > 0 ? (cur - prev) / prev * 100 : null;
-
-  void _setByTech(bool v) {
-    if (v == _byTech) return;
-    setState(() {
-      _byTech = v;
-      _active = null;
-      _paintedIndex = null;
-    });
-    _hover.value = 0;
-    if (!v) _intro.forward(from: 0);
-  }
+  double? _pct(double prev, double cur) =>
+      prev > 0 ? (cur - prev) / prev * 100 : null;
 
   @override
   Widget build(BuildContext context) {
     final data = widget.data;
-
-    if (_byTech) {
-      return _TechShareView(
-        staff: widget.staff,
-        year: widget.year,
-        toggle: _ViewToggle(byTech: true, onChanged: _setByTech),
-      );
-    }
 
     if (data.isEmpty) {
       return Container(
@@ -1305,13 +1528,20 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
         child: const Center(
           child: Text(
             'No chart data for this year yet.',
-            style: TextStyle(color: _Ui.muted, fontWeight: FontWeight.w500, fontSize: 14),
+            style: TextStyle(
+              color: _Ui.muted,
+              fontWeight: FontWeight.w500,
+              fontSize: 14,
+            ),
           ),
         ),
       );
     }
 
-    final withData = [for (var i = 0; i < data.length; i++) if (_metric.valueOf(data[i]) > 0) i];
+    final withData = [
+      for (var i = 0; i < data.length; i++)
+        if (_metric.valueOf(data[i]) > 0) i,
+    ];
     final values = withData.map((i) => _metric.valueOf(data[i])).toList();
     final sum = values.fold<double>(0, (a, b) => a + b);
     final avg = values.isEmpty ? 0.0 : sum / values.length;
@@ -1326,7 +1556,9 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
       }
     }
 
-    final maxV = data.map(_metric.valueOf).fold<double>(0, (a, b) => math.max(a, b));
+    final maxV = data
+        .map(_metric.valueOf)
+        .fold<double>(0, (a, b) => math.max(a, b));
     final scale = _niceScale(maxV);
 
     double? trendPct;
@@ -1348,47 +1580,48 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    _metric.caption,
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.slate),
+              Expanded(
+                child: Text(
+                  _metric.caption,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: _Ui.slate,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        _metric.format(sum),
-                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _Ui.ink, height: 1.1),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Total for ${widget.year}',
-                        style: const TextStyle(fontSize: 13, color: _Ui.muted, fontWeight: FontWeight.w500),
-                      ),
-                      if (trendPct != null) ...[
-                        const SizedBox(width: 10),
-                        _TrendChip(pct: trendPct, vs: trendVs!),
-                      ],
-                    ],
-                  ),
-                ],
+                ),
               ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _ViewToggle(byTech: false, onChanged: _setByTech),
-                  const SizedBox(width: 8),
-                  _MetricToggle(value: _metric, onChanged: _setMetric),
-                ],
+              const SizedBox(width: 8),
+              _MetricToggle(value: _metric, onChanged: _setMetric),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 10,
+            runSpacing: 4,
+            children: [
+              Text(
+                _metric.format(sum),
+                style: const TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  color: _Ui.ink,
+                  height: 1.1,
+                ),
               ),
+              Text(
+                'Total for ${widget.year}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  color: _Ui.muted,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              if (trendPct != null) _TrendChip(pct: trendPct, vs: trendVs!),
             ],
           ),
           const SizedBox(height: 16),
@@ -1403,7 +1636,9 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
                           _chartHovering = true;
                           _metricCycleTimer?.cancel();
                         },
-                        onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
+                        onHover: (e) => _setActive(
+                          _indexFor(e.localPosition.dx, c.maxWidth),
+                        ),
                         onExit: (_) {
                           _setActive(null);
                           _chartHovering = false;
@@ -1411,9 +1646,15 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
                         },
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                          onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                          onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
+                          onTapDown: (d) => _setActive(
+                            _indexFor(d.localPosition.dx, c.maxWidth),
+                          ),
+                          onHorizontalDragStart: (d) => _setActive(
+                            _indexFor(d.localPosition.dx, c.maxWidth),
+                          ),
+                          onHorizontalDragUpdate: (d) => _setActive(
+                            _indexFor(d.localPosition.dx, c.maxWidth),
+                          ),
                           child: AnimatedBuilder(
                             animation: Listenable.merge([_intro, _hover]),
                             builder: (context, _) {
@@ -1429,7 +1670,9 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
                                   currentMonth: currentMonth,
                                   index: _paintedIndex,
                                   intro: _intro.value,
-                                  hover: Curves.easeOutCubic.transform(_hover.value),
+                                  hover: Curves.easeOutCubic.transform(
+                                    _hover.value,
+                                  ),
                                 ),
                               );
                             },
@@ -1444,7 +1687,11 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
                             padding: const EdgeInsets.only(bottom: 28),
                             child: Text(
                               'Nothing recorded for ${widget.year} yet.',
-                              style: const TextStyle(fontSize: 14, color: _Ui.muted, fontWeight: FontWeight.w500),
+                              style: const TextStyle(
+                                fontSize: 14,
+                                color: _Ui.muted,
+                                fontWeight: FontWeight.w500,
+                              ),
                             ),
                           ),
                         ),
@@ -1502,207 +1749,829 @@ class _InteractivePayoutChartState extends State<_InteractivePayoutChart> with T
       children: [
         swatch,
         const SizedBox(width: 8),
-        Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _Ui.slate)),
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: _Ui.slate,
+          ),
+        ),
       ],
     );
   }
 }
 
-class _ViewToggle extends StatelessWidget {
-  final bool byTech;
-  final ValueChanged<bool> onChanged;
-  const _ViewToggle({required this.byTech, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    Widget seg(String label, bool selected, bool value) => GestureDetector(
-          onTap: () => onChanged(value),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-            decoration: BoxDecoration(
-              color: selected ? Colors.white : Colors.transparent,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: selected ? _Ui.line : Colors.transparent),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                color: selected ? _Ui.ink : _Ui.slate,
-              ),
-            ),
-          ),
-        );
-
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: _Ui.faint, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [seg('By month', !byTech, false), seg('By tech', byTech, true)],
-      ),
-    );
-  }
-}
-
-/// Who is earning what: commission YTD per technician, ranked, with share of the total.
-/// Sales staff are excluded because the API doesn't report a commission amount for them.
-class _TechShareView extends StatefulWidget {
+/// Hurdle meters: each technician's gross for the current pay week against the weekly hurdle. Bars fill in one after
+/// another, the numbers count up, and a bar that has cleared the hurdle turns green, glows and gets a light sweep.
+/// Gross includes the commercial retainage held that week (it counts toward the hurdle but is not paid).
+class _HurdleMetersCard extends StatefulWidget {
   final List<_StaffCommissionProfile> staff;
-  final int? year;
-  final Widget toggle;
-  const _TechShareView({required this.staff, required this.year, required this.toggle});
+  final double hurdle;
+  const _HurdleMetersCard({required this.staff, required this.hurdle});
 
   @override
-  State<_TechShareView> createState() => _TechShareViewState();
+  State<_HurdleMetersCard> createState() => _HurdleMetersCardState();
 }
 
-class _TechShareViewState extends State<_TechShareView> {
-  int? _hovered;
+class _HurdleMetersCardState extends State<_HurdleMetersCard>
+    with TickerProviderStateMixin {
+  late final AnimationController _intro;
+  late final AnimationController _sweep;
+  String _sig = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _intro = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    );
+    _sweep = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 3400),
+    );
+    _sig = _signature();
+    _intro.forward();
+    _sweep.repeat();
+  }
+
+  String _signature() => widget.staff
+      .where((p) => !p.isSales)
+      .map((p) => '${p.id}:${p.weekGross.toStringAsFixed(2)}')
+      .join('|');
+
+  @override
+  void didUpdateWidget(covariant _HurdleMetersCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final now = _signature();
+    if (now != _sig) {
+      _sig = now;
+      _intro.forward(from: 0); // new numbers: play the fill again
+    }
+  }
+
+  @override
+  void dispose() {
+    _intro.dispose();
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  static const double _rowH = 34;
 
   @override
   Widget build(BuildContext context) {
+    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduce) {
+      _intro.value = 1;
+      _sweep.stop();
+    }
     final techs = widget.staff.where((p) => !p.isSales).toList()
-      ..sort((a, b) => b.commission.compareTo(a.commission));
-    final total = techs.fold<double>(0, (s, p) => s + p.commission);
-    final maxV = techs.isEmpty ? 0.0 : techs.first.commission;
+      ..sort((a, b) => b.weekGross.compareTo(a.weekGross));
+    final cleared = techs.where((p) => p.weekGross >= widget.hurdle).length;
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
+      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
       decoration: _Ui.panel(),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text(
-                    'Commission earned by technician',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.slate),
+              const Expanded(
+                child: Text(
+                  'Weekly hurdle',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: _Ui.slate,
                   ),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _money(total),
-                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: _Ui.ink, height: 1.1),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Total for ${widget.year}',
-                        style: const TextStyle(fontSize: 13, color: _Ui.muted, fontWeight: FontWeight.w500),
-                      ),
-                    ],
-                  ),
-                ],
+                ),
               ),
-              widget.toggle,
+              Text(
+                techs.isEmpty ? '' : '$cleared of ${techs.length} cleared',
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: _Ui.emeraldDeep,
+                ),
+              ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 8),
           Expanded(
             child: techs.isEmpty
                 ? const Center(
-                    child: Text('No technician commission recorded yet.',
-                        style: TextStyle(color: _Ui.muted, fontSize: 14)),
+                    child: Text(
+                      'No technicians to show.',
+                      style: TextStyle(color: _Ui.muted, fontSize: 13),
+                    ),
                   )
-                : ListView.builder(
-                    itemCount: techs.length,
-                    itemExtent: 38,
-                    itemBuilder: (context, i) {
-                      final p = techs[i];
-                      final ratio = maxV > 0 ? (p.commission / maxV).clamp(0.0, 1.0) : 0.0;
-                      final share = total > 0 ? p.commission / total * 100 : 0.0;
-                      final hovered = _hovered == i;
-                      final faded = _hovered != null && !hovered;
-                      return MouseRegion(
-                        onEnter: (_) => setState(() => _hovered = i),
-                        onExit: (_) => setState(() => _hovered = null),
-                        child: AnimatedOpacity(
-                          duration: const Duration(milliseconds: 180),
-                          opacity: faded ? 0.4 : 1.0,
-                          child: Row(
-                            children: [
-                              SizedBox(
-                                width: 140,
+                : LayoutBuilder(
+                    builder: (context, box) {
+                      final fit = (box.maxHeight / _rowH).floor().clamp(1, 99);
+                      final needMore = techs.length > fit;
+                      final visible = needMore
+                          ? math.max(1, fit - 1)
+                          : techs.length;
+                      return Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (var i = 0; i < visible; i++)
+                            SizedBox(
+                              height: _rowH,
+                              child: _meterRow(techs[i], i, techs.length),
+                            ),
+                          if (needMore)
+                            SizedBox(
+                              height: _rowH,
+                              child: Align(
+                                alignment: Alignment.centerLeft,
                                 child: Text(
-                                  p.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 13.5,
-                                    fontWeight: hovered ? FontWeight.w800 : FontWeight.w600,
-                                    color: hovered ? _Ui.ink : _Ui.slate,
+                                  '+${techs.length - visible} more',
+                                  style: const TextStyle(
+                                    fontSize: 12.5,
+                                    color: _Ui.muted,
+                                    fontWeight: FontWeight.w600,
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Stack(
-                                  alignment: Alignment.centerLeft,
-                                  children: [
-                                    Container(
-                                      height: 22,
-                                      decoration: BoxDecoration(color: _Ui.faint, borderRadius: BorderRadius.circular(6)),
-                                    ),
-                                    FractionallySizedBox(
-                                      widthFactor: p.commission > 0 ? math.max(ratio, 0.02) : 0.0,
-                                      child: TweenAnimationBuilder<double>(
-                                        tween: Tween(begin: 0, end: 1),
-                                        duration: const Duration(milliseconds: 600),
-                                        curve: Curves.easeOutCubic,
-                                        builder: (context, t, child) => FractionallySizedBox(
-                                          alignment: Alignment.centerLeft,
-                                          widthFactor: t,
-                                          child: child,
-                                        ),
-                                        child: Container(
-                                          height: 22,
-                                          decoration: BoxDecoration(
-                                            gradient: const LinearGradient(
-                                              colors: [Color(0xFF059669), Color(0xFF10B981)],
-                                            ),
-                                            borderRadius: BorderRadius.circular(6),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 14),
-                              SizedBox(
-                                width: 96,
-                                child: Text(
-                                  _money(p.commission),
-                                  textAlign: TextAlign.end,
-                                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: _Ui.ink),
-                                ),
-                              ),
-                              SizedBox(
-                                width: 52,
-                                child: Text(
-                                  '${share.toStringAsFixed(1)}%',
-                                  textAlign: TextAlign.end,
-                                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _Ui.emeraldDeep),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                            ),
+                        ],
                       );
                     },
                   ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _meterRow(_StaffCommissionProfile p, int index, int count) {
+    final hurdle = widget.hurdle <= 0 ? 1.0 : widget.hurdle;
+    final target = (p.weekGross / hurdle).clamp(0.0, 1.0);
+    final isCleared = p.weekGross >= hurdle;
+    // Rows start one after another: each gets its own slice of the intro animation.
+    final start = (index * 0.09).clamp(0.0, 0.5);
+    final curve = CurvedAnimation(
+      parent: _intro,
+      curve: Interval(
+        start,
+        math.min(1.0, start + 0.55),
+        curve: Curves.easeOutCubic,
+      ),
+    );
+
+    return AnimatedBuilder(
+      // Only the intro drives the row. The light sweep has its own builder below, so the text is not rebuilt
+      // every frame (that would keep clearing a mouse selection of the names and amounts).
+      animation: curve,
+      builder: (context, _) {
+        final t = curve.value;
+        final fill = target * t;
+        final shown = p.weekGross * t;
+        final accent = isCleared ? _Ui.emeraldDeep : _Ui.amber;
+        return Row(
+          children: [
+            SizedBox(
+              width: 116,
+              child: Text(
+                p.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  color: _Ui.ink,
+                ),
+              ),
+            ),
+            // A fixed slot so the bars line up whether or not someone has a streak.
+            SizedBox(
+              width: 48,
+              child: p.hurdleStreak > 0
+                  ? Align(
+                      alignment: Alignment.centerLeft,
+                      child: _StreakFlame(
+                        streak: p.hurdleStreak,
+                        weeksHit: p.hurdleWeeksHit,
+                      ),
+                    )
+                  : null,
+            ),
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, c) {
+                  final w = c.maxWidth;
+                  return SizedBox(
+                    height: 16,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            color: _Ui.faint,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        if (fill > 0)
+                          Container(
+                            width: math.max(10.0, w * fill),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(8),
+                              gradient: LinearGradient(
+                                colors: isCleared
+                                    ? const [
+                                        Color(0xFF059669),
+                                        Color(0xFF34D399),
+                                      ]
+                                    : const [
+                                        Color(0xFFF59E0B),
+                                        Color(0xFFD97706),
+                                      ],
+                              ),
+                              boxShadow: isCleared && t >= 1
+                                  ? [
+                                      BoxShadow(
+                                        color: _Ui.emerald.withValues(
+                                          alpha: 0.35,
+                                        ),
+                                        blurRadius: 8,
+                                        spreadRadius: 0.5,
+                                      ),
+                                    ]
+                                  : null,
+                            ),
+                            child: isCleared && t >= 1
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(8),
+                                    child: AnimatedBuilder(
+                                      animation: _sweep,
+                                      builder: (context, _) =>
+                                          FractionallySizedBox(
+                                            alignment: Alignment(
+                                              -1.6 + 3.2 * _sweep.value,
+                                              0,
+                                            ),
+                                            widthFactor: 0.28,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                gradient: LinearGradient(
+                                                  colors: [
+                                                    Colors.white.withValues(
+                                                      alpha: 0,
+                                                    ),
+                                                    Colors.white.withValues(
+                                                      alpha: 0.45,
+                                                    ),
+                                                    Colors.white.withValues(
+                                                      alpha: 0,
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                    ),
+                                  )
+                                : null,
+                          ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            SizedBox(
+              width: 128,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (isCleared) ...[
+                    Icon(Icons.check_circle_rounded, size: 15, color: accent),
+                    const SizedBox(width: 4),
+                  ],
+                  Text(
+                    _money(shown).replaceAll('.00', ''),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: isCleared ? _Ui.emeraldDeep : _Ui.ink,
+                    ),
+                  ),
+                  Text(
+                    isCleared
+                        ? '  +${_money(math.max(0, (p.weekGross - hurdle) * t)).replaceAll('.00', '')}'
+                        : ' / ${_money(hurdle).replaceAll('.00', '')}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: isCleared ? _Ui.emeraldDeep : _Ui.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// A flickering flame with the number of weeks in a row a technician has hit the hurdle. The flame gets bigger and
+/// hotter as the streak grows. Static when the system asks for reduced motion.
+class _StreakFlame extends StatefulWidget {
+  final int streak;
+  final int weeksHit;
+  const _StreakFlame({required this.streak, required this.weeksHit});
+
+  @override
+  State<_StreakFlame> createState() => _StreakFlameState();
+}
+
+class _StreakFlameState extends State<_StreakFlame>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    if (reduce) {
+      _c.stop();
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+    final s = widget.streak;
+    // 1-2 weeks: small; 3-5: medium; 6+: big and hot (the core goes white-yellow, the glow grows).
+    final level = s >= 6 ? 2 : (s >= 3 ? 1 : 0);
+    final h = 20.0 + level * 4;
+    final w = 15.0 + level * 3;
+    return Tooltip(
+      message:
+          '$s ${s == 1 ? 'week' : 'weeks'} in a row at or above the hurdle'
+          '${widget.weeksHit > s ? ' · ${widget.weeksHit} weeks in total' : ''}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: w + 4,
+            height: h + 4,
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) => CustomPaint(
+                painter: _FlamePainter(
+                  t: reduce ? 0.25 : _c.value,
+                  level: level,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 2),
+          Text(
+            '$s',
+            style: TextStyle(
+              fontSize: 14 + level.toDouble(),
+              fontWeight: FontWeight.w900,
+              color: level == 2
+                  ? const Color(0xFFDC2626)
+                  : const Color(0xFFEA580C),
+              height: 1,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FlamePainter extends CustomPainter {
+  final double t; // 0..1, loops
+  final int level; // 0..2
+  const _FlamePainter({required this.t, required this.level});
+
+  Path _flame(double w, double h, double sway, double inset) {
+    final cx = w / 2;
+    final left = w * inset;
+    final right = w * (1 - inset);
+    final top = h * (inset * 1.4);
+    return Path()
+      ..moveTo(cx, h)
+      ..cubicTo(left - w * 0.15, h * 0.92, left, h * 0.45, cx + sway, top)
+      ..cubicTo(right, h * 0.45, right + w * 0.15, h * 0.92, cx, h)
+      ..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final bottom = h;
+    final tau = math.pi * 2;
+    final sway = math.sin(t * tau * 2) * w * 0.08;
+    final flick = 1 + 0.07 * math.sin(t * tau * 3 + 1.3);
+
+    // Soft glow behind the flame, stronger for longer streaks.
+    canvas.drawCircle(
+      Offset(w / 2, h * 0.62),
+      w * (0.55 + 0.12 * level) * (1 + 0.08 * math.sin(t * tau * 2)),
+      Paint()
+        ..color = const Color(0xFFF97316).withValues(alpha: 0.16 + 0.1 * level)
+        ..maskFilter = MaskFilter.blur(BlurStyle.normal, 6 + 2.0 * level),
+    );
+
+    canvas.save();
+    canvas.translate(0, bottom);
+    canvas.scale(1, flick);
+    canvas.translate(0, -bottom);
+
+    final outer = _flame(w, h, sway, 0.06);
+    canvas.drawPath(
+      outer,
+      Paint()
+        ..shader = const LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFFDC2626), Color(0xFFF97316), Color(0xFFFBBF24)],
+          stops: [0.0, 0.55, 1.0],
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
+
+    // Inner core, a smaller flame that sways a little against the outer one.
+    canvas.save();
+    canvas.translate(w * 0.2, h * 0.34);
+    canvas.scale(0.6, 0.64);
+    canvas.drawPath(
+      _flame(w, h, -sway * 0.8, 0.1),
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            const Color(0xFFFDE68A),
+            level == 2 ? Colors.white : const Color(0xFFFEF3C7),
+          ],
+        ).createShader(Rect.fromLTWH(0, 0, w, h)),
+    );
+    canvas.restore();
+    canvas.restore();
+
+    // A few embers drifting up and fading.
+    for (var i = 0; i < 3; i++) {
+      final p = (t + i / 3) % 1.0;
+      final x =
+          w * (0.35 + 0.3 * ((i * 0.37 + 0.13) % 1.0)) +
+          math.sin((t + i) * tau) * 1.5;
+      final y = h * (0.55 - 0.7 * p);
+      canvas.drawCircle(
+        Offset(x, y),
+        1.1 + 0.4 * level,
+        Paint()
+          ..color = const Color(0xFFFBBF24).withValues(alpha: (1 - p) * 0.9),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _FlamePainter old) =>
+      old.t != t || old.level != level;
+}
+
+/// Payroll status: is the last completed pay week run yet, a button to run it, and the recent runs.
+/// Commission totals on this page only count once a run is finalized, so this is where that happens.
+class _PayrollRunsCard extends StatefulWidget {
+  /// Called after a run is finalized or voided, so the dashboard numbers can reload.
+  final VoidCallback onChanged;
+  const _PayrollRunsCard({required this.onChanged});
+
+  @override
+  State<_PayrollRunsCard> createState() => _PayrollRunsCardState();
+}
+
+class _RunRow {
+  final String weekStart;
+  final String weekEnd;
+  final String type;
+  final String status;
+  final String by;
+  final double paid;
+
+  _RunRow(Map<String, dynamic> j)
+    : weekStart = '${j['week_start'] ?? ''}',
+      weekEnd = '${j['week_end'] ?? ''}',
+      type = '${j['run_type'] ?? ''}',
+      status = '${j['status'] ?? ''}',
+      by = '${j['run_by_name'] ?? ''}',
+      paid = double.tryParse('${j['total_amount_paid'] ?? 0}') ?? 0;
+
+  bool get voided => status == 'voided';
+}
+
+class _PayrollRunsCardState extends State<_PayrollRunsCard> {
+  List<_RunRow> _runs = const [];
+  bool _loading = true;
+  String? _error;
+
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  static const _months = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
+    'May',
+    'Jun',
+    'Jul',
+    'Aug',
+    'Sep',
+    'Oct',
+    'Nov',
+    'Dec',
+  ];
+  static String _short(String ymd) {
+    final p = ymd.split('-');
+    if (p.length != 3) return ymd;
+    return '${_months[(int.tryParse(p[1]) ?? 1) - 1]} ${int.tryParse(p[2]) ?? 0}';
+  }
+
+  /// First pay week (commissions go live on this Monday, 2026-10-05).
+  static final DateTime _firstWeek = DateTime(2026, 10, 5);
+
+  /// Monday of the most recent pay week that is over, or the first pay week if none is over yet.
+  DateTime get _lastWeek {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final last = today.subtract(
+      Duration(days: today.weekday - DateTime.monday + 7),
+    );
+    return last.isBefore(_firstWeek) ? _firstWeek : last;
+  }
+
+  bool get _weekIsOver {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    return _lastWeek.add(const Duration(days: 7)).compareTo(today) <= 0;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$kApiBaseUrl/api/payroll/runs?limit=40'),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout();
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      if (res.statusCode != 200) {
+        throw Exception('The server returned status ${res.statusCode}.');
+      }
+      final body = json.decode(res.body) as Map<String, dynamic>;
+      if (!mounted) return;
+      setState(() {
+        _runs = [
+          for (final r in (body['runs'] as List? ?? const []))
+            _RunRow(Map<String, dynamic>.from(r as Map)),
+        ];
+        _loading = false;
+      });
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Took too long to load.';
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString().replaceFirst('Exception: ', '');
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _openRunDialog() async {
+    await showPayrollRunDialog(
+      context,
+      initialDate: _lastWeek,
+      onChanged: () {
+        _load();
+        widget.onChanged();
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final week = _lastWeek;
+    final weekKey = _ymd(week);
+    final weekEnd = _ymd(week.add(const Duration(days: 6)));
+    final lastRuns = _runs
+        .where((r) => r.weekStart == weekKey && !r.voided)
+        .toList();
+    final paidLastWeek = lastRuns.fold<double>(0, (s, r) => s + r.paid);
+    final done = lastRuns.isNotEmpty;
+    final open = !_weekIsOver; // the first pay week is still running
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
+      decoration: _Ui.panel(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Payroll',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: _Ui.slate,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_loading && _runs.isEmpty)
+            const Expanded(
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+            )
+          else if (_error != null && _runs.isEmpty)
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      _error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: _Ui.muted, fontSize: 13),
+                    ),
+                    const SizedBox(height: 8),
+                    OutlinedButton(
+                      onPressed: _load,
+                      child: const Text('Try again'),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: done
+                    ? const Color(0xFFECFDF5)
+                    : (open ? _Ui.faint : const Color(0xFFFFFBEB)),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: done
+                      ? const Color(0xFFA7F3D0)
+                      : (open ? _Ui.line : const Color(0xFFFDE68A)),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Pay week ${_short(weekKey)} – ${_short(weekEnd)}',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _Ui.slate,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    done
+                        ? 'Paid ${_money(paidLastWeek)}'
+                        : (open ? 'Week in progress' : 'Not run yet'),
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                      color: done
+                          ? _Ui.emeraldDeep
+                          : (open ? _Ui.slate : _Ui.amber),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _openRunDialog,
+                      icon: const Icon(Icons.payments_outlined, size: 18),
+                      label: Text(
+                        done
+                            ? 'Review / adjust'
+                            : (open ? 'Preview payroll' : 'Run payroll'),
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: _Ui.ink,
+                        minimumSize: const Size(0, 40),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Recent runs',
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: _Ui.slate,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Expanded(
+              child: _runs.isEmpty
+                  ? const Align(
+                      alignment: Alignment.topLeft,
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Text(
+                          'No payroll has been finalized yet.',
+                          style: TextStyle(color: _Ui.muted, fontSize: 13),
+                        ),
+                      ),
+                    )
+                  : LayoutBuilder(
+                      builder: (context, box) {
+                        const rowH = 34.0;
+                        final fit = (box.maxHeight / rowH).floor().clamp(1, 99);
+                        final shown = math.min(_runs.length, fit);
+                        return Column(
+                          children: [
+                            for (var i = 0; i < shown; i++)
+                              SizedBox(height: rowH, child: _runLine(_runs[i])),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _runLine(_RunRow r) {
+    final muted = r.voided;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '${_short(r.weekStart)} – ${_short(r.weekEnd)}'
+            '${r.type == 'adjustment' ? '  ·  adjustment' : ''}'
+            '${r.voided ? '  ·  voided' : ''}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: muted ? _Ui.muted : _Ui.ink,
+              decoration: muted ? TextDecoration.lineThrough : null,
+            ),
+          ),
+        ),
+        Text(
+          _money(r.paid),
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: muted ? _Ui.muted : _Ui.ink,
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1719,13 +2588,27 @@ class _TrendChip extends StatelessWidget {
     final bg = up ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(20),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: fg),
+          Icon(
+            up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+            size: 14,
+            color: fg,
+          ),
           const SizedBox(width: 2),
-          Text('${pct.abs().toStringAsFixed(1)}% vs $vs', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
+          Text(
+            '${pct.abs().toStringAsFixed(1)}% vs $vs',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: fg,
+            ),
+          ),
         ],
       ),
     );
@@ -1741,7 +2624,10 @@ class _MetricToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: _Ui.faint, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: _Ui.faint,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: _ChartMetric.values.map((m) {
@@ -1754,7 +2640,9 @@ class _MetricToggle extends StatelessWidget {
               decoration: BoxDecoration(
                 color: selected ? Colors.white : Colors.transparent,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: selected ? _Ui.line : Colors.transparent),
+                border: Border.all(
+                  color: selected ? _Ui.line : Colors.transparent,
+                ),
               ),
               child: Text(
                 m.toggleLabel,
@@ -1810,21 +2698,35 @@ class _PayoutChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(leftGutter, topPad, size.width, size.height - bottomGutter);
+    final plot = Rect.fromLTRB(
+      leftGutter,
+      topPad,
+      size.width,
+      size.height - bottomGutter,
+    );
     if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
 
     final n = data.length;
     final slotW = plot.width / n;
     final focusing = index != null && hover > 0.001;
 
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
+    double yFor(double v) =>
+        plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
 
     if (focusing) {
       final r = RRect.fromRectAndRadius(
-        Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height),
+        Rect.fromLTWH(
+          plot.left + index! * slotW + 2,
+          plot.top,
+          slotW - 4,
+          plot.height,
+        ),
         const Radius.circular(10),
       );
-      canvas.drawRRect(r, Paint()..color = metric.tint.withValues(alpha: hover));
+      canvas.drawRRect(
+        r,
+        Paint()..color = metric.tint.withValues(alpha: hover),
+      );
     }
 
     final ticks = scale.ticks;
@@ -1838,7 +2740,14 @@ class _PayoutChartPainter extends CustomPainter {
           ..color = i == 0 ? _Ui.line : _Ui.faint
           ..strokeWidth = 1,
       );
-      final tp = _layoutText(metric.axisFormat(v), const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.muted));
+      final tp = _layoutText(
+        metric.axisFormat(v),
+        const TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: _Ui.muted,
+        ),
+      );
       tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
     }
 
@@ -1854,7 +2763,9 @@ class _PayoutChartPainter extends CustomPainter {
       final baseW = math.min(slotW * 0.58, 36.0);
       final barW = baseW + (isFocus ? 4 * hover : 0);
 
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
+      final localT = Curves.easeOutCubic.transform(
+        ((intro - i * stagger) / 0.6).clamp(0.0, 1.0),
+      );
       final fullH = (v / scale.max).clamp(0.0, 1.0) * plot.height;
 
       final emphasized = isFocus || isCurrent;
@@ -1863,7 +2774,9 @@ class _PayoutChartPainter extends CustomPainter {
         TextStyle(
           fontSize: 13,
           fontWeight: emphasized ? FontWeight.w800 : FontWeight.w600,
-          color: emphasized ? _Ui.ink : (v > 0 ? _Ui.slate : const Color(0xFFCBD5E1)),
+          color: emphasized
+              ? _Ui.ink
+              : (v > 0 ? _Ui.slate : const Color(0xFFCBD5E1)),
         ),
         maxWidth: slotW,
         align: TextAlign.center,
@@ -1874,7 +2787,11 @@ class _PayoutChartPainter extends CustomPainter {
       if (isCurrent) {
         canvas.drawRRect(
           RRect.fromRectAndRadius(
-            Rect.fromCenter(center: Offset(cx, plot.bottom + 8 + labelTp.height + 4), width: 14, height: 3),
+            Rect.fromCenter(
+              center: Offset(cx, plot.bottom + 8 + labelTp.height + 4),
+              width: 14,
+              height: 3,
+            ),
             const Radius.circular(2),
           ),
           Paint()..color = metric.accent,
@@ -1883,7 +2800,11 @@ class _PayoutChartPainter extends CustomPainter {
 
       if (v <= 0) {
         final stub = RRect.fromRectAndRadius(
-          Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: baseW * 0.6, height: 3),
+          Rect.fromCenter(
+            center: Offset(cx, plot.bottom - 1.5),
+            width: baseW * 0.6,
+            height: 3,
+          ),
           const Radius.circular(2),
         );
         canvas.drawRRect(stub, Paint()..color = _Ui.line);
@@ -1925,7 +2846,11 @@ class _PayoutChartPainter extends CustomPainter {
       if (peakIndex == i && !isFocus && localT >= 1) {
         final tp = _layoutText(
           metric.format(v),
-          TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: metric.accentDeep.withValues(alpha: dim)),
+          TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w800,
+            color: metric.accentDeep.withValues(alpha: dim),
+          ),
         );
         final ly = rect.top - tp.height - 4;
         if (ly >= 0) tp.paint(canvas, Offset(cx - tp.width / 2, ly));
@@ -1940,44 +2865,96 @@ class _PayoutChartPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       var x = plot.left;
       while (x < plot.right) {
-        canvas.drawLine(Offset(x, y), Offset(math.min(x + 5, plot.right), y), paint);
+        canvas.drawLine(
+          Offset(x, y),
+          Offset(math.min(x + 5, plot.right), y),
+          paint,
+        );
         x += 9;
       }
 
       final avgTp = _layoutText(
         'avg ${metric.format(average)}',
-        TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: metric.accentDeep.withValues(alpha: intro)),
+        TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: metric.accentDeep.withValues(alpha: intro),
+        ),
       );
-      avgTp.paint(canvas, Offset(plot.right - avgTp.width - 4, y - avgTp.height - 3));
+      avgTp.paint(
+        canvas,
+        Offset(plot.right - avgTp.width - 4, y - avgTp.height - 3),
+      );
     }
 
     if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
   }
 
-  void _paintTooltip(Canvas canvas, Size size, Rect plot, double slotW, double Function(double) yFor) {
+  void _paintTooltip(
+    Canvas canvas,
+    Size size,
+    Rect plot,
+    double slotW,
+    double Function(double) yFor,
+  ) {
     final i = index!;
     final p = data[i];
     final v = metric.valueOf(p);
 
-    final rows = <_TipRow>[_TipRow(metric.rowLabel, metric.format(v), Colors.white)];
+    final rows = <_TipRow>[
+      _TipRow(metric.rowLabel, metric.format(v), Colors.white),
+    ];
     if (v > 0 && total > 0) {
-      rows.add(_TipRow('Share of year', '${(v / total * 100).toStringAsFixed(0)}%', Colors.white));
+      rows.add(
+        _TipRow(
+          'Share of year',
+          '${(v / total * 100).toStringAsFixed(0)}%',
+          Colors.white,
+        ),
+      );
     }
     if (v > 0 && average > 0) {
       final d = (v - average) / average * 100;
-      rows.add(_TipRow(
-        'Vs average',
-        '${d >= 0 ? '+' : '-'}${d.abs().toStringAsFixed(0)}%',
-        d >= 0 ? const Color(0xFF34D399) : const Color(0xFFF87171),
-      ));
+      rows.add(
+        _TipRow(
+          'Vs average',
+          '${d >= 0 ? '+' : '-'}${d.abs().toStringAsFixed(0)}%',
+          d >= 0 ? const Color(0xFF34D399) : const Color(0xFFF87171),
+        ),
+      );
     }
 
-    final titleTp = _layoutText(p.month, const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800));
+    final titleTp = _layoutText(
+      p.month,
+      const TextStyle(
+        color: Colors.white,
+        fontSize: 13.5,
+        fontWeight: FontWeight.w800,
+      ),
+    );
     final labelTps = rows
-        .map((r) => _layoutText(r.label, const TextStyle(color: Color(0xFF94A3B8), fontSize: 12, fontWeight: FontWeight.w500)))
+        .map(
+          (r) => _layoutText(
+            r.label,
+            const TextStyle(
+              color: Color(0xFF94A3B8),
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        )
         .toList();
     final valueTps = rows
-        .map((r) => _layoutText(r.value, TextStyle(color: r.valueColor, fontSize: 12.5, fontWeight: FontWeight.w800)))
+        .map(
+          (r) => _layoutText(
+            r.value,
+            TextStyle(
+              color: r.valueColor,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        )
         .toList();
 
     var contentW = titleTp.width;
@@ -1986,7 +2963,13 @@ class _PayoutChartPainter extends CustomPainter {
     }
     final rowH = labelTps.first.height;
     final tipW = contentW + 28;
-    final tipH = 10 + titleTp.height + 6 + rows.length * rowH + (rows.length - 1) * 4 + 12;
+    final tipH =
+        10 +
+        titleTp.height +
+        6 +
+        rows.length * rowH +
+        (rows.length - 1) * 4 +
+        12;
 
     final cx = plot.left + slotW * (i + 0.5);
     final barTop = yFor(v);
@@ -2001,7 +2984,10 @@ class _PayoutChartPainter extends CustomPainter {
       Paint()..color = Colors.white.withValues(alpha: hover),
     );
 
-    final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(10));
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(tx, ty, tipW, tipH),
+      const Radius.circular(10),
+    );
     canvas.drawRRect(
       rrect.shift(const Offset(0, 4)),
       Paint()

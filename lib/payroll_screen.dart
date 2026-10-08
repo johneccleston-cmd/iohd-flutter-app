@@ -12,6 +12,7 @@ import 'package:printing/printing.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'payroll_pending_panel.dart';
+import 'payroll_run_dialog.dart';
 import 'widgets/dashboard_kit.dart';
 
 part 'payroll_pdf.dart';
@@ -183,6 +184,7 @@ class _Week {
   final double weeklyGross;
   final double hurdleApplied;
   final double hurdleRule;
+  final double hurdleCredit; // retainage held this week; counts toward the hurdle but is not paid
   final double cashPay;
   final double advanceShortfall;
   final List<_Job> jobs;
@@ -201,6 +203,7 @@ class _Week {
       weeklyGross = _d(j['weeklyGross']),
       hurdleApplied = _d(j['hurdleApplied']),
       hurdleRule = _d(j['hurdleRule']),
+      hurdleCredit = _d(j['hurdleCredit']),
       cashPay = _d(j['cashPay']),
       advanceShortfall = _d(j['advanceShortfall']),
       jobs = ((j['jobs'] as List?) ?? const []).map((e) => _Job(Map<String, dynamic>.from(e as Map))).toList(),
@@ -638,6 +641,19 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        FilledButton.icon(
+          icon: const Icon(Icons.payments_outlined, size: 18),
+          label: const Text('Run payroll'),
+          style: FilledButton.styleFrom(
+            minimumSize: const Size(0, 40),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+            backgroundColor: DashUi.ink,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+          ),
+          onPressed: () => showPayrollRunDialog(context, initialDate: _range.start, onChanged: _load),
+        ),
+        const SizedBox(width: 8),
         OutlinedButton.icon(
           icon: _exporting
               ? const SizedBox(
@@ -1958,6 +1974,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
           const Divider(height: 1, color: DashUi.line),
           const SizedBox(height: 4),
           _ledgerRow('Closed-job commission (net to tech)', w.jobNet, dot: DashUi.emeraldDeep),
+          if (w.hurdleCredit > 0)
+            _ledgerRow(
+              'Retainage held this week',
+              w.hurdleCredit,
+              dot: DashUi.indigo,
+              plus: true,
+              note: 'Held back, not paid now, but it counts toward the weekly gross and the hurdle',
+            ),
           if (w.advancesPaid != 0) _ledgerRow('Advances paid this week', w.advancesPaid, dot: DashUi.sky, plus: true),
           if (w.callbackPay != 0) _ledgerRow('Callback pay', w.callbackPay, dot: DashUi.amber, plus: true),
           if (w.repPay != 0) _ledgerRow('Sales commission (closed jobs)', w.repPay, dot: DashUi.indigo, plus: true),

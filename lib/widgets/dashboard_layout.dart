@@ -143,7 +143,8 @@ class _DashboardLayoutState extends State<DashboardLayout> {
                       maxWidth: _DashTokens.maxContentWidth,
                     ),
                     child: Padding(
-                      padding: EdgeInsets.all(pad),
+                      // A little less space under the header banner and above the bottom edge than at the sides, so the content gets more height.
+                      padding: EdgeInsets.fromLTRB(pad, (pad * 0.6).roundToDouble(), pad, (pad * 0.6).roundToDouble()),
                       // Fade between years so data swaps don't feel like a hard jump.
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),

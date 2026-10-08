@@ -31,6 +31,7 @@ import 'payments_screen.dart';
 import 'invoices_screen.dart';
 import 'team_admin_screen.dart';
 import 'login_screen.dart';
+import 'widgets/page_selection.dart';
 import 'commission_corrections_screen.dart';
 import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
@@ -65,10 +66,10 @@ final GoRouter _router = GoRouter(
     return null;
   },
   routes: [
-    GoRoute(path: '/login', builder: (context, state) => const LoginScreen()),
+    GoRoute(path: '/login', builder: (context, state) => const RouteSelection(child: LoginScreen())),
     StatefulShellRoute.indexedStack(
       builder: (context, state, navigationShell) {
-        return MainNavigationShell(navigationShell: navigationShell);
+        return RouteSelection(child: MainNavigationShell(navigationShell: navigationShell));
       },
       branches: [
        // OFFICE BRANCH (Index 0)
@@ -191,10 +192,12 @@ class IohdHubApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'IOHD',
+      title: 'IOHD Office',
       debugShowCheckedModeBanner: false,
       themeMode: ThemeMode.light,
       routerConfig: _router,
+      // Flutter text is not selectable by default. This makes all text in the app highlightable and copyable.
+      builder: appSelectionBuilder,
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,

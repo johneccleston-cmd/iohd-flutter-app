@@ -202,11 +202,11 @@ void main() {
 
   testWidgets('stale dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_stale', tapText: 'Stale estimates'));
 
-  testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Commercial hard bids'));
+  testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Hard bids · rev & profit'));
 
-  testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Commercial hard bids'));
+  testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Hard bids · rev & profit'));
 
-  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Residential'));
+  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Residential · rev & profit'));
 
   testWidgets('main kpi page', (tester) async => _shot(tester, const Size(1500, 720), 'kpi_main', main: true));
 

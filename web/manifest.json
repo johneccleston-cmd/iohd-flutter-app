@@ -1,6 +1,6 @@
 {
-    "name": "IOHD Desktop",
-    "short_name": "IOHD Desktop",
+    "name": "IOHD Office",
+    "short_name": "IOHD Office",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#F5F5F5",

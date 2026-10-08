@@ -35,7 +35,6 @@ class _Bar {
   static const activeFill = _darkBar ? Color(0x1AFFFFFF) : Color(0xFFFCEEEE); // white at 10%
   static const hoverFill = _darkBar ? Color(0x0FFFFFFF) : Color(0xFFF3F4F6); // white at 6%
 
-  static const brandSub = _darkBar ? Color(0xFF94A3B8) : Color(0xFF5B6572);
 
   static const field = _darkBar ? Color(0xFF1E293B) : Color(0xFFF6F7F9);
   static const fieldBorder = _darkBar ? Color(0xFF334155) : Colors.transparent;
@@ -321,13 +320,15 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         child: Scaffold(
           appBar: PreferredSize(
             preferredSize: const Size.fromHeight(_barHeight),
-            child: LayoutBuilder(
+            child: SelectionContainer.disabled(
+              child: LayoutBuilder(
               builder: (context, constraints) {
                 final double w = constraints.maxWidth;
                 final bool compact = w < _compactWidth;
                 _tight = w < _tightWidth;
                 return _buildBar(current, location, compact: compact, tight: _tight, iconOnly: w < _iconOnlyWidth);
               },
+            ),
             ),
           ),
           body: widget.navigationShell,
@@ -393,31 +394,14 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                 child: const Icon(Icons.garage_rounded, size: 18, color: Colors.white),
               ),
               const SizedBox(width: 10),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'IOHD',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                      color: _Bar.textActive,
-                      letterSpacing: 0.4,
-                      height: 1.15,
-                    ),
-                  ),
-                  if (!compact)
-                    const Text(
-                      'IOHD Desktop',
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                        color: _Bar.brandSub,
-                        height: 1.15,
-                      ),
-                    ),
-                ],
+              const Text(
+                'IOHD Office',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: _Bar.textActive,
+                  letterSpacing: 0.4,
+                ),
               ),
               SizedBox(width: compact ? 14 : 22),
               Container(width: 1, height: 26, color: _Bar.divider),

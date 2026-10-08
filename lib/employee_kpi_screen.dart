@@ -267,7 +267,12 @@ class _TechKpis {
   final double? laborPerDay;
   final bool tracksPackages;
   final bool tracksEfficiency;
+
+  /// Service call evals (Residential Diagnostic Visit jobs) this tech worked, and how many got the Same Day Service
+  /// Credit, i.e. converted to a service package. Null until the backend sends `evalConversion`.
+  final ({int evals, int converted})? evalConversion;
   const _TechKpis({
+    this.evalConversion,
     required this.satisfaction,
     required this.employeeRating,
     required this.mentions,
@@ -287,7 +292,11 @@ class _TechKpis {
 
   factory _TechKpis.fromJson(Map<String, dynamic> j) {
     final tr = j['tracking'] is Map ? j['tracking'] as Map : const {};
+    final ec = j['evalConversion'];
     return _TechKpis(
+      evalConversion: ec is Map
+          ? (evals: int.tryParse(_str(ec['evals'])) ?? 0, converted: int.tryParse(_str(ec['converted'])) ?? 0)
+          : null,
       satisfaction: _Rating.fromJson(j['satisfaction']),
       employeeRating: _Rating.fromJson(j['employeeRating']),
       teamPerDay: _monthSeries(j['teamMonthly'], 'laborPerDay'),
@@ -975,12 +984,14 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         final grid = _scoreGrid();
         Widget leftColumn({required bool fill}) {
           final morale = _moraleCard(fill: fill);
+          final conversion = _conversionCard();
           return Column(
             mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               profile,
               if (grid != null) ...[const SizedBox(height: 8), grid],
+              if (conversion != null) ...[const SizedBox(height: 8), conversion],
               if (morale != null) ...[
                 const SizedBox(height: 8),
                 if (fill) Expanded(child: morale) else SizedBox(height: 210, child: morale),
@@ -1103,6 +1114,19 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           card('Team callback rate', teamRate, ts == null ? DashUi.muted : strikeColor(ts.teamCallbacks), 2, (v) => '${_fmtNum(v)}%'),
         ],
       ],
+    );
+  }
+
+  static const _sampleConversion = (evals: 14, converted: 6);
+
+  /// Eval-to-package conversions, above the Morale card. Brett only; null for everyone else.
+  Widget? _conversionCard() {
+    final d = _details;
+    final t = d?.tech;
+    if (d == null || !d.isTech || t == null || _firstName.toLowerCase() != 'brett') return null;
+    return SizedBox(
+      height: 70,
+      child: _ConversionCard(data: (t.evalConversion?.converted ?? 0) > 0 ? t.evalConversion : (_sample ? _sampleConversion : t.evalConversion)),
     );
   }
 
@@ -1340,7 +1364,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           fill ? Expanded(child: _salesCard(sales, expand: true, monthly: d.monthlyWon, showChart: chart)) : _salesCard(sales, monthly: d.monthlyWon, showChart: true),
-          if (commercial.isNotEmpty) ...[gap, pair(commercial, flex: commercial.length == 2 ? const [5, 6] : null, breakpoint: 760, equalHeight: fill)],
+          if (commercial.isNotEmpty) ...[gap, pair(commercial, flex: commercial.length == 2 ? const [4, 6] : null, breakpoint: 760, equalHeight: fill)],
         ],
       );
       final body = LayoutBuilder(
@@ -1427,7 +1451,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     if (!showChart) return const SizedBox.shrink();
     final visible = _mixVisible(s.residential);
     final typeLabels = _mixLabelsFor(s.residential);
-    final tabs = ['Revenue by month', for (final k in visible) typeLabels[k]];
+    final tabs = ['Monthly revenue', for (final k in visible) '${_typeTabName(typeLabels[k])} · rev & profit'];
     // Without the monthly feed the first tab has nothing to show, so open on the first type.
     var view = _view.clamp(0, tabs.length - 1);
     if (monthly == null && view == 0 && tabs.length > 1) view = 1;
@@ -1460,7 +1484,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         children: [
           Align(
             alignment: Alignment.centerLeft,
-            child: _ChartToggle(labels: tabs, selected: view, onChanged: (i) => setState(() => _view = i)),
+            child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: _ChartToggle(labels: tabs, selected: view, onChanged: (i) => setState(() => _view = i))),
           ),
           const SizedBox(height: 8),
           if (expand) Expanded(child: content) else SizedBox(height: 252, child: content),
@@ -1665,6 +1689,13 @@ class _BigStat extends StatelessWidget {
   }
 }
 
+/// Short name for a chart tab: "Commercial hard bids" -> "Hard bids", "Commercial estimates" -> "Commercial".
+String _typeTabName(String label) => switch (label) {
+      'Commercial hard bids' => 'Hard bids',
+      'Commercial estimates' => 'Commercial',
+      _ => label,
+    };
+
 /// 0 = Commercial hard bid, 1 = other Commercial estimate, 2 = everything else, from an estimate category.
 int _mixBucket(String category) {
   final c = category.toLowerCase();
@@ -1681,9 +1712,9 @@ List<String> _mixLabelsFor(bool residential) => residential ? const ['Commercial
 /// Which buckets to show: a residential salesperson only gets Residential; commercial gets all three.
 List<int> _mixVisible(bool residential) => residential ? const [2] : const [0, 1, 2];
 
-/// Estimates this year split into Commercial hard bids, other Commercial estimates and everything else: a donut with a
-/// soft shadow and highlight on the left, and on the right one card per slice (share, count, won and won revenue with a
-/// share bar). Hovering a slice or a card highlights it and shows its count and share in the middle.
+/// Estimates this year split into Commercial hard bids, other Commercial estimates and everything else, drawn like the
+/// "Active jobs by status" donut on the Jobs dashboard: a big thick ring with the total in the middle and a plain legend
+/// beside it. Hovering a slice or a legend row highlights it and shows its share and count in the middle.
 class _EstimateMixPie extends StatefulWidget {
   final List<_TypeKpis> types;
   final bool residential;
@@ -1694,23 +1725,18 @@ class _EstimateMixPie extends StatefulWidget {
 }
 
 class _EstimateMixPieState extends State<_EstimateMixPie> {
-  static const double _size = 150;
-  static const double _ring = 24;
+  static const double _size = 184;
   List<String> get _labels => _mixLabelsFor(widget.residential);
   static const _colors = [DashUi.indigo, DashUi.sky, DashUi.emerald];
   int? _hover;
 
-  /// Per bucket [hard bid, commercial, other]: estimates, won estimates and won revenue.
-  ({List<int> est, List<int> won, List<double> rev}) get _stats {
-    final est = [0, 0, 0], won = [0, 0, 0];
-    final rev = [0.0, 0.0, 0.0];
+  /// Estimate counts for [hard bid, commercial, other], bucketed by the estimate's category.
+  List<int> get _counts {
+    final out = [0, 0, 0];
     for (final t in widget.types) {
-      final b = _mixBucket(t.type);
-      est[b] += t.estimates;
-      won[b] += t.wonCount;
-      rev[b] += t.wonValue;
+      out[_mixBucket(t.type)] += t.estimates;
     }
-    return (est: est, won: won, rev: rev);
+    return out;
   }
 
   /// Which slice a point (relative to the donut's box) is over, or null for the hole / outside.
@@ -1718,8 +1744,9 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
     final total = counts.fold<int>(0, (a, b) => a + b);
     if (total == 0) return null;
     final d = p - const Offset(_size / 2, _size / 2);
-    final r = d.distance;
-    if (r > _size / 2 || r < _size / 2 - _ring - 8) return null;
+    final r = _MixPiePainter.radiusFor(_size);
+    final half = _MixPiePainter.strokeFor(_size) / 2 + 4;
+    if (d.distance < r - half || d.distance > r + half) return null;
     var a = math.atan2(d.dx, -d.dy); // 0 at 12 o'clock, clockwise
     if (a < 0) a += 2 * math.pi;
     var edge = 0.0;
@@ -1732,13 +1759,32 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
 
   @override
   Widget build(BuildContext context) {
-    final st = _stats;
-    final counts = st.est;
+    final counts = _counts;
     final total = counts.fold<int>(0, (a, b) => a + b);
     final h = _hover;
-    final centerBig = total == 0 ? '—' : (h == null ? '$total' : '${counts[h]}');
-    final centerSmall = total == 0 ? 'NO ESTIMATES' : (h == null ? 'ESTIMATES' : _labels[h].toUpperCase());
-    final centerSub = total == 0 ? '' : (h == null ? 'this year' : '${(counts[h] / total * 100).round()}% of all');
+    final Widget center;
+    if (total == 0) {
+      center = const Text('No estimates\nyet', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: _muted, fontWeight: FontWeight.w600));
+    } else if (h != null) {
+      center = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('${(counts[h] / total * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: _colors[h], height: 1.05)),
+          const SizedBox(height: 2),
+          Text(_labels[h], textAlign: TextAlign.center, maxLines: 2, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _slate)),
+          Text('${counts[h]} estimates', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _muted)),
+        ],
+      );
+    } else {
+      center = Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text('$total', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: _ink, height: 1.05)),
+          const SizedBox(height: 2),
+          const Text('Total estimates', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate)),
+        ],
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
@@ -1760,110 +1806,64 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
                   curve: Curves.easeOutCubic,
                   builder: (context, t, _) => CustomPaint(
                     size: const Size(_size, _size),
-                    painter: _MixPiePainter(counts: counts, colors: _colors, progress: t, hover: h, ring: _ring),
+                    painter: _MixPiePainter(counts: counts, colors: _colors, progress: t, hover: h),
                   ),
                 ),
-                IgnorePointer(
-                  child: SizedBox(
-                    width: _size - _ring * 2 - 14,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(centerBig, style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800, height: 1.05, color: h == null ? _ink : _colors[h])),
-                        const SizedBox(height: 2),
-                        Text(
-                          centerSmall,
-                          textAlign: TextAlign.center,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: _muted, letterSpacing: 1.0, height: 1.2),
-                        ),
-                        if (centerSub.isNotEmpty) Text(centerSub, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _muted)),
-                      ],
-                    ),
-                  ),
-                ),
+                IgnorePointer(child: SizedBox(width: _size * 0.56, child: FittedBox(fit: BoxFit.scaleDown, child: center))),
               ],
             ),
           ),
         ),
-        const SizedBox(width: 18),
+        const SizedBox(width: 20),
         Expanded(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               for (final k in _mixVisible(widget.residential))
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  padding: const EdgeInsets.symmetric(vertical: 7),
                   child: MouseRegion(
                     onEnter: (_) => setState(() => _hover = k),
                     onExit: (_) => setState(() => _hover = null),
-                    child: _legendCard(k, st, total),
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: h != null && h != k ? 0.35 : 1,
+                      child: Row(
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 180),
+                            width: h == k ? 14 : 10,
+                            height: h == k ? 14 : 10,
+                            decoration: BoxDecoration(color: _colors[k], borderRadius: BorderRadius.circular(4)),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _labels[k],
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 13, fontWeight: h == k ? FontWeight.w800 : FontWeight.w600, color: h == k ? _ink : _slate),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text('${counts[k]}', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _colors[k])),
+                          SizedBox(
+                            width: 40,
+                            child: Text(
+                              total == 0 ? '' : '${(counts[k] / total * 100).round()}%',
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _muted),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
             ],
           ),
         ),
       ],
-    );
-  }
-
-  Widget _legendCard(int k, ({List<int> est, List<int> won, List<double> rev}) st, int total) {
-    final color = _colors[k];
-    final share = total == 0 ? 0.0 : st.est[k] / total;
-    final active = _hover == k;
-    final dim = _hover != null && !active;
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 140),
-      opacity: dim ? 0.45 : 1,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(begin: Alignment.centerLeft, end: Alignment.centerRight, colors: [color.withValues(alpha: active ? 0.14 : 0.07), Colors.white]),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: active ? color.withValues(alpha: 0.55) : DashUi.line),
-          boxShadow: active ? [BoxShadow(color: color.withValues(alpha: 0.18), blurRadius: 12, offset: const Offset(0, 4))] : null,
-        ),
-        child: Row(
-          children: [
-            Container(width: 4, height: 34, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(3))),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(_labels[k], maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _ink)),
-                  const SizedBox(height: 1),
-                  Text(
-                    '${st.est[k]} est · ${st.won[k]} won${st.rev[k] > 0 ? ' · ${_compactMoney(st.rev[k])}' : ''}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: _muted),
-                  ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(3),
-                    child: SizedBox(
-                      height: 5,
-                      child: Stack(
-                        children: [
-                          const Positioned.fill(child: ColoredBox(color: DashUi.faint)),
-                          FractionallySizedBox(widthFactor: share.clamp(0.0, 1.0), heightFactor: 1, child: ColoredBox(color: color)),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            Text('${(share * 100).round()}%', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800, height: 1, color: color)),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1873,60 +1873,44 @@ class _MixPiePainter extends CustomPainter {
   final List<Color> colors;
   final double progress;
   final int? hover;
-  final double ring;
-  const _MixPiePainter({required this.counts, required this.colors, required this.progress, required this.hover, required this.ring});
+  const _MixPiePainter({required this.counts, required this.colors, required this.progress, required this.hover});
+
+  static double strokeFor(double side) => side * 0.16;
+  static double radiusFor(double side) => (side - strokeFor(side) - 10) / 2;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final total = counts.fold<int>(0, (a, b) => a + b);
-    final center = size.center(Offset.zero);
-    final rect = Rect.fromCircle(center: center, radius: size.shortestSide / 2 - ring / 2 - 6);
-    // Soft drop shadow under the ring, and the track.
-    canvas.drawArc(rect.shift(const Offset(0, 4)), 0, 2 * math.pi, false, Paint()
-      ..color = const Color(0x14000000)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = ring
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-    canvas.drawArc(rect, 0, 2 * math.pi, false, Paint()
+    final side = math.min(size.width, size.height);
+    final center = Offset(size.width / 2, size.height / 2);
+    final stroke = strokeFor(side);
+    final rect = Rect.fromCircle(center: center, radius: radiusFor(side));
+    canvas.drawCircle(center, radiusFor(side), Paint()
       ..color = DashUi.faint
       ..style = PaintingStyle.stroke
-      ..strokeWidth = ring);
+      ..strokeWidth = stroke);
+    final total = counts.fold<int>(0, (a, b) => a + b);
     if (total == 0) return;
     final nonZero = counts.where((c) => c > 0).length;
-    final gap = nonZero > 1 ? 0.06 : 0.0; // radians between slices
+    final gap = nonZero > 1 ? 0.05 : 0.0;
     var start = -math.pi / 2;
     for (var k = 0; k < counts.length; k++) {
       if (counts[k] == 0) continue;
-      final sweep = counts[k] / total * 2 * math.pi;
-      final drawn = (sweep - gap).clamp(0.0, 2 * math.pi) * progress;
+      final full = counts[k] / total * 2 * math.pi;
+      final sweep = math.max(0.0, full - gap) * progress;
       final active = hover == k;
-      final alpha = hover == null || active ? 1.0 : 0.3;
-      final w = active ? ring + 6 : ring;
-      final from = start + gap / 2;
+      final dim = hover != null && !active;
       canvas.drawArc(
         rect,
-        from,
-        drawn,
+        start + gap / 2,
+        sweep,
         false,
         Paint()
-          ..color = colors[k].withValues(alpha: alpha)
+          ..color = colors[k].withValues(alpha: dim ? 0.3 : 1.0)
           ..style = PaintingStyle.stroke
-          ..strokeWidth = w
+          ..strokeWidth = stroke + (active ? 6 : 0)
           ..strokeCap = StrokeCap.butt,
       );
-      // thin highlight on the outer edge for depth
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: rect.width / 2 + w / 2 - 2),
-        from,
-        drawn,
-        false,
-        Paint()
-          ..color = Colors.white.withValues(alpha: 0.35 * alpha)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 1.5
-          ..strokeCap = StrokeCap.butt,
-      );
-      start += sweep;
+      start += full;
     }
   }
 
@@ -3692,6 +3676,61 @@ class _StarsPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _StarsPainter old) => old.value != value || old.fill != fill;
+}
+
+/// Share of service call evals that turned into a service package (the Same Day Service Credit was added to the job).
+/// The percentage counts up and the bar fills when the card appears (or the figure changes); still when the OS asks
+/// for reduced motion.
+class _ConversionCard extends StatelessWidget {
+  final ({int evals, int converted})? data;
+  const _ConversionCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = data;
+    final has = d != null && d.evals > 0;
+    final rate = has ? d.converted / d.evals : 0.0;
+    final target = !has ? DashUi.muted : (rate >= 0.4 ? DashUi.emeraldDeep : (rate >= 0.2 ? DashUi.amber : DashUi.red));
+    final still = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      label: has ? 'Service and repair conversion rate: ${(rate * 100).round()} percent' : 'Service and repair conversion rate: no data yet',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: DashUi.panel(),
+        child: TweenAnimationBuilder<double>(
+          key: ValueKey(rate),
+          tween: Tween(begin: still ? rate : 0, end: rate),
+          duration: still ? Duration.zero : const Duration(milliseconds: 1600),
+          curve: Curves.easeOutCubic,
+          builder: (context, v, _) {
+            final color = Color.lerp(DashUi.muted, target, (v / (rate == 0 ? 1 : rate)).clamp(0.0, 1.0))!;
+            return Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Service & Repair Conversion Rate', overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink, height: 1.15)),
+                    ),
+                    Text(
+                      has ? '${(v * 100).round()}%' : '—',
+                      style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: color, height: 1, fontFeatures: const [FontFeature.tabularFigures()]),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(3),
+                  child: LinearProgressIndicator(value: v, minHeight: 5, color: color, backgroundColor: DashUi.faint),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
 /// A 1-5 star rating card (customer satisfaction, employee morale). Empty until there is data.
