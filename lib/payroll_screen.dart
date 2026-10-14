@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -136,6 +137,9 @@ class _Job {
       advancesRepaid = _d(j['advancesRepaid']),
       net = _d(j['net']),
       lines = ((j['lines'] as List?) ?? const []).map((e) => _Line(Map<String, dynamic>.from(e as Map))).toList();
+
+  /// The job's whole commission pool before the tech split: every line, with the company pool taken off.
+  double get poolTotal => lines.fold(0.0, (sum, l) => sum + l.jobAmount);
 }
 
 class _DayItem {
@@ -572,7 +576,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: DashUi.faint,
+      color: AppTheme.bgColor,
       child: LayoutBuilder(
         builder: (context, c) {
           final w = c.maxWidth;
@@ -2165,6 +2169,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                               if (j.status.isNotEmpty) j.status,
                               if (worked.isNotEmpty) '$worked (${j.daysWorked} ${j.daysWorked == 1 ? 'day' : 'days'})',
                               if (j.jobRevenue > 0) 'Job total ${_fmt(j.jobRevenue)}',
+                              if (j.lines.isNotEmpty) 'Commission pool ${_fmt(j.poolTotal)}',
                             ].join('   '),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2245,7 +2250,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       return TableRow(
         decoration: hairline,
         children: [
-          cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of revenue)' : l.name, style: base),
+          cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of job commission)' : l.name, style: base),
           cell(
             l.isPool ? '' : l.category,
             style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
@@ -2319,6 +2324,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
         ),
       );
     }
+
+    // Nothing comes off the share (no retainage, no advances to repay): Net to Tech equals Net Pool Share and is
+    // already in the job header, so the equation would only repeat one number.
+    if (j.retainage == 0 && j.advancesRepaid == 0) return const SizedBox.shrink();
 
     return Container(
       color: _P.wash,

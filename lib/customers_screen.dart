@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
@@ -12,7 +13,7 @@ import 'config/auth_session.dart';
 // Design tokens
 // ---------------------------------------------------------------------------
 class _C {
-  static const bg = Color(0xFFF4F6F9);
+  static const bg = AppTheme.bgColor;
   static const surface = Colors.white;
   static const ink = Color(0xFF111827);
   static const muted = Color(0xFF6B7280);

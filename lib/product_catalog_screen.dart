@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 
 // --- Shared Design Tokens ---
 const Color _brandRed = Color(0xFFCC0007);
@@ -86,7 +87,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: AppTheme.bgColor,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(

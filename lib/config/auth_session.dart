@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'access.dart';
 import 'api_config.dart';
@@ -21,8 +23,9 @@ class AuthException implements Exception {
 /// Who is signed in to the desktop app.
 ///
 /// The shared [kAuthToken] ships inside every build, so by itself it only says "this is our app".
-/// Signing in with a username and PIN gets a per-user token from the backend (`/login`). It is kept in
-/// memory only, so closing the app signs you out, and the backend rejects it after 12 hours.
+/// Signing in with a username and PIN gets a per-user token from the backend (`/login`). The office app asks for
+/// a 7 day token (`x-client: office`) and keeps it on this device, so refreshing the page or reopening the app
+/// stays signed in until it expires, then you sign in again. Signing out clears it.
 class AuthSession extends ChangeNotifier {
   AuthSession._();
   static final AuthSession instance = AuthSession._();
@@ -33,6 +36,50 @@ class AuthSession extends ChangeNotifier {
   String _role = '';
   bool _isAdmin = false;
   Set<String> _denied = {};
+
+  static const _storeKey = 'iohd_auth_session';
+
+  /// Brings back the saved sign-in (if it hasn't expired) before the first screen is built.
+  Future<void> restore() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_storeKey);
+      if (raw == null) return;
+      final d = json.decode(raw) as Map<String, dynamic>;
+      final token = d['token']?.toString();
+      final exp = _expiryOf(token ?? '');
+      if (token == null || token.isEmpty || DateTime.now().millisecondsSinceEpoch >= exp) {
+        await prefs.remove(_storeKey);
+        return;
+      }
+      _userToken = token;
+      _expiresAtMs = exp;
+      _name = d['name']?.toString() ?? '';
+      _role = d['role']?.toString() ?? '';
+      _isAdmin = d['is_admin'] == true;
+      _denied = (d['denied'] is List) ? (d['denied'] as List).map((e) => e.toString()).toSet() : {};
+      notifyListeners();
+    } catch (_) {
+      // Unreadable or unavailable storage: just start signed out.
+    }
+  }
+
+  Future<void> _persist() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _storeKey,
+        json.encode({'token': _userToken, 'name': _name, 'role': _role, 'is_admin': _isAdmin, 'denied': _denied.toList()}),
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _forget() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_storeKey);
+    } catch (_) {}
+  }
 
   bool get isLoggedIn => _userToken != null && DateTime.now().millisecondsSinceEpoch < _expiresAtMs;
   String get name => _name;
@@ -74,6 +121,7 @@ class AuthSession extends ChangeNotifier {
         Uri.parse('$kApiBaseUrl/login'),
         headers: {
           if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
+          'x-client': 'office',
           'x-username': user,
           'x-pin': secret,
         },
@@ -116,6 +164,7 @@ class AuthSession extends ChangeNotifier {
     _isAdmin = body['is_admin'] == true;
     final denied = body['access_denied'];
     _denied = denied is List ? denied.map((e) => e.toString()).toSet() : {};
+    unawaited(_persist());
     notifyListeners();
   }
 
@@ -127,6 +176,7 @@ class AuthSession extends ChangeNotifier {
     _role = '';
     _isAdmin = false;
     _denied = {};
+    unawaited(_forget());
     notifyListeners();
   }
 

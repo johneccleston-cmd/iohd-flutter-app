@@ -150,8 +150,8 @@ class _SalesKpis {
 
     final haveMonthly = mbt.isNotEmpty;
     return _SalesKpis(
-      monthlyRevenue: haveMonthly ? [series('hardBid', 'revenue'), series('commercial', 'revenue'), series('other', 'revenue')] : const [],
-      monthlyProfit: haveMonthly ? [series('hardBid', 'profit'), series('commercial', 'profit'), series('other', 'profit')] : const [],
+      monthlyRevenue: haveMonthly ? [series('hardBid', 'revenue'), series('commercial', 'revenue'), series('residential', 'revenue'), series('other', 'revenue')] : const [],
+      monthlyProfit: haveMonthly ? [series('hardBid', 'profit'), series('commercial', 'profit'), series('residential', 'profit'), series('other', 'profit')] : const [],
       staleEstimates: int.tryParse(_str(strikes['staleEstimates'])),
       slowEstimates: int.tryParse(_str(strikes['slowEstimates'])),
       focus: _str(j['focus']),
@@ -1256,7 +1256,12 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           title: 'Estimate mix',
           icon: Icons.pie_chart_rounded,
           trailing: '${DateTime.now().year} year to date',
-          child: _EstimateMixPie(types: sales.byType, residential: sales.residential),
+          child: _EstimateMixPie(
+            types: sales.byType,
+            residential: sales.residential,
+            employeeId: widget.employeeId,
+            name: _data?.entry.user.name ?? 'Estimates',
+          ),
         ),
     ];
 
@@ -1696,21 +1701,22 @@ String _typeTabName(String label) => switch (label) {
       _ => label,
     };
 
-/// 0 = Commercial hard bid, 1 = other Commercial estimate, 2 = everything else, from an estimate category.
+/// 0 = Commercial hard bid, 1 = other Commercial estimate, 2 = Residential, 3 = everything else, from an estimate category.
 int _mixBucket(String category) {
   final c = category.toLowerCase();
   if (c.contains('hard bid')) return 0;
   if (c.contains('commercial')) return 1;
-  return 2;
+  if (c.contains('residential')) return 2;
+  return 3;
 }
 
-const _mixLabels = ['Commercial hard bids', 'Commercial estimates', 'Other'];
+const _mixLabels = ['Commercial hard bids', 'Commercial estimates', 'Residential', 'Other'];
 
-/// Labels for the three buckets. A residential salesperson has no commercial work, so their "other" is Residential.
-List<String> _mixLabelsFor(bool residential) => residential ? const ['Commercial hard bids', 'Commercial estimates', 'Residential'] : _mixLabels;
+/// Labels for the four buckets.
+List<String> _mixLabelsFor(bool residential) => _mixLabels;
 
-/// Which buckets to show: a residential salesperson only gets Residential; commercial gets all three.
-List<int> _mixVisible(bool residential) => residential ? const [2] : const [0, 1, 2];
+/// Which buckets to show: a residential salesperson has no commercial work, so only Residential and Other.
+List<int> _mixVisible(bool residential) => residential ? const [2, 3] : const [0, 1, 2, 3];
 
 /// Estimates this year split into Commercial hard bids, other Commercial estimates and everything else, drawn like the
 /// "Active jobs by status" donut on the Jobs dashboard: a big thick ring with the total in the middle and a plain legend
@@ -1718,7 +1724,9 @@ List<int> _mixVisible(bool residential) => residential ? const [2] : const [0, 1
 class _EstimateMixPie extends StatefulWidget {
   final List<_TypeKpis> types;
   final bool residential;
-  const _EstimateMixPie({required this.types, this.residential = false});
+  final String employeeId;
+  final String name;
+  const _EstimateMixPie({required this.types, required this.employeeId, required this.name, this.residential = false});
 
   @override
   State<_EstimateMixPie> createState() => _EstimateMixPieState();
@@ -1727,12 +1735,12 @@ class _EstimateMixPie extends StatefulWidget {
 class _EstimateMixPieState extends State<_EstimateMixPie> {
   static const double _size = 184;
   List<String> get _labels => _mixLabelsFor(widget.residential);
-  static const _colors = [DashUi.indigo, DashUi.sky, DashUi.emerald];
+  static const _colors = [DashUi.indigo, DashUi.sky, DashUi.emerald, DashUi.amber];
   int? _hover;
 
-  /// Estimate counts for [hard bid, commercial, other], bucketed by the estimate's category.
+  /// Estimate counts for [hard bid, commercial, residential, other], bucketed by the estimate's category.
   List<int> get _counts {
-    final out = [0, 0, 0];
+    final out = [0, 0, 0, 0];
     for (final t in widget.types) {
       out[_mixBucket(t.type)] += t.estimates;
     }
@@ -1755,6 +1763,14 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
       if (counts[k] > 0 && a < edge) return k;
     }
     return null;
+  }
+
+  void _open(int bucket, List<int> counts) {
+    if (counts[bucket] == 0) return;
+    showDialog<void>(
+      context: context,
+      builder: (_) => _MixEstimatesDialog(employeeId: widget.employeeId, name: widget.name, bucket: bucket, label: _labels[bucket], color: _colors[bucket]),
+    );
   }
 
   @override
@@ -1789,12 +1805,19 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         MouseRegion(
+          cursor: h != null ? SystemMouseCursors.click : MouseCursor.defer,
           onHover: (e) {
             final k = _slice(e.localPosition, counts);
             if (k != _hover) setState(() => _hover = k);
           },
           onExit: (_) => setState(() => _hover = null),
-          child: SizedBox(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapUp: (d) {
+              final k = _slice(d.localPosition, counts);
+              if (k != null) _open(k, counts);
+            },
+            child: SizedBox(
             width: _size,
             height: _size,
             child: Stack(
@@ -1813,6 +1836,7 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
               ],
             ),
           ),
+          ),
         ),
         const SizedBox(width: 20),
         Expanded(
@@ -1823,9 +1847,13 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 7),
                   child: MouseRegion(
+                    cursor: counts[k] > 0 ? SystemMouseCursors.click : MouseCursor.defer,
                     onEnter: (_) => setState(() => _hover = k),
                     onExit: (_) => setState(() => _hover = null),
-                    child: AnimatedOpacity(
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => _open(k, counts),
+                      child: AnimatedOpacity(
                       duration: const Duration(milliseconds: 180),
                       opacity: h != null && h != k ? 0.35 : 1,
                       child: Row(
@@ -1858,12 +1886,216 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
                         ],
                       ),
                     ),
+                    ),
                   ),
                 ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The estimates behind one slice of the Estimate mix donut: customer, job number, status, date and value.
+class _MixEstimatesDialog extends StatefulWidget {
+  final String employeeId;
+  final String name;
+  final int bucket;
+  final String label;
+  final Color color;
+  const _MixEstimatesDialog({required this.employeeId, required this.name, required this.bucket, required this.label, required this.color});
+
+  @override
+  State<_MixEstimatesDialog> createState() => _MixEstimatesDialogState();
+}
+
+class _MixEstimate {
+  final String jobId;
+  final String customer;
+  final String category;
+  final String status;
+  final String created;
+  final double value;
+  const _MixEstimate(this.jobId, this.customer, this.category, this.status, this.created, this.value);
+}
+
+class _MixEstimatesDialogState extends State<_MixEstimatesDialog> {
+  List<_MixEstimate>? _items;
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await http
+          .get(
+            Uri.parse(
+              '$kApiBaseUrl/api/employees/${Uri.encodeComponent(widget.employeeId)}/mix_estimates'
+              '?year=${DateTime.now().year}&bucket=${widget.bucket}',
+            ),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 40));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout(); // sends the app back to the sign-in screen
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
+      final body = json.decode(res.body);
+      final list = body is Map && body['items'] is List ? body['items'] as List : const [];
+      final items = [
+        for (final e in list)
+          if (e is Map)
+            _MixEstimate(
+              _str(e['jobId']),
+              _str(e['customerName']),
+              _str(e['category']),
+              _str(e['status']),
+              _str(e['created']),
+              _num(e['value']) ?? 0,
+            ),
+      ];
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } on TimeoutException {
+      _fail('The request timed out.');
+    } catch (e) {
+      _fail(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _fail(String m) {
+    if (!mounted) return;
+    setState(() {
+      _error = m;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const head = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _muted, letterSpacing: 0.6);
+    final Widget body;
+    if (_loading) {
+      body = const Padding(padding: EdgeInsets.all(48), child: Center(child: CircularProgressIndicator(color: Color(0xFFCC0007))));
+    } else if (_error != null) {
+      body = Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: DashUi.muted),
+            const SizedBox(height: 8),
+            Text("Couldn't load these estimates. $_error", textAlign: TextAlign.center, style: const TextStyle(fontSize: 13.5, color: _slate)),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
+          ],
+        ),
+      );
+    } else if (_items!.isEmpty) {
+      body = Padding(
+        padding: const EdgeInsets.all(40),
+        child: Center(child: Text('No ${widget.label.toLowerCase()} this year.', style: const TextStyle(fontSize: 14, color: _slate))),
+      );
+    } else {
+      body = Flexible(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 4, 24, 6),
+              child: Row(
+                children: [
+                  Expanded(flex: 5, child: Text('CUSTOMER', style: head)),
+                  Expanded(flex: 3, child: Text('STATUS', style: head, textAlign: TextAlign.right)),
+                  Expanded(flex: 3, child: Text('DATE', style: head, textAlign: TextAlign.right)),
+                  Expanded(flex: 2, child: Text('VALUE', style: head, textAlign: TextAlign.right)),
+                ],
+              ),
+            ),
+            for (final e in _items!)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 11),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: _line))),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.customer.isEmpty ? 'Unknown' : e.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
+                          Text(
+                            '#${e.jobId}${e.category.isEmpty ? '' : ' · ${e.category}'}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12, color: _muted),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(flex: 3, child: Align(alignment: Alignment.centerRight, child: e.status.isEmpty ? const Text('—') : StatusPill(e.status))),
+                    Expanded(flex: 3, child: Text(_prettyDate(e.created), textAlign: TextAlign.right, style: const TextStyle(fontSize: 13.5, color: _slate))),
+                    Expanded(flex: 2, child: Text(dashMoney(e.value), textAlign: TextAlign.right, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink))),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final n = _items?.length;
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.all(24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 640),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 12, 12),
+              child: Row(
+                children: [
+                  Icon(Icons.pie_chart_rounded, size: 20, color: widget.color),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${widget.name} · ${widget.label}', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _ink)),
+                        Text(
+                          '${n == null ? '' : '$n ${n == 1 ? 'estimate' : 'estimates'} · '}${DateTime.now().year} year to date, newest first',
+                          style: const TextStyle(fontSize: 12.5, color: _muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, size: 20, color: _slate), tooltip: 'Close'),
+                ],
+              ),
+            ),
+            body,
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 }

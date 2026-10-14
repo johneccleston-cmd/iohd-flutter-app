@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../utils/status_colors.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart' hide TextDirection;
@@ -383,6 +384,15 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
     );
   }
 
+  /// Closes the list and opens that record's own page.
+  void _open(EstimateListItem it) {
+    if (it.jobId.isEmpty) return;
+    final router = GoRouter.of(context);
+    Navigator.of(context).pop();
+    // The Collections list holds jobs (noun 'job'); every other list holds estimates.
+    router.go('/${widget.noun == 'job' ? 'jobs' : 'estimates'}/${Uri.encodeComponent(it.jobId)}');
+  }
+
   Widget _row(EstimateListItem it) {
     final doorMode = it.doorValue != null;
     final doorSummary = doorMode ? _doorSummary(it) : '';
@@ -400,7 +410,7 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
             : 'starts in ${-it.daysOld!} ${it.daysOld == -1 ? 'day' : 'days'}',
     ].join(' · ');
 
-    return Container(
+    final card = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
         color: const Color(0xFFF8FAFC),
@@ -460,6 +470,10 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
           ),
         ],
       ),
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => _open(it), child: card),
     );
   }
 }

@@ -42,6 +42,8 @@ dependencies:
   printing: ^5.15.0
   cached_network_image: ^4.0.0
   url_launcher: ^6.3.3
+  file_picker: ^13.1.0
+  shared_preferences: ^2.5.6
 
 dev_dependencies:
   flutter_test:
@@ -66,9 +68,8 @@ flutter:
   uses-material-design: true
 
   # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
+  assets:
+    - assets/images/iohd_logo.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

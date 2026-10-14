@@ -1,10 +1,16 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
+import 'theme/app_theme.dart';
+
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'utils/status_colors.dart';
@@ -21,7 +27,7 @@ const _slate = Color(0xFF4B5563);
 const _muted = Color(0xFF9CA3AF);
 const _line = Color(0xFFE5E7EB);
 const _faint = Color(0xFFF3F4F6);
-const _bg = Color(0xFFF8F9FB);
+const _bg = AppTheme.bgColor;
 const _brand = Color(0xFFCC0007);
 
 DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
@@ -31,27 +37,22 @@ DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 DateTime _addDays(DateTime d, int n) => DateTime(d.year, d.month, d.day + n);
 
 DateTime _dayKey(DateTime d) => DateTime.utc(d.year, d.month, d.day);
-bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
+bool _sameDay(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;
 String _ymd(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
-Color _onColor(Color c) => c.computeLuminance() > 0.55 ? const Color(0xFF111827) : Colors.white;
+Color _onColor(Color c) =>
+    c.computeLuminance() > 0.55 ? const Color(0xFF111827) : Colors.white;
 
 String _titleCase(String s) => s
     .split(RegExp(r'\s+'))
     .map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1))
     .join(' ');
 
-String _initials(String name) {
-  final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-  if (parts.isEmpty) return '?';
-  if (parts.length == 1) {
-    final p = parts.first;
-    return p.substring(0, math.min(2, p.length)).toUpperCase();
-  }
-  return (parts.first[0] + parts.last[0]).toUpperCase();
-}
-
-bool _truthy(dynamic v) => v == true || v == 1 || (v is String && (v.toLowerCase() == 'true' || v == 't' || v == '1'));
+bool _truthy(dynamic v) =>
+    v == true ||
+    v == 1 ||
+    (v is String && (v.toLowerCase() == 'true' || v == 't' || v == '1'));
 
 class _ChipStyle {
   final Color bg;
@@ -99,18 +100,40 @@ class _CalEvent {
 
   Color get color => getStatusColor(status);
 
+  /// "9:00 AM" / "9:00 AM - 11:00 AM" from the visit's promised time frame, or null for an all-day job.
+  String? get timeLabel {
+    String? fmt(dynamic v) {
+      final m = RegExp(r'^(\d{1,2}):(\d{2})').firstMatch(v?.toString() ?? '');
+      if (m == null) return null;
+      final h = int.parse(m.group(1)!), min = m.group(2)!;
+      if (h > 23) return null;
+      final h12 = h % 12 == 0 ? 12 : h % 12;
+      return '$h12:$min ${h < 12 ? 'AM' : 'PM'}';
+    }
+
+    final start = fmt(raw['time_start']);
+    if (start == null) return null;
+    final end = fmt(raw['time_end']);
+    return end == null || end == start ? start : '$start - $end';
+  }
+
   String get tooltip => [
-        customer,
-        statusLabel + (isEstimate ? ' (estimate)' : ''),
-        if (techs.isNotEmpty) 'Techs: $techs',
-      ].join('\n');
+    customer,
+    statusLabel + (isEstimate ? ' (estimate)' : ''),
+    if (techs.isNotEmpty) 'Techs: $techs',
+  ].join('\n');
 
   /// Reads the date straight from the yyyy-mm-dd prefix, so a timestamp or timezone suffix
   /// from the server can never shift the event onto a neighboring day.
   static DateTime? _parseDay(dynamic v) {
-    final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(v?.toString() ?? '');
+    final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})')
+        .firstMatch(v?.toString() ?? '');
     if (m == null) return null;
-    return DateTime.utc(int.parse(m.group(1)!), int.parse(m.group(2)!), int.parse(m.group(3)!));
+    return DateTime.utc(
+      int.parse(m.group(1)!),
+      int.parse(m.group(2)!),
+      int.parse(m.group(3)!),
+    );
   }
 
   static _CalEvent? tryParse(Map<String, dynamic> m) {
@@ -126,7 +149,11 @@ class _CalEvent {
       techs: techs,
       techList: techs.isEmpty
           ? const []
-          : techs.split(RegExp(r'\s*[,;&/]\s*')).map((t) => t.trim()).where((t) => t.isNotEmpty).toList(),
+          : techs
+                .split(RegExp(r'\s*[,;&/]\s*'))
+                .map((t) => t.trim())
+                .where((t) => t.isNotEmpty)
+                .toList(),
       isEstimate: _truthy(m['is_estimate']),
     );
   }
@@ -159,10 +186,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime? _loadedStart; // window currently held in memory: [start, end)
   DateTime? _loadedEnd;
 
-  final TextEditingController _searchCtl = TextEditingController();
   final FocusNode _focusNode = FocusNode();
-  String _query = '';
-  String? _tech;
+  final Set<String> _techs = {};
   _TypeFilter _type = _TypeFilter.all;
   final Set<String> _statusFilter = {};
   bool _solid = false;
@@ -175,7 +200,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   @override
   void dispose() {
-    _searchCtl.dispose();
     _focusNode.dispose();
     super.dispose();
   }
@@ -185,15 +209,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // ---------------------------------------------------------------------------
 
   DateTime get _monthStart => DateTime(_focused.year, _focused.month, 1);
-  DateTime get _gridStart => _addDays(_monthStart, -(_monthStart.weekday % 7)); // weeks start Sunday
+  DateTime get _gridStart =>
+      _addDays(_monthStart, -(_monthStart.weekday % 7)); // weeks start Sunday
   int get _weeksInGrid {
     final daysInMonth = DateTime(_focused.year, _focused.month + 1, 0).day;
     return ((_monthStart.weekday % 7) + daysInMonth + 6) ~/ 7;
   }
 
   DateTime get _weekStart => _addDays(_focused, -(_focused.weekday % 7));
-  DateTime get _visibleStart => _view == _CalView.month ? _gridStart : _weekStart;
-  DateTime get _visibleEnd => _addDays(_visibleStart, _view == _CalView.month ? _weeksInGrid * 7 : 7);
+  DateTime get _visibleStart =>
+      _view == _CalView.month ? _gridStart : _weekStart;
+  DateTime get _visibleEnd =>
+      _addDays(_visibleStart, _view == _CalView.month ? _weeksInGrid * 7 : 7);
 
   // ---------------------------------------------------------------------------
   // Data
@@ -224,13 +251,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final uri = Uri.parse('$kApiBaseUrl/api/calendar/sync').replace(
         queryParameters: {'start': _ymd(windowStart), 'end': _ymd(windowEnd)},
       );
-      final response = await http.get(
-        uri,
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
+      final response = await http
+          .get(uri, headers: AuthSession.instance.headers())
+          .timeout(
+            const Duration(seconds: 60),
+          ); // free-tier hosts can take ~30s+ to wake up
 
-      if (!mounted || id != _requestId) return; // a newer request superseded this one
-      if (response.statusCode != 200) throw Exception('The server returned status ${response.statusCode}.');
+      if (!mounted || id != _requestId) {
+        return; // a newer request superseded this one
+      }
+      if (response.statusCode != 200) {
+        throw Exception('The server returned status ${response.statusCode}.');
+      }
 
       final dynamic body = json.decode(response.body);
       final dynamic rawList = body is Map ? body['events'] : body;
@@ -245,7 +277,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
       }
       for (final l in grouped.values) {
         l.sort((a, b) {
-          if (a.isEstimate != b.isEstimate) return a.isEstimate ? 1 : -1; // jobs first
+          if (a.isEstimate != b.isEstimate) {
+            return a.isEstimate ? 1 : -1; // jobs first
+          }
           return a.customer.toLowerCase().compareTo(b.customer.toLowerCase());
         });
       }
@@ -275,30 +309,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // Filtering
   // ---------------------------------------------------------------------------
 
-  bool get _filtersActive => _query.isNotEmpty || _tech != null || _type != _TypeFilter.all || _statusFilter.isNotEmpty;
-
-  void _clearFilters() {
-    _searchCtl.clear();
-    setState(() {
-      _query = '';
-      _tech = null;
-      _type = _TypeFilter.all;
-      _statusFilter.clear();
-    });
-  }
-
   bool _passes(_CalEvent e, {bool ignoreStatus = false}) {
     if (_type == _TypeFilter.jobs && e.isEstimate) return false;
     if (_type == _TypeFilter.estimates && !e.isEstimate) return false;
-    if (_tech != null && !e.techList.contains(_tech)) return false;
-    if (_query.isNotEmpty) {
-      final q = _query.toLowerCase();
-      final hit = e.customer.toLowerCase().contains(q) ||
-          e.techs.toLowerCase().contains(q) ||
-          e.statusLabel.toLowerCase().contains(q);
-      if (!hit) return false;
+    if (_techs.isNotEmpty && !e.techList.any(_techs.contains)) return false;
+    if (!ignoreStatus &&
+        _statusFilter.isNotEmpty &&
+        !_statusFilter.contains(e.statusKey)) {
+      return false;
     }
-    if (!ignoreStatus && _statusFilter.isNotEmpty && !_statusFilter.contains(e.statusKey)) return false;
     return true;
   }
 
@@ -315,17 +334,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
         set.addAll(e.techList);
       }
     }
-    return set.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-  }
-
-  int get _periodEventCount {
-    var n = 0;
-    final start = _view == _CalView.month ? _monthStart : _weekStart;
-    final end = _view == _CalView.month ? DateTime(_focused.year, _focused.month + 1, 1) : _addDays(_weekStart, 7);
-    for (var d = start; d.isBefore(end); d = _addDays(d, 1)) {
-      n += _eventsFor(d).length;
-    }
-    return n;
+    return set.toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   // ---------------------------------------------------------------------------
@@ -352,7 +362,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
       _view = v;
       final today = _dateOnly(DateTime.now());
       // Month -> week: land on today's week when viewing the current month, else the 1st.
-      if (v == _CalView.week && today.year == _focused.year && today.month == _focused.month) {
+      if (v == _CalView.week &&
+          today.year == _focused.year &&
+          today.month == _focused.month) {
         _focused = today;
       }
     });
@@ -374,7 +386,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   bool _isTyping() {
     final ctx = FocusManager.instance.primaryFocus?.context;
-    return ctx?.findAncestorWidgetOfExactType<EditableText>() != null || ctx?.widget is EditableText;
+    return ctx?.findAncestorWidgetOfExactType<EditableText>() != null ||
+        ctx?.widget is EditableText;
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -395,11 +408,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   String get _periodTitle {
-    if (_view == _CalView.month) return DateFormat('MMMM yyyy').format(_focused);
+    if (_view == _CalView.month) {
+      return DateFormat('MMMM yyyy').format(_focused);
+    }
     final s = _weekStart;
     final e = _addDays(s, 6);
-    if (s.month == e.month) return '${DateFormat('MMM d').format(s)} – ${e.day}, ${e.year}';
-    return '${DateFormat('MMM d').format(s)} – ${DateFormat('MMM d, y').format(e)}';
+    if (s.month == e.month) {
+      return '${DateFormat('MMM d').format(s)} â€“ ${e.day}, ${e.year}';
+    }
+    return '${DateFormat('MMM d').format(s)} â€“ ${DateFormat('MMM d, y').format(e)}';
   }
 
   // ---------------------------------------------------------------------------
@@ -407,6 +424,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // ---------------------------------------------------------------------------
 
   void _openEvent(_CalEvent e) {
+    final jobId = (e.raw['job_number'] ?? '').toString().trim();
+    if (jobId.isNotEmpty) {
+      context.go(
+        '/jobs/${Uri.encodeComponent(jobId)}',
+        extra: <String, dynamic>{
+          'job_id': jobId,
+          'customer_name': e.raw['customer_name'],
+          'status': e.status,
+          'is_estimate': e.isEstimate,
+          'techs_assigned': e.techs,
+        },
+      );
+      return;
+    }
     showDialog<void>(
       context: context,
       builder: (ctx) => Dialog(
@@ -415,7 +446,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460, maxHeight: 640),
-          child: _EventDetails(event: e, onClose: () => Navigator.of(ctx).pop()),
+          child: _EventDetails(
+            event: e,
+            onClose: () => Navigator.of(ctx).pop(),
+          ),
         ),
       ),
     );
@@ -445,21 +479,39 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         children: [
                           Text(
                             DateFormat('EEEE').format(day).toUpperCase(),
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _muted, letterSpacing: 1),
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: _muted,
+                              letterSpacing: 1,
+                            ),
                           ),
                           Text(
                             DateFormat('MMMM d, y').format(day),
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink),
+                            style: const TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.w800,
+                              color: _ink,
+                            ),
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            events.isEmpty ? 'Nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
+                            events.isEmpty
+                                ? 'Nothing scheduled'
+                                : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: _slate,
+                            ),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(onPressed: () => Navigator.of(ctx).pop(), icon: const Icon(Icons.close_rounded)),
+                    IconButton(
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
                   ],
                 ),
               ),
@@ -471,9 +523,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.event_available_rounded, size: 40, color: Color(0xFFD1D5DB)),
+                        Icon(
+                          Icons.event_available_rounded,
+                          size: 40,
+                          color: Color(0xFFD1D5DB),
+                        ),
                         SizedBox(height: 8),
-                        Text('Nothing on the schedule', style: TextStyle(color: _muted, fontWeight: FontWeight.w600)),
+                        Text(
+                          'Nothing on the schedule',
+                          style: TextStyle(
+                            color: _muted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -515,12 +577,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
       child: Scaffold(
         backgroundColor: _bg,
         body: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _header(),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               Expanded(child: _panel()),
             ],
           ),
@@ -530,17 +592,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Widget _header() {
-    final n = _periodEventCount;
     final title = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text('Dispatch Calendar',
-            style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _ink)),
-        const SizedBox(height: 2),
-        Text(
-          '$n ${n == 1 ? 'event' : 'events'}${_filtersActive ? ' (filtered)' : ''}',
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
+        const Text(
+          'Calendar',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.bold,
+            color: _ink,
+          ),
         ),
       ],
     );
@@ -550,68 +612,88 @@ class _CalendarScreenState extends State<CalendarScreen> {
       runSpacing: 10,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        SizedBox(
-          width: 230,
-          height: 40,
-          child: TextField(
-            controller: _searchCtl,
-            onChanged: (v) => setState(() => _query = v.trim()),
-            style: const TextStyle(fontSize: 13),
-            decoration: InputDecoration(
-              hintText: 'Search customer, tech…',
-              hintStyle: const TextStyle(fontSize: 13, color: _muted),
-              prefixIcon: const Icon(Icons.search_rounded, size: 19, color: _muted),
-              suffixIcon: _query.isEmpty
+        MenuAnchor(
+          menuChildren: [
+            MenuItemButton(
+              onPressed: _techs.isEmpty
                   ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close_rounded, size: 17),
-                      onPressed: () {
-                        _searchCtl.clear();
-                        setState(() => _query = '');
-                      },
-                    ),
-              isDense: true,
-              filled: true,
-              fillColor: Colors.white,
-              contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _line)),
-              enabledBorder:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _line)),
-              focusedBorder:
-                  OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _brand)),
+                  : () => setState(() => _techs.clear()),
+              child: const Text('All techs'),
             ),
-          ),
-        ),
-        PopupMenuButton<String>(
-          tooltip: 'Filter by tech',
-          onSelected: (v) => setState(() => _tech = v.isEmpty ? null : v),
-          itemBuilder: (_) => [
-            const PopupMenuItem(value: '', child: Text('All techs')),
-            ..._allTechs.map((t) => PopupMenuItem(value: t, child: Text(t))),
+            ..._allTechs.map(
+              (t) => CheckboxMenuButton(
+                closeOnActivate: false,
+                value: _techs.contains(t),
+                onChanged: (on) => setState(() {
+                  if (on == true) {
+                    _techs.add(t);
+                  } else {
+                    _techs.remove(t);
+                  }
+                }),
+                child: Text(t),
+              ),
+            ),
           ],
-          child: Container(
-            height: 40,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: _tech != null ? _brand.withValues(alpha: 0.08) : Colors.white,
+          builder: (context, controller, _) => Tooltip(
+            message: 'Filter by tech (select several)',
+            child: InkWell(
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: _tech != null ? _brand : _line),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.person_outline_rounded, size: 18, color: _tech != null ? _brand : _slate),
-                const SizedBox(width: 6),
-                Text(_tech ?? 'All techs',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _tech != null ? _brand : _slate)),
-                const SizedBox(width: 2),
-                const Icon(Icons.expand_more_rounded, size: 18, color: _muted),
-              ],
+              onTap: () =>
+                  controller.isOpen ? controller.close() : controller.open(),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: _techs.isNotEmpty
+                      ? _brand.withValues(alpha: 0.08)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: _techs.isNotEmpty ? _brand : _line,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.person_outline_rounded,
+                      size: 18,
+                      color: _techs.isNotEmpty ? _brand : _slate,
+                    ),
+                    const SizedBox(width: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 220),
+                      child: Text(
+                        _techs.isEmpty
+                            ? 'All techs'
+                            : (_techs.toList()..sort()).join(', '),
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: _techs.isNotEmpty ? _brand : _slate,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    const Icon(
+                      Icons.expand_more_rounded,
+                      size: 18,
+                      color: _muted,
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ),
         _SegToggle<_TypeFilter>(
-          options: const [(_TypeFilter.all, 'All'), (_TypeFilter.jobs, 'Jobs'), (_TypeFilter.estimates, 'Estimates')],
+          options: const [
+            (_TypeFilter.all, 'All'),
+            (_TypeFilter.jobs, 'Jobs'),
+            (_TypeFilter.estimates, 'Estimates'),
+          ],
           value: _type,
           onChanged: (v) => setState(() => _type = v),
         ),
@@ -626,7 +708,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
           active: _solid,
           onTap: () => setState(() => _solid = !_solid),
         ),
-        _IconPill(icon: Icons.refresh_rounded, tooltip: 'Refresh', onTap: () => _ensureLoaded(force: true)),
+        _IconPill(
+          icon: Icons.refresh_rounded,
+          tooltip: 'Refresh',
+          onTap: () => _ensureLoaded(force: true),
+        ),
       ],
     );
 
@@ -638,11 +724,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
             children: [
               title,
               const SizedBox(width: 24),
-              Expanded(child: Align(alignment: Alignment.centerRight, child: controls)),
+              Expanded(
+                child: Align(alignment: Alignment.centerRight, child: controls),
+              ),
             ],
           );
         }
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [title, const SizedBox(height: 12), controls]);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [title, const SizedBox(height: 12), controls],
+        );
       },
     );
   }
@@ -657,64 +748,113 @@ class _CalendarScreenState extends State<CalendarScreen> {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          Padding(padding: const EdgeInsets.fromLTRB(16, 14, 20, 10), child: _navRow()),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+            child: _navRow(),
+          ),
           SizedBox(
             height: 2,
             child: _loading
-                ? const LinearProgressIndicator(color: _brand, backgroundColor: Colors.transparent, minHeight: 2)
+                ? const LinearProgressIndicator(
+                    color: _brand,
+                    backgroundColor: Colors.transparent,
+                    minHeight: 2,
+                  )
                 : null,
           ),
           if (_error != null) _errorBanner(),
-          _legend(),
-          const Divider(height: 1, color: _line),
-          Expanded(child: _view == _CalView.month ? _monthGrid() : _weekGrid()),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final grid = _view == _CalView.month
+                    ? _monthGrid()
+                    : _weekGrid();
+                if (c.maxWidth < 760) {
+                  return Column(
+                    children: [
+                      _legend(),
+                      const Divider(height: 1, color: _line),
+                      Expanded(child: grid),
+                    ],
+                  );
+                }
+                return Column(
+                  children: [
+                    const Divider(height: 1, color: _line),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(width: 190, child: _legend(vertical: true)),
+                          const VerticalDivider(width: 1, color: _line),
+                          Expanded(child: grid),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
         ],
       ),
     );
   }
 
   Widget _navRow() {
-    return Row(
+    return Stack(
+      alignment: Alignment.center,
       children: [
-        _NavBtn(icon: Icons.chevron_left_rounded, tooltip: 'Previous', onTap: () => _go(-1)),
-        const SizedBox(width: 4),
-        _NavBtn(icon: Icons.chevron_right_rounded, tooltip: 'Next', onTap: () => _go(1)),
-        const SizedBox(width: 12),
-        InkWell(
-          borderRadius: BorderRadius.circular(8),
-          onTap: _pickDate,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(_periodTitle, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink)),
-                const SizedBox(width: 4),
-                const Icon(Icons.expand_more_rounded, color: _muted),
-              ],
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _NavBtn(
+                icon: Icons.chevron_left_rounded,
+                tooltip: 'Previous',
+                onTap: () => _go(-1),
+              ),
+              const SizedBox(width: 4),
+              _NavBtn(
+                icon: Icons.chevron_right_rounded,
+                tooltip: 'Next',
+                onTap: () => _go(1),
+              ),
+            ],
           ),
         ),
-        const Spacer(),
-        if (_filtersActive)
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: TextButton.icon(
-              onPressed: _clearFilters,
-              icon: const Icon(Icons.filter_alt_off_rounded, size: 18),
-              label: const Text('Clear filters'),
-              style: TextButton.styleFrom(foregroundColor: _brand),
+        // Centered between the arrows; the side padding keeps it clear of them.
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 88),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: _pickDate,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Flexible(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        _periodTitle,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: _ink,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  const Icon(Icons.expand_more_rounded, color: _muted),
+                ],
+              ),
             ),
           ),
-        OutlinedButton(
-          onPressed: _goToday,
-          style: OutlinedButton.styleFrom(
-            foregroundColor: _ink,
-            side: const BorderSide(color: _line),
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          ),
-          child: const Text('Today', style: TextStyle(fontWeight: FontWeight.w700)),
         ),
       ],
     );
@@ -732,21 +872,32 @@ class _CalendarScreenState extends State<CalendarScreen> {
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off_rounded, size: 18, color: Color(0xFFB91C1C)),
+          const Icon(
+            Icons.cloud_off_rounded,
+            size: 18,
+            color: Color(0xFFB91C1C),
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               "Couldn't refresh the calendar. ${_error ?? ''} Showing the last loaded data.",
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF991B1B)),
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF991B1B),
+              ),
             ),
           ),
-          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+          TextButton(
+            onPressed: () => _ensureLoaded(force: true),
+            child: const Text('Retry'),
+          ),
         ],
       ),
     );
   }
 
-  Widget _legend() {
+  Widget _legend({bool vertical = false}) {
     final counts = <String, int>{};
     final labels = <String, String>{};
     for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
@@ -757,26 +908,57 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
     if (counts.isEmpty) return const SizedBox.shrink();
 
-    final keys = counts.keys.toList()..sort((a, b) => counts[b]!.compareTo(counts[a]!));
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 2, 20, 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
+    final keys = counts.keys.toList()
+      ..sort((a, b) => counts[b]!.compareTo(counts[a]!));
+    if (vertical) {
+      return ListView(
+        padding: const EdgeInsets.all(12),
         children: [
           for (final k in keys)
-            _LegendChip(
-              label: labels[k]!,
-              color: getStatusColor(k),
-              count: counts[k]!,
-              selected: _statusFilter.contains(k),
-              dimmed: _statusFilter.isNotEmpty && !_statusFilter.contains(k),
-              onTap: () => setState(() {
-                if (!_statusFilter.remove(k)) _statusFilter.add(k);
-              }),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: _LegendChip(
+                  label: labels[k]!,
+                  color: getStatusColor(k),
+                  count: counts[k]!,
+                  selected: _statusFilter.contains(k),
+                  dimmed:
+                      _statusFilter.isNotEmpty && !_statusFilter.contains(k),
+                  onTap: () => setState(() {
+                    if (!_statusFilter.remove(k)) _statusFilter.add(k);
+                  }),
+                ),
+              ),
             ),
         ],
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 2, 0, 10),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Row(
+          children: [
+            for (final k in keys)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _LegendChip(
+                  label: labels[k]!,
+                  color: getStatusColor(k),
+                  count: counts[k]!,
+                  selected: _statusFilter.contains(k),
+                  dimmed:
+                      _statusFilter.isNotEmpty && !_statusFilter.contains(k),
+                  onTap: () => setState(() {
+                    if (!_statusFilter.remove(k)) _statusFilter.add(k);
+                  }),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -787,12 +969,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _monthGrid() {
     const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
-    const headerH = 34.0;
+    const headerH = 46.0;
 
     return LayoutBuilder(
       builder: (context, c) {
         final weeks = _weeksInGrid;
-        final rowH = math.max(118.0, (c.maxHeight - headerH) / weeks);
+        // Rows fill the window when the month is quiet and grow to fit every full-size card when it is busy.
+        final minRowH = math.max(130.0, (c.maxHeight - headerH) / weeks);
         final start = _gridStart;
 
         return SingleChildScrollView(
@@ -800,28 +983,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
             children: [
               Container(
                 height: headerH,
-                decoration: const BoxDecoration(color: _bg, border: Border(bottom: BorderSide(color: _line))),
+                decoration: const BoxDecoration(
+                  color: _bg,
+                  border: Border(bottom: BorderSide(color: _line)),
+                ),
                 child: Row(
                   children: [
                     for (final d in days)
                       Expanded(
                         child: Center(
-                          child: Text(d,
-                              style: const TextStyle(
-                                  fontSize: 11, fontWeight: FontWeight.w800, color: _slate, letterSpacing: 1)),
+                          child: Text(
+                            d,
+                            style: const TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w800,
+                              color: _ink,
+                              letterSpacing: 1.6,
+                            ),
+                          ),
                         ),
                       ),
                   ],
                 ),
               ),
               for (var w = 0; w < weeks; w++)
-                SizedBox(
-                  height: rowH,
-                  child: Row(
-                    children: [
-                      for (var d = 0; d < 7; d++)
-                        Expanded(child: _monthCell(_addDays(start, w * 7 + d), rowH, d == 6)),
-                    ],
+                ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: minRowH),
+                  child: IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (var d = 0; d < 7; d++)
+                          Expanded(
+                            child: _monthCell(
+                              _addDays(start, w * 7 + d),
+                              d == 6,
+                            ),
+                          ),
+                      ],
+                    ),
                   ),
                 ),
             ],
@@ -831,19 +1031,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Widget _monthCell(DateTime day, double rowH, bool lastCol) {
+  Widget _monthCell(DateTime day, bool lastCol) {
     final inMonth = day.month == _focused.month;
     final isToday = _sameDay(day, DateTime.now());
     final events = _eventsFor(day);
 
-    const headerH = 30.0, slotH = 27.0;
-    final capacity = math.max(1, ((rowH - headerH - 8) / slotH).floor());
-    final overflow = events.length > capacity;
-    final shown = overflow ? events.take(capacity - 1).toList() : events;
-    final hidden = events.length - shown.length;
-
     final weekend = day.weekday >= 6;
-    final bg = !inMonth ? const Color(0xFFF9FAFB) : (weekend ? const Color(0xFFFCFCFD) : Colors.white);
+    final bg = !inMonth
+        ? const Color(0xFFF9FAFB)
+        : (weekend ? const Color(0xFFFCFCFD) : Colors.white);
 
     return Material(
       color: bg,
@@ -857,61 +1053,60 @@ class _CalendarScreenState extends State<CalendarScreen> {
               bottom: const BorderSide(color: _line),
             ),
           ),
-          padding: const EdgeInsets.fromLTRB(6, 6, 6, 0),
+          padding: const EdgeInsets.fromLTRB(6, 6, 6, 3),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
                 height: 24,
-                child: Row(
-                  children: [
-                    if (events.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
-                        child: Text('${events.length}',
-                            style: TextStyle(
-                                fontSize: 11, fontWeight: FontWeight.w800, color: inMonth ? _slate : _muted)),
-                      ),
-                    const Spacer(),
-                    Container(
-                      constraints: const BoxConstraints(minWidth: 24),
-                      height: 24,
-                      alignment: Alignment.center,
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      decoration: isToday ? BoxDecoration(color: _brand, borderRadius: BorderRadius.circular(12)) : null,
-                      child: Text(
-                        day.day == 1 ? '${DateFormat('MMM').format(day)} 1' : '${day.day}',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: isToday ? FontWeight.w800 : FontWeight.w700,
-                          color: isToday ? Colors.white : (inMonth ? _ink : _muted),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 4),
-              Expanded(
-                child: SingleChildScrollView(
-                  physics: const NeverScrollableScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                child: LayoutBuilder(
+                  builder: (context, hc) => Row(
                     children: [
-                      for (final e in shown) _EventChip(event: e, solid: _solid, onTap: () => _openEvent(e)),
-                      if (hidden > 0)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 2, top: 1),
-                          child: Text(
-                            '+$hidden more',
-                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: _slate),
+                      const Spacer(),
+                      Flexible(
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 24),
+                          height: 24,
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
+                          decoration: isToday
+                              ? BoxDecoration(
+                                  color: _brand,
+                                  borderRadius: BorderRadius.circular(12),
+                                )
+                              : null,
+                          child: Center(
+                            widthFactor: 1,
+                            heightFactor: 1,
+                            child: Text(
+                              day.day == 1
+                                  ? '${DateFormat('MMM').format(day)} 1'
+                                  : '${day.day}',
+                              maxLines: 1,
+                              overflow: TextOverflow.clip,
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: isToday
+                                    ? FontWeight.w800
+                                    : FontWeight.w700,
+                                color: isToday
+                                    ? Colors.white
+                                    : (inMonth ? _ink : _muted),
+                              ),
+                            ),
                           ),
                         ),
+                      ),
                     ],
                   ),
                 ),
               ),
+              const SizedBox(height: 4),
+              for (final e in events)
+                _EventChip(
+                  event: e,
+                  solid: _solid,
+                  onTap: () => _openEvent(e),
+                ),
             ],
           ),
         ),
@@ -934,12 +1129,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var i = 0; i < 7; i++) Expanded(child: _weekColumn(_addDays(start, i), i == 6)),
+              for (var i = 0; i < 7; i++)
+                Expanded(child: _weekColumn(_addDays(start, i), i == 6)),
             ],
           ),
         );
         if (colW * 7 > c.maxWidth + 0.5) {
-          return SingleChildScrollView(scrollDirection: Axis.horizontal, child: row);
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: row,
+          );
         }
         return row;
       },
@@ -951,8 +1150,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final events = _eventsFor(day);
     return Container(
       decoration: BoxDecoration(
-        color: isToday ? const Color(0xFFFFF7F7) : (day.weekday >= 6 ? const Color(0xFFFCFCFD) : Colors.white),
-        border: Border(right: last ? BorderSide.none : const BorderSide(color: _line)),
+        color: isToday
+            ? const Color(0xFFFFF7F7)
+            : (day.weekday >= 6 ? const Color(0xFFFCFCFD) : Colors.white),
+        border: Border(
+          right: last ? BorderSide.none : const BorderSide(color: _line),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -961,7 +1164,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
             onTap: () => _openDay(day),
             child: Container(
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: _line))),
+              decoration: const BoxDecoration(
+                border: Border(bottom: BorderSide(color: _line)),
+              ),
               child: Row(
                 children: [
                   Container(
@@ -972,18 +1177,39 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       color: isToday ? _brand : _faint,
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text('${day.day}',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: isToday ? Colors.white : _ink)),
+                    child: Text(
+                      '${day.day}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: isToday ? Colors.white : _ink,
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(DateFormat('EEE').format(day).toUpperCase(),
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _slate, letterSpacing: 1)),
-                        Text(events.isEmpty ? 'No events' : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
-                            style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: _muted)),
+                        Text(
+                          DateFormat('EEE').format(day).toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w800,
+                            color: _slate,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        Text(
+                          events.isEmpty
+                              ? 'No events'
+                              : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            color: _muted,
+                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -993,12 +1219,22 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
           Expanded(
             child: events.isEmpty
-                ? const Center(child: Icon(Icons.event_available_rounded, size: 26, color: Color(0xFFE5E7EB)))
+                ? const Center(
+                    child: Icon(
+                      Icons.event_available_rounded,
+                      size: 26,
+                      color: Color(0xFFE5E7EB),
+                    ),
+                  )
                 : ListView.separated(
                     padding: const EdgeInsets.all(10),
                     itemCount: events.length,
                     separatorBuilder: (_, _) => const SizedBox(height: 8),
-                    itemBuilder: (_, i) => _EventCard(event: events[i], solid: _solid, onTap: () => _openEvent(events[i])),
+                    itemBuilder: (_, i) => _EventCard(
+                      event: events[i],
+                      solid: _solid,
+                      onTap: () => _openEvent(events[i]),
+                    ),
                   ),
           ),
         ],
@@ -1016,13 +1252,17 @@ class _EventChip extends StatelessWidget {
   final _CalEvent event;
   final bool solid;
   final VoidCallback onTap;
-  const _EventChip({required this.event, required this.solid, required this.onTap});
+  const _EventChip({
+    required this.event,
+    required this.solid,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final st = _styleFor(event.color, solid);
     return Padding(
-      padding: const EdgeInsets.only(bottom: 3),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Tooltip(
         message: event.tooltip,
         waitDuration: const Duration(milliseconds: 450),
@@ -1032,39 +1272,93 @@ class _EventChip extends StatelessWidget {
           clipBehavior: Clip.antiAlias,
           child: InkWell(
             onTap: onTap,
-            child: SizedBox(
-              height: 24,
-              child: LayoutBuilder(
-                builder: (context, c) {
-                  final showTechs = c.maxWidth >= 140 && event.techList.isNotEmpty;
-                  return Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Container(width: 4, color: st.bar),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            event.customer,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: st.fg, height: 1.1),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(width: 4, color: st.bar),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              event.timeLabel ?? 'All Day',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: st.fg.withValues(alpha: 0.75),
+                                letterSpacing: 0.3,
+                              ),
+                            ),
                           ),
-                        ),
+                          const SizedBox(height: 2),
+                          // The whole name, wrapping onto a second line when it has to.
+                          SizedBox(
+                            width: double.infinity,
+                            child: Text(
+                              event.customer,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                color: st.fg,
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                          if (event.isEstimate) ...[
+                            const SizedBox(height: 4),
+                            Align(
+                              alignment: Alignment.center,
+                              child: _EstBadge(color: st.fg, label: 'ESTIMATE'),
+                            ),
+                          ],
+                          if (event.techList.isNotEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: Text(
+                                  'Techs:',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800,
+                                    color: st.fg.withValues(alpha: 0.65),
+                                    letterSpacing: 0.3,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          // Every tech, spelled out in full, one per line.
+                          for (final t in event.techList)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: Text(
+                                  t,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: st.fg.withValues(alpha: 0.85),
+                                    height: 1.2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                      if (event.isEstimate) ...[
-                        const SizedBox(width: 4),
-                        Center(child: _EstBadge(color: st.fg)),
-                      ],
-                      if (showTechs) ...[
-                        const SizedBox(width: 4),
-                        Center(child: _TechDots(techs: event.techList, style: st, solid: solid)),
-                      ],
-                      const SizedBox(width: 5),
-                    ],
-                  );
-                },
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -1079,7 +1373,11 @@ class _EventCard extends StatelessWidget {
   final _CalEvent event;
   final bool solid;
   final VoidCallback onTap;
-  const _EventCard({required this.event, required this.solid, required this.onTap});
+  const _EventCard({
+    required this.event,
+    required this.solid,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1108,13 +1406,24 @@ class _EventCard extends StatelessWidget {
                         children: [
                           Flexible(
                             child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(color: pillBg, borderRadius: BorderRadius.circular(5)),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: pillBg,
+                                borderRadius: BorderRadius.circular(5),
+                              ),
                               child: Text(
                                 event.statusLabel.toUpperCase(),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: pillFg, letterSpacing: 0.5),
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: pillFg,
+                                  letterSpacing: 0.5,
+                                ),
                               ),
                             ),
                           ),
@@ -1129,22 +1438,33 @@ class _EventCard extends StatelessWidget {
                         event.customer,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: st.fg, height: 1.2),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: st.fg,
+                          height: 1.2,
+                        ),
                       ),
                       if (event.techs.isNotEmpty) ...[
                         const SizedBox(height: 6),
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.person_outline_rounded, size: 14, color: st.fg.withValues(alpha: 0.75)),
+                            Icon(
+                              Icons.person_outline_rounded,
+                              size: 14,
+                              color: st.fg.withValues(alpha: 0.75),
+                            ),
                             const SizedBox(width: 4),
                             Expanded(
                               child: Text(
                                 event.techs,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                    fontSize: 12, fontWeight: FontWeight.w600, color: st.fg.withValues(alpha: 0.85), height: 1.2),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: st.fg.withValues(alpha: 0.85),
+                                  height: 1.2,
+                                ),
                               ),
                             ),
                           ],
@@ -1164,7 +1484,8 @@ class _EventCard extends StatelessWidget {
 
 class _EstBadge extends StatelessWidget {
   final Color color;
-  const _EstBadge({required this.color});
+  final String label;
+  const _EstBadge({required this.color, this.label = 'EST'});
 
   @override
   Widget build(BuildContext context) {
@@ -1174,44 +1495,20 @@ class _EstBadge extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.6)),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text('EST',
-          style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: color, letterSpacing: 0.4, height: 1.2)),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 8.5,
+          fontWeight: FontWeight.w800,
+          color: color,
+          letterSpacing: 0.4,
+          height: 1.2,
+        ),
+      ),
     );
   }
 }
 
-class _TechDots extends StatelessWidget {
-  final List<String> techs;
-  final _ChipStyle style;
-  final bool solid;
-  const _TechDots({required this.techs, required this.style, required this.solid});
-
-  @override
-  Widget build(BuildContext context) {
-    final bg = solid ? Colors.white.withValues(alpha: 0.28) : style.accent;
-    final fg = solid ? style.fg : _onColor(style.accent);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final t in techs.take(2))
-          Container(
-            margin: const EdgeInsets.only(left: 2),
-            width: 17,
-            height: 17,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-            child: Text(_initials(t), style: TextStyle(fontSize: 8, fontWeight: FontWeight.w800, color: fg)),
-          ),
-        if (techs.length > 2)
-          Padding(
-            padding: const EdgeInsets.only(left: 3),
-            child: Text('+${techs.length - 2}',
-                style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: style.fg)),
-          ),
-      ],
-    );
-  }
-}
 
 // =============================================================================
 // EVENT DETAILS DIALOG
@@ -1222,9 +1519,16 @@ class _EventDetails extends StatelessWidget {
   final VoidCallback onClose;
   const _EventDetails({required this.event, required this.onClose});
 
-  static const _known = {'event_date', 'status', 'is_estimate', 'customer_name', 'techs'};
+  static const _known = {
+    'event_date',
+    'status',
+    'is_estimate',
+    'customer_name',
+    'techs',
+  };
 
-  static String _prettyKey(String k) => _titleCase(k.replaceAll(RegExp(r'[_\-]+'), ' ').trim());
+  static String _prettyKey(String k) =>
+      _titleCase(k.replaceAll(RegExp(r'[_\-]+'), ' ').trim());
 
   @override
   Widget build(BuildContext context) {
@@ -1252,10 +1556,23 @@ class _EventDetails extends StatelessWidget {
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                    decoration: BoxDecoration(color: on.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6)),
-                    child: Text(event.statusLabel.toUpperCase(),
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: on, letterSpacing: 0.6)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 9,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: on.withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      event.statusLabel.toUpperCase(),
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: on,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
                   ),
                   if (event.isEstimate) ...[
                     const SizedBox(width: 8),
@@ -1264,8 +1581,15 @@ class _EventDetails extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(event.customer,
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: on, height: 1.15)),
+              Text(
+                event.customer,
+                style: TextStyle(
+                  fontSize: 24,
+                  fontWeight: FontWeight.w800,
+                  color: on,
+                  height: 1.15,
+                ),
+              ),
             ],
           ),
         ),
@@ -1276,14 +1600,26 @@ class _EventDetails extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 _DetailRow(
-                    icon: Icons.event_rounded, label: 'Date', value: DateFormat('EEEE, MMMM d, y').format(event.day)),
+                  icon: Icons.event_rounded,
+                  label: 'Date',
+                  value: DateFormat('EEEE, MMMM d, y').format(event.day),
+                ),
                 _DetailRow(
-                    icon: Icons.assignment_outlined, label: 'Type', value: event.isEstimate ? 'Estimate' : 'Job'),
+                  icon: Icons.assignment_outlined,
+                  label: 'Type',
+                  value: event.isEstimate ? 'Estimate' : 'Job',
+                ),
                 _DetailRow(
-                    icon: Icons.engineering_outlined,
-                    label: event.techList.length > 1 ? 'Techs' : 'Tech',
-                    value: event.techs.isEmpty ? 'Unassigned' : event.techs),
-                for (final x in extras) _DetailRow(icon: Icons.notes_rounded, label: x.key, value: x.value),
+                  icon: Icons.engineering_outlined,
+                  label: event.techList.length > 1 ? 'Techs' : 'Tech',
+                  value: event.techs.isEmpty ? 'Unassigned' : event.techs,
+                ),
+                for (final x in extras)
+                  _DetailRow(
+                    icon: Icons.notes_rounded,
+                    label: x.key,
+                    value: x.value,
+                  ),
               ],
             ),
           ),
@@ -1304,7 +1640,11 @@ class _DetailRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  const _DetailRow({required this.icon, required this.label, required this.value});
+  const _DetailRow({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1318,10 +1658,24 @@ class _DetailRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label.toUpperCase(),
-                    style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: _muted, letterSpacing: 0.7)),
+                Text(
+                  label.toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    color: _muted,
+                    letterSpacing: 0.7,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                SelectableText(value, style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: _ink)),
+                SelectableText(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w600,
+                    color: _ink,
+                  ),
+                ),
               ],
             ),
           ),
@@ -1339,14 +1693,21 @@ class _SegToggle<T> extends StatelessWidget {
   final List<(T, String)> options;
   final T value;
   final ValueChanged<T> onChanged;
-  const _SegToggle({required this.options, required this.value, required this.onChanged});
+  const _SegToggle({
+    required this.options,
+    required this.value,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Container(
       height: 40,
       padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(
+        color: _faint,
+        borderRadius: BorderRadius.circular(10),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -1362,13 +1723,17 @@ class _SegToggle<T> extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: o.$1 == value ? Colors.white : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: o.$1 == value ? _line : Colors.transparent),
+                    border: Border.all(
+                      color: o.$1 == value ? _line : Colors.transparent,
+                    ),
                   ),
                   child: Text(
                     o.$2,
                     style: TextStyle(
                       fontSize: 12.5,
-                      fontWeight: o.$1 == value ? FontWeight.w800 : FontWeight.w600,
+                      fontWeight: o.$1 == value
+                          ? FontWeight.w800
+                          : FontWeight.w600,
                       color: o.$1 == value ? _ink : _slate,
                     ),
                   ),
@@ -1386,7 +1751,12 @@ class _IconPill extends StatelessWidget {
   final String tooltip;
   final VoidCallback onTap;
   final bool active;
-  const _IconPill({required this.icon, required this.tooltip, required this.onTap, this.active = false});
+  const _IconPill({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+    this.active = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1401,7 +1771,11 @@ class _IconPill extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
-          child: SizedBox(width: 40, height: 40, child: Icon(icon, size: 19, color: active ? _brand : _slate)),
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: Icon(icon, size: 19, color: active ? _brand : _slate),
+          ),
         ),
       ),
     );
@@ -1412,7 +1786,11 @@ class _NavBtn extends StatelessWidget {
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
-  const _NavBtn({required this.icon, required this.tooltip, required this.onTap});
+  const _NavBtn({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1424,7 +1802,11 @@ class _NavBtn extends StatelessWidget {
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
-          child: SizedBox(width: 38, height: 38, child: Icon(icon, size: 24, color: _ink)),
+          child: SizedBox(
+            width: 38,
+            height: 38,
+            child: Icon(icon, size: 24, color: _ink),
+          ),
         ),
       ),
     );
@@ -1462,16 +1844,44 @@ class _LegendChip extends StatelessWidget {
             decoration: BoxDecoration(
               color: selected ? color.withValues(alpha: 0.14) : Colors.white,
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: selected ? color : _line, width: selected ? 1.5 : 1),
+              border: Border.all(
+                color: selected ? color : _line,
+                width: selected ? 1.5 : 1,
+              ),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(width: 9, height: 9, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+                Container(
+                  width: 9,
+                  height: 9,
+                  decoration: BoxDecoration(
+                    color: color,
+                    shape: BoxShape.circle,
+                  ),
+                ),
                 const SizedBox(width: 7),
-                Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink)),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: _ink,
+                    ),
+                  ),
+                ),
                 const SizedBox(width: 6),
-                Text('$count', style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: _muted)),
+                Text(
+                  '$count',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: _muted,
+                  ),
+                ),
               ],
             ),
           ),

@@ -2,11 +2,16 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+
 import '../utils/status_colors.dart';
+
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
 import '../config/api_config.dart';
+
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../config/auth_session.dart';
 
 // --- Design tokens (same palette as the top bar) -------------------------------
@@ -24,8 +29,9 @@ const Color _bad = Color(0xFFDC2626);
 const Color _info = Color(0xFF4F46E5);
 const Color _teal = Color(0xFF0891B2);
 
-// The backend accepts at most 20 messages of 4000 characters each.
-const int _maxHistory = 19;
+// The backend accepts at most 20 messages of 4000 characters each, but only the last 8 are sent: every
+// message sent is billed as input tokens on every question, so the cap keeps an old tab cheap.
+const int _sendMessages = 8;
 const int _maxChars = 4000;
 
 class _Suggestion {
@@ -40,6 +46,8 @@ const List<_Suggestion> _suggestions = [
   _Suggestion(Icons.groups_outlined, 'Top customers', 'Who are our top 10 customers by revenue this year?'),
   _Suggestion(Icons.show_chart_rounded, 'Monthly trend', 'Show completed revenue and profit by month this year.'),
   _Suggestion(Icons.inventory_2_outlined, 'Low stock', 'Which inventory items are low on stock?'),
+  _Suggestion(Icons.handshake_outlined, 'Open estimates', 'What is our open estimate pipeline and win rate this year?'),
+  _Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?'),
 ];
 
 // What the person sees under an answer, instead of internal tool names.
@@ -61,9 +69,41 @@ const Map<String, String> _toolLabels = {
   'expenses_summary': 'Expenses',
   'inventory_lookup': 'Inventory',
   'status_changes': 'Job history',
+  'search_estimates': 'Estimates',
+  'never_converted': 'Estimates',
+  'pipeline_forecast': 'Pipeline',
+  'lapsed_customers': 'Customers',
+  'customer_exposure': 'Customers',
+  'new_customers': 'Customers',
+  'payment_speed': 'Payments',
+  'schedule': 'Schedule',
+  'revenue_mix': 'Revenue',
+  'line_item_sales': 'Line items',
+  'writeoffs_summary': 'Write-offs',
+  'jobs_stuck': 'Stuck jobs',
+  'commission_corrections': 'Commissions',
+  'job_commission': 'Commissions',
+  'payroll_runs': 'Payroll',
+  'payroll_preview': 'Payroll',
+  'advance_balances': 'Payroll',
+  'retainage_and_pool': 'Payroll',
 };
 
 enum AssistantRole { user, assistant }
+
+/// One saved chat: its messages and an optional name the user gave it (otherwise its first question).
+class AssistantConversation {
+  final List<AssistantMessage> messages = [];
+  String? title;
+
+  String get label {
+    if (title != null) return title!;
+    final first = messages.where((m) => m.role == AssistantRole.user).firstOrNull;
+    if (first == null) return 'New chat';
+    final t = first.text.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return t.length > 40 ? '${t.substring(0, 40).trimRight()}…' : t;
+  }
+}
 
 class AssistantMessage {
   final AssistantRole role;
@@ -77,26 +117,186 @@ class AssistantMessage {
   AssistantMessage(this.role, this.text, [this.sources = const []]);
 }
 
-/// The conversation lives here, in memory only, so it survives closing the panel but not a sign-out
-/// or an app restart. Nothing is written to disk.
+/// The conversation lives here. It survives closing the panel and, via SharedPreferences, an app restart.
+/// Sign-out, "New conversation" or a different user signing in wipes it.
 class AssistantChat extends ChangeNotifier {
   AssistantChat._() {
     AuthSession.instance.addListener(_onAuthChanged);
   }
   static final AssistantChat instance = AssistantChat._();
 
-  final List<AssistantMessage> messages = [];
+  /// Saved chats, shown in the sidebar and capped at [maxChats]. Only the active one is ever sent to the
+  /// server, and only its last [_sendMessages] messages, so an old or idle chat costs nothing until used.
+  static const maxChats = 10;
+  final List<AssistantConversation> chats = [AssistantConversation()];
+  int active = 0;
+  int chatChanges = 0; // bumped on every switch so the panel can jump to the end instead of animating
+
+  List<AssistantMessage> get messages => chats[active].messages;
+
+  bool get canAddChat => !busy && messages.isNotEmpty && chats.length < maxChats;
+
+  /// Starts a fresh chat. If the current one is still empty there is nothing to start.
+  void newChat() {
+    if (!canAddChat) return;
+    chats.add(AssistantConversation());
+    _switchTo(chats.length - 1);
+  }
+
+  void selectChat(int i) {
+    if (busy || i < 0 || i >= chats.length || i == active) return;
+    _switchTo(i);
+  }
+
+  void renameChat(int i, String name) {
+    if (i < 0 || i >= chats.length) return;
+    final t = name.trim();
+    chats[i].title = t.isEmpty ? null : (t.length > 60 ? t.substring(0, 60) : t);
+    _save();
+    notifyListeners();
+  }
+
+  void deleteChat(int i) {
+    if (busy || i < 0 || i >= chats.length) return;
+    chats.removeAt(i);
+    if (chats.isEmpty) chats.add(AssistantConversation());
+    active = active > i || active >= chats.length ? (active - 1).clamp(0, chats.length - 1) : active;
+    _switchTo(active);
+  }
+
+  void _switchTo(int i) {
+    active = i;
+    chatChanges++;
+    stopped = false;
+    error = null;
+    _save();
+    notifyListeners();
+  }
+
   bool busy = false;
   String? error;
+  DateTime? busySince;
+  bool stopped = false; // the last question was cancelled by the user
+  int _gen = 0; // bumped by stop() so a late reply to a cancelled question is ignored
+
+  /// Cancels the question in flight. The server may still finish it, but the reply is dropped.
+  void stop() {
+    if (!busy) return;
+    _gen++;
+    busy = false;
+    busySince = null;
+    stopped = true;
+    notifyListeners();
+  }
 
   void _onAuthChanged() {
     if (!AuthSession.instance.isLoggedIn) clear();
   }
 
+  // --- Saved conversation ----------------------------------------------------------
+  // The thread is kept on this device so it is still there after a restart. It is tied to the signed-in
+  // name and wiped on sign-out, "New conversation" and when someone else signs in.
+  static const _storeKey = 'iohd_assistant_chat';
+  static const _keepMessages = 40;
+  bool _loaded = false;
+
+  /// Brings back the saved thread once per app run. Safe to call every time the panel opens.
+  Future<void> ensureLoaded() async {
+    if (_loaded) return;
+    _loaded = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString(_storeKey);
+      if (raw == null) return;
+      final d = json.decode(raw) as Map<String, dynamic>;
+      if (d['user'] != AuthSession.instance.name || chats.any((c) => c.messages.isNotEmpty)) return;
+      // Older saves hold one thread under "messages", then a list of message lists under "tabs"; the
+      // current format is a list of {title, messages} under "tabs".
+      final saved = d['tabs'] is List ? d['tabs'] as List : [d['messages'] ?? const []];
+      final loaded = <AssistantConversation>[];
+      for (final t in saved.take(maxChats)) {
+        final convo = AssistantConversation();
+        if (t is Map) convo.title = (t['title'] as String?)?.trim().isEmpty ?? true ? null : t['title'] as String;
+        for (final m in ((t is Map ? t['messages'] : t) as List? ?? const [])) {
+          final role = m['role'] == 'user' ? AssistantRole.user : AssistantRole.assistant;
+          final text = (m['text'] ?? '').toString();
+          if (text.isEmpty) continue;
+          convo.messages.add(
+            AssistantMessage(role, text, [for (final x in (m['sources'] as List? ?? const [])) x.toString()])..fresh = false,
+          );
+        }
+        while (convo.messages.isNotEmpty && convo.messages.first.role != AssistantRole.user) {
+          convo.messages.removeAt(0);
+        }
+        loaded.add(convo);
+      }
+      if (loaded.isEmpty) return;
+      chats
+        ..clear()
+        ..addAll(loaded);
+      active = ((d['active'] as num?)?.toInt() ?? 0).clamp(0, chats.length - 1);
+      chatChanges++;
+      notifyListeners();
+    } catch (_) {
+      // unreadable storage: start with an empty chat
+    }
+  }
+
+  Future<void> _save() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (chats.every((c) => c.messages.isEmpty && c.title == null)) {
+        await prefs.remove(_storeKey);
+        return;
+      }
+      await prefs.setString(
+        _storeKey,
+        json.encode({
+          'user': AuthSession.instance.name,
+          'active': active,
+          'tabs': [
+            for (final c in chats)
+              {
+                'title': c.title,
+                'messages': [
+                  for (final m in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
+                    {'role': m.role.name, 'text': m.text, 'sources': m.sources},
+                ],
+              },
+          ],
+        }),
+      );
+    } catch (_) {}
+  }
+
+  /// Replaces an earlier question with new wording and asks again. Everything after it is dropped, since
+  /// those answers were to the old question.
+  Future<void> editAndResend(int index, String text) {
+    final q = text.trim();
+    if (busy || q.isEmpty || index < 0 || index >= messages.length || messages[index].role != AssistantRole.user) {
+      return Future.value();
+    }
+    if (q.length > _maxChars) {
+      error = 'That question is too long. Keep it under $_maxChars characters.';
+      notifyListeners();
+      return Future.value();
+    }
+    messages.removeRange(index, messages.length);
+    return send(q);
+  }
+
+  /// Wipes every chat (sign-out, a different user). Use [deleteChat] to drop just one.
   void clear() {
-    messages.clear();
+    _gen++;
+    chats
+      ..clear()
+      ..add(AssistantConversation());
+    active = 0;
+    chatChanges++;
+    stopped = false;
     busy = false;
     error = null;
+    _save();
     notifyListeners();
   }
 
@@ -123,7 +323,7 @@ class AssistantChat extends ChangeNotifier {
 
   List<Map<String, String>> _payload() {
     final list = List<AssistantMessage>.from(messages);
-    while (list.length > _maxHistory) {
+    while (list.length > _sendMessages) {
       list.removeAt(0);
     }
     while (list.isNotEmpty && list.first.role != AssistantRole.user) {
@@ -139,7 +339,10 @@ class AssistantChat extends ChangeNotifier {
   }
 
   Future<void> _ask() async {
+    final gen = ++_gen;
     busy = true;
+    busySince = DateTime.now();
+    stopped = false;
     error = null;
     notifyListeners();
 
@@ -152,6 +355,7 @@ class AssistantChat extends ChangeNotifier {
           )
           .timeout(const Duration(seconds: 120)); // free-tier hosts wake slowly and answers can take a few lookups
 
+      if (gen != _gen) return; // cancelled while waiting
       Map<String, dynamic> body = const {};
       try {
         body = json.decode(res.body) as Map<String, dynamic>;
@@ -161,13 +365,17 @@ class AssistantChat extends ChangeNotifier {
         case 200:
           final answer = (body['answer'] ?? '').toString().trim();
           final tools = <String>{
-            for (final t in (body['toolsUsed'] as List? ?? const [])) if (_toolLabels[t] != null) _toolLabels[t]!,
+            for (final t in (body['toolsUsed'] as List? ?? const []))
+              if (_toolLabels[t] != null) _toolLabels[t]!,
           }.toList();
-          messages.add(AssistantMessage(
-            AssistantRole.assistant,
-            answer.isEmpty ? "I couldn't put together an answer. Try rephrasing." : answer,
-            tools,
-          ));
+          messages.add(
+            AssistantMessage(
+              AssistantRole.assistant,
+              answer.isEmpty ? "I couldn't put together an answer. Try rephrasing." : answer,
+              tools,
+            ),
+          );
+          _save();
         case 401:
           AuthSession.instance.logout(); // sends the app back to the sign-in screen
           error = 'Your session expired. Please sign in again.';
@@ -179,12 +387,15 @@ class AssistantChat extends ChangeNotifier {
           error = (body['error'] ?? 'Server error (${res.statusCode}).').toString();
       }
     } on TimeoutException {
-      error = 'That took too long. The server may be waking up, so try again in a moment.';
+      if (gen == _gen) error = 'That took too long. The server may be waking up, so try again in a moment.';
     } catch (_) {
-      error = "Couldn't reach the server. Check your connection and try again.";
+      if (gen == _gen) error = "Couldn't reach the server. Check your connection and try again.";
     } finally {
-      busy = false;
-      notifyListeners();
+      if (gen == _gen) {
+        busy = false;
+        busySince = null;
+        notifyListeners();
+      }
     }
   }
 }
@@ -199,8 +410,10 @@ Future<void> showAssistantPanel(BuildContext context) {
     transitionDuration: const Duration(milliseconds: 240),
     pageBuilder: (_, _, _) => const Align(alignment: Alignment.centerRight, child: _AssistantPanel()),
     transitionBuilder: (_, animation, _, child) => SlideTransition(
-      position: Tween<Offset>(begin: const Offset(1, 0), end: Offset.zero)
-          .animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
+      position: Tween<Offset>(
+        begin: const Offset(1, 0),
+        end: Offset.zero,
+      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
       child: child,
     ),
   );
@@ -341,7 +554,8 @@ _Parsed _parse(String text) {
           plain.add(chart.title.isEmpty ? 'Chart' : chart.title);
           for (final p in chart.points) {
             final values = [
-              for (var s = 0; s < p.$2.length; s++) '${chart.series.length > s ? '${chart.series[s]} ' : ''}${_chartFull(p.$2[s], chart.format)}',
+              for (var s = 0; s < p.$2.length; s++)
+                '${chart.series.length > s ? '${chart.series[s]} ' : ''}${_chartFull(p.$2[s], chart.format)}',
             ];
             plain.add('- ${p.$1}: ${values.join(', ')}');
           }
@@ -411,6 +625,9 @@ class _AssistantPanel extends StatefulWidget {
 
 class _AssistantPanelState extends State<_AssistantPanel> {
   static bool _wide = false; // remembered while the app is open
+  static double? _userWidth; // set by dragging the left edge
+  bool _dragging = false;
+  static String _draft = ''; // an unsent question survives closing the panel
 
   final _chat = AssistantChat.instance;
   final _input = TextEditingController();
@@ -418,11 +635,20 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   final _scroll = ScrollController();
   final _lastAnswerKey = GlobalKey();
   int _seen = 0;
+  int _seenTab = 0;
+  static bool _side = true; // chat list open; remembered while the app is open
+  static const _sideWidth = 200.0;
+  bool _showJump = false; // scrolled away from the bottom of a long thread
 
   @override
   void initState() {
     super.initState();
+    _input.text = _draft;
+    _chat.ensureLoaded().then((_) => _scrollToEnd(jump: true));
+    _input.addListener(() => _draft = _input.text);
+    _scroll.addListener(_onScroll);
     _seen = _chat.messages.length;
+    _seenTab = _chat.chatChanges;
     _chat.addListener(_onChat);
     _inputFocus.addListener(() => setState(() {}));
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd(jump: true));
@@ -437,7 +663,114 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     super.dispose();
   }
 
+  void _onScroll() {
+    if (!_scroll.hasClients) return;
+    final away = _scroll.position.maxScrollExtent - _scroll.offset > 160;
+    if (away != _showJump) setState(() => _showJump = away);
+  }
+
+  /// Up arrow in an empty box brings back the last question, like a terminal.
+  void _recallLast() {
+    final last = _chat.messages.lastWhere((m) => m.role == AssistantRole.user, orElse: () => AssistantMessage(AssistantRole.user, ''));
+    if (last.text.isEmpty) return;
+    _input.text = last.text;
+    _input.selection = TextSelection.collapsed(offset: last.text.length);
+  }
+
+  Future<void> _rename(int i) async {
+    final label = _chat.chats[i].label;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _RenameDialog(initial: label == 'New chat' ? '' : label),
+    );
+    if (name != null) _chat.renameChat(i, name);
+  }
+
+  Future<void> _delete(int i) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete this chat?'),
+        content: Text('"${_chat.chats[i].label}" will be removed from this computer. This cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: _bad),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) _chat.deleteChat(i);
+  }
+
+  /// Left list of saved chats: start a new one, switch, rename or delete.
+  Widget _sidebar() {
+    return Container(
+      width: _sideWidth,
+      decoration: const BoxDecoration(
+        color: _fill,
+        border: Border(right: BorderSide(color: _stroke)),
+      ),
+      child: ListenableBuilder(
+        listenable: _chat,
+        builder: (context, _) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+              child: OutlinedButton.icon(
+                onPressed: _chat.canAddChat ? _chat.newChat : null,
+                icon: const Icon(Icons.add_rounded, size: 18),
+                label: const Text('New chat'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _ink,
+                  backgroundColor: Colors.white,
+                  side: const BorderSide(color: _stroke),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+                children: [
+                  for (var i = _chat.chats.length - 1; i >= 0; i--)
+                    _ChatRow(
+                      label: _chat.chats[i].label,
+                      selected: i == _chat.active,
+                      enabled: !_chat.busy,
+                      onTap: () => _chat.selectChat(i),
+                      onRename: () => _rename(i),
+                      onDelete: () => _delete(i),
+                    ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+              child: Text(
+                _chat.chats.length >= AssistantChat.maxChats
+                    ? 'Chat limit reached. Delete one to start another.'
+                    : '${_chat.chats.length} of ${AssistantChat.maxChats} chats',
+                style: const TextStyle(fontSize: 11, color: _muted),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   void _onChat() {
+    if (_chat.chatChanges != _seenTab) {
+      // A different conversation: show it from the bottom without treating it as a new answer.
+      _seenTab = _chat.chatChanges;
+      _seen = _chat.messages.length;
+      _scrollToEnd(jump: true);
+      return;
+    }
     final n = _chat.messages.length;
     final newAnswer = n > _seen && _chat.messages.last.role == AssistantRole.assistant;
     _seen = n;
@@ -477,33 +810,131 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   @override
   Widget build(BuildContext context) {
     final screen = MediaQuery.sizeOf(context).width;
-    final target = _wide ? (screen - 80).clamp(560.0, 880.0) : 560.0;
-    final width = screen < 560 ? screen : target;
+    // The panel is a share of the window, so it grows and shrinks with it. Dragging the left edge sets an
+    // exact width instead, until the wide/narrow button is pressed.
+    final minWidth = (_side ? 680.0 : 480.0).clamp(0.0, screen);
+    final auto = screen * (_wide ? 0.92 : 0.62);
+    final width = (_userWidth ?? auto).clamp(minWidth, screen);
     return Material(
       color: Colors.white,
       elevation: 16,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 260),
-        curve: Curves.easeOutCubic,
-        width: width,
-        height: double.infinity,
-        decoration: const BoxDecoration(border: Border(left: BorderSide(color: _stroke))),
-        child: SafeArea(
-          child: Column(
+      child: Stack(
+        children: [
+          AnimatedContainer(
+            duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            width: width,
+            height: double.infinity,
+            decoration: const BoxDecoration(
+              border: Border(left: BorderSide(color: _stroke)),
+            ),
+            child: SafeArea(
+              child: Row(
+                children: [
+                  if (_side) _sidebar(),
+                  Expanded(child: _chatColumn(screen)),
+                ],
+              ),
+            ),
+          ),
+          // drag handle on the left edge
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 8,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.resizeLeftRight,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onHorizontalDragStart: (_) => setState(() => _dragging = true),
+                onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
+                onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _chatColumn(double screen) {
+    return Column(
+      children: [
+        _header(screen),
+        const Divider(height: 1, color: _stroke),
+        Expanded(
+          child: Stack(
             children: [
-              _header(screen),
-              const Divider(height: 1, color: _stroke),
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: _chat,
-                  builder: (context, _) => _chat.messages.isEmpty && !_chat.busy ? _emptyState() : _thread(),
+              ListenableBuilder(
+                listenable: _chat,
+                builder: (context, _) => _chat.messages.isEmpty && !_chat.busy ? _emptyState() : _thread(),
+              ),
+              Positioned(
+                bottom: 10,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: AnimatedSlide(
+                    duration: const Duration(milliseconds: 180),
+                    offset: _showJump ? Offset.zero : const Offset(0, 1.6),
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: _showJump ? 1 : 0,
+                      child: IgnorePointer(
+                        ignoring: !_showJump,
+                        child: Material(
+                          color: Colors.white,
+                          elevation: 3,
+                          shadowColor: Colors.black.withValues(alpha: 0.25),
+                          shape: const StadiumBorder(side: BorderSide(color: _stroke)),
+                          child: InkWell(
+                            customBorder: const StadiumBorder(),
+                            onTap: _scrollToEnd,
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.arrow_downward_rounded, size: 15, color: _slate),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Latest',
+                                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ),
-              _composer(),
+              // soft edge so scrolled content fades under the header instead of hitting the divider
+              Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                height: 14,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.white, Colors.white.withValues(alpha: 0)],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ],
           ),
         ),
-      ),
+        _composer(),
+      ],
     );
   }
 
@@ -512,30 +943,37 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       padding: const EdgeInsets.fromLTRB(18, 14, 10, 12),
       child: Row(
         children: [
+          IconButton(
+            tooltip: _side ? 'Hide chats' : 'Show chats',
+            onPressed: () => setState(() => _side = !_side),
+            icon: Icon(_side ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
+            color: _slate,
+          ),
           const _Mark(size: 34),
           const SizedBox(width: 12),
           const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Ask Jarvis', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink, height: 1.2)),
-                Text('Read-only. Answers come from your live data.',
-                    style: TextStyle(fontSize: 12, color: _slate, height: 1.3)),
-              ],
+            child: Text(
+              'Ask Jarvis',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink, height: 1.2),
             ),
           ),
           if (screen >= 700)
             IconButton(
               tooltip: _wide ? 'Narrow view' : 'Wide view',
-              onPressed: () => setState(() => _wide = !_wide),
+              onPressed: () => setState(() {
+                _wide = !_wide;
+                _userWidth = null;
+              }),
               icon: Icon(_wide ? Icons.close_fullscreen_rounded : Icons.open_in_full_rounded, size: 18),
               color: _slate,
             ),
           ListenableBuilder(
             listenable: _chat,
             builder: (context, _) => IconButton(
-              tooltip: 'New conversation',
-              onPressed: _chat.messages.isEmpty || _chat.busy ? null : _chat.clear,
+              tooltip: _chat.chats.length >= AssistantChat.maxChats
+                  ? 'Delete a chat to start another (${AssistantChat.maxChats} max)'
+                  : 'New chat',
+              onPressed: _chat.canAddChat ? _chat.newChat : null,
               icon: const Icon(Icons.add_comment_outlined, size: 19),
               color: _slate,
             ),
@@ -564,9 +1002,11 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       children: [
         const Center(child: _Mark(size: 46)),
         const SizedBox(height: 18),
-        Text(_greeting(),
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink, letterSpacing: -0.3)),
+        Text(
+          _greeting(),
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink, letterSpacing: -0.3),
+        ),
         const SizedBox(height: 6),
         const Text(
           'Ask about jobs, customers, revenue, estimates or inventory.\nI can look things up but I can’t change anything.',
@@ -574,11 +1014,35 @@ class _AssistantPanelState extends State<_AssistantPanel> {
           style: TextStyle(fontSize: 13.5, color: _slate, height: 1.5),
         ),
         const SizedBox(height: 28),
-        for (final s in _suggestions)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: _SuggestionCard(suggestion: s, onTap: () => _submit(s.question)),
-          ),
+        LayoutBuilder(
+          builder: (context, c) {
+            final cols = c.maxWidth >= 640 ? 2 : 1;
+            return Column(
+              children: [
+                for (var i = 0; i < _suggestions.length; i += cols)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: IntrinsicHeight(
+                      // equal-height cards in each row, however long the question wraps
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (var j = i; j < i + cols; j++) ...[
+                            if (j > i) const SizedBox(width: 10),
+                            Expanded(
+                              child: j < _suggestions.length
+                                  ? _SuggestionCard(suggestion: _suggestions[j], onTap: () => _submit(_suggestions[j].question))
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            );
+          },
+        ),
       ],
     );
   }
@@ -593,7 +1057,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         children: [
           for (var i = 0; i < msgs.length; i++)
             if (msgs[i].role == AssistantRole.user)
-              _UserMessage(key: ObjectKey(msgs[i]), message: msgs[i])
+              _UserMessage(key: ObjectKey(msgs[i]), message: msgs[i], canEdit: !_chat.busy, onResend: (t) => _chat.editAndResend(i, t))
             else
               _AnswerView(
                 key: i == msgs.length - 1 && !_chat.busy ? _lastAnswerKey : ObjectKey(msgs[i]),
@@ -602,7 +1066,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                 onAsk: _submit,
                 onRegenerate: _chat.regenerate,
               ),
-          if (_chat.busy) const _Thinking(),
+          if (_chat.busy) _Thinking(since: _chat.busySince, onStop: _chat.stop),
+          if (_chat.stopped && !_chat.busy) _StoppedNote(onRetry: _chat.retry),
           if (_chat.error != null) _ErrorNote(message: _chat.error!, onRetry: _chat.retry),
         ],
       ),
@@ -611,82 +1076,228 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   Widget _composer() {
     final focused = _inputFocus.hasFocus;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(14, 6, 14, 6),
-      padding: const EdgeInsets.fromLTRB(16, 4, 6, 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: focused ? _brandRed : _stroke, width: focused ? 1.5 : 1),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 14, offset: const Offset(0, 4))],
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                child: Focus(
-                  // Enter sends, Shift+Enter adds a new line.
-                  onKeyEvent: (node, event) {
-                    if (event is KeyDownEvent &&
-                        event.logicalKey == LogicalKeyboardKey.enter &&
-                        !HardwareKeyboard.instance.isShiftPressed) {
-                      _submit();
-                      return KeyEventResult.handled;
-                    }
-                    return KeyEventResult.ignored;
-                  },
-                  child: TextField(
-                    controller: _input,
-                    focusNode: _inputFocus,
-                    autofocus: true,
-                    minLines: 1,
-                    maxLines: 6,
-                    maxLength: _maxChars,
-                    style: const TextStyle(fontSize: 14, color: _ink, height: 1.4),
-                    cursorColor: _brandRed,
-                    decoration: const InputDecoration(
-                      hintText: 'Ask anything about your business…',
-                      hintStyle: TextStyle(fontSize: 14, color: _muted),
-                      counterText: '',
-                      isDense: true,
-                      filled: false,
-                      contentPadding: EdgeInsets.symmetric(vertical: 12),
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                    ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          margin: const EdgeInsets.fromLTRB(14, 6, 14, 4),
+          padding: const EdgeInsets.fromLTRB(16, 4, 6, 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: focused ? _brandRed.withValues(alpha: 0.55) : _stroke),
+            boxShadow: [
+              BoxShadow(
+                color: focused ? _brandRed.withValues(alpha: 0.10) : Colors.black.withValues(alpha: 0.05),
+                blurRadius: focused ? 18 : 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: _composerField(),
+        ),
+        const Padding(
+          padding: EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Enter to send · Shift+Enter for a new line · ↑ recalls your last question',
+            style: TextStyle(fontSize: 11, color: _muted),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _composerField() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Focus(
+                // Enter sends, Shift+Enter adds a new line.
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+                    _submit();
+                    return KeyEventResult.handled;
+                  }
+                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp && _input.text.isEmpty) {
+                    _recallLast();
+                    return KeyEventResult.handled;
+                  }
+                  return KeyEventResult.ignored;
+                },
+                child: TextField(
+                  controller: _input,
+                  focusNode: _inputFocus,
+                  autofocus: true,
+                  minLines: 1,
+                  maxLines: 6,
+                  maxLength: _maxChars,
+                  style: const TextStyle(fontSize: 14, color: _ink, height: 1.4),
+                  cursorColor: _brandRed,
+                  decoration: const InputDecoration(
+                    hintText: 'Ask anything about your business…',
+                    hintStyle: TextStyle(fontSize: 14, color: _muted),
+                    counterText: '',
+                    isDense: true,
+                    filled: false,
+                    contentPadding: EdgeInsets.symmetric(vertical: 12),
+                    border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
                   ),
                 ),
               ),
-              const SizedBox(width: 6),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 2),
-                child: AnimatedBuilder(
-                  animation: Listenable.merge([_chat, _input]),
-                  builder: (context, _) {
-                    final ready = !_chat.busy && _input.text.trim().isNotEmpty;
+            ),
+            const SizedBox(width: 6),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: AnimatedBuilder(
+                animation: Listenable.merge([_chat, _input]),
+                builder: (context, _) {
+                  if (_chat.busy) {
                     return IconButton.filled(
-                      tooltip: 'Send',
-                      onPressed: ready ? _submit : null,
-                      icon: const Icon(Icons.arrow_upward_rounded, size: 19),
+                      tooltip: 'Stop',
+                      onPressed: _chat.stop,
+                      icon: const Icon(Icons.stop_rounded, size: 20),
                       style: IconButton.styleFrom(
-                        backgroundColor: _brandRed,
+                        backgroundColor: _ink,
                         foregroundColor: Colors.white,
-                        disabledBackgroundColor: _stroke,
-                        disabledForegroundColor: Colors.white,
                         fixedSize: const Size(36, 36),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                       ),
                     );
-                  },
-                ),
+                  }
+                  final ready = _input.text.trim().isNotEmpty;
+                  return IconButton.filled(
+                    tooltip: 'Send',
+                    onPressed: ready ? _submit : null,
+                    icon: const Icon(Icons.arrow_upward_rounded, size: 19),
+                    style: IconButton.styleFrom(
+                      backgroundColor: _brandRed,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: _stroke,
+                      disabledForegroundColor: Colors.white,
+                      fixedSize: const Size(36, 36),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _RenameDialog extends StatefulWidget {
+  final String initial;
+  const _RenameDialog({required this.initial});
+
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final _c = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Rename chat'),
+      content: TextField(
+        controller: _c,
+        autofocus: true,
+        maxLength: 60,
+        decoration: const InputDecoration(hintText: 'Chat name'),
+        onSubmitted: (v) => Navigator.of(context).pop(v),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton(onPressed: () => Navigator.of(context).pop(_c.text), child: const Text('Save')),
+      ],
+    );
+  }
+}
+
+class _ChatRow extends StatefulWidget {
+  final String label;
+  final bool selected;
+  final bool enabled;
+  final VoidCallback onTap;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+  const _ChatRow({
+    required this.label,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  @override
+  State<_ChatRow> createState() => _ChatRowState();
+}
+
+class _ChatRowState extends State<_ChatRow> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final sel = widget.selected;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 2),
+        child: Material(
+          color: sel ? _tint : (_hover ? Colors.white : Colors.transparent),
+          borderRadius: BorderRadius.circular(8),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(8),
+            onTap: widget.enabled ? widget.onTap : null,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 10),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500, color: sel ? _ink : _slate),
+                    ),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Chat options',
+                    enabled: widget.enabled,
+                    padding: EdgeInsets.zero,
+                    iconSize: 18,
+                    iconColor: _hover || sel ? _slate : Colors.transparent,
+                    icon: const Icon(Icons.more_horiz_rounded),
+                    onSelected: (v) => v == 'rename' ? widget.onRename() : widget.onDelete(),
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'rename', child: Text('Rename')),
+                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -702,13 +1313,9 @@ class _Mark extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFFE0252C), _brandRed],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        gradient: const LinearGradient(colors: [Color(0xFFE0252C), _brandRed], begin: Alignment.topLeft, end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(size * 0.32),
-        boxShadow: [BoxShadow(color: _brandRed.withValues(alpha: 0.25), blurRadius: 10, offset: const Offset(0, 3))],
+        boxShadow: [BoxShadow(color: _brandRed.withValues(alpha: 0.18), blurRadius: 8, spreadRadius: -1, offset: const Offset(0, 2))],
       ),
       child: Icon(Icons.auto_awesome_rounded, size: size * 0.5, color: Colors.white),
     );
@@ -731,7 +1338,10 @@ class _SuggestionCard extends StatelessWidget {
         hoverColor: _fill,
         child: Container(
           padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: _stroke)),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: _stroke),
+          ),
           child: Row(
             children: [
               Container(
@@ -745,7 +1355,10 @@ class _SuggestionCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(suggestion.title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink)),
+                    Text(
+                      suggestion.title,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink),
+                    ),
                     const SizedBox(height: 2),
                     Text(suggestion.question, style: const TextStyle(fontSize: 12.5, color: _slate, height: 1.35)),
                   ],
@@ -765,21 +1378,156 @@ class _SuggestionCard extends StatelessWidget {
 // Messages
 // =============================================================================
 
-class _UserMessage extends StatelessWidget {
+class _UserMessage extends StatefulWidget {
   final AssistantMessage message;
-  const _UserMessage({super.key, required this.message});
+  final bool canEdit;
+  final ValueChanged<String> onResend;
+  const _UserMessage({super.key, required this.message, required this.canEdit, required this.onResend});
+
+  @override
+  State<_UserMessage> createState() => _UserMessageState();
+}
+
+class _UserMessageState extends State<_UserMessage> {
+  bool _hover = false;
+  bool _editing = false;
+  late final TextEditingController _c = TextEditingController(text: widget.message.text);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  void _send() {
+    final t = _c.text.trim();
+    if (t.isEmpty) return;
+    setState(() => _editing = false);
+    widget.onResend(t);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final text = widget.message.text;
     return Padding(
       padding: const EdgeInsets.only(bottom: 18, left: 40),
-      child: Align(
-        alignment: Alignment.centerRight,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-          decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(18)),
-          child: SelectableText(message.text, style: const TextStyle(fontSize: 14, color: _ink, height: 1.45)),
+      child: MouseRegion(
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: _editing ? _editor() : _bubble(text),
+      ),
+    );
+  }
+
+  Widget _bubble(String text) {
+    final show = _hover && widget.canEdit;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        AnimatedOpacity(
+          duration: const Duration(milliseconds: 120),
+          opacity: show ? 1 : 0,
+          child: IgnorePointer(
+            ignoring: !show,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  tooltip: 'Copy',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => Clipboard.setData(ClipboardData(text: text)),
+                  icon: const Icon(Icons.content_copy_rounded, size: 15),
+                  color: _muted,
+                ),
+                IconButton(
+                  tooltip: 'Edit and ask again',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => setState(() {
+                    _c.text = text;
+                    _editing = true;
+                  }),
+                  icon: const Icon(Icons.edit_outlined, size: 16),
+                  color: _muted,
+                ),
+              ],
+            ),
+          ),
         ),
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
+            decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(18)),
+            child: SelectableText(text, style: const TextStyle(fontSize: 14, color: _ink, height: 1.45)),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _editor() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 6, 8, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _brandRed.withValues(alpha: 0.55)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Focus(
+            onKeyEvent: (node, event) {
+              if (event is! KeyDownEvent) return KeyEventResult.ignored;
+              if (event.logicalKey == LogicalKeyboardKey.escape) {
+                setState(() => _editing = false);
+                return KeyEventResult.handled;
+              }
+              if (event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+                _send();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: TextField(
+              controller: _c,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 6,
+              maxLength: _maxChars,
+              cursorColor: _brandRed,
+              style: const TextStyle(fontSize: 14, color: _ink, height: 1.45),
+              decoration: const InputDecoration(
+                counterText: '',
+                isDense: true,
+                filled: false,
+                contentPadding: EdgeInsets.symmetric(vertical: 8),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+              ),
+            ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              const Expanded(
+                child: Text('Answers below this question will be replaced.', style: TextStyle(fontSize: 11, color: _muted)),
+              ),
+              TextButton(onPressed: () => setState(() => _editing = false), child: const Text('Cancel')),
+              const SizedBox(width: 4),
+              FilledButton(
+                onPressed: _send,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _brandRed,
+                  visualDensity: VisualDensity.compact,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
+                child: const Text('Send'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -844,21 +1592,15 @@ class _AnswerView extends StatefulWidget {
   final bool isLast;
   final ValueChanged<String> onAsk;
   final VoidCallback onRegenerate;
-  const _AnswerView({
-    super.key,
-    required this.message,
-    required this.isLast,
-    required this.onAsk,
-    required this.onRegenerate,
-  });
+  const _AnswerView({super.key, required this.message, required this.isLast, required this.onAsk, required this.onRegenerate});
 
   @override
   State<_AnswerView> createState() => _AnswerViewState();
 }
 
 class _AnswerViewState extends State<_AnswerView> {
-  late final _Parsed _parsed = _parse(widget.message.text);
-  late final bool _animate = widget.message.fresh;
+  late _Parsed _parsed = _parse(widget.message.text);
+  late bool _animate = widget.message.fresh;
   bool _copied = false;
   Timer? _copiedTimer;
 
@@ -866,6 +1608,17 @@ class _AnswerViewState extends State<_AnswerView> {
   void initState() {
     super.initState();
     widget.message.fresh = false;
+  }
+
+  @override
+  void didUpdateWidget(_AnswerView old) {
+    super.didUpdateWidget(old);
+    // The newest answer shares one GlobalKey, so a replaced answer can arrive in the same element.
+    if (!identical(old.message, widget.message)) {
+      _parsed = _parse(widget.message.text);
+      _animate = widget.message.fresh;
+      widget.message.fresh = false;
+    }
   }
 
   @override
@@ -904,12 +1657,7 @@ class _AnswerViewState extends State<_AnswerView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SelectionArea(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      for (final b in blocks) reveal(_blockView(b)),
-                    ],
-                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final b in blocks) reveal(_blockView(b))]),
                 ),
                 reveal(_actions()),
                 if (widget.isLast && _parsed.followUps.isNotEmpty) reveal(_followUps()),
@@ -924,40 +1672,56 @@ class _AnswerViewState extends State<_AnswerView> {
   Widget _blockView(_Block b) {
     return switch (b) {
       _Para() => Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
-        ),
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
+      ),
       _Head() => Padding(
-          padding: const EdgeInsets.only(top: 6, bottom: 6),
-          child: Text.rich(TextSpan(
+        padding: const EdgeInsets.only(top: 6, bottom: 6),
+        child: Text.rich(
+          TextSpan(
             style: _bodyStyle.copyWith(fontSize: 15.5, fontWeight: FontWeight.w800, letterSpacing: -0.1),
             children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 15.5)),
-          )),
-        ),
-      _Item() => Padding(
-          padding: const EdgeInsets.only(left: 2, bottom: 5),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              SizedBox(
-                width: 20,
-                child: b.number == null
-                    ? const Padding(
-                        padding: EdgeInsets.only(top: 9, left: 4),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(color: _brandRed, shape: BoxShape.circle),
-                          child: SizedBox(width: 5, height: 5),
-                        ),
-                      )
-                    : Text('${b.number}.', style: _bodyStyle.copyWith(color: _slate, fontWeight: FontWeight.w600)),
-              ),
-              Expanded(child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle)))),
-            ],
           ),
         ),
-      _Table() => Padding(padding: const EdgeInsets.only(top: 4, bottom: 14), child: _ChatTable(rows: b.rows)),
-      _Stats() => Padding(padding: const EdgeInsets.only(top: 2, bottom: 14), child: _StatRow(items: b.items, animate: _animate)),
-      _Chart() => Padding(padding: const EdgeInsets.only(top: 2, bottom: 14), child: _ChatChart(chart: b, animate: _animate)),
+      ),
+      _Item() => Padding(
+        padding: const EdgeInsets.only(left: 2, bottom: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 20,
+              child: b.number == null
+                  ? const Padding(
+                      padding: EdgeInsets.only(top: 9, left: 4),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(color: _brandRed, shape: BoxShape.circle),
+                        child: SizedBox(width: 5, height: 5),
+                      ),
+                    )
+                  : Text(
+                      '${b.number}.',
+                      style: _bodyStyle.copyWith(color: _slate, fontWeight: FontWeight.w600),
+                    ),
+            ),
+            Expanded(
+              child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
+            ),
+          ],
+        ),
+      ),
+      _Table() => Padding(
+        padding: const EdgeInsets.only(top: 4, bottom: 14),
+        child: _ChatTable(rows: b.rows),
+      ),
+      _Stats() => Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 14),
+        child: _StatRow(items: b.items, animate: _animate),
+      ),
+      _Chart() => Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 14),
+        child: _ChatChart(chart: b, animate: _animate),
+      ),
     };
   }
 
@@ -1000,9 +1764,7 @@ class _AnswerViewState extends State<_AnswerView> {
       child: Wrap(
         spacing: 8,
         runSpacing: 8,
-        children: [
-          for (final q in _parsed.followUps) _FollowUpChip(text: q, onTap: () => widget.onAsk(q)),
-        ],
+        children: [for (final q in _parsed.followUps) _FollowUpChip(text: q, onTap: () => widget.onAsk(q))],
       ),
     );
   }
@@ -1029,7 +1791,10 @@ class _MiniAction extends StatelessWidget {
           children: [
             Icon(icon, size: 14, color: c),
             const SizedBox(width: 5),
-            Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c)),
+            Text(
+              label,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c),
+            ),
           ],
         ),
       ),
@@ -1053,12 +1818,18 @@ class _FollowUpChip extends StatelessWidget {
         hoverColor: _tint,
         child: Container(
           padding: const EdgeInsets.fromLTRB(12, 7, 10, 7),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), border: Border.all(color: _stroke)),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: _stroke),
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(
-                child: Text(text, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _ink, height: 1.3)),
+                child: Text(
+                  text,
+                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _ink, height: 1.3),
+                ),
               ),
               const SizedBox(width: 6),
               const Icon(Icons.arrow_outward_rounded, size: 13, color: _brandRed),
@@ -1082,7 +1853,12 @@ List<InlineSpan> _inlineSpans(String line, TextStyle base) {
   var last = 0;
   for (final m in RegExp(r'\*\*(.+?)\*\*').allMatches(line)) {
     if (m.start > last) spans.add(TextSpan(text: line.substring(last, m.start)));
-    spans.add(TextSpan(text: m.group(1), style: base.copyWith(fontWeight: FontWeight.w800)));
+    spans.add(
+      TextSpan(
+        text: m.group(1),
+        style: base.copyWith(fontWeight: FontWeight.w800),
+      ),
+    );
     last = m.end;
   }
   if (last < line.length) spans.add(TextSpan(text: line.substring(last)));
@@ -1096,48 +1872,50 @@ class _StatRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      final cols = c.maxWidth >= 150.0 * items.length ? items.length : (c.maxWidth >= 300 ? 2 : 1);
-      const gap = 10.0;
-      final w = (c.maxWidth - gap * (cols - 1)) / cols;
-      return Wrap(
-        spacing: gap,
-        runSpacing: gap,
-        children: [
-          for (var i = 0; i < items.length; i++)
-            SizedBox(
-              width: w,
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                decoration: BoxDecoration(
-                  color: i == 0 ? _tint : _fill,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: i == 0 ? _brandRed.withValues(alpha: 0.18) : _stroke),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _CountUp(
-                      value: items[i].$1,
-                      animate: animate,
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: -0.5,
-                        color: i == 0 ? _brandRed : _ink,
-                        height: 1.15,
-                        fontFeatures: const [FontFeature.tabularFigures()],
+    return LayoutBuilder(
+      builder: (context, c) {
+        final cols = c.maxWidth >= 150.0 * items.length ? items.length : (c.maxWidth >= 300 ? 2 : 1);
+        const gap = 10.0;
+        final w = (c.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (var i = 0; i < items.length; i++)
+              SizedBox(
+                width: w,
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                  decoration: BoxDecoration(
+                    color: i == 0 ? _tint : _fill,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: i == 0 ? _brandRed.withValues(alpha: 0.18) : _stroke),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _CountUp(
+                        value: items[i].$1,
+                        animate: animate,
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.5,
+                          color: i == 0 ? _brandRed : _ink,
+                          height: 1.15,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(items[i].$2, style: const TextStyle(fontSize: 12, color: _slate, height: 1.3)),
-                  ],
+                      const SizedBox(height: 3),
+                      Text(items[i].$2, style: const TextStyle(fontSize: 12, color: _slate, height: 1.3)),
+                    ],
+                  ),
                 ),
               ),
-            ),
-        ],
-      );
-    });
+          ],
+        );
+      },
+    );
   }
 }
 
@@ -1185,7 +1963,11 @@ String _chartFull(double v, String format) {
   final neg = v < 0;
   final a = v.abs();
   final s = _CountUp._fmt(a, format == 'percent' && a % 1 != 0 ? 1 : 0, true);
-  final body = switch (format) { 'money' => '\$$s', 'percent' => '$s%', _ => s };
+  final body = switch (format) {
+    'money' => '\$$s',
+    'percent' => '$s%',
+    _ => s,
+  };
   return neg ? '-$body' : body;
 }
 
@@ -1202,7 +1984,11 @@ String _chartCompact(double v, String format) {
   } else {
     s = a % 1 == 0 ? a.toStringAsFixed(0) : a.toStringAsFixed(1);
   }
-  final body = switch (format) { 'money' => '\$$s', 'percent' => '$s%', _ => s };
+  final body = switch (format) {
+    'money' => '\$$s',
+    'percent' => '$s%',
+    _ => s,
+  };
   return neg ? '-$body' : body;
 }
 
@@ -1224,8 +2010,9 @@ class _ChatChartState extends State<_ChatChart> {
 
   _Chart get c => widget.chart;
 
-  String get _summary => '${c.title.isEmpty ? 'Chart' : c.title}. ${[
-        for (final p in c.points) '${p.$1}: ${[for (var i = 0; i < p.$2.length; i++) '${c.series.isEmpty ? '' : '${c.series[i]} '}${_chartFull(p.$2[i], c.format)}'].join(', ')}'
+  String get _summary =>
+      '${c.title.isEmpty ? 'Chart' : c.title}. ${[
+        for (final p in c.points) '${p.$1}: ${[for (var i = 0; i < p.$2.length; i++) '${c.series.isEmpty ? '' : '${c.series[i]} '}${_chartFull(p.$2[i], c.format)}'].join(', ')}',
       ].join('; ')}';
 
   @override
@@ -1248,19 +2035,33 @@ class _ChatChartState extends State<_ChatChart> {
               if (c.title.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Text(c.title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink)),
+                  child: Text(
+                    c.title,
+                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink),
+                  ),
                 ),
               if (c.series.length > 1)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 8),
-                  child: Wrap(spacing: 14, runSpacing: 4, children: [
-                    for (var i = 0; i < c.series.length; i++)
-                      Row(mainAxisSize: MainAxisSize.min, children: [
-                        Container(width: 9, height: 9, decoration: BoxDecoration(color: _palette[i], borderRadius: BorderRadius.circular(3))),
-                        const SizedBox(width: 6),
-                        Text(c.series[i], style: const TextStyle(fontSize: 12, color: _slate)),
-                      ]),
-                  ]),
+                  child: Wrap(
+                    spacing: 14,
+                    runSpacing: 4,
+                    children: [
+                      for (var i = 0; i < c.series.length; i++)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 9,
+                              height: 9,
+                              decoration: BoxDecoration(color: _palette[i], borderRadius: BorderRadius.circular(3)),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(c.series[i], style: const TextStyle(fontSize: 12, color: _slate)),
+                          ],
+                        ),
+                    ],
+                  ),
                 ),
               if (c.kind == 'hbar') _hbars(animate) else _plot(animate),
             ],
@@ -1281,7 +2082,12 @@ class _ChatChartState extends State<_ChatChart> {
               children: [
                 SizedBox(
                   width: 150,
-                  child: Text(c.points[i].$1, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: _ink)),
+                  child: Text(
+                    c.points[i].$1,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12.5, color: _ink),
+                  ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -1310,7 +2116,12 @@ class _ChatChartState extends State<_ChatChart> {
                   child: Text(
                     _chartFull(c.points[i].$2.first, c.format),
                     textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _ink, fontFeatures: [FontFeature.tabularFigures()]),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: _ink,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
                   ),
                 ),
               ],
@@ -1323,25 +2134,27 @@ class _ChatChartState extends State<_ChatChart> {
   Widget _plot(bool animate) {
     return SizedBox(
       height: _plotHeight,
-      child: LayoutBuilder(builder: (context, box) {
-        final geo = _ChartGeometry(Size(box.maxWidth, _plotHeight), c);
-        return TweenAnimationBuilder<double>(
-          tween: Tween(begin: animate ? 0 : 1, end: 1),
-          duration: const Duration(milliseconds: 750),
-          curve: Curves.easeOutCubic,
-          builder: (_, t, _) => MouseRegion(
-            onHover: (e) => setState(() => _hover = geo.indexAt(e.localPosition.dx)),
-            onExit: (_) => setState(() => _hover = null),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned.fill(child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style))),
-                if (_hover != null) _tooltip(geo, _hover!),
-              ],
+      child: LayoutBuilder(
+        builder: (context, box) {
+          final geo = _ChartGeometry(Size(box.maxWidth, _plotHeight), c);
+          return TweenAnimationBuilder<double>(
+            tween: Tween(begin: animate ? 0 : 1, end: 1),
+            duration: const Duration(milliseconds: 750),
+            curve: Curves.easeOutCubic,
+            builder: (_, t, _) => MouseRegion(
+              onHover: (e) => setState(() => _hover = geo.indexAt(e.localPosition.dx)),
+              onExit: (_) => setState(() => _hover = null),
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style))),
+                  if (_hover != null) _tooltip(geo, _hover!),
+                ],
+              ),
             ),
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 
@@ -1417,7 +2230,15 @@ class _ChartGeometry {
       pow /= 10;
     }
     final f = v / pow;
-    final nice = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+    final nice = f <= 1
+        ? 1
+        : f <= 2
+        ? 2
+        : f <= 2.5
+        ? 2.5
+        : f <= 5
+        ? 5
+        : 10;
     return nice * pow;
   }
 
@@ -1443,9 +2264,17 @@ class _ChartPainter extends CustomPainter {
 
   static const _colors = _ChatChartState._palette;
 
-  void _text(Canvas canvas, String s, Offset at, {bool rightAlign = false, bool centre = false}) {
+  void _text(Canvas canvas, String s, Offset at, {bool rightAlign = false, bool centre = false, Color color = _muted}) {
     final tp = TextPainter(
-      text: TextSpan(text: s, style: base.copyWith(fontSize: 11, color: _muted, fontWeight: FontWeight.w400, fontFeatures: const [FontFeature.tabularFigures()])),
+      text: TextSpan(
+        text: s,
+        style: base.copyWith(
+          fontSize: 11,
+          color: color,
+          fontWeight: color == _muted ? FontWeight.w400 : FontWeight.w600,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
     final dx = rightAlign ? at.dx - tp.width : (centre ? at.dx - tp.width / 2 : at.dx);
@@ -1556,11 +2385,32 @@ class _ChartPainter extends CustomPainter {
           final v = chart.points[i].$2[s];
           final top = grow(v);
           final rect = Rect.fromLTRB(startX + barW * s + 1, v >= 0 ? top : base, startX + barW * (s + 1) - 1, v >= 0 ? base : top);
-          final color = _colors[s].withValues(alpha: hover == null || hover == i ? 1 : 0.45);
+          final dim = hover == null || hover == i ? 1.0 : 0.45;
+          final color = _colors[s];
           canvas.drawRRect(
-            RRect.fromRectAndCorners(rect, topLeft: const Radius.circular(4), topRight: const Radius.circular(4)),
-            Paint()..color = color,
+            RRect.fromRectAndCorners(rect, topLeft: const Radius.circular(5), topRight: const Radius.circular(5)),
+            Paint()
+              ..shader = LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  color.withValues(alpha: dim),
+                  color.withValues(alpha: 0.72 * dim),
+                ],
+              ).createShader(rect),
           );
+          // Short single-series charts read faster with the value printed on the bar.
+          if (seriesCount == 1 && g.n <= 8 && t > 0.98 && v != 0) {
+            final label = _chartCompact(v, chart.format);
+            final above = v >= 0 ? rect.top - 9 : rect.bottom + 9;
+            _text(
+              canvas,
+              label,
+              Offset(startX + barW / 2, above.clamp(_ChartGeometry.top + 2, size.height - _ChartGeometry.bottom - 2)),
+              centre: true,
+              color: _slate,
+            );
+          }
         }
       }
     }
@@ -1609,7 +2459,8 @@ class _ChatTableState extends State<_ChatTable> {
   /// Last column whose cells are all dollar amounts: that one gets the data bars.
   late final int? _barCol = () {
     for (var c = _cols - 1; c >= 0; c--) {
-      if (_numeric[c] && _body.every((r) => r[c].isEmpty || r[c].trim().startsWith(r'$')) && _body.any((r) => r[c].isNotEmpty)) return c;
+      final dollars = _body.every((r) => r[c].isEmpty || r[c].trim().startsWith(r'$')) && _body.any((r) => r[c].isNotEmpty);
+      if (_numeric[c] && dollars) return c;
     }
     return null;
   }();
@@ -1693,28 +2544,25 @@ class _ChatTableState extends State<_ChatTable> {
     }
 
     Widget headCell(int c) => InkWell(
-          onTap: () => _sortBy(c),
-          hoverColor: Colors.black.withValues(alpha: 0.04),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-            child: Row(
-              mainAxisAlignment: _numeric[c] ? MainAxisAlignment.end : MainAxisAlignment.start,
-              children: [
-                Text(_header[c].toUpperCase(),
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.5,
-                      color: _sortCol == c ? _brandRed : _slate,
-                    )),
-                if (_sortCol == c) ...[
-                  const SizedBox(width: 3),
-                  Icon(_asc ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 12, color: _brandRed),
-                ],
-              ],
+      onTap: () => _sortBy(c),
+      hoverColor: Colors.black.withValues(alpha: 0.04),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          mainAxisAlignment: _numeric[c] ? MainAxisAlignment.end : MainAxisAlignment.start,
+          children: [
+            Text(
+              _header[c].toUpperCase(),
+              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: _sortCol == c ? _brandRed : _slate),
             ),
-          ),
-        );
+            if (_sortCol == c) ...[
+              const SizedBox(width: 3),
+              Icon(_asc ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 12, color: _brandRed),
+            ],
+          ],
+        ),
+      ),
+    );
 
     Widget cell(List<String> r, int c, {bool total = false}) {
       final t = r[c];
@@ -1733,7 +2581,11 @@ class _ChatTableState extends State<_ChatTable> {
         text = Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(width: 8, height: 8, decoration: BoxDecoration(color: _statusColor(t), shape: BoxShape.circle)),
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(color: _statusColor(t), shape: BoxShape.circle),
+            ),
             const SizedBox(width: 8),
             Flexible(child: text),
           ],
@@ -1771,14 +2623,15 @@ class _ChatTableState extends State<_ChatTable> {
     final table = Table(
       columnWidths: {
         for (var c = 0; c < _cols; c++)
-          c: c == barCol
-              ? const FlexColumnWidth(1.1)
-              : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(c == 0 ? 2 : 1.4)),
+          c: c == barCol ? const FlexColumnWidth(1.1) : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(c == 0 ? 2 : 1.4)),
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: const TableBorder(horizontalInside: BorderSide(color: _stroke)),
       children: [
-        TableRow(decoration: const BoxDecoration(color: _fill), children: [for (var c = 0; c < _cols; c++) headCell(c)]),
+        TableRow(
+          decoration: const BoxDecoration(color: _fill),
+          children: [for (var c = 0; c < _cols; c++) headCell(c)],
+        ),
         for (final r in shown) TableRow(children: [for (var c = 0; c < _cols; c++) cell(r, c)]),
         for (final r in _totals)
           TableRow(
@@ -1789,14 +2642,19 @@ class _ChatTableState extends State<_ChatTable> {
     );
 
     return Container(
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: _stroke)),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _stroke),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           table,
           Container(
-            decoration: const BoxDecoration(border: Border(top: BorderSide(color: _stroke))),
+            decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: _stroke)),
+            ),
             padding: const EdgeInsets.fromLTRB(8, 2, 4, 2),
             child: Row(
               children: [
@@ -1809,8 +2667,10 @@ class _ChatTableState extends State<_ChatTable> {
                 else
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
-                    child: Text('${sorted.length} ${sorted.length == 1 ? 'row' : 'rows'}',
-                        style: const TextStyle(fontSize: 11.5, color: _muted)),
+                    child: Text(
+                      '${sorted.length} ${sorted.length == 1 ? 'row' : 'rows'}',
+                      style: const TextStyle(fontSize: 11.5, color: _muted),
+                    ),
                   ),
                 const Spacer(),
                 _MiniAction(
@@ -1841,7 +2701,9 @@ class _SlideGradient extends GradientTransform {
 }
 
 class _Thinking extends StatefulWidget {
-  const _Thinking();
+  final DateTime? since;
+  final VoidCallback onStop;
+  const _Thinking({required this.since, required this.onStop});
 
   @override
   State<_Thinking> createState() => _ThinkingState();
@@ -1851,13 +2713,13 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
   static const _phrases = ['Looking through your jobs…', 'Checking the numbers…', 'Putting it together…'];
   late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))..repeat();
   Timer? _timer;
-  int _i = 0;
+  int get _secs => widget.since == null ? 0 : DateTime.now().difference(widget.since!).inSeconds;
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(const Duration(milliseconds: 3200), (_) {
-      if (mounted) setState(() => _i = (_i + 1).clamp(0, _phrases.length - 1));
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
     });
   }
 
@@ -1871,30 +2733,69 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
   @override
   Widget build(BuildContext context) {
     final still = MediaQuery.disableAnimationsOf(context);
+    final secs = _secs;
+    final i = (secs ~/ 4).clamp(0, _phrases.length - 1);
+    return Semantics(
+      liveRegion: true,
+      label: 'Jarvis is working on your question',
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 18),
+        child: Row(
+          children: [
+            ScaleTransition(
+              scale: still
+                  ? const AlwaysStoppedAnimation(1.0)
+                  : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+              child: const _Mark(size: 26),
+            ),
+            const SizedBox(width: 12),
+            AnimatedBuilder(
+              animation: _c,
+              builder: (context, _) => ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (r) => LinearGradient(
+                  colors: const [_muted, _ink, _muted],
+                  stops: const [0.35, 0.5, 0.65],
+                  transform: _SlideGradient(still ? 0 : _c.value * 2 - 1),
+                ).createShader(r),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 250),
+                  child: Text(
+                    _phrases[i],
+                    key: ValueKey(i),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              secs >= 12 ? '${secs}s · still working, this can take up to a minute' : (secs >= 3 ? '${secs}s' : ''),
+              style: const TextStyle(fontSize: 11.5, color: _muted, fontFeatures: [FontFeature.tabularFigures()]),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Shown after the person stops a question, so the thread does not just end on their message.
+class _StoppedNote extends StatelessWidget {
+  final VoidCallback onRetry;
+  const _StoppedNote({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 18),
       child: Row(
         children: [
-          ScaleTransition(
-            scale: still ? const AlwaysStoppedAnimation(1.0) : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-            child: const _Mark(size: 26),
-          ),
-          const SizedBox(width: 12),
-          AnimatedBuilder(
-            animation: _c,
-            builder: (context, _) => ShaderMask(
-              blendMode: BlendMode.srcIn,
-              shaderCallback: (r) => LinearGradient(
-                colors: const [_muted, _ink, _muted],
-                stops: const [0.35, 0.5, 0.65],
-                transform: _SlideGradient(still ? 0 : _c.value * 2 - 1),
-              ).createShader(r),
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 250),
-                child: Text(_phrases[_i], key: ValueKey(_i), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-              ),
-            ),
-          ),
+          const Icon(Icons.stop_circle_outlined, size: 18, color: _muted),
+          const SizedBox(width: 8),
+          const Text('Stopped.', style: TextStyle(fontSize: 13, color: _slate)),
+          const SizedBox(width: 4),
+          TextButton(onPressed: onRetry, child: const Text('Ask again')),
         ],
       ),
     );

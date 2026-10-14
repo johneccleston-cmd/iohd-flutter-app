@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'config/access.dart';
 import 'config/auth_session.dart';
 
@@ -40,7 +41,7 @@ class _InvoicesScreenState extends State<InvoicesScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: AppTheme.bgColor,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(

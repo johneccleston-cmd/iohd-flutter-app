@@ -1,0 +1,172 @@
+<title>Tech Commission Rules</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: one letter-size sheet. Red title band, 2x2 grid of rule blocks, example strip, footer. Reads top-down: get credit -> get paid -> long jobs -> callbacks. */
+:root {
+  --bg: #eceef1;
+  --paper: #ffffff;
+  --ink: #1a1c1e;
+  --muted: #4b5563;
+  --line: #d9dde3;
+  --brand: #cc0007;
+  --brand-ink: #ffffff;
+  --tint: #f6f7f9;
+  --good: #1a7a4a;
+  --warn-bg: #fff6e0;
+  --warn-line: #f0d68a;
+  --warn-ink: #6b4d0c;
+  --display: "Barlow Condensed", "Arial Narrow", Arial, sans-serif;
+  --text: "Barlow", "Segoe UI", Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111316; --paper: #1a1d21; --ink: #eceff3; --muted: #a3acb8; --line: #2d3238;
+    --brand: #ff4b52; --brand-ink: #1a1d21; --tint: #21252a; --good: #4fc58a;
+    --warn-bg: #2b2412; --warn-line: #5a4a1c; --warn-ink: #f0d68a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111316; --paper: #1a1d21; --ink: #eceff3; --muted: #a3acb8; --line: #2d3238;
+  --brand: #ff4b52; --brand-ink: #1a1d21; --tint: #21252a; --good: #4fc58a;
+  --warn-bg: #2b2412; --warn-line: #5a4a1c; --warn-ink: #f0d68a;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--text); font-size: 15px; line-height: 1.4; padding-inline: 16px; padding-block: 24px; }
+.sheet { max-width: 8.5in; margin-inline: auto; background: var(--paper); border: 1px solid var(--line); }
+.band { background: var(--brand); color: var(--brand-ink); padding: 18px 28px 16px; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 6px 24px; }
+.band h1 { font-family: var(--display); font-weight: 700; font-size: 2.4rem; line-height: 1; margin: 0; text-transform: uppercase; letter-spacing: 0.02em; text-wrap: balance; }
+.band p { margin: 0; font-weight: 500; font-size: 0.95rem; }
+.body { padding: 18px 28px 14px; display: grid; gap: 16px; }
+.lede { margin: 0; font-size: 1.02rem; font-weight: 500; text-wrap: pretty; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; }
+.block { min-width: 0; }
+h2 { font-family: var(--display); font-weight: 700; font-size: 1.3rem; text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 6px; padding-bottom: 4px; border-bottom: 2px solid var(--ink); }
+ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+li { padding-left: 14px; position: relative; text-wrap: pretty; }
+li::before { content: ""; position: absolute; left: 0; top: 0.55em; width: 6px; height: 6px; background: var(--brand); }
+b { font-weight: 600; }
+.num { font-variant-numeric: tabular-nums; font-weight: 600; }
+.example { background: var(--tint); border: 1px solid var(--line); padding: 10px 14px; display: grid; gap: 4px; }
+.example h3 { margin: 0; font-family: var(--display); font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.math { display: flex; flex-wrap: wrap; gap: 2px 14px; font-variant-numeric: tabular-nums; }
+.math span { white-space: nowrap; }
+.math .pay { color: var(--good); font-weight: 600; }
+.do { background: var(--warn-bg); border: 1px solid var(--warn-line); color: var(--warn-ink); padding: 10px 14px; }
+.do h3 { margin: 0 0 4px; font-family: var(--display); font-size: 1.05rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.do ol { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.foot { padding: 8px 28px 12px; font-size: 0.8rem; color: var(--muted); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; border-top: 1px solid var(--line); }
+@media (max-width: 640px) {
+  .grid { grid-template-columns: 1fr; }
+  .band, .body, .foot { padding-inline: 18px; }
+  .band h1 { font-size: 2rem; }
+}
+@media print {
+  @page { size: letter; margin: 0.35in; }
+  :root, :root[data-theme="dark"] { --bg: #fff; --paper: #fff; --ink: #1a1c1e; --muted: #4b5563; --line: #cfd4db; --brand: #cc0007; --brand-ink: #fff; --tint: #f6f7f9; --good: #1a7a4a; --warn-bg: #fff6e0; --warn-line: #f0d68a; --warn-ink: #6b4d0c; color-scheme: light; }
+  body { padding: 0; font-size: 10.4pt; line-height: 1.32; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .sheet { border: 0; max-width: none; }
+  .band { padding: 12px 20px 10px; }
+  .band h1 { font-size: 26pt; }
+  .body { padding: 12px 20px 8px; gap: 11px; }
+  .grid { gap: 11px 22px; }
+  .foot { padding: 6px 20px 0; }
+  .grid, .example, .do, .block { break-inside: avoid; }
+}
+</style>
+
+<main class="sheet">
+  <header class="band">
+    <h1>Tech Commission Rules</h1>
+    <p>Starts Monday, Oct 5, 2026 &middot; Pay week is Monday to Sunday</p>
+  </header>
+
+  <div class="body">
+    <p class="lede">Your commission comes from the jobs you work and finish. These are the rules that decide what counts, when you are paid and what comes out.</p>
+
+    <div class="grid">
+      <section class="block">
+        <h2>What counts</h2>
+        <ul>
+          <li><b>Jobs that start on or after Oct 5.</b> A job that started earlier is ignored completely, even if you work it after Oct 5. That includes callbacks on it.</li>
+          <li><b>Only verified days.</b> A day counts when your Site Visit status is set to <b>Completed</b>. No Completed, no credit for that day.</li>
+          <li><b>Full day = 1, half day = 0.5.</b> Verify Delivery, Manage Project and site check visits earn no credit.</li>
+          <li><b>The job's pool is split by days.</b> After 1% goes to the company pool, 100% of what is left is divided among the techs with verified days on that job.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>When you get paid</h2>
+        <ul>
+          <li><b>In the week the job closes,</b> not the week you worked it. The job closes the first time it reaches a closed status.</li>
+          <li><b>Fast pay:</b> on a service job or a residential install, if all your work was in one pay week and the job closes by <b>5:00 pm the following Monday</b>, you are paid for the week you worked it. Commercial installs never get fast pay.</li>
+          <li><b>Close it late, get paid late.</b> A job that closes after that cutoff, or that takes work in 2 or more pay weeks, is paid in its close week.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>The $750 weekly cut</h2>
+        <ul>
+          <li>Each week the company keeps the first <span class="num">$750</span> of your weekly total. You are paid the total minus $750, and never less than $0.</li>
+          <li>Your weekly total = closed job pay + advances + retainage held + callback pay.</li>
+          <li>Under $750 pays $0 for that week. Nothing rolls over to the next week.</li>
+        </ul>
+      </section>
+
+      <section class="block">
+        <h2>Long jobs, advances and retainage</h2>
+        <ul>
+          <li><b>Multi-week jobs:</b> each verified day before the close week pays a flat <span class="num">$200</span> advance in the week you worked it. Advances count toward the $750.</li>
+          <li><b>Commercial installs:</b> a verified day also pays the <span class="num">$200</span> advance if the job is still open when that week's Friday ends, even if it is not a multi-week job.</li>
+          <li>When the job closes, your advances are taken back out of <b>that job's</b> pay only.</li>
+          <li><b>Commercial retainage:</b> <span class="num">20%</span> of a commercial install's pay is held. It counts toward your $750 that week and is paid out later (see below).</li>
+          <li><b>Quarterly retainage payout:</b> held retainage is paid one full quarter after the quarter the job started in. Q4 2026 retainage is the first payout, on <b>Apr 1, 2027</b>. Q1 pays Jul 1, Q2 pays Oct 1, Q3 pays Jan 1, Q4 pays Apr 1.</li>
+        </ul>
+      </section>
+    </div>
+
+    <section class="block">
+      <h2>Callbacks and strikes</h2>
+      <div class="grid">
+        <ul>
+          <li><b>Callback pay:</b> a verified callback or warranty day pays a flat <span class="num">$50</span> in the week you worked it. It is separate from the job pool.</li>
+          <li><b>No callback pay</b> on service jobs, or on jobs for Lennar or Schuber Mitchell Homes.</li>
+        </ul>
+        <ul>
+          <li><b>A strike</b> goes on every tech who did the original job each time a verified callback visit happens on it. Strikes are counted by calendar year.</li>
+          <li>The $50 is charged to the original techs' retainage, or to the company pool. Service jobs have no charge, but the strike still counts.</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="grid">
+      <div class="example">
+        <h3>Example week</h3>
+        <div class="math">
+          <span>Closed jobs: $950</span>
+          <span>+ one $200 advance day</span>
+          <span>= $1,150 total</span>
+        </div>
+        <div class="math">
+          <span>$1,150 &minus; $750</span>
+          <span class="pay">= $400 paid</span>
+        </div>
+      </div>
+      <div class="do">
+        <h3>Every job</h3>
+        <ol>
+          <li>Set your Site Visit to <b>Completed</b> the day you work.</li>
+          <li>Mark callbacks and warranty visits as such in the visit.</li>
+          <li>Tell the office if a day is missing or wrong.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  <footer class="foot">
+    <span>Questions about a pay week? Ask the office.</span>
+    <span>IOHD &middot; Rules effective Oct 5, 2026</span>
+  </footer>
+</main>

@@ -3,13 +3,15 @@
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'config/access.dart';
 import 'config/api_config.dart';
 import 'package:go_router/go_router.dart';
 import 'product_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
-import 'jobs_screen.dart'; 
+import 'jobs_screen.dart';
+import 'job_detail_screen.dart';
 import 'payroll_screen.dart'; 
 import 'estimates_screen.dart'; 
 import 'calendar_screen.dart';
@@ -54,7 +56,11 @@ final GoRouter _router = GoRouter(
     // Page access follows the Permissions card on the Team screen. Someone who opens a page they're
     // switched off from lands on the calendar, or on the first page they can use.
     final session = AuthSession.instance;
-    final path = state.matchedLocation == '/dashboards' ? '/dashboards/financial' : state.matchedLocation;
+    final path = state.matchedLocation == '/dashboards'
+        ? '/dashboards/financial'
+        : state.matchedLocation.startsWith('/jobs/')
+            ? '/jobs' // a job's own page needs the same permission as the Jobs list
+            : state.matchedLocation;
     if (signedIn && !session.isAdmin) {
       if (path == '/hr/team') return '/calendar';
       final page = kAccessPages.where((p) => p.route == path).firstOrNull;
@@ -88,10 +94,23 @@ final GoRouter _router = GoRouter(
           GoRoute(path: '/projects', builder: (context, state) => const _PlaceholderScreen(title: "Projects")),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/estimates', builder: (context, state) => const EstimatesScreen()),
+          GoRoute(
+            path: '/estimates',
+            builder: (context, state) => EstimatesScreen(initialQuery: state.uri.queryParameters['q']),
+            // An estimate's own page (/estimates/<number>): the same screen as a job's, so the Estimates item stays lit in the nav.
+            routes: [jobDetailRoute()],
+          ),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/jobs', builder: (context, state) => const JobsScreen()),
+          GoRoute(
+            path: '/jobs',
+            builder: (context, state) => JobsScreen(initialQuery: state.uri.queryParameters['q']),
+            routes: [
+              // One job's own page (/jobs/<job number>), inside the shell so the top nav stays. The clicked row rides
+              // along as `extra` to show instantly.
+              jobDetailRoute(),
+            ],
+          ),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/calendar', builder: (context, state) => const CalendarScreen()),
@@ -168,8 +187,9 @@ final GoRouter _router = GoRouter(
   ],
 );
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AuthSession.instance.restore();
   SmoothWheelScroll.install();
   // The hosted backend sleeps when idle; waking it now means the first real screen doesn't pay for it.
   unawaited(
@@ -201,7 +221,7 @@ class IohdHubApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.light,
-        scaffoldBackgroundColor: bgColor,
+        scaffoldBackgroundColor: AppTheme.bgColor, // same page colour as the dashboards
         typography: Typography.material2021(platform: defaultTargetPlatform),
         textTheme: const TextTheme().apply(displayColor: primaryText, bodyColor: primaryText),
         colorScheme: ColorScheme.fromSeed(

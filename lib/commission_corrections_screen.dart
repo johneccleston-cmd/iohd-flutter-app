@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'utils/status_colors.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -230,7 +231,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF6F7F9),
+      color: AppTheme.bgColor,
       child: Padding(
         padding: const EdgeInsets.all(24),
         child: Column(

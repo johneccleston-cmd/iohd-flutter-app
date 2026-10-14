@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 
 const Color _brandRed = Color(0xFFCC0007);
 const Color _inkColor = Color(0xFF181B1F);
@@ -39,7 +40,7 @@ class _PaymentsScreenState extends State<PaymentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFFAFAFA),
+      backgroundColor: AppTheme.bgColor,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(32),
         child: Column(

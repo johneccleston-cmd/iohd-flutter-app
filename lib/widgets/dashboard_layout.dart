@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import '../theme/app_theme.dart';
 
 /// Design tokens in one place so the header, selector and body stay consistent.
 abstract final class _DashTokens {
-  static const background = Color(0xFFE2E8F0);
+  static const background = AppTheme.bgColor; // one shared page colour for the whole app
   static const header = Color(0xFF0F172A);
   static const surface = Color(0xFF1E293B);
   static const border = Color(0xFF334155);

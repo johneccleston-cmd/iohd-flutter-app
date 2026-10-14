@@ -84,7 +84,7 @@ class _LoginScreenState extends State<LoginScreen>
       body: LayoutBuilder(
         builder: (context, box) {
           final wide = box.maxWidth >= 960;
-          final form = _formPanel(showLogo: !wide);
+          final form = _formPanel();
           if (!wide) return form;
           return Row(
             children: [
@@ -97,7 +97,7 @@ class _LoginScreenState extends State<LoginScreen>
     );
   }
 
-  Widget _formPanel({required bool showLogo}) {
+  Widget _formPanel() {
     final curve = CurvedAnimation(parent: _enter, curve: Curves.easeOutCubic);
     return Center(
       child: SingleChildScrollView(
@@ -118,15 +118,11 @@ class _LoginScreenState extends State<LoginScreen>
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (showLogo) ...[
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: _Logo(dark: false),
-                    ),
-                    const SizedBox(height: 36),
-                  ],
+                  const Center(child: _Logo()),
+                  const SizedBox(height: 32),
                   const Text(
                     'Welcome back',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.w800,
@@ -137,6 +133,7 @@ class _LoginScreenState extends State<LoginScreen>
                   const SizedBox(height: 6),
                   const Text(
                     'Sign in with your username and PIN.',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 14.5,
                       color: AppTheme.secondaryText,
@@ -341,58 +338,17 @@ class _LoginScreenState extends State<LoginScreen>
 }
 
 class _Logo extends StatelessWidget {
-  final bool dark;
-  const _Logo({required this.dark});
+  const _Logo();
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 44,
-          height: 44,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: AppTheme.brandRed,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: AppTheme.brandRed.withValues(alpha: 0.22),
-                blurRadius: 10,
-                offset: const Offset(0, 3),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.garage_rounded,
-            size: 24,
-            color: Colors.white,
-          ),
-        ),
-        const SizedBox(width: 12),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'IOHD Office',
-              style: TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
-                height: 1.1,
-                color: dark ? Colors.white : AppTheme.primaryText,
-              ),
-            ),
-            Text(
-              'Office',
-              style: TextStyle(
-                fontSize: 12.5,
-                color: dark ? const Color(0xFF94A3B8) : AppTheme.secondaryText,
-              ),
-            ),
-          ],
-        ),
-      ],
+    return Semantics(
+      label: 'Integrity Overhead Door',
+      child: Image.asset(
+        'assets/images/iohd_logo.png',
+        height: 110,
+        filterQuality: FilterQuality.medium,
+      ),
     );
   }
 }
@@ -427,7 +383,6 @@ class _BrandPanel extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const _Logo(dark: true),
                   const Spacer(),
                   const Text(
                     'Run the office\nfrom one place.',
@@ -550,8 +505,8 @@ class _SlatsPainter extends CustomPainter {
     for (var y = -gap + offset; y < size.height; y += gap) {
       final fade = (1 - (y / size.height)).clamp(0.0, 1.0);
       final line = Paint()
-        ..color = Colors.white.withValues(alpha: 0.045 * fade + 0.01)
-        ..strokeWidth = 1;
+        ..color = Colors.white.withValues(alpha: 0.10 * fade + 0.02)
+        ..strokeWidth = 1.5;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
       canvas.drawLine(
         Offset(0, y + 3),

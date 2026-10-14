@@ -363,13 +363,14 @@ List<pw.Widget> _pdfJob(_Job j, _Report r) {
     if (j.status.isNotEmpty) j.status,
     if (worked.isNotEmpty) '$worked (${j.daysWorked} ${j.daysWorked == 1 ? 'day' : 'days'})',
     if (j.jobRevenue > 0) 'Job total ${_fmt(j.jobRevenue)}',
+    if (j.lines.isNotEmpty) 'Commission pool ${_fmt(j.poolTotal)}',
     'Split ${_pct(j.splitPct)}',
   ].join('  |  ');
 
   final rows = <List<String>>[
     for (final l in j.lines)
       [
-        l.isPool ? 'Company pool (${_pct(r.companyPoolRate * 100)} of revenue)' : l.name,
+        l.isPool ? 'Company pool (${_pct(r.companyPoolRate * 100)} of job commission)' : l.name,
         l.isPool ? '' : l.category,
         _fmt(l.jobAmount),
         _pct(j.splitPct),
@@ -378,6 +379,7 @@ List<pw.Widget> _pdfJob(_Job j, _Report r) {
     if (j.adjustment != 0) ['Adjustment', '', '', '', _fmt(j.adjustment)],
   ];
 
+  final showPayout = j.retainage != 0 || j.advancesRepaid != 0;
   final payout = StringBuffer('Net pool share ${_fmt(j.share)}');
   if (j.retainage != 0) payout.write('   less retainage held ${_fmt(j.retainage)}');
   if (j.advancesRepaid != 0) payout.write('   less advances repaid ${_fmt(j.advancesRepaid)}');
@@ -411,7 +413,10 @@ List<pw.Widget> _pdfJob(_Job j, _Report r) {
         right: const {2, 3, 4},
         size: 8,
       ),
-    pw.SizedBox(height: 3),
-    _pt(payout.toString(), size: 8.5, bold: true, color: _pSlate),
+    // Only worth a line when something comes off the share; otherwise it just repeats the Net to tech in the header.
+    if (showPayout) ...[
+      pw.SizedBox(height: 3),
+      _pt(payout.toString(), size: 8.5, bold: true, color: _pSlate),
+    ],
   ];
 }

@@ -121,6 +121,12 @@ How does this compare with 2025?
 :::''';
 
 String _current = _answer;
+Duration _delay = Duration.zero;
+
+Future<http.Response> _handleLater(http.Request r) async {
+  if (_delay > Duration.zero) await Future<void>.delayed(_delay);
+  return _handle(r);
+}
 
 http.Response _handle(http.Request r) => http.Response.bytes(
       utf8.encode(jsonEncode({'success': true, 'answer': _current, 'toolsUsed': ['jobs_summary', 'search_jobs']})),
@@ -134,7 +140,8 @@ Future<void> _pumpMs(WidgetTester t, int ms) async {
   }
 }
 
-Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = false, bool sort = false, bool wide = false, bool end = false, bool charts = false}) async {
+Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = false, bool sort = false, bool wide = false, bool end = false, bool charts = false, int thinkSecs = 0, bool stop = false}) async {
+  _delay = thinkSecs > 0 ? const Duration(seconds: 90) : Duration.zero;
   _current = charts ? _chartAnswer : _answer;
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
@@ -158,15 +165,23 @@ Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = fals
     await tester.tap(find.text('open'));
     await _pumpMs(tester, 500);
 
-    if (wide) {
-      await tester.tap(find.byTooltip('Wide view'));
+    // the wide/narrow choice is remembered between panel opens, so only toggle when needed
+    if (wide != find.byTooltip('Narrow view').evaluate().isNotEmpty) {
+      await tester.tap(find.byTooltip(wide ? 'Wide view' : 'Narrow view'));
       await _pumpMs(tester, 500);
     }
     if (ask) {
       await tester.tap(find.text('Unpaid jobs'));
       await _pumpMs(tester, 300);
-      if (name.endsWith('thinking')) {
+      if (thinkSecs > 0) {
+        await _pumpMs(tester, thinkSecs * 1000);
+        if (stop) {
+          await tester.tap(find.byTooltip('Stop'));
+          await _pumpMs(tester, 400);
+        }
         await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/$name.png'));
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(seconds: 100));
         return;
       }
       await _pumpMs(tester, 3000);
@@ -183,7 +198,7 @@ Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = fals
     // Let the pending reveal/shimmer timers finish before teardown.
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(seconds: 5));
-  }, () => MockClient((r) async => _handle(r)));
+  }, () => MockClient(_handleLater));
 }
 
 void main() {
@@ -201,5 +216,8 @@ void main() {
   testWidgets('assistant answer', (t) async => _shot(t, const Size(1400, 860), 'assistant_answer', ask: true));
   testWidgets('assistant answer end', (t) async => _shot(t, const Size(1400, 860), 'assistant_answer_end', ask: true, end: true));
   testWidgets('assistant answer wide sorted', (t) async => _shot(t, const Size(1500, 900), 'assistant_wide_sorted', ask: true, sort: true, wide: true));
+  testWidgets('assistant empty wide', (t) async => _shot(t, const Size(1500, 900), 'assistant_empty_wide', wide: true));
+  testWidgets('assistant thinking', (t) async => _shot(t, const Size(1400, 860), 'assistant_thinking', ask: true, thinkSecs: 14));
+  testWidgets('assistant stopped', (t) async => _shot(t, const Size(1400, 860), 'assistant_stopped', ask: true, thinkSecs: 5, stop: true));
   testWidgets('assistant charts', (t) async => _shot(t, const Size(1400, 1500), 'assistant_charts', ask: true, charts: true));
 }

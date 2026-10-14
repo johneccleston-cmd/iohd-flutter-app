@@ -383,25 +383,9 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
           child: Row(
             children: [
               // --- Brand lockup ---
-              Container(
-                width: 34,
-                height: 34,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _brandRed,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: const Icon(Icons.garage_rounded, size: 18, color: Colors.white),
-              ),
-              const SizedBox(width: 10),
-              const Text(
-                'IOHD Office',
-                style: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                  color: _Bar.textActive,
-                  letterSpacing: 0.4,
-                ),
+              Semantics(
+                label: 'Integrity Overhead Door',
+                child: Image.asset('assets/images/iohd_logo.png', height: 46, filterQuality: FilterQuality.medium),
               ),
               SizedBox(width: compact ? 14 : 22),
               Container(width: 1, height: 26, color: _Bar.divider),

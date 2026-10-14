@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
@@ -14,7 +15,7 @@ const Color _strokeBorder = Color(0xFFE4E7EC);
 const Color _fieldFill = Color(0xFFF6F7F9);
 const Color _okGreen = Color(0xFF1E7B4F);
 const Color _warnAmber = Color(0xFFB45309);
-const Color _pageBg = Color(0xFFFAFAFA);
+const Color _pageBg = AppTheme.bgColor;
 
 // Used until the API returns a per-item minimum.
 const int _kLowStockThreshold = 5;
