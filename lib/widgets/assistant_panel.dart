@@ -13,15 +13,21 @@ import '../config/api_config.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config/auth_session.dart';
+import '../theme/app_theme.dart';
+import 'dashboard_kit.dart';
 
 // --- Design tokens (same palette as the top bar) -------------------------------
-const Color _brandRed = Color(0xFFCC0007);
-const Color _ink = Color(0xFF181B1F);
-const Color _slate = Color(0xFF5B6572);
-const Color _muted = Color(0xFF9199A6);
-const Color _stroke = Color(0xFFE4E7EC);
-const Color _tint = Color(0xFFFCEEEE);
-const Color _fill = Color(0xFFF6F7F9);
+const Color _brandRed = AppTheme.brandRed;
+const Color _paper = AppTheme.surfaceColor; // page background
+const Color _sidebarBg = DashUi.faint;
+const Color _ink = AppTheme.primaryText;
+const Color _slate = AppTheme.secondaryText;
+const Color _muted = AppTheme.sectionLabel;
+const Color _stroke = AppTheme.strokeBorder;
+// Opaque on purpose: callers apply their own alpha with withValues, which replaces this one rather than multiplying.
+final Color _tint = Color.alphaBlend(AppTheme.brandRed.withValues(alpha: 0.08), AppTheme.surfaceColor);
+const Color _fill = DashUi.faint;
+const Color _fillStrong = DashUi.line; // selected row in the sidebar, which is already _fill
 
 const Color _good = Color(0xFF16A34A);
 const Color _warn = Color(0xFFD97706);
@@ -259,7 +265,8 @@ class AssistantChat extends ChangeNotifier {
               {
                 'title': c.title,
                 'messages': [
-                  for (final m in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
+                  for (final m
+                      in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
                     {'role': m.role.name, 'text': m.text, 'sources': m.sources},
                 ],
               },
@@ -377,8 +384,10 @@ class AssistantChat extends ChangeNotifier {
           );
           _save();
         case 401:
-          AuthSession.instance.logout(); // sends the app back to the sign-in screen
+          // Set the message first: logout() wipes the chat (and its error) through the auth listener, and an error
+          // set afterwards would linger and greet the next person who signs in.
           error = 'Your session expired. Please sign in again.';
+          AuthSession.instance.logout(); // sends the app back to the sign-in screen
         case 403:
           error = 'Your account does not have access to the assistant.';
         case 503:
@@ -499,7 +508,7 @@ _Chart? _parseChart(List<String> body) {
     final values = <double>[];
     for (final p in parts.skip(1)) {
       final n = double.tryParse(p.replaceAll(RegExp(r'[\$,%\s]'), ''));
-      if (n != null) values.add(n);
+      if (n != null && n.isFinite) values.add(n); // "NaN" and "Infinity" parse as numbers and would break the axis
     }
     if (values.isEmpty) continue;
     points.add((parts.first, values));
@@ -540,10 +549,18 @@ _Parsed _parse(String text) {
     if (directive != null) {
       final kind = directive.group(1)!.toLowerCase();
       final body = <String>[];
+      final opened = i;
       i++;
       while (i < lines.length && lines[i].trim() != ':::') {
         if (lines[i].trim().isNotEmpty) body.add(lines[i].trim());
         i++;
+      }
+      if (i >= lines.length && kind != 'followups') {
+        // The model never closed a stats/chart block. Drop just the opening line and read the rest as normal text, instead
+        // of swallowing the whole remainder of the answer into a block that then shows nothing. (Follow-ups are always
+        // last, so an unclosed one still reads to the end.)
+        i = opened + 1;
+        continue;
       }
       i++; // closing :::
       if (kind == 'chart') {
@@ -566,7 +583,13 @@ _Parsed _parse(String text) {
           final parts = b.split('|');
           if (parts.length >= 2) items.add((parts.first.trim(), parts.sublist(1).join('|').trim()));
         }
-        if (items.isNotEmpty) blocks.add(_Stats(items.take(4).toList()));
+        if (items.isNotEmpty) {
+          blocks.add(_Stats(items.take(4).toList()));
+          // Copied text: one "label: value" line per card, instead of the cards vanishing or running together.
+          for (final it in items.take(4)) {
+            plain.add('${it.$2}: ${it.$1}');
+          }
+        }
       } else {
         for (final b in body) {
           final q = b.replaceFirst(_bulletRe, '').trim();
@@ -606,7 +629,7 @@ _Parsed _parse(String text) {
     } else if (numbered != null) {
       blocks.add(_Item(line.replaceFirst(_numberedRe, ''), numbered.group(1)));
     } else {
-      blocks.add(_Para(line));
+      blocks.add(_Para(line.replaceFirst(RegExp(r'^\s*>\s?'), ''))); // a stray "> quote" marker is not shown
     }
   }
   return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim());
@@ -636,7 +659,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   final _lastAnswerKey = GlobalKey();
   int _seen = 0;
   int _seenTab = 0;
-  static bool _side = true; // chat list open; remembered while the app is open
+  static bool? _sideChoice; // set when the person toggles the chat list; remembered while the app is open
+
+  /// The chat list starts open on a roomy window and closed on a narrow one, where it would leave the chat a sliver.
+  bool _sideOpen(double screen) => _sideChoice ?? screen >= 760;
   static const _sideWidth = 200.0;
   bool _showJump = false; // scrolled away from the bottom of a long thread
 
@@ -644,7 +670,9 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   void initState() {
     super.initState();
     _input.text = _draft;
-    _chat.ensureLoaded().then((_) => _scrollToEnd(jump: true));
+    _chat.ensureLoaded().then((_) {
+      if (mounted) _scrollToEnd(jump: true);
+    });
     _input.addListener(() => _draft = _input.text);
     _scroll.addListener(_onScroll);
     _seen = _chat.messages.length;
@@ -671,7 +699,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   /// Up arrow in an empty box brings back the last question, like a terminal.
   void _recallLast() {
-    final last = _chat.messages.lastWhere((m) => m.role == AssistantRole.user, orElse: () => AssistantMessage(AssistantRole.user, ''));
+    final last = _chat.messages.lastWhere(
+      (m) => m.role == AssistantRole.user,
+      orElse: () => AssistantMessage(AssistantRole.user, ''),
+    );
     if (last.text.isEmpty) return;
     _input.text = last.text;
     _input.selection = TextSelection.collapsed(offset: last.text.length);
@@ -710,7 +741,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     return Container(
       width: _sideWidth,
       decoration: const BoxDecoration(
-        color: _fill,
+        color: _sidebarBg,
         border: Border(right: BorderSide(color: _stroke)),
       ),
       child: ListenableBuilder(
@@ -719,17 +750,14 @@ class _AssistantPanelState extends State<_AssistantPanel> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
-              child: OutlinedButton.icon(
-                onPressed: _chat.canAddChat ? _chat.newChat : null,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('New chat'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _ink,
-                  backgroundColor: Colors.white,
-                  side: const BorderSide(color: _stroke),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                ),
+              padding: const EdgeInsets.fromLTRB(10, 14, 10, 6),
+              child: _NewChatButton(onTap: _chat.canAddChat ? _chat.newChat : null),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 10, 16, 4),
+              child: Text(
+                'Recents',
+                style: TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w500),
               ),
             ),
             Expanded(
@@ -812,48 +840,61 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     final screen = MediaQuery.sizeOf(context).width;
     // The panel is a share of the window, so it grows and shrinks with it. Dragging the left edge sets an
     // exact width instead, until the wide/narrow button is pressed.
-    final minWidth = (_side ? 680.0 : 480.0).clamp(0.0, screen);
+    final sideOpen = _sideOpen(screen);
+    final minWidth = (sideOpen ? 680.0 : 480.0).clamp(0.0, screen);
     final auto = screen * (_wide ? 0.92 : 0.62);
     final width = (_userWidth ?? auto).clamp(minWidth, screen);
-    return Material(
-      color: Colors.white,
-      elevation: 16,
-      child: Stack(
-        children: [
-          AnimatedContainer(
-            duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
-            curve: Curves.easeOutCubic,
-            width: width,
-            height: double.infinity,
-            decoration: const BoxDecoration(
-              border: Border(left: BorderSide(color: _stroke)),
-            ),
-            child: SafeArea(
-              child: Row(
-                children: [
-                  if (_side) _sidebar(),
-                  Expanded(child: _chatColumn(screen)),
-                ],
+    final base = Theme.of(context);
+    // Material's default purple showed up on text buttons (Retry, Cancel), selection handles and the like.
+    return Theme(
+      data: base.copyWith(
+        colorScheme: base.colorScheme.copyWith(primary: _brandRed),
+        textSelectionTheme: TextSelectionThemeData(
+          cursorColor: _brandRed,
+          selectionHandleColor: _brandRed,
+          selectionColor: _brandRed.withValues(alpha: 0.18),
+        ),
+      ),
+      child: Material(
+        color: _paper,
+        elevation: 16,
+        child: Stack(
+          children: [
+            AnimatedContainer(
+              duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
+              curve: Curves.easeOutCubic,
+              width: width,
+              height: double.infinity,
+              decoration: const BoxDecoration(
+                border: Border(left: BorderSide(color: _stroke)),
+              ),
+              child: SafeArea(
+                child: Row(
+                  children: [
+                    if (sideOpen) _sidebar(),
+                    Expanded(child: _chatColumn(screen)),
+                  ],
+                ),
               ),
             ),
-          ),
-          // drag handle on the left edge
-          Positioned(
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 8,
-            child: MouseRegion(
-              cursor: SystemMouseCursors.resizeLeftRight,
-              child: GestureDetector(
-                behavior: HitTestBehavior.translucent,
-                onHorizontalDragStart: (_) => setState(() => _dragging = true),
-                onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
-                onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+            // drag handle on the left edge
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 8,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeLeftRight,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragStart: (_) => setState(() => _dragging = true),
+                  onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
+                  onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -862,13 +903,30 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     return Column(
       children: [
         _header(screen),
-        const Divider(height: 1, color: _stroke),
         Expanded(
           child: Stack(
             children: [
               ListenableBuilder(
                 listenable: _chat,
                 builder: (context, _) => _chat.messages.isEmpty && !_chat.busy ? _emptyState() : _thread(),
+              ),
+              // soft edge above the message box, so text fades out instead of being sliced by it
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 22,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [_paper.withValues(alpha: 0), _paper],
+                      ),
+                    ),
+                  ),
+                ),
               ),
               Positioned(
                 bottom: 10,
@@ -885,8 +943,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                         ignoring: !_showJump,
                         child: Material(
                           color: Colors.white,
-                          elevation: 3,
-                          shadowColor: Colors.black.withValues(alpha: 0.25),
+                          elevation: 2,
+                          shadowColor: Colors.black.withValues(alpha: 0.12),
                           shape: const StadiumBorder(side: BorderSide(color: _stroke)),
                           child: InkWell(
                             customBorder: const StadiumBorder(),
@@ -924,7 +982,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                       gradient: LinearGradient(
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
-                        colors: [Colors.white, Colors.white.withValues(alpha: 0)],
+                        colors: [_paper, _paper.withValues(alpha: 0)],
                       ),
                     ),
                   ),
@@ -944,17 +1002,24 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       child: Row(
         children: [
           IconButton(
-            tooltip: _side ? 'Hide chats' : 'Show chats',
-            onPressed: () => setState(() => _side = !_side),
-            icon: Icon(_side ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
+            tooltip: _sideOpen(screen) ? 'Hide chats' : 'Show chats',
+            onPressed: () => setState(() => _sideChoice = !_sideOpen(screen)),
+            icon: Icon(_sideOpen(screen) ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
             color: _slate,
           ),
-          const _Mark(size: 34),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Text(
-              'Ask Jarvis',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink, height: 1.2),
+          const SizedBox(width: 4),
+          Expanded(
+            child: ListenableBuilder(
+              listenable: _chat,
+              builder: (context, _) {
+                final title = _chat.messages.isEmpty ? 'Jarvis' : _chat.chats[_chat.active].label;
+                return Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w600, color: _ink, height: 1.2),
+                );
+              },
             ),
           ),
           if (screen >= 700)
@@ -998,50 +1063,45 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   Widget _emptyState() {
     return ListView(
-      padding: const EdgeInsets.fromLTRB(24, 44, 24, 16),
+      padding: const EdgeInsets.fromLTRB(28, 72, 28, 16),
       children: [
-        const Center(child: _Mark(size: 46)),
-        const SizedBox(height: 18),
-        Text(
-          _greeting(),
-          textAlign: TextAlign.center,
-          style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink, letterSpacing: -0.3),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Ask about jobs, customers, revenue, estimates or inventory.\nI can look things up but I can’t change anything.',
-          textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 13.5, color: _slate, height: 1.5),
-        ),
-        const SizedBox(height: 28),
-        LayoutBuilder(
-          builder: (context, c) {
-            final cols = c.maxWidth >= 640 ? 2 : 1;
-            return Column(
+        Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 680),
+            child: Column(
               children: [
-                for (var i = 0; i < _suggestions.length; i += cols)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: IntrinsicHeight(
-                      // equal-height cards in each row, however long the question wraps
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (var j = i; j < i + cols; j++) ...[
-                            if (j > i) const SizedBox(width: 10),
-                            Expanded(
-                              child: j < _suggestions.length
-                                  ? _SuggestionCard(suggestion: _suggestions[j], onTap: () => _submit(_suggestions[j].question))
-                                  : const SizedBox.shrink(),
-                            ),
-                          ],
-                        ],
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.auto_awesome_rounded, size: 30, color: _brandRed),
+                    const SizedBox(width: 12),
+                    Flexible(
+                      child: Text(
+                        _greeting(),
+                        textAlign: TextAlign.center,
+                        style: _serifStyle.copyWith(fontSize: 30, fontWeight: FontWeight.w600, letterSpacing: -0.6, height: 1.15),
                       ),
                     ),
-                  ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Ask about jobs, customers, revenue, estimates or inventory. I can look things up but I can’t change anything.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 14.5, color: _slate, height: 1.5),
+                ),
+                const SizedBox(height: 28),
+                Wrap(
+                  alignment: WrapAlignment.center,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final sug in _suggestions) _SuggestionCard(suggestion: sug, onTap: () => _submit(sug.question)),
+                  ],
+                ),
               ],
-            );
-          },
+            ),
+          ),
         ),
       ],
     );
@@ -1051,60 +1111,79 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     final msgs = _chat.messages;
     return SingleChildScrollView(
       controller: _scroll,
-      padding: const EdgeInsets.fromLTRB(18, 18, 18, 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (var i = 0; i < msgs.length; i++)
-            if (msgs[i].role == AssistantRole.user)
-              _UserMessage(key: ObjectKey(msgs[i]), message: msgs[i], canEdit: !_chat.busy, onResend: (t) => _chat.editAndResend(i, t))
-            else
-              _AnswerView(
-                key: i == msgs.length - 1 && !_chat.busy ? _lastAnswerKey : ObjectKey(msgs[i]),
-                message: msgs[i],
-                isLast: i == msgs.length - 1 && !_chat.busy && _chat.error == null,
-                onAsk: _submit,
-                onRegenerate: _chat.regenerate,
-              ),
-          if (_chat.busy) _Thinking(since: _chat.busySince, onStop: _chat.stop),
-          if (_chat.stopped && !_chat.busy) _StoppedNote(onRetry: _chat.retry),
-          if (_chat.error != null) _ErrorNote(message: _chat.error!, onRetry: _chat.retry),
-        ],
+      padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var i = 0; i < msgs.length; i++)
+                if (msgs[i].role == AssistantRole.user)
+                  _UserMessage(
+                    key: ObjectKey(msgs[i]),
+                    message: msgs[i],
+                    canEdit: !_chat.busy,
+                    onResend: (t) => _chat.editAndResend(i, t),
+                  )
+                else
+                  _AnswerView(
+                    key: i == msgs.length - 1 && !_chat.busy ? _lastAnswerKey : ObjectKey(msgs[i]),
+                    message: msgs[i],
+                    isLast: i == msgs.length - 1 && !_chat.busy && _chat.error == null,
+                    onAsk: _submit,
+                    onRegenerate: _chat.regenerate,
+                  ),
+              if (_chat.busy) _Thinking(since: _chat.busySince, onStop: _chat.stop),
+              if (_chat.stopped && !_chat.busy) _StoppedNote(onRetry: _chat.retry),
+              if (_chat.error != null) _ErrorNote(message: _chat.error!, onRetry: _chat.retry),
+            ],
+          ),
+        ),
       ),
     );
   }
 
   Widget _composer() {
     final focused = _inputFocus.hasFocus;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          margin: const EdgeInsets.fromLTRB(14, 6, 14, 4),
-          padding: const EdgeInsets.fromLTRB(16, 4, 6, 6),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: focused ? _brandRed.withValues(alpha: 0.55) : _stroke),
-            boxShadow: [
-              BoxShadow(
-                color: focused ? _brandRed.withValues(alpha: 0.10) : Colors.black.withValues(alpha: 0.05),
-                blurRadius: focused ? 18 : 14,
-                offset: const Offset(0, 4),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 760),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                padding: const EdgeInsets.fromLTRB(20, 6, 10, 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(26),
+                  border: Border.all(color: focused ? _brandRed.withValues(alpha: 0.4) : _stroke),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: focused ? 0.07 : 0.04),
+                      blurRadius: focused ? 22 : 14,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: _composerField(),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(0, 8, 0, 10),
+                child: Text(
+                  'Enter to send · Shift+Enter for a new line · ↑ recalls your last question. '
+                  'Read-only, so double-check anything important.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11.5, color: _muted, height: 1.4),
+                ),
               ),
             ],
           ),
-          child: _composerField(),
         ),
-        const Padding(
-          padding: EdgeInsets.only(bottom: 8),
-          child: Text(
-            'Enter to send · Shift+Enter for a new line · ↑ recalls your last question',
-            style: TextStyle(fontSize: 11, color: _muted),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1119,7 +1198,9 @@ class _AssistantPanelState extends State<_AssistantPanel> {
               child: Focus(
                 // Enter sends, Shift+Enter adds a new line.
                 onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+                  if (event is KeyDownEvent &&
+                      event.logicalKey == LogicalKeyboardKey.enter &&
+                      !HardwareKeyboard.instance.isShiftPressed) {
                     _submit();
                     return KeyEventResult.handled;
                   }
@@ -1136,15 +1217,15 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   minLines: 1,
                   maxLines: 6,
                   maxLength: _maxChars,
-                  style: const TextStyle(fontSize: 14, color: _ink, height: 1.4),
+                  style: const TextStyle(fontSize: 15, color: _ink, height: 1.4),
                   cursorColor: _brandRed,
                   decoration: const InputDecoration(
-                    hintText: 'Ask anything about your business…',
-                    hintStyle: TextStyle(fontSize: 14, color: _muted),
+                    hintText: 'Ask Jarvis about your business…',
+                    hintStyle: TextStyle(fontSize: 15, color: _muted),
                     counterText: '',
                     isDense: true,
                     filled: false,
-                    contentPadding: EdgeInsets.symmetric(vertical: 12),
+                    contentPadding: EdgeInsets.symmetric(vertical: 14),
                     border: InputBorder.none,
                     enabledBorder: InputBorder.none,
                     focusedBorder: InputBorder.none,
@@ -1167,7 +1248,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                         backgroundColor: _ink,
                         foregroundColor: Colors.white,
                         fixedSize: const Size(36, 36),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: const CircleBorder(),
                       ),
                     );
                   }
@@ -1179,10 +1260,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                     style: IconButton.styleFrom(
                       backgroundColor: _brandRed,
                       foregroundColor: Colors.white,
-                      disabledBackgroundColor: _stroke,
-                      disabledForegroundColor: Colors.white,
+                      disabledBackgroundColor: _fill,
+                      disabledForegroundColor: _muted,
                       fixedSize: const Size(36, 36),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: const CircleBorder(),
                     ),
                   );
                 },
@@ -1263,7 +1344,7 @@ class _ChatRowState extends State<_ChatRow> {
       child: Padding(
         padding: const EdgeInsets.only(bottom: 2),
         child: Material(
-          color: sel ? _tint : (_hover ? Colors.white : Colors.transparent),
+          color: sel ? _fillStrong : (_hover ? _fillStrong.withValues(alpha: 0.5) : Colors.transparent),
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
             borderRadius: BorderRadius.circular(8),
@@ -1277,7 +1358,7 @@ class _ChatRowState extends State<_ChatRow> {
                       widget.label,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 13, fontWeight: sel ? FontWeight.w700 : FontWeight.w500, color: sel ? _ink : _slate),
+                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w400, color: sel ? _ink : _slate),
                     ),
                   ),
                   PopupMenuButton<String>(
@@ -1303,25 +1384,54 @@ class _ChatRowState extends State<_ChatRow> {
   }
 }
 
-class _Mark extends StatelessWidget {
-  final double size;
-  const _Mark({required this.size});
+class _NewChatButton extends StatefulWidget {
+  final VoidCallback? onTap;
+  const _NewChatButton({required this.onTap});
+
+  @override
+  State<_NewChatButton> createState() => _NewChatButtonState();
+}
+
+class _NewChatButtonState extends State<_NewChatButton> {
+  bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(colors: [Color(0xFFE0252C), _brandRed], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        borderRadius: BorderRadius.circular(size * 0.32),
-        boxShadow: [BoxShadow(color: _brandRed.withValues(alpha: 0.18), blurRadius: 8, spreadRadius: -1, offset: const Offset(0, 2))],
+    final on = widget.onTap != null;
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: Material(
+        color: _hover && on ? _fillStrong.withValues(alpha: 0.5) : Colors.transparent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: widget.onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            child: Row(
+              children: [
+                Container(
+                  width: 26,
+                  height: 26,
+                  decoration: BoxDecoration(color: on ? _brandRed : _muted.withValues(alpha: 0.5), shape: BoxShape.circle),
+                  child: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'New chat',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: on ? _ink : _muted),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
-      child: Icon(Icons.auto_awesome_rounded, size: size * 0.5, color: Colors.white),
     );
   }
 }
 
+/// A rounded suggestion chip on the empty screen; the full question shows as a tooltip.
 class _SuggestionCard extends StatelessWidget {
   final _Suggestion suggestion;
   final VoidCallback onTap;
@@ -1329,44 +1439,26 @@ class _SuggestionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(14),
-        hoverColor: _fill,
-        child: Container(
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: _stroke),
-          ),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(color: _tint, borderRadius: BorderRadius.circular(10)),
-                child: Icon(suggestion.icon, size: 19, color: _brandRed),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      suggestion.title,
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(suggestion.question, style: const TextStyle(fontSize: 12.5, color: _slate, height: 1.35)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.arrow_forward_rounded, size: 16, color: _muted),
-            ],
+    return Tooltip(
+      message: suggestion.question,
+      waitDuration: const Duration(milliseconds: 500),
+      child: Material(
+        color: Colors.white,
+        shape: const StadiumBorder(side: BorderSide(color: _stroke)),
+        child: InkWell(
+          customBorder: const StadiumBorder(),
+          hoverColor: _fill,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 18, 10),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(suggestion.icon, size: 17, color: _slate),
+                const SizedBox(width: 8),
+                Text(suggestion.title, style: const TextStyle(fontSize: 13.5, color: _ink)),
+              ],
+            ),
           ),
         ),
       ),
@@ -1458,7 +1550,7 @@ class _UserMessageState extends State<_UserMessage> {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
             decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(18)),
-            child: SelectableText(text, style: const TextStyle(fontSize: 14, color: _ink, height: 1.45)),
+            child: SelectableText(text, style: const TextStyle(fontSize: 15, color: _ink, height: 1.5)),
           ),
         ),
       ],
@@ -1646,24 +1738,18 @@ class _AnswerViewState extends State<_AnswerView> {
     Widget reveal(Widget child) => _Reveal(animate: _animate, delayMs: next(), child: child);
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 22),
-      child: Row(
+      padding: const EdgeInsets.only(bottom: 26),
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(padding: EdgeInsets.only(top: 1), child: _Mark(size: 26)),
-          const SizedBox(width: 12),
-          Expanded(
+          SelectionArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SelectionArea(
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [for (final b in blocks) reveal(_blockView(b))]),
-                ),
-                reveal(_actions()),
-                if (widget.isLast && _parsed.followUps.isNotEmpty) reveal(_followUps()),
-              ],
+              children: [for (final b in blocks) reveal(_blockView(b))],
             ),
           ),
+          reveal(_actions()),
+          if (widget.isLast && _parsed.followUps.isNotEmpty) reveal(_followUps()),
         ],
       ),
     );
@@ -1672,31 +1758,31 @@ class _AnswerViewState extends State<_AnswerView> {
   Widget _blockView(_Block b) {
     return switch (b) {
       _Para() => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.only(bottom: 14),
         child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
       ),
       _Head() => Padding(
-        padding: const EdgeInsets.only(top: 6, bottom: 6),
+        padding: const EdgeInsets.only(top: 8, bottom: 8),
         child: Text.rich(
           TextSpan(
-            style: _bodyStyle.copyWith(fontSize: 15.5, fontWeight: FontWeight.w800, letterSpacing: -0.1),
-            children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 15.5)),
+            style: _bodyStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w600, height: 1.35),
+            children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 18, height: 1.35)),
           ),
         ),
       ),
       _Item() => Padding(
-        padding: const EdgeInsets.only(left: 2, bottom: 5),
+        padding: const EdgeInsets.only(left: 2, bottom: 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 20,
+              width: 22,
               child: b.number == null
                   ? const Padding(
-                      padding: EdgeInsets.only(top: 9, left: 4),
+                      padding: EdgeInsets.only(top: 12, left: 5),
                       child: DecoratedBox(
-                        decoration: BoxDecoration(color: _brandRed, shape: BoxShape.circle),
-                        child: SizedBox(width: 5, height: 5),
+                        decoration: BoxDecoration(color: _slate, shape: BoxShape.circle),
+                        child: SizedBox(width: 4.5, height: 4.5),
                       ),
                     )
                   : Text(
@@ -1772,32 +1858,25 @@ class _AnswerViewState extends State<_AnswerView> {
 
 class _MiniAction extends StatelessWidget {
   final IconData icon;
-  final String label;
+  final String label; // shown next to the icon, so it reads on touch and web where there is no hover
   final Color? color;
   final VoidCallback onTap;
   const _MiniAction({required this.icon, required this.label, required this.onTap, this.color});
 
   @override
   Widget build(BuildContext context) {
-    final c = color ?? _slate;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      hoverColor: _fill,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 14, color: c),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: c),
-            ),
-          ],
-        ),
-      ),
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
+      style: TextButton.styleFrom(
+        foregroundColor: color ?? _slate,
+        iconColor: color ?? _slate,
+        minimumSize: const Size(34, 34),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        visualDensity: VisualDensity.compact,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ).copyWith(overlayColor: WidgetStatePropertyAll(_fill)),
     );
   }
 }
@@ -1810,12 +1889,12 @@ class _FollowUpChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.white,
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(20),
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(20),
-        hoverColor: _tint,
+        hoverColor: _fill,
         child: Container(
           padding: const EdgeInsets.fromLTRB(12, 7, 10, 7),
           decoration: BoxDecoration(
@@ -1826,13 +1905,10 @@ class _FollowUpChip extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Flexible(
-                child: Text(
-                  text,
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _ink, height: 1.3),
-                ),
+                child: Text(text, style: const TextStyle(fontSize: 13.5, color: _ink, height: 1.3)),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.arrow_outward_rounded, size: 13, color: _brandRed),
+              const Icon(Icons.arrow_outward_rounded, size: 13, color: _muted),
             ],
           ),
         ),
@@ -1845,76 +1921,139 @@ class _FollowUpChip extends StatelessWidget {
 // Rich text, stats and tables
 // =============================================================================
 
-const TextStyle _bodyStyle = TextStyle(fontSize: 14, color: _ink, height: 1.55);
+/// Jarvis's own text uses the app font. (A serif looked right in desktop tests but Flutter web only uses bundled fonts,
+/// so it silently became Roboto there.)
+const TextStyle _serifStyle = TextStyle(color: _ink);
+final TextStyle _bodyStyle = _serifStyle.copyWith(fontSize: 15.5, height: 1.6);
 
-/// **bold** inside a line of text.
+final RegExp _inlineRe = RegExp(r'\*\*(.+?)\*\*|`([^`]+)`|(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])|\[([^\]]+)\]\(([^)\s]+)\)');
+
+/// **bold**, *italic*, `code` and [links](url) (shown as their text) inside a line of text.
 List<InlineSpan> _inlineSpans(String line, TextStyle base) {
   final spans = <InlineSpan>[];
   var last = 0;
-  for (final m in RegExp(r'\*\*(.+?)\*\*').allMatches(line)) {
+  for (final m in _inlineRe.allMatches(line)) {
     if (m.start > last) spans.add(TextSpan(text: line.substring(last, m.start)));
-    spans.add(
-      TextSpan(
-        text: m.group(1),
-        style: base.copyWith(fontWeight: FontWeight.w800),
-      ),
-    );
+    if (m.group(1) != null) {
+      spans.add(
+        TextSpan(
+          text: m.group(1),
+          style: base.copyWith(fontWeight: FontWeight.w700),
+        ),
+      );
+    } else if (m.group(2) != null) {
+      spans.add(
+        TextSpan(
+          text: m.group(2),
+          style: base.copyWith(
+            fontFamily: 'Consolas',
+            fontFamilyFallback: const ['Menlo', 'Courier New', 'monospace'],
+            fontSize: (base.fontSize ?? 14) * 0.9,
+            backgroundColor: _fill,
+          ),
+        ),
+      );
+    } else if (m.group(3) != null) {
+      spans.add(
+        TextSpan(
+          text: m.group(3),
+          style: base.copyWith(fontStyle: FontStyle.italic),
+        ),
+      );
+    } else {
+      spans.add(TextSpan(text: m.group(4)));
+    }
     last = m.end;
   }
   if (last < line.length) spans.add(TextSpan(text: line.substring(last)));
   return spans;
 }
 
+/// Key figures as a borderless strip (big number over a small label, hairlines between), so they read as part of
+/// the answer instead of a row of scorecards.
 class _StatRow extends StatelessWidget {
   final List<(String value, String label)> items;
   final bool animate;
   const _StatRow({required this.items, required this.animate});
 
+  Widget _figure(int i, {required bool divider}) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(divider ? 20 : 0, 0, 12, 0),
+      decoration: BoxDecoration(
+        border: divider ? const Border(left: BorderSide(color: _stroke)) : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // label on top (any wrapping stays above), value pinned to the bottom so the numbers line up across figures
+          Text(
+            items[i].$2,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12.5, color: _slate, height: 1.3),
+          ),
+          const SizedBox(height: 8),
+          _CountUp(
+            value: items[i].$1,
+            animate: animate,
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.6,
+              color: _ink,
+              height: 1.1,
+              fontFeatures: [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, c) {
-        final cols = c.maxWidth >= 150.0 * items.length ? items.length : (c.maxWidth >= 300 ? 2 : 1);
-        const gap = 10.0;
-        final w = (c.maxWidth - gap * (cols - 1)) / cols;
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: [
-            for (var i = 0; i < items.length; i++)
-              SizedBox(
-                width: w,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-                  decoration: BoxDecoration(
-                    color: i == 0 ? _tint : _fill,
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: i == 0 ? _brandRed.withValues(alpha: 0.18) : _stroke),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _CountUp(
-                        value: items[i].$1,
-                        animate: animate,
-                        style: TextStyle(
-                          fontSize: 24,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: -0.5,
-                          color: i == 0 ? _brandRed : _ink,
-                          height: 1.15,
-                          fontFeatures: const [FontFeature.tabularFigures()],
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(items[i].$2, style: const TextStyle(fontSize: 12, color: _slate, height: 1.3)),
-                    ],
-                  ),
+    // Dragging a selection across the figures glued values and labels together ("$19.747$12.64..."), so they sit
+    // out of drag-selection; the Copy button writes them as "label: value" lines instead.
+    return SelectionContainer.disabled(
+      child: LayoutBuilder(
+        builder: (context, c) {
+          final fitsInRow = c.maxWidth >= 150.0 * items.length;
+          if (fitsInRow) {
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 14),
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: _stroke),
+                  bottom: BorderSide(color: _stroke),
                 ),
               ),
-          ],
-        );
-      },
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [for (var i = 0; i < items.length; i++) Expanded(child: _figure(i, divider: i > 0))],
+                ),
+              ),
+            );
+          }
+          // narrow: two per row, no dividers
+          final w = c.maxWidth >= 300 ? (c.maxWidth - 12) / 2 : c.maxWidth;
+          return Container(
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            decoration: const BoxDecoration(
+              border: Border(
+                top: BorderSide(color: _stroke),
+                bottom: BorderSide(color: _stroke),
+              ),
+            ),
+            child: Wrap(
+              spacing: 12,
+              runSpacing: 14,
+              children: [for (var i = 0; i < items.length; i++) SizedBox(width: w, child: _figure(i, divider: false))],
+            ),
+          );
+        },
+      ),
     );
   }
 }
@@ -2147,7 +2286,9 @@ class _ChatChartState extends State<_ChatChart> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Positioned.fill(child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style))),
+                  Positioned.fill(
+                    child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style)),
+                  ),
                   if (_hover != null) _tooltip(geo, _hover!),
                 ],
               ),
@@ -2320,7 +2461,11 @@ class _ChartPainter extends CustomPainter {
       // grid lines sit under the highlight; redraw them lightly so the band does not hide them
       for (var k = 0; k <= g.ticks; k++) {
         final yy = g.y(g.lo + (g.hi - g.lo) * k / g.ticks);
-        canvas.drawLine(Offset(_ChartGeometry.left + g.slot * hover!, yy), Offset(_ChartGeometry.left + g.slot * (hover! + 1), yy), grid);
+        canvas.drawLine(
+          Offset(_ChartGeometry.left + g.slot * hover!, yy),
+          Offset(_ChartGeometry.left + g.slot * (hover! + 1), yy),
+          grid,
+        );
       }
     }
 
@@ -2384,7 +2529,12 @@ class _ChartPainter extends CustomPainter {
         for (var s = 0; s < seriesCount; s++) {
           final v = chart.points[i].$2[s];
           final top = grow(v);
-          final rect = Rect.fromLTRB(startX + barW * s + 1, v >= 0 ? top : base, startX + barW * (s + 1) - 1, v >= 0 ? base : top);
+          final rect = Rect.fromLTRB(
+            startX + barW * s + 1,
+            v >= 0 ? top : base,
+            startX + barW * (s + 1) - 1,
+            v >= 0 ? base : top,
+          );
           final dim = hover == null || hover == i ? 1.0 : 0.45;
           final color = _colors[s];
           canvas.drawRRect(
@@ -2453,7 +2603,8 @@ class _ChatTableState extends State<_ChatTable> {
   late final List<List<String>> _totals = _all.where(_isTotal).toList();
 
   late final List<bool> _numeric = [
-    for (var c = 0; c < _cols; c++) _body.every((r) => r[c].isEmpty || _numericRe.hasMatch(r[c])) && _body.any((r) => r[c].isNotEmpty),
+    for (var c = 0; c < _cols; c++)
+      _body.every((r) => r[c].isEmpty || _numericRe.hasMatch(r[c])) && _body.any((r) => r[c].isNotEmpty),
   ];
 
   /// Last column whose cells are all dollar amounts: that one gets the data bars.
@@ -2551,9 +2702,18 @@ class _ChatTableState extends State<_ChatTable> {
         child: Row(
           mainAxisAlignment: _numeric[c] ? MainAxisAlignment.end : MainAxisAlignment.start,
           children: [
-            Text(
-              _header[c].toUpperCase(),
-              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: _sortCol == c ? _brandRed : _slate),
+            Flexible(
+              child: Text(
+                _header[c].toUpperCase(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.5,
+                  color: _sortCol == c ? _brandRed : _slate,
+                ),
+              ),
             ),
             if (_sortCol == c) ...[
               const SizedBox(width: 3),
@@ -2623,7 +2783,9 @@ class _ChatTableState extends State<_ChatTable> {
     final table = Table(
       columnWidths: {
         for (var c = 0; c < _cols; c++)
-          c: c == barCol ? const FlexColumnWidth(1.1) : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(c == 0 ? 2 : 1.4)),
+          c: c == barCol
+              ? const FlexColumnWidth(1.1)
+              : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(c == 0 ? 2 : 1.4)),
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: const TableBorder(horizontalInside: BorderSide(color: _stroke)),
@@ -2643,6 +2805,7 @@ class _ChatTableState extends State<_ChatTable> {
 
     return Container(
       decoration: BoxDecoration(
+        color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _stroke),
       ),
@@ -2746,9 +2909,9 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
               scale: still
                   ? const AlwaysStoppedAnimation(1.0)
                   : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-              child: const _Mark(size: 26),
+              child: const Icon(Icons.auto_awesome_rounded, size: 20, color: _brandRed),
             ),
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             AnimatedBuilder(
               animation: _c,
               builder: (context, _) => ShaderMask(
@@ -2763,7 +2926,7 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
                   child: Text(
                     _phrases[i],
                     key: ValueKey(i),
-                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
                 ),
               ),

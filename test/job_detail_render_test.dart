@@ -533,11 +533,14 @@ void main() {
     expect(find.text('Visit 1'), findsNothing);
     expect(find.text('Show all 8 visits (5 earlier)'), findsOneWidget);
 
-    // The older work-day list (no Service Fusion visits yet) collapses the same way.
+    // Service Fusion sent no visits: the section says so, however many work days our commission ledger holds (7 here)
+    // and whatever the job's own start date is. It must show exactly what Service Fusion shows.
     await open(jobWithVisits(7, serviceFusion: false), 'workdays');
-    expect(find.text('Show all 7 visits (4 earlier)'), findsOneWidget);
-    expect(find.text('Visit 4'), findsNothing);
-    expect(find.text('Visit 5'), findsOneWidget);
+    expect(find.text('Site Visits (0)'), findsOneWidget);
+    expect(find.text('No visits scheduled.'), findsOneWidget);
+    expect(find.text('Visit 1'), findsNothing);
+    expect(find.textContaining('Show'), findsNothing);
+    expect(find.text('Tech 1'), findsNothing);
     expect(t.takeException(), isNull);
   });
 

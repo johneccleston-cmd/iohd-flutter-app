@@ -22,6 +22,7 @@ Future<void> _loadFont(String family, List<String> paths) async {
   await loader.load();
 }
 
+String? _answerOverride;
 final List<List<dynamic>> _sent = []; // the messages array of every request the fake server saw
 
 Future<http.Response> _server(http.Request r) async {
@@ -30,7 +31,7 @@ Future<http.Response> _server(http.Request r) async {
     utf8.encode(
       jsonEncode({
         'success': true,
-        'answer': 'Answer ${_sent.length}',
+        'answer': _answerOverride ?? 'Answer ${_sent.length}',
         'toolsUsed': ['jobs_summary'],
       }),
     ),
@@ -69,6 +70,8 @@ Future<void> _open(WidgetTester tester) async {
 void main() {
   setUpAll(() async {
     await _loadFont('Segoe UI', [r'C:\Windows\Fonts\segoeui.ttf', r'C:\Windows\Fonts\segoeuib.ttf', r'C:\Windows\Fonts\seguisb.ttf']);
+    await _loadFont('Cambria', [r'C:\Windows\Fonts\cambria.ttc', r'C:\Windows\Fonts\cambriab.ttf']);
+    await _loadFont('Georgia', [r'C:\Windows\Fonts\georgia.ttf', r'C:\Windows\Fonts\georgiab.ttf']);
     final root = Platform.environment['FLUTTER_ROOT'] ?? r'C:\src\flutter';
     await _loadFont('MaterialIcons', ['$root/bin/cache/artifacts/material_fonts/materialicons-regular.otf']);
   });
@@ -90,7 +93,7 @@ void main() {
     });
     await http.runWithClient(() async {
       await _open(tester);
-      expect(find.text('How many jobs are open?'), findsNWidgets(2)); // the thread and its sidebar entry
+      expect(find.text('How many jobs are open?'), findsNWidgets(3)); // the thread, its sidebar entry and the header title
       expect(find.textContaining('42 open jobs'), findsOneWidget);
       expect(find.textContaining('Ask about jobs'), findsNothing);
     }, () => MockClient(_server));
@@ -132,7 +135,7 @@ void main() {
   testWidgets('the sidebar starts new chats, renames and deletes them', (tester) async {
     await http.runWithClient(() async {
       await _open(tester);
-      await tester.tap(find.widgetWithText(OutlinedButton, 'New chat'));
+      await tester.tap(find.text('New chat').first);
       await _pumpMs(tester, 300);
       expect(find.textContaining('Ask about jobs'), findsOneWidget); // the new chat is empty
       expect(find.text('Answer 1'), findsNothing);
@@ -192,5 +195,38 @@ void main() {
     expect(chat.chats.length, AssistantChat.maxChats);
     expect(chat.canAddChat, isFalse);
     chat.clear();
+  });
+
+  testWidgets('Copy includes the stat cards as label: value lines', (tester) async {
+    _answerOverride = '''Pool summary.
+
+::: stats
+\$19.74 | Total pool deposits
+7 | Deposit entries
+:::
+
+Done.''';
+    AssistantChat.instance.clear(); // earlier tests leave chats behind in the shared instance
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') copied = (call.arguments as Map)['text'] as String?;
+      return null;
+    });
+    addTearDown(() => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null));
+    await http.runWithClient(() async {
+      await _open(tester);
+      await tester.enterText(find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Ask Jarvis')), 'pool?');
+      await _pumpMs(tester, 100);
+      await tester.tap(find.byTooltip('Send'));
+      await _pumpMs(tester, 1500);
+      await tester.tap(find.text('Copy').last);
+      await _pumpMs(tester, 300);
+      expect(copied, contains('Total pool deposits: \$19.74'));
+      expect(copied, contains('Deposit entries: 7'));
+      expect(copied, isNot(contains('::: stats')));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 5));
+    }, () => MockClient(_server));
+    _answerOverride = null;
   });
 }

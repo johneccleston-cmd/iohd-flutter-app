@@ -49,7 +49,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Map<String, dynamic>? _customer;
   String? _fromEstimate; // for a job: the estimate it most likely came from
   String? _becameJob; // for an estimate: the job it most likely became
-  List<Map<String, dynamic>> _visits = const [];
   List<Map<String, dynamic>> _payments = const [];
   List<Map<String, dynamic>> _history = const [];
   List<Map<String, dynamic>> _ourFiles = const []; // pictures + documents uploaded here (not Service Fusion's)
@@ -81,7 +80,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       _customer = null;
       _fromEstimate = null;
       _becameJob = null;
-      _visits = const [];
       _payments = const [];
       _history = const [];
       _ourFiles = const [];
@@ -133,7 +131,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _customer = data['customer'] is Map ? Map<String, dynamic>.from(data['customer'] as Map) : null;
         _fromEstimate = data['fromEstimate']?.toString();
         _becameJob = data['becameJob']?.toString();
-        _visits = rows('visits');
         _payments = rows('payments');
         _history = rows('history');
         _loading = false;
@@ -345,7 +342,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       _sfRow(Icons.engineering_outlined, 'Assigned Techs', _techsValue(techs)),
       _sfRow(Icons.sticky_note_2_outlined, 'Notes For Techs', notes.isEmpty ? null : _text(notes)),
       // An estimate has no visits to show: don't draw an empty "Site Visits (0)" box on it.
-      if (!(_isEstimate && (_sfVisits.isEmpty ? _visits.length : _sfVisits.length) == 0)) _visitsSection(),
+      if (!(_isEstimate && _sfVisits.isEmpty)) _visitsSection(),
     ];
     final infoPanel = _panel(
       _isEstimate ? 'Estimate Info' : 'Job Info',
@@ -1662,8 +1659,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   static const int _visitsCollapsedCount = 3; // visits shown while the section is collapsed
 
   Widget _visitsSection() {
-    final sfVisits = _sfVisits;
-    final count = sfVisits.isNotEmpty ? sfVisits.length : _visits.length;
+    final visits = _sfVisits; // only what Service Fusion lists: no visit rows from it means no visits
+    final count = visits.length;
     // More than a handful of visits: collapsed by default to the latest few (keeping their real numbers, so the
     // hidden ones are the earliest). The control sits right under the heading, where the hidden ones would start.
     final collapsible = count > _visitsCollapsedCount;
@@ -1698,30 +1695,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           ),
         if (count == 0)
           Padding(padding: const EdgeInsets.all(18), child: _text('No visits scheduled.', muted: true))
-        else if (sfVisits.isNotEmpty)
-          for (var i = first; i < sfVisits.length; i++) ...[
-            if (i > first || collapsible) const Divider(height: 1, color: AppTheme.strokeBorder),
-            _sfVisit(i, sfVisits[i]),
-          ]
         else
-          for (var i = first; i < _visits.length; i++)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 70,
-                    child: Text('Visit ${i + 1}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
-                  ),
-                  Expanded(child: Text(_date(_visits[i]['work_date']), style: const TextStyle(fontSize: 14))),
-                  Expanded(
-                    child: Text((_visits[i]['tech_name'] ?? 'Unassigned').toString(), style: const TextStyle(fontSize: 14, color: _link)),
-                  ),
-                  if (_visits[i]['is_callback'] == true) _badge('CALLBACK', const Color(0xFFD97706)),
-                  if (_visits[i]['is_verified'] == true) ...[const SizedBox(width: 6), _badge('DONE', AppTheme.successGreen)],
-                ],
-              ),
-            ),
+          for (var i = first; i < visits.length; i++) ...[
+            if (i > first || collapsible) const Divider(height: 1, color: AppTheme.strokeBorder),
+            _sfVisit(i, visits[i]),
+          ],
       ],
     );
   }

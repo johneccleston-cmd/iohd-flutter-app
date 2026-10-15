@@ -160,8 +160,7 @@ class _SalesKpis {
       satisfaction: _Rating.fromJson(j['satisfaction']),
       mentions: [
         for (final m in (j['reviews'] is List ? j['reviews'] as List : const []))
-          if (m is Map && _str(m['quote']).isNotEmpty)
-            _Mention(_str(m['quote']), _str(m['customer']).isEmpty ? 'Customer' : _str(m['customer']), _str(m['source']).isEmpty ? null : _str(m['source'])),
+          ?_Mention.fromJson(m),
       ],
       byType: [for (final t in types) if (t is Map) _TypeKpis.fromJson(Map<String, dynamic>.from(t))],
       bids: j['bids'] is Map ? _BidKpis.fromJson(Map<String, dynamic>.from(j['bids'] as Map)) : null,
@@ -231,7 +230,17 @@ class _Mention {
   final String quote;
   final String customer;
   final String? source;
-  const _Mention(this.quote, this.customer, [this.source]);
+  final DateTime? date;
+  final double? stars; // 1-5 when the source has a rating (Google), else null
+  const _Mention(this.quote, this.customer, [this.source, this.date, this.stars]);
+
+  /// "Jul 2026" for the footer; reviews span years, so the date matters.
+  String? get when {
+    final d = date;
+    if (d == null) return null;
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[d.month - 1]} ${d.year}';
+  }
 
   static _Mention? fromJson(dynamic j) {
     if (j is! Map) return null;
@@ -239,7 +248,12 @@ class _Mention {
     if (quote.isEmpty) return null;
     final who = _str(j['customer']).trim();
     final src = _str(j['source']).trim();
-    return _Mention(quote, who.isEmpty ? 'A customer' : who, src.isEmpty ? null : src);
+    // The numeric field is the source of truth; the "Google · 5★" label is only read for a backend that predates it.
+    final rating = j['rating'] is num
+        ? (j['rating'] as num).toDouble()
+        : double.tryParse(_str(j['rating'])) ?? double.tryParse(RegExp(r'(\d)★').firstMatch(src)?.group(1) ?? '');
+    final stars = rating != null && rating >= 1 && rating <= 5 ? rating : null;
+    return _Mention(quote, who.isEmpty ? 'A customer' : who, src.isEmpty ? null : src, DateTime.tryParse(_str(j['date']))?.toLocal(), stars);
   }
 }
 
@@ -253,8 +267,6 @@ class _TechKpis {
   /// Month-by-month series (index 0 = January), null for months without data. Nothing sends these yet:
   /// `teamMonthly` [{month, laborPerDay}], `satisfactionMonthly` and `employeeRatingMonthly` [{month, avg}].
   final List<double?> teamPerDay;
-  final List<double?> satisfactionTrend;
-  final List<double?> peerTrend;
 
   /// Current techs' figures for the scorecard (`team` in the response): pooled labor per work day and the average
   /// inventory strikes. Null until the backend sends them.
@@ -277,8 +289,6 @@ class _TechKpis {
     required this.employeeRating,
     required this.mentions,
     this.teamPerDay = const [],
-    this.satisfactionTrend = const [],
-    this.peerTrend = const [],
     this.teamLaborPerDay,
     this.teamAvgStrikes,
     required this.monthly,
@@ -300,8 +310,6 @@ class _TechKpis {
       satisfaction: _Rating.fromJson(j['satisfaction']),
       employeeRating: _Rating.fromJson(j['employeeRating']),
       teamPerDay: _monthSeries(j['teamMonthly'], 'laborPerDay'),
-      satisfactionTrend: _monthSeries(j['satisfactionMonthly'], 'avg'),
-      peerTrend: _monthSeries(j['employeeRatingMonthly'], 'avg'),
       teamLaborPerDay: j['team'] is Map ? _num((j['team'] as Map)['laborPerDay']) : null,
       teamAvgStrikes: j['team'] is Map ? _num((j['team'] as Map)['avgInventoryStrikes']) : null,
       mentions: [
@@ -356,6 +364,8 @@ class _ReceivablesKpis {
   final bool tracksMissedCall;
   final bool tracksLeadToBooked;
   final bool tracksCustomerResponse;
+  final _Rating? satisfaction;
+  final List<_Mention> mentions;
   const _ReceivablesKpis({
     required this.outstanding,
     required this.over90,
@@ -366,6 +376,8 @@ class _ReceivablesKpis {
     required this.tracksMissedCall,
     required this.tracksLeadToBooked,
     required this.tracksCustomerResponse,
+    this.satisfaction,
+    this.mentions = const [],
   });
 
   factory _ReceivablesKpis.fromJson(Map<String, dynamic> j) {
@@ -384,6 +396,11 @@ class _ReceivablesKpis {
       tracksMissedCall: _flag(tr, 'missedCallResponse'),
       tracksLeadToBooked: _flag(tr, 'leadToBooked'),
       tracksCustomerResponse: _flag(tr, 'customerResponse'),
+      satisfaction: _Rating.fromJson(j['satisfaction']),
+      mentions: [
+        for (final m in (j['reviews'] is List ? j['reviews'] as List : const []))
+          ?_Mention.fromJson(m),
+      ],
     );
   }
 }
@@ -716,8 +733,6 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     return _sampleSeries([410, 425, 440, 435, 455, 470, 465, 480, 490, 500, 505, 510]);
   }
 
-  List<double?> _satisfactionTrendOf(_TechKpis t) => t.satisfactionTrend.isNotEmpty ? t.satisfactionTrend : (_sample ? _sampleSeries([4.4, 4.5, 4.4, 4.6, 4.7, 4.6, 4.8, 4.7, 4.8, 4.7, 4.7, 4.8]) : const []);
-  List<double?> _peerTrendOf(_TechKpis t) => t.peerTrend.isNotEmpty ? t.peerTrend : (_sample ? _sampleSeries([3.8, 3.9, 4.1, 4.0, 4.2, 4.1, 4.3, 4.2, 4.4, 4.3, 4.5, 4.4]) : const []);
   /// The scorecard: each metric against the current techs' figure. Ratings have no team figure yet.
   List<_ScoreRow> _scoreRows(_EmployeeDetails d, _TechKpis t) {
     final ts = d.techStats;
@@ -1267,7 +1282,6 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
 
     // Technician performance, customer satisfaction and morale (every tech, including the supervisor).
     final tech = d.tech;
-    final sup = d.supervisor;
     final techCard = tech == null
         ? null
         : _TechPerformance(
@@ -1279,13 +1293,6 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             scorecard: _scoreRows(d, tech),
             techName: (_data?.entry.user.name ?? '').trim().isEmpty ? 'This tech' : _data!.entry.user.name.trim(),
             teamPerDay: _teamPerDayOf(tech),
-            customerTrend: _satisfactionTrendOf(tech),
-            peerTrend: _peerTrendOf(tech),
-            untracked: [
-              if (!tech.tracksEfficiency) 'Job completion efficiency',
-              if (sup != null && !sup.tracksOvertime) 'Overtime / production efficiency',
-              if (sup != null && !sup.tracksImprovement) 'Technician performance improvement',
-            ],
           );
     final off = d.office;
     final officeCard = off == null
@@ -1330,7 +1337,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
       if (sales != null) _salesScorecards(sales),
       if (sales != null) fill && techCard == null ? Expanded(child: _salesCard(sales, expand: true, monthly: d.monthlyWon, showChart: chart)) : _salesCard(sales, monthly: d.monthlyWon, showChart: true),
       if (techCard != null) fill ? Expanded(child: techCard) : techCard,
-      ?officeCard,
+      if (officeCard != null) _withFeedback(officeCard, off!),
     ];
 
     if (wideCards.isEmpty && smaller.isEmpty && commercial.isEmpty) {
@@ -1409,6 +1416,32 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           pair(smaller),
         ],
       ],
+    );
+  }
+
+  /// The receivables card with the customer feedback card in a column on its right (stacked below on narrow widths).
+  Widget _withFeedback(Widget card, _ReceivablesKpis off) {
+    final feedback = _MentionsCard(mentions: off.mentions, satisfaction: off.satisfaction);
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 760) {
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [card, const SizedBox(height: 16), SizedBox(height: 240, child: feedback)]);
+        }
+        // The feedback card is laid over a gap the row leaves for it, so it takes the receivables card's height
+        // (a LayoutBuilder inside it rules out IntrinsicHeight) but never drops below what the quote needs.
+        return ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 260),
+          child: Stack(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [Expanded(child: card), const SizedBox(width: 16 + 240)],
+              ),
+              Positioned(top: 0, right: 0, bottom: 0, width: 240, child: feedback),
+            ],
+          ),
+        );
+      },
     );
   }
 
@@ -3041,7 +3074,6 @@ class _TechPerformance extends StatefulWidget {
   final _TechKpis tech;
 
   /// KPIs without a data source yet, listed under the chart.
-  final List<String> untracked;
 
   /// Take all the height the parent offers: the chart grows to fill it.
   final bool fill;
@@ -3062,13 +3094,10 @@ class _TechPerformance extends StatefulWidget {
   /// Team comparison rows (metric vs the current techs' figure), shown beside the tech-vs-team line chart.
   final List<_ScoreRow> scorecard;
 
-  /// Team average labor per work day by month, and the two rating trends (empty until tracked).
+  /// Team average labor per work day by month (empty until tracked).
   final List<double?> teamPerDay;
-  final List<double?> customerTrend;
-  final List<double?> peerTrend;
   const _TechPerformance({
     required this.tech,
-    required this.untracked,
     this.fill = false,
     this.satisfaction,
     this.mentions = const [],
@@ -3076,8 +3105,6 @@ class _TechPerformance extends StatefulWidget {
     this.techName = 'This tech',
     this.scorecard = const [],
     this.teamPerDay = const [],
-    this.customerTrend = const [],
-    this.peerTrend = const [],
   });
 
   @override
@@ -3180,10 +3207,6 @@ class _TechPerformanceState extends State<_TechPerformance> {
           ),
           const SizedBox(height: 12),
           if (widget.fill) Expanded(child: chart) else chart,
-          if (widget.untracked.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            _UntrackedNote(widget.untracked),
-          ],
         ],
       ),
     );
@@ -3236,7 +3259,6 @@ class _TechPerformanceState extends State<_TechPerformance> {
   Widget _withSideCards(Widget panel, List<double?> perDay) {
     final card = _MentionsCard(mentions: widget.mentions, satisfaction: widget.satisfaction);
     final streak = _StreakCard(streak: widget.streak);
-    final trends = _RatingTrendsCard(customer: widget.customerTrend, peer: widget.peerTrend);
     final team = List<double?>.generate(perDay.length, (i) => i < widget.teamPerDay.length ? widget.teamPerDay[i] : null);
     final fill = widget.fill;
     // Bottom row: the tech-vs-team line chart, with the scorecard bars beside it when there are any.
@@ -3266,9 +3288,7 @@ class _TechPerformanceState extends State<_TechPerformance> {
               const SizedBox(height: 8),
               SizedBox(height: 118, child: streak),
               const SizedBox(height: 8),
-              SizedBox(height: 210, child: card),
-              const SizedBox(height: 8),
-              SizedBox(height: 150, child: trends),
+              SizedBox(height: 300, child: card),
             ],
           );
         }
@@ -3292,9 +3312,8 @@ class _TechPerformanceState extends State<_TechPerformance> {
                 children: [
                   SizedBox(height: 118, child: streak),
                   const SizedBox(height: 8),
-                  SizedBox(height: 226, child: card),
-                  const SizedBox(height: 8),
-                  if (fill) Expanded(child: trends) else SizedBox(height: 150, child: trends),
+                  // The review card takes whatever height is left, so a whole review fits.
+                  if (fill) Expanded(child: card) else SizedBox(height: 300, child: card),
                 ],
               ),
             ),
@@ -4018,25 +4037,82 @@ class _MentionsCard extends StatefulWidget {
   State<_MentionsCard> createState() => _MentionsCardState();
 }
 
-class _MentionsCardState extends State<_MentionsCard> {
-  static const _every = Duration(seconds: 7);
-  Timer? _timer;
+class _MentionsCardState extends State<_MentionsCard> with SingleTickerProviderStateMixin {
+  static const _sizes = [14.0, 13.5, 13.0, 12.5, 12.0, 11.5];
+  late final AnimationController _clock = AnimationController(vsync: this, duration: const Duration(seconds: 12));
   int _i = 0;
+  int _dir = 1; // which way the last change travelled, so the transition slides the right way
   bool _hovered = false;
+  bool _still = false; // reduced motion: no auto-rotate
 
   @override
   void initState() {
     super.initState();
-    _timer = Timer.periodic(_every, (_) {
-      if (!mounted || _hovered || widget.mentions.length < 2 || MediaQuery.disableAnimationsOf(context)) return;
-      setState(() => _i = (_i + 1) % widget.mentions.length);
+    _clock.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) _step(1);
     });
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = MediaQuery.disableAnimationsOf(context);
+    _syncClock();
+  }
+
+  @override
+  void didUpdateWidget(covariant _MentionsCard old) {
+    super.didUpdateWidget(old);
+    if (!_sameMentions(old.mentions, widget.mentions)) {
+      _i = 0;
+      _syncClock(restart: true);
+    }
+  }
+
+  /// Same reviews in the same order; length alone misses a switch between two people with equally many.
+  static bool _sameMentions(List<_Mention> a, List<_Mention> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].quote != b[i].quote || a[i].customer != b[i].customer) return false;
+    }
+    return true;
+  }
+
+  @override
   void dispose() {
-    _timer?.cancel();
+    _clock.dispose();
     super.dispose();
+  }
+
+  /// Runs while there is something to rotate to, and not under the cursor or with reduced motion.
+  void _syncClock({bool restart = false}) {
+    if (restart) _clock.value = 0;
+    if (widget.mentions.length < 2 || _still || _hovered) {
+      _clock.stop();
+    } else if (!_clock.isAnimating) {
+      _clock.forward();
+    }
+  }
+
+  void _step(int by) {
+    final n = widget.mentions.length;
+    if (n < 2) return;
+    setState(() {
+      _dir = by >= 0 ? 1 : -1;
+      _i = ((_i + by) % n + n) % n;
+    });
+    _clock.value = 0;
+    _syncClock();
+  }
+
+  /// Slide + fade in the direction of travel, the old review slipping out the other way with a slight scale.
+  Widget _swap(Widget child, Animation<double> anim, int shown) {
+    final incoming = child.key == ValueKey<int>(shown);
+    final curved = CurvedAnimation(parent: anim, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+    final slide = Tween<Offset>(begin: Offset(incoming ? 0.22 * _dir : -0.22 * _dir, 0), end: Offset.zero).animate(curved);
+    final scale = Tween<double>(begin: 0.96, end: 1).animate(curved);
+    return FadeTransition(opacity: curved, child: SlideTransition(position: slide, child: ScaleTransition(scale: scale, child: child)));
   }
 
   /// Average customer stars and how many ratings it is based on.
@@ -4053,10 +4129,86 @@ class _MentionsCardState extends State<_MentionsCard> {
           else ...[
             Text(_fmtNum(r.avg), style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink, height: 1)),
             const SizedBox(width: 6),
-            Text('${r.count} ratings', style: const TextStyle(fontSize: 11, color: DashUi.muted)),
+            Flexible(child: Text('${r.count} ratings', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: DashUi.muted))),
           ],
         ],
       ),
+    );
+  }
+
+  void _openFull(_Mention m) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(children: [
+          SizedBox(width: 82, height: 18, child: CustomPaint(painter: _StarsPainter(m.stars ?? 0, DashUi.amber))),
+          const SizedBox(width: 10),
+          Expanded(child: Text(m.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800))),
+        ]),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: SingleChildScrollView(
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+              SelectableText(m.quote, style: const TextStyle(fontSize: 14.5, height: 1.45, color: _ink)),
+              const SizedBox(height: 12),
+              Text(_footer(m), style: const TextStyle(fontSize: 12, color: DashUi.muted)),
+            ]),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close'))],
+      ),
+    );
+  }
+
+  String _footer(_Mention m) => [if (m.source != null) m.source!, ?m.when].join(' · ');
+
+  /// The review text at the largest size that fits; if even the smallest does not, it is cut with a "Read full review" link.
+  Widget _quote(_Mention m, BoxConstraints c) {
+    const link = 24.0;
+    final width = c.maxWidth;
+    final base = DefaultTextStyle.of(context).style; // what the Text below inherits, so measuring matches drawing
+    final scaler = MediaQuery.textScalerOf(context); // the Text below scales, so the measurement has to as well
+    TextStyle style(double size) => TextStyle(fontSize: size, fontStyle: FontStyle.italic, color: _ink, height: 1.35);
+    double heightAt(double size) {
+      final tp = TextPainter(
+        text: TextSpan(text: m.quote, style: base.merge(style(size))),
+        textDirection: TextDirection.ltr,
+        textScaler: scaler,
+      )..layout(maxWidth: width);
+      final h = tp.height;
+      tp.dispose();
+      return h;
+    }
+
+    double? fit;
+    for (final size in _sizes) {
+      if (heightAt(size) <= c.maxHeight) {
+        fit = size;
+        break;
+      }
+    }
+    final cut = fit == null;
+    final size = fit ?? _sizes.last;
+    final lines = cut ? ((c.maxHeight - link) / (scaler.scale(size) * 1.35)).floor().clamp(1, 40) : null;
+    return InkWell(
+      onTap: cut ? () => _openFull(m) : null,
+      borderRadius: BorderRadius.circular(6),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: Text(m.quote, maxLines: lines, overflow: cut ? TextOverflow.ellipsis : TextOverflow.clip, style: style(size)),
+              ),
+            ),
+            if (cut)
+              const SizedBox(
+                height: link,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Read full review', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.indigo)),
+                ),
+              ),
+          ]),
     );
   }
 
@@ -4065,11 +4217,26 @@ class _MentionsCardState extends State<_MentionsCard> {
     final list = widget.mentions;
     final idx = list.isEmpty ? 0 : _i % list.length;
     final m = list.isEmpty ? null : list[idx];
+    final duration = _still ? Duration.zero : const Duration(milliseconds: 520);
+    Widget switched(Widget Function(_Mention) build, {AlignmentGeometry align = Alignment.topLeft}) => ClipRect(
+          child: AnimatedSwitcher(
+            duration: duration,
+            transitionBuilder: (child, anim) => _swap(child, anim, idx),
+            layoutBuilder: (cur, prev) => Stack(alignment: align, children: [...prev, ?cur]),
+            child: KeyedSubtree(key: ValueKey<int>(idx), child: build(m!)),
+          ),
+        );
     return MouseRegion(
-      onEnter: (_) => _hovered = true,
-      onExit: (_) => _hovered = false,
+      onEnter: (_) {
+        _hovered = true;
+        _syncClock();
+      },
+      onExit: (_) {
+        _hovered = false;
+        _syncClock();
+      },
       child: Container(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
         decoration: DashUi.panel(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4077,63 +4244,83 @@ class _MentionsCardState extends State<_MentionsCard> {
             const Text('CUSTOMER FEEDBACK', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: DashUi.muted)),
             const SizedBox(height: 6),
             _satisfactionRow(),
-            const SizedBox(height: 4),
-            const Align(alignment: Alignment.centerLeft, child: Icon(Icons.format_quote_rounded, size: 28, color: DashUi.amber)),
+            const SizedBox(height: 10),
             Expanded(
-              child: ClipRect(
-                child: AnimatedSwitcher(
-                  duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 450),
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: SlideTransition(position: Tween(begin: const Offset(0, 0.15), end: Offset.zero).animate(anim), child: child),
+              child: m == null
+                  ? const Align(alignment: Alignment.centerLeft, child: Text('No customer mentions yet', style: TextStyle(fontSize: 13, color: DashUi.muted)))
+                  : Semantics(
+                      label: 'Customer comment from ${m.customer}: ${m.quote}',
+                      child: LayoutBuilder(
+                        builder: (context, c) => switched((mm) => SizedBox(width: c.maxWidth, height: c.maxHeight, child: _quote(mm, c))),
+                      ),
+                    ),
+            ),
+            if (m != null) ...[
+              const SizedBox(height: 8),
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Expanded(
+                  child: switched(
+                    (mm) => Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(mm.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink)),
+                      if (_footer(mm).isNotEmpty) Text(_footer(mm), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: DashUi.muted)),
+                    ]),
+                    align: Alignment.bottomLeft,
                   ),
-                  layoutBuilder: (cur, prev) => Stack(alignment: Alignment.topLeft, children: [...prev, ?cur]),
-                  child: m == null
-                      ? const Align(
-                          key: ValueKey('empty'),
-                          alignment: Alignment.centerLeft,
-                          child: Text('No customer mentions yet', style: TextStyle(fontSize: 13, color: DashUi.muted)),
-                        )
-                      : Semantics(
-                          key: ValueKey(idx),
-                          label: 'Customer comment from ${m.customer}: ${m.quote}',
-                          child: SizedBox.expand(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(
-                                  child: Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: Text(m.quote, overflow: TextOverflow.fade, style: const TextStyle(fontSize: 14, fontStyle: FontStyle.italic, color: _ink, height: 1.35)),
-                                  ),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(m.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink)),
-                                if (m.source != null) Text(m.source!, style: const TextStyle(fontSize: 11.5, color: DashUi.muted)),
-                              ],
+                ),
+                if (list.length > 1) ...[
+                  _StepButton(icon: Icons.chevron_left_rounded, tooltip: 'Previous review', onTap: () => _step(-1)),
+                  Text('${idx + 1}/${list.length}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: DashUi.muted)),
+                  _StepButton(icon: Icons.chevron_right_rounded, tooltip: 'Next review', onTap: () => _step(1)),
+                ],
+              ]),
+            ],
+            // Time until the next review: a thin line that fills across the bottom edge and pauses under the cursor.
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 4,
+              child: list.length > 1 && !_still
+                  ? RepaintBoundary(
+                      // Only this 4px line repaints each frame, not the card around it.
+                      child: AnimatedBuilder(
+                        animation: _clock,
+                        builder: (context, _) => DecoratedBox(
+                          decoration: BoxDecoration(color: DashUi.muted.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(2)),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: FractionallySizedBox(
+                              widthFactor: _clock.value.clamp(0.0, 1.0),
+                              heightFactor: 1, // without this the empty box collapses to zero height and nothing draws
+                              child: DecoratedBox(decoration: BoxDecoration(color: DashUi.amber, borderRadius: BorderRadius.circular(2))),
                             ),
                           ),
                         ),
-                ),
-              ),
+                      ),
+                    )
+                  : null,
             ),
-            if (list.length > 1) ...[
-              const SizedBox(height: 6),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (var k = 0; k < list.length; k++)
-                    Container(
-                      width: k == idx ? 16 : 6,
-                      height: 6,
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      decoration: BoxDecoration(color: k == idx ? DashUi.amber : DashUi.muted.withValues(alpha: 0.35), borderRadius: BorderRadius.circular(3)),
-                    ),
-                ],
-              ),
-            ],
+            const SizedBox(height: 9),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A small round arrow for stepping through reviews.
+class _StepButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onTap;
+  const _StepButton({required this.icon, required this.tooltip, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        onTap: onTap,
+        radius: 16,
+        child: Padding(padding: const EdgeInsets.all(2), child: Icon(icon, size: 20, color: DashUi.muted)),
       ),
     );
   }
@@ -4605,107 +4792,6 @@ class _ComparePainter extends CustomPainter {
       old.fontFamily != fontFamily ||
       !listEquals(old.mine, mine) ||
       !listEquals(old.team, team);
-}
-
-/// Customer satisfaction and peer rating over the year, as two small stacked trend lines with the latest score.
-class _RatingTrendsCard extends StatelessWidget {
-  final List<double?> customer;
-  final List<double?> peer;
-  const _RatingTrendsCard({required this.customer, required this.peer});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text('RATING TRENDS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: DashUi.muted)),
-          const SizedBox(height: 6),
-          Expanded(child: _TrendRow(label: 'Customer', values: customer, color: DashUi.amber)),
-          const SizedBox(height: 6),
-          Expanded(child: _TrendRow(label: 'Peer', values: peer, color: DashUi.indigo)),
-        ],
-      ),
-    );
-  }
-}
-
-class _TrendRow extends StatelessWidget {
-  final String label;
-  final List<double?> values;
-  final Color color;
-  const _TrendRow({required this.label, required this.values, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    final latest = values.whereType<double>().isEmpty ? null : values.lastWhere((v) => v != null)!;
-    return Semantics(
-      label: latest == null ? '$label rating trend: not tracked yet' : '$label rating trend, latest ${_fmtNum(latest)} out of 5',
-      child: Row(
-        children: [
-          SizedBox(width: 66, child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _slate))),
-          Expanded(
-            child: latest == null
-                ? const Align(alignment: Alignment.centerLeft, child: Text('Not tracked yet', style: TextStyle(fontSize: 11.5, color: DashUi.muted)))
-                : CustomPaint(painter: _SparkPainter(values, color), size: Size.infinite),
-          ),
-          const SizedBox(width: 8),
-          SizedBox(
-            width: 32,
-            child: Text(latest == null ? '—' : _fmtNum(latest), textAlign: TextAlign.right, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: latest == null ? DashUi.muted : _ink, height: 1)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// A small line over the months with a dot on the latest point. Scaled to the data (kept within 1-5 stars).
-class _SparkPainter extends CustomPainter {
-  final List<double?> values;
-  final Color color;
-  _SparkPainter(this.values, this.color);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final vs = values.whereType<double>().toList();
-    if (vs.isEmpty) return;
-    var lo = math.max(1.0, vs.reduce(math.min) - 0.3);
-    var hi = math.min(5.0, vs.reduce(math.max) + 0.3);
-    if (hi - lo < 1) {
-      lo = math.max(1.0, hi - 1);
-      hi = lo + 1;
-    }
-    const pad = 4.0;
-    final n = values.length;
-    Offset pt(int i, double v) => Offset(pad + (size.width - pad * 2) * (n == 1 ? 0.5 : i / (n - 1)), pad + (size.height - pad * 2) * (1 - (v - lo) / (hi - lo)));
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.2
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
-    Path? path;
-    Offset? last;
-    for (var i = 0; i < n; i++) {
-      final v = values[i];
-      if (v == null) continue;
-      final p = pt(i, v);
-      if (path == null) {
-        path = Path()..moveTo(p.dx, p.dy);
-      } else {
-        path.lineTo(p.dx, p.dy);
-      }
-      last = p;
-    }
-    if (path != null) canvas.drawPath(path, paint);
-    if (last != null) canvas.drawCircle(last, 3.4, Paint()..color = color);
-  }
-
-  @override
-  bool shouldRepaint(covariant _SparkPainter old) => !identical(old.values, values) || old.color != color;
 }
 
 enum _Standing { ahead, par, behind, none }

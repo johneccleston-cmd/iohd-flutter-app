@@ -120,6 +120,18 @@ Which month had the best profit margin?
 How does this compare with 2025?
 :::''';
 
+const _poolAnswer = '''Only one deposit is traced to a job so far: Ideal Structures LLC (job 1095809012) accounts for **\$12.64** of the \$19.74 in the pool.
+
+::: stats
+\$19.74 | Total pool deposits (since Oct 5, 2026)
+7 | Deposit entries recorded
+\$12.64 | From Ideal Structures LLC
+\$7.10 | Not yet traced to a job (6 entries)
+:::
+
+- **Ideal Structures LLC:** The job was invoiced Oct 6 at \$10,102.36.
+- **The other six entries:** most likely jobs that closed since Oct 5.''';
+
 String _current = _answer;
 Duration _delay = Duration.zero;
 
@@ -140,9 +152,9 @@ Future<void> _pumpMs(WidgetTester t, int ms) async {
   }
 }
 
-Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = false, bool sort = false, bool wide = false, bool end = false, bool charts = false, int thinkSecs = 0, bool stop = false}) async {
+Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = false, bool sort = false, bool wide = false, bool end = false, bool charts = false, bool pool = false, int thinkSecs = 0, bool stop = false}) async {
   _delay = thinkSecs > 0 ? const Duration(seconds: 90) : Duration.zero;
-  _current = charts ? _chartAnswer : _answer;
+  _current = charts ? _chartAnswer : (pool ? _poolAnswer : _answer);
   tester.view.devicePixelRatio = 1.0;
   tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
@@ -208,6 +220,8 @@ void main() {
       r'C:\Windows\Fonts\segoeuib.ttf',
       r'C:\Windows\Fonts\seguisb.ttf',
     ]);
+    await _loadFont('Cambria', [r'C:\Windows\Fonts\cambria.ttc', r'C:\Windows\Fonts\cambriab.ttf']);
+    await _loadFont('Georgia', [r'C:\Windows\Fonts\georgia.ttf', r'C:\Windows\Fonts\georgiab.ttf']);
     final root = Platform.environment['FLUTTER_ROOT'] ?? r'C:\src\flutter';
     await _loadFont('MaterialIcons', ['$root/bin/cache/artifacts/material_fonts/materialicons-regular.otf']);
   });
@@ -219,5 +233,6 @@ void main() {
   testWidgets('assistant empty wide', (t) async => _shot(t, const Size(1500, 900), 'assistant_empty_wide', wide: true));
   testWidgets('assistant thinking', (t) async => _shot(t, const Size(1400, 860), 'assistant_thinking', ask: true, thinkSecs: 14));
   testWidgets('assistant stopped', (t) async => _shot(t, const Size(1400, 860), 'assistant_stopped', ask: true, thinkSecs: 5, stop: true));
+  testWidgets('assistant four stats', (t) async => _shot(t, const Size(1400, 700), 'assistant_stats4', ask: true, pool: true));
   testWidgets('assistant charts', (t) async => _shot(t, const Size(1400, 1500), 'assistant_charts', ask: true, charts: true));
 }
