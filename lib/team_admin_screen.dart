@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +10,8 @@ import 'package:intl/intl.dart';
 import 'config/api_config.dart';
 import 'config/access.dart';
 import 'config/auth_session.dart';
+import 'utils/avatar_image.dart';
+import 'widgets/app_dialog.dart';
 import 'widgets/dashboard_kit.dart';
 
 // ---------------------------------------------------------------------------
@@ -27,9 +30,8 @@ import 'widgets/dashboard_kit.dart';
 // ---------------------------------------------------------------------------
 
 class _T {
-  static const bg = Color(0xFFE2E8F0); // same page background as the dashboards
   static const wash = Color(0xFFF8FAFC);
-  static const field = Color(0xFFF8FAFC);
+  static const field = Colors.white;
   static const changedFill = Color(0xFFEEF2FF);
   static const amberBg = Color(0xFFFFFBEB);
   static const amberFg = Color(0xFF92400E);
@@ -81,22 +83,21 @@ const Map<String, String> _labels = {
   'inventory_strikes': 'Inventory strikes',
   'warehouse_strikes': 'Warehouse strikes',
   'tech_id': 'Service Fusion tech ID',
-  'avatar_url': 'Photo URL',
+  'avatar_url': 'Photo',
 };
 
 /// Draft value for `access_denied` is the list of keys that are ALLOWED (what the pills show); the
 /// server stores the opposite, the keys switched off. Keys come from config/access.dart.
-List<String> _allowedFrom(dynamic denied) => [for (final k in kAllAccessKeys) if (denied is! List || !denied.contains(k)) k];
+List<String> _allowedFrom(dynamic denied) => [
+  for (final k in kAllAccessKeys)
+    if (denied is! List || !denied.contains(k)) k,
+];
 
 /// Admins (John and Ryan) see everything, so they get no permissions card. This is the Admin and
 /// Owner roles only: Office Manager (Heather) is not an admin.
 bool _isOwnerAdmin(String role) => const {'admin', 'owner'}.contains(role.trim().toLowerCase());
 
-const List<(double, String)> _weightPresets = [
-  (0.0, 'No share'),
-  (1.0, 'Standard'),
-  (1.5, 'Lead'),
-];
+const List<(double, String)> _weightPresets = [(0.0, 'No share'), (1.0, 'Standard'), (1.5, 'Lead')];
 
 double _d(dynamic v) {
   if (v is num) return v.toDouble();
@@ -110,10 +111,36 @@ bool _isActiveStatus(dynamic v) {
   return s.isEmpty || s == 'active';
 }
 
+/// 0, 1, 1.5, 1.25 (no trailing zeros), so the roster, editor, history and Add dialog all agree.
 String _fmtW(double w) {
-  var s = w.toStringAsFixed(2);
-  if (s.endsWith('0')) s = s.substring(0, s.length - 1);
-  return s;
+  if (w == w.roundToDouble()) return w.toStringAsFixed(0);
+  return w.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
+}
+
+/// Roles come back in whatever casing the database holds ("ADMIN", "warehouse"); show the canonical one.
+String _roleLabel(String role, List<_Role> roles) {
+  final r = role.trim();
+  if (r.isEmpty) return 'No role';
+  for (final x in roles) {
+    if (x.name.toLowerCase() == r.toLowerCase()) return x.name;
+  }
+  return r[0].toUpperCase() + r.substring(1).toLowerCase();
+}
+
+/// "dash_financial.view" -> "Dashboards · Financial (view)".
+String _accessKeyLabel(String key) {
+  for (final g in kAccessGroups) {
+    for (final r in g.items) {
+      for (final a in AccessAction.values) {
+        if (r.actions.contains(a) && r.keyFor(a) == key) {
+          return a == AccessAction.view
+              ? '${g.title} · ${r.label}'
+              : '${g.title} · ${r.label} (${a.label.toLowerCase()})';
+        }
+      }
+    }
+  }
+  return key;
 }
 
 bool _same(dynamic a, dynamic b) {
@@ -174,6 +201,49 @@ class _Emp {
 
 const List<String> _groupNames = ['Field team', 'Sales', 'Office and admin', 'Warehouse', 'Other', 'Inactive'];
 
+class _Resp {
+  final int status;
+  final Map<String, dynamic> body;
+  const _Resp(this.status, this.body);
+  bool get ok => status == 200 && body['success'] == true;
+  String error(String fallback) {
+    final e = _s(body['error']);
+    return e.isNotEmpty ? e : fallback;
+  }
+}
+
+/// One place for every call: auth headers, a timeout, 401 = sign out, and a readable message when the
+/// server (or Render in front of it) answers with something that isn't our JSON.
+Future<_Resp> _send(String method, Uri uri, {Object? body}) async {
+  final h = AuthSession.instance.headers();
+  final http.Response res;
+  try {
+    final Future<http.Response> req = switch (method) {
+      'GET' => http.get(uri, headers: h),
+      'POST' => http.post(uri, headers: h, body: body == null ? null : jsonEncode(body)),
+      _ => http.patch(uri, headers: h, body: jsonEncode(body)),
+    };
+    res = await req.timeout(_timeout);
+  } on TimeoutException {
+    throw _ApiError('The server took too long to answer. Check your connection and try again.', null);
+  } catch (_) {
+    throw _ApiError("Couldn't reach the server. Check your connection and try again.", null);
+  }
+  if (res.statusCode == 401) {
+    AuthSession.instance.logout();
+    throw _ApiError('Your session expired. Please sign in again.', null);
+  }
+  Map<String, dynamic> data = const {};
+  try {
+    final d = jsonDecode(res.body);
+    if (d is Map) data = Map<String, dynamic>.from(d);
+  } catch (_) {}
+  if (data.isEmpty && res.statusCode != 200) {
+    throw _ApiError('The server had a problem (${res.statusCode}). Try again in a moment.', null);
+  }
+  return _Resp(res.statusCode, data);
+}
+
 class _Change {
   final String field;
   final String label;
@@ -184,13 +254,13 @@ class _Change {
   final DateTime? at;
 
   _Change(Map<String, dynamic> j)
-      : field = _s(j['field']),
-        label = _s(j['label']),
-        oldValue = j['old_value'] == null ? null : _s(j['old_value']),
-        newValue = j['new_value'] == null ? null : _s(j['new_value']),
-        note = j['note'] == null ? null : _s(j['note']),
-        by = _s(j['changed_by_name']),
-        at = DateTime.tryParse(_s(j['changed_at']))?.toLocal();
+    : field = _s(j['field']),
+      label = _s(j['label']),
+      oldValue = j['old_value'] == null ? null : _s(j['old_value']),
+      newValue = j['new_value'] == null ? null : _s(j['new_value']),
+      note = j['note'] == null ? null : _s(j['note']),
+      by = _s(j['changed_by_name']),
+      at = DateTime.tryParse(_s(j['changed_at']))?.toLocal();
 }
 
 // ---------------------------------------------------------------------------
@@ -217,18 +287,22 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   List<_Change>? _history;
   bool _historyLoading = false;
+  String? _historyError;
   int _historyReq = 0;
+  bool _pinBusy = false;
+  bool _refreshing = false;
 
   String _query = '';
+  String _filter = 'all'; // all | field | office | inactive
   final _searchCtl = TextEditingController();
   final _detailScroll = ScrollController();
+  final _weightCtl = TextEditingController();
 
   final _nameCtl = TextEditingController();
   final _usernameCtl = TextEditingController();
   final _emailCtl = TextEditingController();
   final _yearCtl = TextEditingController();
   final _techIdCtl = TextEditingController();
-  final _avatarCtl = TextEditingController();
   final _allowanceCtl = TextEditingController();
 
   @override
@@ -239,17 +313,19 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   @override
   void dispose() {
-    for (final c in [
-      _searchCtl, _nameCtl, _usernameCtl, _emailCtl, _yearCtl,
-      _techIdCtl, _avatarCtl, _allowanceCtl,
-    ]) {
+    for (final c in [_searchCtl, _nameCtl, _usernameCtl, _emailCtl, _yearCtl, _techIdCtl, _allowanceCtl, _weightCtl]) {
       c.dispose();
     }
     _detailScroll.dispose();
     super.dispose();
   }
 
-  Map<String, String> _headers() => AuthSession.instance.headers();
+  /// True when [e] is the person signed in to this app. The server refuses to let you deactivate
+  /// yourself or drop your own admin access; the screen says so up front instead.
+  bool _isMe(_Emp e) {
+    final me = AuthSession.instance.name.trim().toLowerCase();
+    return me.isNotEmpty && me == e.name.toLowerCase();
+  }
 
   Uri _uri(String path) => Uri.parse('$kApiBaseUrl/api/admin/users$path');
 
@@ -270,11 +346,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       _error = null;
     });
     try {
-      final res = await http.get(_uri(''), headers: _headers()).timeout(_timeout);
-      final body = jsonDecode(res.body);
-      if (res.statusCode != 200 || body is! Map || body['success'] != true) {
-        throw Exception(body is Map ? (body['error'] ?? 'Server returned ${res.statusCode}') : 'Server returned ${res.statusCode}');
-      }
+      final res = await _send('GET', _uri(''));
+      final body = res.body;
+      if (!res.ok) throw _ApiError(res.error('Server returned ${res.status}.'), null);
       final roles = ((body['roles'] as List?) ?? const [])
           .whereType<Map>()
           .map((r) => _Role(_s(r['name']), r['grantsAdmin'] == true))
@@ -289,17 +363,34 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         _users = users;
         _loading = false;
       });
+      // Keep the person you were on (and any edits in progress); otherwise start with nobody picked.
       final keep = keepSelection && _selected != null;
-      if (keep) {
+      if (keep && !_dirty) {
         _openEmployee(_selected!, force: true);
-      } else {
-        final visible = _visible();
-        if (visible.isNotEmpty) _openEmployee(visible.first, force: true);
+      } else if (!keep) {
+        setState(() => _selectedId = null);
       }
-    } on TimeoutException {
-      _fail('The server took too long to answer. Check your connection and try again.');
+    } on _ApiError catch (e) {
+      _fail("Couldn't load employees. ${e.message}");
     } catch (e) {
-      _fail('Couldn\'t load employees. ${e.toString().replaceFirst('Exception: ', '')}');
+      _fail("Couldn't load employees. ${e.toString().replaceFirst('Exception: ', '')}");
+    }
+  }
+
+  /// Reload the roster without losing the person you're on or what you've typed.
+  Future<void> _refresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    final before = _draft.length;
+    await _load();
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    if (_error == null) {
+      _toast(
+        before > 0
+            ? 'Refreshed. Your $before unsaved ${before == 1 ? 'change is' : 'changes are'} still here.'
+            : 'Team refreshed.',
+      );
     }
   }
 
@@ -315,24 +406,27 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final req = ++_historyReq;
     setState(() {
       _historyLoading = true;
+      _historyError = null;
       _history = null;
     });
     try {
-      final res = await http.get(_uri('/$id/history'), headers: _headers()).timeout(_timeout);
-      final body = jsonDecode(res.body);
+      final res = await _send('GET', _uri('/$id/history'));
       if (!mounted || req != _historyReq) return;
-      final list = (body is Map && body['success'] == true)
-          ? ((body['history'] as List?) ?? const []).whereType<Map>().map((h) => _Change(Map<String, dynamic>.from(h))).toList()
-          : <_Change>[];
+      if (!res.ok) throw _ApiError(res.error("Couldn't load the change history."), null);
+      final list = ((res.body['history'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((h) => _Change(Map<String, dynamic>.from(h)))
+          .toList();
       setState(() {
         _history = list;
         _historyLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted || req != _historyReq) return;
       setState(() {
-        _history = const [];
+        _history = null;
         _historyLoading = false;
+        _historyError = e is _ApiError ? e.message : "Couldn't load the change history.";
       });
     }
   }
@@ -346,8 +440,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     return r.trim();
   }
 
-  bool _grantsAdmin(String role) =>
-      _roles.any((r) => r.name.toLowerCase() == role.toLowerCase() && r.grantsAdmin);
+  bool _grantsAdmin(String role) => _roles.any((r) => r.name.toLowerCase() == role.toLowerCase() && r.grantsAdmin);
 
   dynamic _norm(String key, dynamic v) {
     if (_boolKeys.contains(key)) return v == true;
@@ -385,6 +478,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         _draft[key] = v;
       }
       _fieldErrors.remove(key);
+      // Admins see everything and get no permissions card, so edits to it can't be saved by accident.
+      if (key == 'role' && _isOwnerAdmin(_s(_value('role')))) _draft.remove('access_denied');
     });
   }
 
@@ -395,9 +490,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final y = _norm('year_joined', e.raw['year_joined']);
     _yearCtl.text = y == null ? '' : '$y';
     _techIdCtl.text = _s(e.raw['tech_id']);
-    _avatarCtl.text = e.avatarUrl;
     final a = _d(e.raw['tool_allowance']);
     _allowanceCtl.text = a == 0 ? '' : a.toStringAsFixed(a == a.roundToDouble() ? 0 : 2);
+    _weightCtl.text = _fmtW(e.weight);
   }
 
   Future<void> _openEmployee(_Emp e, {bool force = false}) async {
@@ -429,8 +524,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Map<String, dynamic> _payload() {
     final out = <String, dynamic>{};
     _draft.forEach((k, v) {
+      if (k == 'access_denied' && _isOwnerAdmin(_s(_value('role')))) return;
       if (k == 'access_denied' && v is List) {
-        out[k] = [for (final key in kAllAccessKeys) if (!v.contains(key)) key];
+        out[k] = [
+          for (final key in kAllAccessKeys)
+            if (!v.contains(key)) key,
+        ];
       } else {
         out[k] = (_nullableText.contains(k) && v is String && v.isEmpty) ? null : v;
       }
@@ -459,13 +558,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       _fieldErrors = {};
     });
     try {
-      final res = await http
-          .patch(_uri('/${e.id}'), headers: _headers(), body: jsonEncode({'changes': _payload(), 'version': e.version}))
-          .timeout(_timeout);
-      final body = jsonDecode(res.body);
+      final res = await _send('PATCH', _uri('/${e.id}'), body: {'changes': _payload(), 'version': e.version});
+      final body = res.body;
       if (!mounted) return;
 
-      if (res.statusCode == 200 && body is Map && body['success'] == true) {
+      if (res.ok) {
         final updated = e.mergedFrom(Map<String, dynamic>.from(body['user'] as Map));
         final renamed = _d(body['renamedRows']).round();
         setState(() {
@@ -475,39 +572,43 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         });
         _fillControllers(updated);
         _loadHistory(updated.id);
-        _toast(renamed > 0
-            ? 'Saved ${updated.name}. Renamed $renamed past work-day and ledger rows to match.'
-            : 'Saved ${updated.name}.');
+        _toast(
+          renamed > 0
+              ? 'Saved ${updated.name}. Renamed $renamed past work-day and ledger rows to match.'
+              : 'Saved ${updated.name}.',
+        );
         return;
       }
 
       setState(() => _saving = false);
-      if (res.statusCode == 409 && body is Map && body['conflict'] == true && body['user'] is Map) {
+      if (res.status == 409 && body['conflict'] == true && body['user'] is Map) {
         await _showConflict(e, Map<String, dynamic>.from(body['user'] as Map));
         return;
       }
-      final msg = body is Map ? _s(body['error']) : 'Save failed (${res.statusCode}).';
-      final field = body is Map ? body['field'] : null;
+      final msg = res.error('Save failed (${res.status}).');
+      final field = body['field'];
       if (field is String && field.isNotEmpty) setState(() => _fieldErrors = {field: msg});
-      _toast(msg.isEmpty ? 'Save failed (${res.statusCode}).' : msg, error: true);
-    } on TimeoutException {
+      _toast(msg, error: true);
+    } on _ApiError catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      _toast('The server took too long to answer. Your changes are still here; try saving again.', error: true);
+      _toast('${err.message} Your changes are still here.', error: true);
     } catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      _toast('Couldn\'t save. Your changes are still here. ($err)', error: true);
+      _toast("Couldn't save. Your changes are still here.", error: true);
     }
   }
 
   Future<void> _resetPin() async {
     final e = _selected;
     if (e == null) return;
+    if (_pinBusy) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => _dialog(
         title: 'Reset ${e.name.split(' ').first}\'s PIN?',
+        icon: Icons.key_rounded,
         body: const Text(
           'Their current PIN stops working right away. You\'ll get a temporary PIN to give them, '
           'and they\'ll choose a new one the next time they log in.',
@@ -519,20 +620,24 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         ],
       ),
     );
-    if (ok != true) return;
+    if (ok != true || !mounted) return;
+    setState(() => _pinBusy = true);
     try {
-      final res = await http.post(_uri('/${e.id}/reset-pin'), headers: _headers()).timeout(_timeout);
-      final body = jsonDecode(res.body);
+      final res = await _send('POST', _uri('/${e.id}/reset-pin'));
       if (!mounted) return;
-      if (res.statusCode == 200 && body is Map && body['success'] == true) {
-        setState(() => _replaceUser(e.mergedFrom(Map<String, dynamic>.from(body['user'] as Map))));
+      if (res.ok) {
+        setState(() => _replaceUser(e.mergedFrom(Map<String, dynamic>.from(res.body['user'] as Map))));
         _loadHistory(e.id);
-        await _showPin(e.name, _s(body['tempPin']));
+        await _showPin(e.name, _s(res.body['tempPin']));
       } else {
-        _toast(body is Map ? _s(body['error']) : 'Couldn\'t reset the PIN.', error: true);
+        _toast(res.error("Couldn't reset the PIN."), error: true);
       }
-    } catch (err) {
-      if (mounted) _toast('Couldn\'t reset the PIN. ($err)', error: true);
+    } on _ApiError catch (err) {
+      if (mounted) _toast(err.message, error: true);
+    } catch (_) {
+      if (mounted) _toast("Couldn't reset the PIN.", error: true);
+    } finally {
+      if (mounted) setState(() => _pinBusy = false);
     }
   }
 
@@ -548,13 +653,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       builder: (ctx) => _AddEmployeeDialog(
         roles: _roles,
         submit: (data) async {
-          final res = await http.post(_uri(''), headers: _headers(), body: jsonEncode(data)).timeout(_timeout);
-          final body = jsonDecode(res.body);
-          if (res.statusCode == 200 && body is Map && body['success'] == true) {
-            return Map<String, dynamic>.from(body);
-          }
-          throw _ApiError(body is Map ? _s(body['error']) : 'Server returned ${res.statusCode}',
-              body is Map ? body['field'] as String? : null);
+          final res = await _send('POST', _uri(''), body: data);
+          if (res.ok) return res.body;
+          final f = res.body['field'];
+          throw _ApiError(res.error('Server returned ${res.status}.'), f is String ? f : null);
         },
       ),
     );
@@ -576,6 +678,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       context: context,
       builder: (ctx) => _dialog(
         title: 'Discard $n unsaved ${n == 1 ? 'change' : 'changes'}?',
+        icon: Icons.undo_rounded,
+        iconColor: _T.badFg,
         body: Text(
           'Your edits to ${e?.name ?? 'this employee'} haven\'t been saved.',
           style: const TextStyle(fontSize: 14, color: DashUi.slate),
@@ -592,10 +696,14 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final keys = _labels.keys.where(_draft.containsKey).toList();
     final notes = <String>[];
     if (_draft.containsKey('tech_weight') || _draft.containsKey('is_commission_eligible')) {
-      notes.add('Open jobs recalculate on the next Service Fusion sync, about 3 minutes. Jobs already paid keep their old weight.');
+      notes.add(
+        'Open jobs recalculate on the next Service Fusion sync, about 3 minutes. Jobs already paid keep their old weight.',
+      );
     }
     if (_draft.containsKey('name')) {
-      notes.add('Past work days and ledger rows are renamed too. Service Fusion must use the new name, or new jobs won\'t match.');
+      notes.add(
+        'Past work days and ledger rows are renamed too. Service Fusion must use the new name, or new jobs won\'t match.',
+      );
     }
     if (_draft['status'] == 'Inactive') {
       notes.add('${e.name.split(' ').first} won\'t be able to log in, and drops off the dashboards.');
@@ -608,6 +716,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       context: context,
       builder: (ctx) => _dialog(
         title: 'Review changes to ${e.name}',
+        icon: Icons.fact_check_outlined,
         width: 520,
         body: Column(
           mainAxisSize: MainAxisSize.min,
@@ -630,22 +739,33 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                       child: Row(
                         children: [
                           Expanded(
-                            child: Text(_labels[keys[i]]!,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate)),
+                            child: Text(
+                              _labels[keys[i]]!,
+                              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate),
+                            ),
                           ),
-                          Text(_display(keys[i], _base(keys[i])),
-                              style: const TextStyle(
-                                  fontSize: 13.5,
-                                  color: DashUi.muted,
-                                  decoration: TextDecoration.lineThrough,
-                                  fontFeatures: _figures)),
+                          Text(
+                            _display(keys[i], _base(keys[i])),
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              color: DashUi.muted,
+                              decoration: TextDecoration.lineThrough,
+                              fontFeatures: _figures,
+                            ),
+                          ),
                           const Padding(
                             padding: EdgeInsets.symmetric(horizontal: 8),
                             child: Icon(Icons.arrow_forward_rounded, size: 14, color: DashUi.muted),
                           ),
-                          Text(_display(keys[i], _draft[keys[i]]),
-                              style: const TextStyle(
-                                  fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: _figures)),
+                          Text(
+                            _display(keys[i], _draft[keys[i]]),
+                            style: const TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: FontWeight.w800,
+                              color: DashUi.ink,
+                              fontFeatures: _figures,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -662,7 +782,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                     child: Icon(Icons.info_outline_rounded, size: 15, color: DashUi.slate),
                   ),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(n, style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.4))),
+                  Expanded(
+                    child: Text(n, style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.4)),
+                  ),
                 ],
               ),
             ],
@@ -677,16 +799,18 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   }
 
   Future<void> _showConflict(_Emp e, Map<String, dynamic> fresh) async {
+    final kept = Map<String, dynamic>.from(_draft);
     await showDialog<void>(
       context: context,
       builder: (ctx) => _dialog(
         title: '${e.name} was changed by someone else',
-        body: const Text(
-          'Someone saved changes to this employee after you opened them. Reload to see the latest, '
-          'then make your edits again.',
-          style: TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
+        icon: Icons.sync_problem_rounded,
+        body: Text(
+          'Someone saved changes to this employee after you opened them. We\'ll load the latest and keep your '
+          '${kept.length} unsaved ${kept.length == 1 ? 'edit' : 'edits'} on top. Check them, then save again.',
+          style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
         ),
-        actions: [_inkButton('Reload employee', () => Navigator.pop(ctx))],
+        actions: [_inkButton('Load latest, keep my edits', () => Navigator.pop(ctx))],
       ),
     );
     if (!mounted) return;
@@ -696,43 +820,87 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       _draft.clear();
     });
     _fillControllers(updated);
+    // Put the edits back on top of the fresh row (anything that now matches it drops out).
+    setState(() {
+      kept.forEach((k, v) {
+        if (!_same(v, _base(k))) _draft[k] = v;
+      });
+    });
+    _syncControllersToDraft();
     _loadHistory(updated.id);
   }
 
+  void _syncControllersToDraft() {
+    String text(dynamic v) => v == null ? '' : '$v';
+    for (final k in _draft.keys) {
+      final v = _draft[k];
+      switch (k) {
+        case 'name':
+          _nameCtl.text = text(v);
+        case 'username':
+          _usernameCtl.text = text(v);
+        case 'email':
+          _emailCtl.text = text(v);
+        case 'year_joined':
+          _yearCtl.text = text(v);
+        case 'tech_id':
+          _techIdCtl.text = text(v);
+        case 'tool_allowance':
+          _allowanceCtl.text = _d(v) == 0 ? '' : _fmtW(_d(v));
+        case 'tech_weight':
+          _weightCtl.text = _fmtW(_d(v));
+      }
+    }
+  }
+
   Future<void> _showPin(String name, String pin) {
+    var copied = false;
     return showDialog<void>(
       context: context,
-      builder: (ctx) => _dialog(
-        title: 'Temporary PIN for ${name.split(' ').first}',
-        body: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 22),
-              decoration: BoxDecoration(color: _T.wash, borderRadius: BorderRadius.circular(14), border: Border.all(color: DashUi.line)),
-              child: SelectableText(
-                pin,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    fontSize: 38, fontWeight: FontWeight.w800, letterSpacing: 10, color: DashUi.ink, fontFeatures: _figures),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => _dialog(
+          title: 'Temporary PIN for ${name.split(' ').first}',
+          icon: Icons.key_rounded,
+          body: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 22),
+                decoration: BoxDecoration(
+                  color: _T.wash,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: DashUi.line),
+                ),
+                child: SelectableText(
+                  pin,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 38,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 10,
+                    color: DashUi.ink,
+                    fontFeatures: _figures,
+                  ),
+                ),
               ),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              'Give this to $name. They\'ll choose their own PIN the first time they log in. '
-              'This PIN isn\'t stored anywhere you can see it again.',
-              style: const TextStyle(fontSize: 13, color: DashUi.slate, height: 1.45),
-            ),
+              const SizedBox(height: 14),
+              Text(
+                'Give this to $name. They\'ll choose their own PIN the first time they log in. '
+                'This PIN isn\'t stored anywhere you can see it again.'
+                '${pin.startsWith('0') ? ' It starts with a zero, so read out every digit.' : ''}',
+                style: const TextStyle(fontSize: 13, color: DashUi.slate, height: 1.45),
+              ),
+            ],
+          ),
+          actions: [
+            _ghostButton(copied ? 'Copied' : 'Copy PIN', () {
+              Clipboard.setData(ClipboardData(text: pin));
+              setLocal(() => copied = true);
+            }),
+            _inkButton('Done', () => Navigator.pop(ctx)),
           ],
         ),
-        actions: [
-          _ghostButton('Copy PIN', () {
-            Clipboard.setData(ClipboardData(text: pin));
-            _toast('PIN copied.');
-          }),
-          _inkButton('Done', () => Navigator.pop(ctx)),
-        ],
       ),
     );
   }
@@ -740,13 +908,69 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   void _toast(String msg, {bool error = false}) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        behavior: SnackBarBehavior.floating,
-        width: 460,
-        backgroundColor: error ? _T.badFg : DashUi.ink,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
-      ));
+      ..showSnackBar(
+        SnackBar(
+          behavior: SnackBarBehavior.floating,
+          width: 460,
+          backgroundColor: error ? _T.badFg : DashUi.ink,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          content: Text(msg, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ),
+      );
+  }
+
+  // ---- Photo ----------------------------------------------------------------
+
+  bool _photoBusy = false;
+
+  /// Pick a picture, crop it to a small square, upload it, and put its address in the draft. Like every other edit it
+  /// only takes effect when "Save changes" is pressed.
+  Future<void> _changePhoto() async {
+    final e = _selected;
+    if (e == null || _photoBusy) return;
+    List<PlatformFile> picked;
+    try {
+      picked = await FilePicker.pickFiles(type: FileType.image);
+    } catch (_) {
+      _toast("Couldn't open the file picker.", error: true);
+      return;
+    }
+    if (picked.isEmpty || !mounted) return;
+    setState(() => _photoBusy = true);
+    try {
+      final png = await squareAvatarPng(await picked.first.readAsBytes());
+      final res = await http
+          .post(
+            _uri('/${e.id}/avatar'),
+            headers: {...AuthSession.instance.headers(json: false), 'Content-Type': 'image/png'},
+            body: png,
+          )
+          .timeout(const Duration(seconds: 60));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout();
+        return;
+      }
+      Map<String, dynamic> body = const {};
+      try {
+        final d = jsonDecode(res.body);
+        if (d is Map) body = Map<String, dynamic>.from(d);
+      } catch (_) {}
+      final url = _s(body['url']);
+      if (res.statusCode == 200 && url.isNotEmpty) {
+        if (mounted && _selectedId == e.id) _set('avatar_url', url);
+      } else {
+        final msg = _s(body['error']);
+        _toast(msg.isNotEmpty ? msg : "Couldn't upload the photo (${res.statusCode}).", error: true);
+      }
+    } on FormatException {
+      _toast("That file couldn't be read as a picture. Try a JPEG or PNG.", error: true);
+    } on TimeoutException {
+      _toast('The upload took too long. Check your connection and try again.', error: true);
+    } catch (_) {
+      _toast("Couldn't upload the photo. Check your connection and try again.", error: true);
+    } finally {
+      if (mounted) setState(() => _photoBusy = false);
+    }
   }
 
   String _display(String key, dynamic v) {
@@ -755,15 +979,18 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     if (key == 'tech_weight') return '${_fmtW(_d(v))}×';
     if (key == 'tool_allowance') return dashMoney(_d(v));
     if (key == 'access_denied' && v is List) return '${v.length} of ${kAllAccessKeys.length} allowed';
+    if (key == 'avatar_url') return '$v'.contains('/api/avatars/') ? 'Uploaded photo' : 'Photo';
     return '$v';
   }
 
   String _displayAudit(String field, String? v) {
-    if (field == 'access_denied') return (v == null || v.isEmpty) ? 'Everything allowed' : 'Off: ${v.replaceAll(',', ', ')}';
     if (v == null || v.isEmpty) return 'None';
+    if (field == 'status') return v.toLowerCase() == 'inactive' ? 'Inactive' : 'Active';
+    if (field == 'role') return _roleLabel(v, _roles);
     if (_boolKeys.contains(field)) return v == 'true' ? 'On' : (v == 'false' ? 'Off' : v);
     if (field == 'tech_weight') return '${_fmtW(_d(v))}×';
     if (field == 'tool_allowance') return dashMoney(_d(v));
+    if (field == 'avatar_url') return v.contains('/api/avatars/') ? 'Uploaded photo' : 'Photo';
     return v;
   }
 
@@ -772,8 +999,17 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   List<_Emp> _visible() {
     final q = _query.trim().toLowerCase();
     final list = _users.where((u) {
+      final inFilter = switch (_filter) {
+        'field' => u.active && u.isField,
+        'office' => u.active && !u.isField,
+        'inactive' => !u.active,
+        _ => true,
+      };
+      if (!inFilter) return false;
       if (q.isEmpty) return true;
-      return u.name.toLowerCase().contains(q) || u.username.toLowerCase().contains(q) || u.role.toLowerCase().contains(q);
+      return u.name.toLowerCase().contains(q) ||
+          u.username.toLowerCase().contains(q) ||
+          _roleLabel(u.role, _roles).toLowerCase().contains(q);
     }).toList();
     list.sort((a, b) {
       final g = a.group.compareTo(b.group);
@@ -784,39 +1020,59 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return CallbackShortcuts(
-      bindings: {
-        const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
-        const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _save,
+    return PopScope(
+      // Browser/Android Back with unsaved edits asks first. (Clicking another menu item can't be
+      // intercepted from here, so the save bar stays visible as the reminder.)
+      canPop: !_dirty,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        final leave = await _confirmDiscard();
+        if (leave == true && mounted) {
+          _discard();
+          if (context.mounted) Navigator.of(context).maybePop();
+        }
       },
-      child: Focus(
-        autofocus: true,
-        child: Scaffold(
-          backgroundColor: _T.bg,
-          body: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-            child: Column(
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.keyS, control: true): _save,
+          const SingleActivator(LogicalKeyboardKey.keyS, meta: true): _save,
+        },
+        child: Focus(
+          autofocus: true,
+          child: Scaffold(
+            backgroundColor: Colors.white,
+            // One screen, not floating cards: a slim bar on top, then the roster as a sidebar and the person filling the
+            // rest of the window, edge to edge.
+            body: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _header(),
-                const SizedBox(height: 18),
+                Container(
+                  constraints: const BoxConstraints(minHeight: 56),
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                  decoration: const BoxDecoration(
+                    color: DashUi.ink, // the header banner colour every dashboard uses
+                    boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
+                  ),
+                  child: _header(),
+                ),
                 if (_loading)
                   const Expanded(child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
                 else if (_error != null && _users.isEmpty)
                   Expanded(child: _errorState())
                 else
                   Expanded(
-                    child: LayoutBuilder(builder: (context, c) {
-                      final rosterW = c.maxWidth >= 1200 ? 340.0 : 296.0;
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(width: rosterW, child: _roster()),
-                          const SizedBox(width: 16),
-                          Expanded(child: _detail()),
-                        ],
-                      );
-                    }),
+                    child: LayoutBuilder(
+                      builder: (context, c) {
+                        final rosterW = c.maxWidth >= 1200 ? 340.0 : 296.0;
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SizedBox(width: rosterW, child: _roster()),
+                            Expanded(child: _detail()),
+                          ],
+                        );
+                      },
+                    ),
                   ),
               ],
             ),
@@ -829,11 +1085,43 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Widget _header() {
     return Row(
       children: [
-        const Expanded(
-          child: Text('Team',
-              style: TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.6)),
+        Expanded(
+          child: Semantics(
+            header: true,
+            child: const Text(
+              'TEAM',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+            ),
+          ),
         ),
-        _inkButton('Add employee', _users.isEmpty ? null : _addEmployee, icon: Icons.person_add_alt_1_rounded),
+        IconButton(
+          tooltip: 'Refresh the team',
+          onPressed: (_loading || _refreshing) ? null : _refresh,
+          icon: _refreshing
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
+              : const Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
+        ),
+        const SizedBox(width: 8),
+        // White on the dark banner (the usual dark button would disappear into it).
+        FilledButton.icon(
+          onPressed: _users.isEmpty ? null : _addEmployee,
+          icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+          label: const Text('Add employee', style: TextStyle(fontWeight: FontWeight.w700)),
+          style: FilledButton.styleFrom(
+            backgroundColor: Colors.white,
+            foregroundColor: DashUi.ink,
+            disabledBackgroundColor: Colors.white24,
+            disabledForegroundColor: Colors.white54,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+        ),
       ],
     );
   }
@@ -849,7 +1137,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           children: [
             const Icon(Icons.cloud_off_rounded, size: 34, color: DashUi.slate),
             const SizedBox(height: 12),
-            Text(_error!, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45)),
+            Text(
+              _error!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
+            ),
             const SizedBox(height: 16),
             _inkButton('Try again', () => _load()),
           ],
@@ -868,18 +1160,24 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     for (final u in list) {
       if (u.group != lastGroup) {
         lastGroup = u.group;
-        children.add(Padding(
-          padding: EdgeInsets.fromLTRB(16, children.isEmpty ? 6 : 16, 16, 6),
-          child: Text(_groupNames[u.group],
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.muted)),
-        ));
+        children.add(
+          Padding(
+            padding: EdgeInsets.fromLTRB(16, children.isEmpty ? 6 : 16, 16, 6),
+            child: Text(
+              _groupNames[u.group],
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.muted),
+            ),
+          ),
+        );
       }
       children.add(_rosterRow(u));
     }
 
     return Container(
-      decoration: DashUi.panel(),
-      clipBehavior: Clip.antiAlias,
+      decoration: const BoxDecoration(
+        color: _T.wash,
+        border: Border(right: BorderSide(color: DashUi.line)),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -892,7 +1190,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               decoration: InputDecoration(
                 isDense: true,
                 filled: true,
-                fillColor: _T.wash,
+                fillColor: Colors.white,
                 hintText: 'Search name, username or role',
                 hintStyle: const TextStyle(fontSize: 13.5, color: DashUi.muted),
                 prefixIcon: const Icon(Icons.search_rounded, size: 19, color: DashUi.muted),
@@ -906,12 +1204,54 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                         }),
                       ),
                 contentPadding: const EdgeInsets.symmetric(vertical: 11),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-                enabledBorder:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-                focusedBorder:
-                    OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.ink)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: DashUi.line),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: DashUi.line),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: DashUi.ink),
+                ),
               ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 6,
+              children: [
+                for (final f in [
+                  ('all', 'All', _users.length),
+                  ('field', 'Field', _users.where((u) => u.active && u.isField).length),
+                  ('office', 'Office', _users.where((u) => u.active && !u.isField).length),
+                  ('inactive', 'Inactive', _users.where((u) => !u.active).length),
+                ])
+                  ChoiceChip(
+                    label: Text(
+                      '${f.$2} ${f.$3}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: _filter == f.$1 ? Colors.white : DashUi.slate,
+                      ),
+                    ),
+                    selected: _filter == f.$1,
+                    onSelected: (_) => setState(() => _filter = f.$1),
+                    showCheckmark: false,
+                    selectedColor: DashUi.ink,
+                    backgroundColor: DashUi.faint,
+                    side: BorderSide.none,
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  ),
+              ],
             ),
           ),
           const Divider(height: 1, color: DashUi.line),
@@ -939,7 +1279,17 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final editing = selected && _dirty;
     final w = selected ? _d(_value('tech_weight')) : u.weight;
     final eligible = selected ? _value('is_commission_eligible') == true : u.commissionEligible;
-    final attention = u.active && (u.unmatched || !u.hasPin);
+    final problems = [
+      if (u.active && u.unmatched)
+        'No Service Fusion work matched in 90 days. Check the name matches Service Fusion exactly.',
+      if (u.active && !u.hasPin) 'No PIN set yet.',
+    ];
+    final attention = problems.isNotEmpty;
+    // Only people on commission get a weight badge; for everyone else it would just say 0×.
+    final showWeight = eligible || w > 0 || u.isField;
+    final eligibleNoShare = eligible && w == 0;
+    // Not eligible means no share, whatever weight is stored (it is ignored), so say "Off" instead of "1×".
+    final badgeText = eligible ? '${_fmtW(w)}×' : 'Off';
 
     return _Hoverable(
       onTap: () => _openEmployee(u),
@@ -953,7 +1303,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
         ),
         child: Opacity(
-          opacity: u.active ? 1 : 0.55,
+          opacity: u.active ? 1 : 0.72,
           child: Row(
             children: [
               DashAvatar(name: u.name, imageUrl: u.avatarUrl, size: 34),
@@ -965,48 +1315,66 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                     Row(
                       children: [
                         Flexible(
-                          child: Text(u.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                  fontSize: 13.5,
-                                  fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
-                                  color: DashUi.ink)),
+                          child: Text(
+                            u.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 13.5,
+                              fontWeight: selected ? FontWeight.w800 : FontWeight.w700,
+                              color: DashUi.ink,
+                            ),
+                          ),
                         ),
                         if (editing) ...[
                           const SizedBox(width: 6),
-                          Container(width: 6, height: 6, decoration: const BoxDecoration(color: DashUi.indigo, shape: BoxShape.circle)),
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: const BoxDecoration(color: DashUi.indigo, shape: BoxShape.circle),
+                          ),
                         ],
                       ],
                     ),
-                    Text(u.active ? (u.role.isEmpty ? 'No role' : u.role) : '${u.role}, inactive',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w500)),
+                    Text(
+                      u.active ? _roleLabel(u.role, _roles) : '${_roleLabel(u.role, _roles)}, inactive',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w500),
+                    ),
                   ],
                 ),
               ),
               if (attention)
                 Tooltip(
-                  message: u.unmatched ? 'No Service Fusion work matched in 90 days' : 'No PIN set',
+                  message: problems.join('\n'),
                   child: const Padding(
                     padding: EdgeInsets.only(right: 6),
                     child: Icon(Icons.error_outline_rounded, size: 16, color: DashUi.amber),
                   ),
                 ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: eligible ? _T.goodBg : DashUi.faint,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Text('${_fmtW(w)}×',
-                    style: TextStyle(
+              if (showWeight)
+                Tooltip(
+                  message: eligibleNoShare
+                      ? 'Commission eligible, but a weight of 0 earns nothing.'
+                      : (!eligible ? 'Not commission eligible, so no share of job commission.' : ''),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: eligibleNoShare ? _T.amberBg : (eligible ? _T.goodBg : DashUi.faint),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
-                        color: eligible ? _T.goodFg : DashUi.muted,
-                        fontFeatures: _figures)),
-              ),
+                        color: eligibleNoShare ? _T.amberFg : (eligible ? _T.goodFg : DashUi.muted),
+                        fontFeatures: _figures,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -1020,10 +1388,23 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final e = _selected;
     if (e == null) {
       return Container(
-        decoration: DashUi.panel(),
         alignment: Alignment.center,
-        child: const Text('Pick someone on the left to see and edit their details.',
-            style: TextStyle(fontSize: 14, color: DashUi.muted)),
+        child: const Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.groups_2_outlined, size: 40, color: DashUi.muted),
+            SizedBox(height: 10),
+            Text(
+              'Pick someone on the left',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+            ),
+            SizedBox(height: 6),
+            Text(
+              'See and edit their profile, pay weight, permissions and change history.',
+              style: TextStyle(fontSize: 13, color: DashUi.slate),
+            ),
+          ],
+        ),
       );
     }
 
@@ -1034,17 +1415,21 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             controller: _detailScroll,
             padding: const EdgeInsets.only(bottom: 110),
             children: [
-              _hero(e),
-              const SizedBox(height: 12),
-              _profileSection(e),
-              const SizedBox(height: 12),
-              _weightSection(),
-              if (!_isOwnerAdmin(_s(_value('role')))) ...[
-                const SizedBox(height: 12),
-                _permissionsSection(),
-              ],
-              const SizedBox(height: 12),
-              _historySection(),
+              // One panel, not five cards: the sections are told apart by a thin rule, so the page reads as a
+              // single record for this person.
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _hero(e),
+                  _sectionRule(),
+                  _profileSection(e),
+                  _sectionRule(),
+                  _weightSection(),
+                  if (!_isOwnerAdmin(_s(_value('role')))) ...[_sectionRule(), _permissionsSection()],
+                  _sectionRule(),
+                  _historySection(),
+                ],
+              ),
             ],
           ),
         ),
@@ -1085,9 +1470,21 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           const Icon(Icons.edit_rounded, size: 17, color: Colors.white70),
           const SizedBox(width: 10),
           Expanded(
-            child: Text(
-              '$n unsaved ${n == 1 ? 'change' : 'changes'}',
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$n unsaved ${n == 1 ? 'change' : 'changes'}${_draft.keys.any(_sensitive.contains) ? ' · affects pay or access' : ''}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: Colors.white),
+                ),
+                Text(
+                  _draft.keys.map((k) => _labels[k] ?? k).join(', '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: Colors.white60),
+                ),
+              ],
             ),
           ),
           TextButton(
@@ -1106,11 +1503,87 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
             child: _saving
-                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.ink))
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.ink),
+                  )
                 : const Text('Save changes', style: TextStyle(fontWeight: FontWeight.w800)),
           ),
         ],
       ),
+    );
+  }
+
+  /// Why this person has a warning icon in the roster, spelled out.
+  List<String> _attentionFor(_Emp e) => [
+    if (e.active && e.unmatched)
+      'No Service Fusion work matched this name in the last 90 days. If they are working, check the name matches '
+          'Service Fusion exactly.',
+    if (e.active && !e.hasPin) 'No PIN yet. Use "Set temporary PIN" below so they can log in.',
+  ];
+
+  /// The avatar, with a small camera badge. Click to upload (or replace/remove when there is one already).
+  Widget _photoControl(String name, bool active) {
+    final url = _s(_value('avatar_url'));
+    final avatar = Stack(
+      clipBehavior: Clip.none,
+      children: [
+        DashAvatar(
+          name: name,
+          imageUrl: url,
+          size: 96,
+          ringColor: _draft.containsKey('avatar_url') ? DashUi.indigo : (active ? DashUi.emerald : DashUi.line),
+          ringWidth: 2.5,
+        ),
+        if (_photoBusy)
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(color: Colors.white.withValues(alpha: 0.75), shape: BoxShape.circle),
+              child: const Center(
+                child: SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.4, color: DashUi.ink),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          right: 0,
+          bottom: 0,
+          child: Container(
+            width: 30,
+            height: 30,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: DashUi.line),
+            ),
+            child: const Icon(Icons.photo_camera_outlined, size: 16, color: DashUi.slate),
+          ),
+        ),
+      ],
+    );
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: url.isEmpty
+          ? Tooltip(
+              message: 'Upload a photo',
+              child: GestureDetector(onTap: _photoBusy ? null : _changePhoto, child: avatar),
+            )
+          : PopupMenuButton<String>(
+              tooltip: 'Change photo',
+              enabled: !_photoBusy,
+              padding: EdgeInsets.zero,
+              color: Colors.white,
+              onSelected: (v) => v == 'remove' ? _set('avatar_url', '') : _changePhoto(),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'upload', child: Text('Replace photo…')),
+                PopupMenuItem(value: 'remove', child: Text('Remove photo')),
+              ],
+              child: avatar,
+            ),
     );
   }
 
@@ -1120,67 +1593,99 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final active = _value('status') == 'Active';
     final year = _value('year_joined');
 
-    return Container(
-      decoration: DashUi.panel(),
+    return Padding(
       padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          LayoutBuilder(builder: (context, c) {
-            final narrow = c.maxWidth < 640;
-            final status = _segmented<String>(
-              value: active ? 'Active' : 'Inactive',
-              options: const [('Active', 'Active'), ('Inactive', 'Inactive')],
-              onChanged: (v) => _set('status', v),
-              activeColor: active ? DashUi.emeraldDeep : _T.badFg,
-            );
-            final identity = Row(
-              children: [
-                DashAvatar(
-                  name: name,
-                  imageUrl: _s(_value('avatar_url')),
-                  size: 64,
-                  ringColor: active ? DashUi.emerald : DashUi.line,
-                  ringWidth: 2.5,
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(name.isEmpty ? 'Unnamed' : name,
-                          style: const TextStyle(
-                              fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.4)),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: [
-                          _chip('@${_s(_value('username'))}', DashUi.slate, DashUi.faint),
-                          _chip(role.isEmpty ? 'No role' : role, DashUi.ink, DashUi.faint),
-                          if (_grantsAdmin(role)) _chip('Admin access', DashUi.indigo, const Color(0xFFEEF2FF)),
-                          if (year != null) _chip('Joined $year', DashUi.slate, DashUi.faint),
-                        ],
+          LayoutBuilder(
+            builder: (context, c) {
+              final narrow = c.maxWidth < 520;
+              final me = _isMe(e);
+              // One deliberate button instead of a toggle next to the name; the review step still follows.
+              final status = Tooltip(
+                message: me ? "You can't deactivate your own account." : '',
+                child: active
+                    ? OutlinedButton.icon(
+                        onPressed: me ? null : () => _set('status', 'Inactive'),
+                        icon: const Icon(Icons.person_off_outlined, size: 17),
+                        label: const Text('Deactivate…', style: TextStyle(fontWeight: FontWeight.w700)),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _T.badFg,
+                          side: BorderSide(color: me ? DashUi.line : _T.badFg.withValues(alpha: 0.4)),
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
+                      )
+                    : FilledButton.icon(
+                        onPressed: () => _set('status', 'Active'),
+                        icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
+                        label: const Text('Reactivate', style: TextStyle(fontWeight: FontWeight.w700)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: DashUi.emeraldDeep,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        ),
                       ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-            if (narrow) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [identity, const SizedBox(height: 14), status],
               );
-            }
-            return Row(
-              children: [
-                Expanded(child: identity),
-                const SizedBox(width: 12),
-                SizedBox(width: 210, child: status),
-              ],
-            );
-          }),
+              final identity = Row(
+                children: [
+                  _photoControl(name, active),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name.isEmpty ? 'Unnamed' : name,
+                          style: const TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: DashUi.ink,
+                            letterSpacing: -0.4,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            _chip('@${_s(_value('username'))}', DashUi.slate, DashUi.faint),
+                            _chip(_roleLabel(role, _roles), DashUi.ink, DashUi.faint),
+                            if (_grantsAdmin(role)) _chip('Admin access', DashUi.indigo, const Color(0xFFEEF2FF)),
+                            if (year != null) _chip('Joined $year', DashUi.slate, DashUi.faint),
+                            if (!active) _chip('Inactive', _T.badFg, _T.badBg),
+                            if (_isMe(e)) _chip('You', DashUi.emeraldDeep, _T.goodBg),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+              if (narrow) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [identity, const SizedBox(height: 14), status],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: identity),
+                  const SizedBox(width: 12),
+                  status,
+                ],
+              );
+            },
+          ),
+          if (_attentionFor(e).isNotEmpty) ...[
+            const SizedBox(height: 12),
+            for (final msg in _attentionFor(e))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: _note(Icons.error_outline_rounded, msg, fg: _T.amberFg, bg: _T.amberBg),
+              ),
+          ],
           if (_fieldErrors['status'] != null) ...[
             const SizedBox(height: 10),
             _note(Icons.error_outline_rounded, _fieldErrors['status']!, fg: _T.badFg, bg: _T.badBg),
@@ -1191,58 +1696,114 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   }
 
   Widget _weightSection() {
+    final e = _selected!;
     final w = _d(_value('tech_weight'));
     final eligible = _value('is_commission_eligible') == true;
+    final isField = _s(_value('role')).toLowerCase().contains('tech');
     final isPreset = _weightPresets.any((p) => _same(p.$1, w));
     final suggestLead = _s(_value('role')).toLowerCase().contains('lead') && !_same(w, 1.5);
+    // Office, sales, warehouse and admin people aren't on job commission, so the pay controls start collapsed.
+    final offCommission = !isField && !eligible && w == 0;
+
+    void pick(double v) => _set('tech_weight', v);
+
+    final weightControls = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Opacity(
+          opacity: eligible ? 1 : 0.6,
+          child: Wrap(
+            spacing: 12,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.start,
+            children: [
+              SizedBox(
+                width: 380,
+                child: _segmented<double>(
+                  value: w,
+                  options: [for (final p in _weightPresets) (p.$1, '${_fmtW(p.$1)}×  ${p.$2}')],
+                  onChanged: pick,
+                ),
+              ),
+              if (!isPreset)
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(
+                    'Custom: ${_fmtW(w)}×',
+                    style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              if (suggestLead)
+                TextButton(
+                  onPressed: () => pick(1.5),
+                  child: const Text('Set to 1.5× (lead rate)', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+            ],
+          ),
+        ),
+        if (_fieldErrors['tech_weight'] != null) ...[
+          const SizedBox(height: 8),
+          _note(Icons.error_outline_rounded, _fieldErrors['tech_weight']!, fg: _T.badFg, bg: _T.badBg),
+        ],
+        if (eligible && w == 0) ...[
+          const SizedBox(height: 10),
+          _note(
+            Icons.warning_amber_rounded,
+            'Commission eligible with a weight of 0 earns nothing. Set a weight, or turn eligibility off.',
+            fg: _T.amberFg,
+            bg: _T.amberBg,
+            line: const Color(0xFFFDE68A),
+          ),
+        ] else if (!eligible && w > 0 && isField) ...[
+          const SizedBox(height: 10),
+          _note(
+            Icons.info_outline_rounded,
+            'The weight is ignored while Commission eligible is off.',
+            fg: DashUi.slate,
+            bg: _T.wash,
+          ),
+        ],
+        const SizedBox(height: 10),
+        _toggleRow(
+          'is_commission_eligible',
+          'Commission eligible',
+          'Earns job commission and shows up on payroll. Weight only counts when this is on.',
+        ),
+      ],
+    );
 
     return _section(
       title: 'Commission',
-      subtitle: 'Weight is their share of a job compared with everyone else who worked the same days.',
+      subtitle: offCommission
+          ? '${e.name.split(' ').first} is not on job commission.'
+          : 'Weight is their share of a job compared with everyone else who worked the same days.',
       trailing: _changedTag('tech_weight'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Opacity(
-            opacity: eligible ? 1 : 0.6,
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 380,
-                  child: _segmented<double>(
-                    value: w,
-                    options: [for (final p in _weightPresets) (p.$1, '${_fmtW(p.$1)}×  ${p.$2}')],
-                    onChanged: (v) => _set('tech_weight', v),
+          if (offCommission)
+            Material(
+              color: Colors.transparent,
+              child: Theme(
+                data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                child: ExpansionTile(
+                  key: ValueKey('comm-${e.id}'),
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  title: const Text(
+                    'Job commission settings',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.slate),
                   ),
+                  children: [weightControls],
                 ),
-                if (!isPreset)
-                  Text('Currently ${_fmtW(w)}×',
-                      style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontWeight: FontWeight.w600)),
-                if (suggestLead)
-                  TextButton(
-                    onPressed: () => _set('tech_weight', 1.5),
-                    child: const Text('Leads usually run 1.5. Use it', style: TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-              ],
-            ),
-          ),
-          if (_fieldErrors['tech_weight'] != null) ...[
-            const SizedBox(height: 8),
-            _note(Icons.error_outline_rounded, _fieldErrors['tech_weight']!, fg: _T.badFg, bg: _T.badBg),
-          ],
-          _rule(),
-          _toggleRow('is_commission_eligible', 'Commission eligible',
-              'Earns job commission and shows up on payroll. Weight only counts when this is on.'),
-          _rule(),
-          _toggleRow('is_callback_eligible', 'Callback pay eligible',
-              'Gets the flat callback rate when sent out on a callback.'),
-          const SizedBox(height: 4),
-          const Text(
-            'Open jobs pick up changes on the next Service Fusion sync, about 3 minutes. Jobs already paid keep the weight they were paid at.',
-            style: TextStyle(fontSize: 12, color: DashUi.muted, height: 1.4),
+              ),
+            )
+          else
+            weightControls,
+          _toggleRow(
+            'is_callback_eligible',
+            'Callback pay eligible',
+            'Gets the flat callback rate when sent out on a callback.',
           ),
         ],
       ),
@@ -1253,7 +1814,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final allowed = (_value('access_denied') as List).cast<String>().toSet();
     final isTech = isTechnicianRole(_s(_value('role')));
 
-    void apply(Set<String> next) => _set('access_denied', [for (final k in kAllAccessKeys) if (next.contains(k)) k]);
+    void apply(Set<String> next) => _set('access_denied', [
+      for (final k in kAllAccessKeys)
+        if (next.contains(k)) k,
+    ]);
 
     // Turns one cell on or off and keeps View in step: Create/Update/Delete need View, and
     // switching View off clears the rest of the row.
@@ -1320,9 +1884,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   }
 
   Widget _subHeader(String text) => Padding(
-        padding: const EdgeInsets.only(top: 4, bottom: 10),
-        child: Text(text, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink)),
-      );
+    padding: const EdgeInsets.only(top: 4, bottom: 10),
+    child: Text(
+      text,
+      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink),
+    ),
+  );
 
   static const double _cellW = 76;
 
@@ -1337,7 +1904,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   ) {
     final used = {for (final r in group.items) ...r.actions};
     return Container(
-      decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: DashUi.line)),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: DashUi.line),
+      ),
       clipBehavior: Clip.antiAlias,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1348,10 +1918,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(group.title,
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: DashUi.slate)),
+                  child: Text(
+                    group.title,
+                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: DashUi.slate),
+                  ),
                 ),
-                for (final a in AccessAction.values)
+                for (final a in AccessAction.values.where(used.contains))
                   SizedBox(
                     width: _cellW,
                     child: used.contains(a)
@@ -1374,7 +1946,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           ),
           for (final r in group.items)
             Container(
-              decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: DashUi.line)),
+              ),
               child: Row(
                 children: [
                   Expanded(
@@ -1387,17 +1961,19 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                             Icon(r.icon, size: 16, color: DashUi.muted),
                             const SizedBox(width: 9),
                             Flexible(
-                              child: Text(r.label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+                              child: Text(
+                                r.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                              ),
                             ),
                           ],
                         ),
                       ),
                     ),
                   ),
-                  for (final a in AccessAction.values)
+                  for (final a in AccessAction.values.where(used.contains))
                     SizedBox(
                       width: _cellW,
                       child: r.actions.contains(a)
@@ -1414,7 +1990,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                                 ),
                               ),
                             )
-                          : const Center(child: Text('\u2013', style: TextStyle(color: DashUi.line, fontSize: 14))),
+                          : const Center(
+                              child: Text('\u2013', style: TextStyle(color: DashUi.line, fontSize: 14)),
+                            ),
                     ),
                 ],
               ),
@@ -1427,91 +2005,152 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Widget _profileSection(_Emp e) {
     final nameChanged = _draft.containsKey('name');
     final role = _s(_value('role'));
-    final options = [..._roles];
+    var options = [..._roles];
     if (role.isNotEmpty && !options.any((r) => r.name == role)) options.add(_Role(role, false));
+    // You can't take admin access away from yourself (the server refuses), so only admin roles are offered.
+    final lockedToAdmin = _isMe(e) && _grantsAdmin(_s(_base('role')));
+    if (lockedToAdmin) options = options.where((r) => r.grantsAdmin).toList();
+
+    final roleField = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _fieldLabel('Role'),
+        DropdownButtonFormField<String>(
+          initialValue: role.isEmpty ? null : role,
+          isExpanded: true,
+          borderRadius: BorderRadius.circular(10),
+          dropdownColor: Colors.white,
+          hint: const Text('Choose a role'),
+          decoration: _dec('role'),
+          // Built from the theme so the dropdown uses the app font (a bare TextStyle skips it).
+          style: Theme.of(context).textTheme.bodyMedium
+              ?.copyWith(fontSize: 13.5, color: DashUi.ink, fontWeight: FontWeight.w600),
+          items: [
+            for (final r in options)
+              DropdownMenuItem(
+                value: r.name,
+                child: Row(
+                  children: [
+                    Expanded(child: Text(r.name)),
+                    if (r.grantsAdmin)
+                      const Text(
+                        'Admin access',
+                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.indigo),
+                      ),
+                  ],
+                ),
+              ),
+          ],
+          onChanged: (v) {
+            if (v != null) _set('role', v);
+          },
+        ),
+      ],
+    );
+
+    final badges = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _fieldLabel('Badges'),
+            const SizedBox(width: 5),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 4),
+              child: Tooltip(
+                message:
+                    'The Lead badge shows in the tech app. Pay comes from the commission weight, and the role is '
+                    'separate, so set each one on its own.',
+                child: Icon(Icons.info_outline_rounded, size: 14, color: DashUi.muted),
+              ),
+            ),
+          ],
+        ),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            _badgePill('is_lead', 'Lead', Icons.workspace_premium_rounded, DashUi.indigo),
+            _badgePill('five_star', '5-Star', Icons.star_rounded, DashUi.amber),
+            _badgePill('no_recalls', 'No recalls', Icons.verified_rounded, DashUi.emeraldDeep),
+          ],
+        ),
+      ],
+    );
 
     return _section(
       title: 'Profile',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _cols([
-            _textField('name', 'Name', _nameCtl,
-                helper: nameChanged ? 'Must match Service Fusion exactly. Past work days and ledger rows are renamed when you save.' : null,
-                helperColor: nameChanged ? _T.amberFg : null),
-            _textField('username', 'Username', _usernameCtl),
-            _textField('email', 'Email', _emailCtl, type: TextInputType.emailAddress, hint: 'name@integritydoornwa.com'),
-            _textField('year_joined', 'Year joined', _yearCtl,
+          // Four columns where there is room, so the whole profile is three short rows instead of a tall form.
+          _grid([
+            (
+              _textField(
+                'name',
+                'Name',
+                _nameCtl,
+                helper: nameChanged
+                    ? 'Must match Service Fusion exactly. Past work days and ledger rows are renamed when you save.'
+                    : null,
+                helperColor: nameChanged ? _T.amberFg : null,
+              ),
+              1,
+            ),
+            (_textField('username', 'Username', _usernameCtl), 1),
+            (
+              _textField(
+                'email',
+                'Email',
+                _emailCtl,
+                type: TextInputType.emailAddress,
+                hint: 'name@integritydoornwa.com',
+              ),
+              1,
+            ),
+            (roleField, 1),
+            (
+              _textField(
+                'year_joined',
+                'Year joined',
+                _yearCtl,
                 type: TextInputType.number,
                 formatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
-                hint: '${DateTime.now().year}'),
-            _textField('tech_id', 'Service Fusion tech ID', _techIdCtl, hint: 'Optional'),
-            _textField('avatar_url', 'Photo URL', _avatarCtl, hint: 'https://'),
-          ]),
-          _rule(),
-          _cols([
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _fieldLabel('Role'),
-                DropdownButtonFormField<String>(
-                  value: role.isEmpty ? null : role,
-                  isExpanded: true,
-                  borderRadius: BorderRadius.circular(12),
-                  dropdownColor: Colors.white,
-                  hint: const Text('Choose a role'),
-                  decoration: _dec('role'),
-                  style: const TextStyle(fontSize: 14, color: DashUi.ink, fontWeight: FontWeight.w600),
-                  items: [
-                    for (final r in options)
-                      DropdownMenuItem(
-                        value: r.name,
-                        child: Row(children: [
-                          Expanded(child: Text(r.name)),
-                          if (r.grantsAdmin)
-                            const Text('Admin access',
-                                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.indigo)),
-                        ]),
-                      ),
-                  ],
-                  onChanged: (v) {
-                    if (v != null) _set('role', v);
-                  },
-                ),
-              ],
+                hint: '${DateTime.now().year}',
+              ),
+              1,
             ),
-            _textField('tool_allowance', 'Tool allowance', _allowanceCtl,
-                prefix: '\$ ',
+            (_textField('tech_id', 'Service Fusion tech ID', _techIdCtl, hint: 'Optional'), 1),
+            (
+              _textField(
+                'tool_allowance',
+                'Tool allowance',
+                _allowanceCtl,
+                prefix: r'$ ',
                 type: const TextInputType.numberWithOptions(decimal: true),
                 formatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,6}(\.\d{0,2})?'))],
-                hint: '0'),
-            _stepperField('tenure_tier', 'Tenure tier', 0, 10),
-            _stepperField('inventory_strikes', 'Inventory strikes', 0, 999),
-            _stepperField('warehouse_strikes', 'Warehouse strikes', 0, 999),
+                hint: '0',
+              ),
+              1,
+            ),
+            (_stepperField('tenure_tier', 'Tenure tier', 0, 10), 1),
+            (_stepperField('inventory_strikes', 'Inventory strikes', 0, 999), 1),
+            (_stepperField('warehouse_strikes', 'Warehouse strikes', 0, 999), 1),
+            (badges, 2),
           ]),
-          if (_grantsAdmin(role)) ...[
+          if (lockedToAdmin) ...[
             const SizedBox(height: 8),
-            const Text('This role can open admin screens, including this one.',
-                style: TextStyle(fontSize: 12, color: DashUi.indigo, fontWeight: FontWeight.w600)),
+            const Text(
+              "You can't remove your own admin access.",
+              style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+            ),
+          ] else if (_grantsAdmin(role)) ...[
+            const SizedBox(height: 8),
+            const Text(
+              'This role can open admin screens, including this one.',
+              style: TextStyle(fontSize: 12, color: DashUi.indigo, fontWeight: FontWeight.w600),
+            ),
           ],
-          const SizedBox(height: 14),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Padding(
-                padding: EdgeInsets.only(top: 8, right: 12),
-                child: Text('Badges',
-                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.slate)),
-              ),
-              Expanded(
-                child: Wrap(spacing: 8, runSpacing: 8, children: [
-                  _badgePill('is_lead', 'Lead', Icons.workspace_premium_rounded, DashUi.indigo),
-                  _badgePill('five_star', '5-Star', Icons.star_rounded, DashUi.amber),
-                  _badgePill('no_recalls', 'No recalls', Icons.verified_rounded, DashUi.emeraldDeep),
-                ]),
-              ),
-            ],
-          ),
           _rule(),
           _loginRow(e),
         ],
@@ -1519,23 +2158,34 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
-  Widget _rule() => const Padding(
-        padding: EdgeInsets.symmetric(vertical: 10),
-        child: Divider(height: 1, color: DashUi.line),
-      );
+  /// A grid that adapts: four columns when wide, three, then two. Each item says how many columns it spans.
+  Widget _grid(List<(Widget, int)> items) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final n = c.maxWidth >= 760 ? 4 : (c.maxWidth >= 520 ? 3 : 2);
+        const gap = 12.0;
+        final col = (c.maxWidth - gap * (n - 1)) / n;
+        double width(int span) {
+          final k = span > n ? n : span;
+          return (col * k + gap * (k - 1)).floorToDouble();
+        }
 
-  /// Three columns when there's room, two otherwise.
-  Widget _cols(List<Widget> items) {
-    return LayoutBuilder(builder: (context, c) {
-      final n = c.maxWidth >= 720 ? 3 : 2;
-      final w = ((c.maxWidth - 12 * (n - 1)) / n).floorToDouble();
-      return Wrap(
-        spacing: 12,
-        runSpacing: 12,
-        children: [for (final i in items) SizedBox(width: w, child: i)],
-      );
-    });
+        return Wrap(
+          spacing: gap,
+          runSpacing: 12,
+          children: [for (final (w, span) in items) SizedBox(width: width(span), child: w)],
+        );
+      },
+    );
   }
+
+  /// The thin line between the sections of the one detail panel.
+  Widget _sectionRule() => const Divider(height: 1, color: DashUi.line);
+
+  Widget _rule() => const Padding(
+    padding: EdgeInsets.symmetric(vertical: 10),
+    child: Divider(height: 1, color: DashUi.line),
+  );
 
   Widget _badgePill(String key, String label, IconData icon, Color color) {
     final on = _value(key) == true;
@@ -1544,21 +2194,28 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       onTap: () => _set(key, !on),
       builder: (hover) => AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
           color: on ? color.withValues(alpha: 0.08) : (hover ? _T.wash : Colors.white),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color: changed ? DashUi.indigo : (on ? color.withValues(alpha: 0.45) : (hover ? DashUi.muted : DashUi.line)),
+            color: changed
+                ? DashUi.indigo
+                : (on ? color.withValues(alpha: 0.45) : (hover ? DashUi.muted : DashUi.line)),
             width: changed ? 1.5 : 1,
           ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 16, color: on ? color : DashUi.muted),
-          const SizedBox(width: 6),
-          Text(label,
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: on ? DashUi.ink : DashUi.slate)),
-        ]),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: on ? color : DashUi.muted),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: on ? DashUi.ink : DashUi.slate),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1567,27 +2224,36 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final (String label, Color fg, Color bg) = !e.hasPin
         ? ('No PIN yet', _T.amberFg, _T.amberBg)
         : e.needsPinChange
-            ? ('Must choose a new PIN at next login', DashUi.sky, _T.skyBg)
-            : ('PIN set', _T.goodFg, _T.goodBg);
+        ? ('Must choose a new PIN at next login', DashUi.sky, _T.skyBg)
+        : ('PIN set', _T.goodFg, _T.goodBg);
     return Row(
       children: [
-        _chip(label, fg, bg),
+        Tooltip(message: 'PINs are stored encrypted, so nobody can look one up.', child: _chip(label, fg, bg)),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
-            'Logs in as ${e.username.isEmpty ? 'no username' : e.username}. PINs are stored encrypted, so nobody can look one up.',
+            'Logs in as ${e.username.isEmpty ? 'no username' : e.username}',
             style: const TextStyle(fontSize: 12.5, color: DashUi.slate),
           ),
         ),
         const SizedBox(width: 12),
         OutlinedButton.icon(
-          onPressed: _resetPin,
-          icon: const Icon(Icons.key_rounded, size: 16),
-          label: Text(e.hasPin ? 'Reset PIN' : 'Set temporary PIN', style: const TextStyle(fontWeight: FontWeight.w700)),
+          onPressed: _pinBusy ? null : _resetPin,
+          icon: _pinBusy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.ink),
+                )
+              : const Icon(Icons.key_rounded, size: 16),
+          label: Text(
+            e.hasPin ? 'Reset PIN' : 'Set temporary PIN',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
           style: OutlinedButton.styleFrom(
             foregroundColor: DashUi.ink,
             side: const BorderSide(color: DashUi.line),
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
           ),
         ),
@@ -1602,17 +2268,43 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         padding: EdgeInsets.symmetric(vertical: 16),
         child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
       );
+    } else if (_historyError != null) {
+      body = Row(
+        children: [
+          const Icon(Icons.error_outline_rounded, size: 18, color: _T.badFg),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(_historyError!, style: const TextStyle(fontSize: 13, color: _T.badFg)),
+          ),
+          TextButton(
+            onPressed: () => _selectedId == null ? null : _loadHistory(_selectedId!),
+            child: const Text('Try again'),
+          ),
+        ],
+      );
     } else if ((_history ?? const []).isEmpty) {
-      body = const Text('No changes recorded yet. Every edit made here is logged with who made it and when.',
-          style: TextStyle(fontSize: 13, color: DashUi.muted));
+      body = const Text(
+        'No changes recorded yet. Every edit made here is logged with who made it and when.',
+        style: TextStyle(fontSize: 13, color: DashUi.muted),
+      );
     } else {
       final fmt = DateFormat('MMM d, y  h:mm a');
       body = Column(
         children: [
+          if (_history!.length >= 60)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Showing the latest 60 changes.', style: TextStyle(fontSize: 12, color: DashUi.muted)),
+              ),
+            ),
           for (var i = 0; i < _history!.length; i++)
             Container(
               padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(border: i == 0 ? null : const Border(top: BorderSide(color: DashUi.line))),
+              decoration: BoxDecoration(
+                border: i == 0 ? null : const Border(top: BorderSide(color: DashUi.line)),
+              ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -1633,8 +2325,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(_history![i].at == null ? '' : fmt.format(_history![i].at!),
-                          style: const TextStyle(fontSize: 12, color: DashUi.slate, fontFeatures: _figures)),
+                      Text(
+                        _history![i].at == null ? '' : fmt.format(_history![i].at!),
+                        style: const TextStyle(fontSize: 12, color: DashUi.slate, fontFeatures: _figures),
+                      ),
                       Text(_history![i].by, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
                     ],
                   ),
@@ -1644,7 +2338,45 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         ],
       );
     }
-    return _section(title: 'Change history', child: body);
+    // Collapsed until asked for: it is long, rarely needed, and used to push everything else off the screen. The key
+    // ties the open/closed state to the person, so choosing someone else starts collapsed again.
+    final count = _history?.length;
+    return Theme(
+      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+      child: ExpansionTile(
+        key: ValueKey('history-${_selectedId ?? 0}'),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+        childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+        shape: const Border(),
+        collapsedShape: const Border(),
+        title: Row(
+          children: [
+            const Text(
+              'Change history',
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+            ),
+            if (count != null && count > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(20)),
+                child: Text(
+                  count >= 60 ? '60+' : '$count',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: DashUi.slate,
+                    fontFeatures: _figures,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        children: [body],
+      ),
+    );
   }
 
   Widget _historyLine(_Change c) {
@@ -1653,26 +2385,71 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       return Text('Added to the team as ${c.newValue ?? ''}', style: labelStyle);
     }
     if (c.field == 'pin') return const Text('PIN reset', style: labelStyle);
+    if (c.field == 'avatar_url') {
+      final removed = c.newValue == null || c.newValue!.isEmpty;
+      return Text(
+        removed ? 'Photo removed' : (c.oldValue == null || c.oldValue!.isEmpty ? 'Photo added' : 'Photo changed'),
+        style: labelStyle,
+      );
+    }
+    if (c.field == 'access_denied') {
+      // Stored as the list of keys switched OFF; say what actually changed in words.
+      Set<String> keys(String? v) =>
+          (v == null || v.isEmpty) ? <String>{} : v.split(',').map((k) => k.trim()).where((k) => k.isNotEmpty).toSet();
+      final before = keys(c.oldValue);
+      final after = keys(c.newValue);
+      final off = after.difference(before).map(_accessKeyLabel).toList();
+      final on = before.difference(after).map(_accessKeyLabel).toList();
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Permissions changed', style: labelStyle),
+          if (off.isNotEmpty)
+            Text(
+              'Turned off: ${off.join('; ')}',
+              style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.35),
+            ),
+          if (on.isNotEmpty)
+            Text(
+              'Turned on: ${on.join('; ')}',
+              style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.35),
+            ),
+          if (off.isEmpty && on.isEmpty)
+            const Text('No visible change', style: TextStyle(fontSize: 12.5, color: DashUi.muted)),
+        ],
+      );
+    }
     return Text.rich(
-      TextSpan(children: [
-        TextSpan(text: '${c.label}  ', style: labelStyle),
-        TextSpan(
+      TextSpan(
+        children: [
+          TextSpan(text: '${c.label}  ', style: labelStyle),
+          TextSpan(
             text: _displayAudit(c.field, c.oldValue),
-            style: const TextStyle(fontSize: 13, color: DashUi.muted, fontFeatures: _figures)),
-        const TextSpan(text: '  to  ', style: TextStyle(fontSize: 12, color: DashUi.muted)),
-        TextSpan(
+            style: const TextStyle(fontSize: 13, color: DashUi.muted, fontFeatures: _figures),
+          ),
+          const TextSpan(
+            text: '  to  ',
+            style: TextStyle(fontSize: 12, color: DashUi.muted),
+          ),
+          TextSpan(
             text: _displayAudit(c.field, c.newValue),
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink, fontFeatures: _figures)),
-      ]),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: DashUi.ink,
+              fontFeatures: _figures,
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   // ---- Building blocks ------------------------------------------------------
 
   Widget _section({required String title, String? subtitle, Widget? trailing, required Widget child}) {
-    return Container(
-      decoration: DashUi.panel(),
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 16),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1683,10 +2460,16 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+                    Text(
+                      title,
+                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
                     if (subtitle != null) ...[
                       const SizedBox(height: 2),
-                      Text(subtitle, style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                      ),
                     ],
                   ],
                 ),
@@ -1694,7 +2477,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               ?trailing,
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           child,
         ],
       ),
@@ -1703,30 +2486,37 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   Widget _changedTag(String key) {
     if (!_draft.containsKey(key)) return const SizedBox.shrink();
-    return Text('was ${_display(key, _base(key))}',
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.indigo, fontFeatures: _figures));
+    return Text(
+      'was ${_display(key, _base(key))}',
+      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.indigo, fontFeatures: _figures),
+    );
   }
 
   Widget _fieldLabel(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 6),
-        child: Text(text, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.slate)),
-      );
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Text(
+      text,
+      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate),
+    ),
+  );
 
   InputDecoration _dec(String key, {String? hint, String? prefix}) {
     final changed = _draft.containsKey(key);
-    OutlineInputBorder b(Color c, [double w = 1]) =>
-        OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: c, width: w));
+    OutlineInputBorder b(Color c, [double w = 1]) => OutlineInputBorder(
+      borderRadius: BorderRadius.circular(8),
+      borderSide: BorderSide(color: c, width: w),
+    );
     return InputDecoration(
       isDense: true,
       filled: true,
       fillColor: changed ? _T.changedFill : _T.field,
       hintText: hint,
-      hintStyle: const TextStyle(fontSize: 14, color: DashUi.muted, fontWeight: FontWeight.w500),
+      hintStyle: const TextStyle(fontSize: 13.5, color: DashUi.muted, fontWeight: FontWeight.w500),
       prefixText: prefix,
-      prefixStyle: const TextStyle(fontSize: 14, color: DashUi.slate, fontWeight: FontWeight.w600),
+      prefixStyle: const TextStyle(fontSize: 13.5, color: DashUi.slate, fontWeight: FontWeight.w600),
       errorText: _fieldErrors[key],
       errorMaxLines: 3,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       border: b(DashUi.line),
       enabledBorder: b(changed ? DashUi.indigo.withValues(alpha: 0.45) : DashUi.line),
       focusedBorder: b(DashUi.ink, 1.4),
@@ -1754,7 +2544,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           controller: ctl,
           keyboardType: type,
           inputFormatters: formatters,
-          style: const TextStyle(fontSize: 14, color: DashUi.ink, fontWeight: FontWeight.w600),
+          style: const TextStyle(fontSize: 13.5, color: DashUi.ink, fontWeight: FontWeight.w600),
           decoration: _dec(key, hint: hint, prefix: prefix),
           onChanged: (t) {
             final v = t.trim();
@@ -1773,12 +2563,15 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         if (helper != null && _fieldErrors[key] == null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
-            child: Text(helper,
-                style: TextStyle(
-                    fontSize: 12,
-                    color: helperColor ?? DashUi.muted,
-                    fontWeight: helperColor == null ? FontWeight.w500 : FontWeight.w600,
-                    height: 1.35)),
+            child: Text(
+              helper,
+              style: TextStyle(
+                fontSize: 12,
+                color: helperColor ?? DashUi.muted,
+                fontWeight: helperColor == null ? FontWeight.w500 : FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
           ),
       ],
     );
@@ -1795,6 +2588,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         color: DashUi.ink,
         disabledColor: DashUi.line,
         visualDensity: VisualDensity.compact,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 34),
       );
     }
 
@@ -1802,20 +2597,29 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _fieldLabel(label),
+        // A small control, not a field-wide bar: a count needs three characters of room, not a third of the page.
         Container(
-          height: 40,
+          width: 112,
+          height: 36,
           decoration: BoxDecoration(
             color: changed ? _T.changedFill : _T.field,
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(color: changed ? DashUi.indigo.withValues(alpha: 0.45) : DashUi.line),
           ),
           child: Row(
             children: [
               btn(Icons.remove_rounded, v - 1),
               Expanded(
-                child: Text('$v',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: _figures)),
+                child: Text(
+                  '$v',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: DashUi.ink,
+                    fontFeatures: _figures,
+                  ),
+                ),
               ),
               btn(Icons.add_rounded, v + 1),
             ],
@@ -1833,47 +2637,57 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Widget _toggleRow(String key, String title, String subtitle) {
     final on = _value(key) == true;
     final changed = _draft.containsKey(key);
-    return InkWell(
-      onTap: () => _set(key, !on),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                      if (changed) ...[
-                        const SizedBox(width: 8),
-                        Container(width: 6, height: 6, decoration: const BoxDecoration(color: DashUi.indigo, shape: BoxShape.circle)),
-                      ],
-                    ],
+    // One slim line: the name, an info icon holding the explanation, and a small switch at the far end.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => _set(key, !on),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink),
+                ),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: subtitle,
+                  child: const Icon(Icons.info_outline_rounded, size: 15, color: DashUi.muted),
+                ),
+                if (changed) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: const BoxDecoration(color: DashUi.indigo, shape: BoxShape.circle),
                   ),
-                  const SizedBox(height: 2),
-                  Text(subtitle, style: const TextStyle(fontSize: 12.5, color: DashUi.slate)),
-                  if (_fieldErrors[key] != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Text(_fieldErrors[key]!, style: const TextStyle(fontSize: 12, color: _T.badFg)),
-                    ),
                 ],
-              ),
+                const Spacer(),
+                Transform.scale(
+                  scale: 0.72,
+                  child: Switch(
+                    value: on,
+                    onChanged: (v) => _set(key, v),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    activeTrackColor: DashUi.emeraldDeep,
+                    inactiveTrackColor: DashUi.line,
+                    inactiveThumbColor: Colors.white,
+                    trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Switch(
-              value: on,
-              onChanged: (v) => _set(key, v),
-              activeTrackColor: DashUi.emeraldDeep,
-              inactiveTrackColor: DashUi.line,
-              inactiveThumbColor: Colors.white,
-              trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
-            ),
-          ],
+          ),
         ),
-      ),
+        if (_fieldErrors[key] != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(_fieldErrors[key]!, style: const TextStyle(fontSize: 12, color: _T.badFg)),
+          ),
+      ],
     );
   }
 
@@ -1890,7 +2704,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         children: [
           Icon(icon, size: 16, color: fg),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: TextStyle(fontSize: 12.5, color: fg, fontWeight: FontWeight.w600, height: 1.4))),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(fontSize: 12.5, color: fg, fontWeight: FontWeight.w600, height: 1.4),
+            ),
+          ),
         ],
       ),
     );
@@ -1905,113 +2724,46 @@ Widget _chip(String text, Color fg, Color bg) {
   return Container(
     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
     decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-    child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
+    ),
   );
 }
 
+// The look of every pop-up, button and pill selector is the shared one (widgets/app_dialog.dart).
 Widget _segmented<V>({
   required V value,
   required List<(V, String)> options,
   required ValueChanged<V> onChanged,
   Color activeColor = DashUi.ink,
-}) {
-  return Container(
-    padding: const EdgeInsets.all(3),
-    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
-    child: Row(
-      children: [
-        for (final o in options)
-          Expanded(
-            child: MouseRegion(
-              cursor: SystemMouseCursors.click,
-              child: GestureDetector(
-                onTap: () => onChanged(o.$1),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(vertical: 7),
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: o.$1 == value ? Colors.white : Colors.white.withValues(alpha: 0),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: o.$1 == value ? DashUi.line : DashUi.line.withValues(alpha: 0)),
-                  ),
-                  child: Text(
-                    o.$2,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: o.$1 == value ? FontWeight.w800 : FontWeight.w600,
-                      color: o.$1 == value ? activeColor : DashUi.slate,
-                      fontFeatures: _figures,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    ),
-  );
-}
+}) => AppSegmented<V>(value: value, options: options, onChanged: onChanged, activeColor: activeColor);
 
-Widget _inkButton(String label, VoidCallback? onPressed, {IconData? icon, bool danger = false}) {
-  final style = FilledButton.styleFrom(
-    backgroundColor: danger ? _T.badFg : DashUi.ink,
-    foregroundColor: Colors.white,
-    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-  );
-  final text = Text(label, style: const TextStyle(fontWeight: FontWeight.w700));
-  return icon == null
-      ? FilledButton(onPressed: onPressed, style: style, child: text)
-      : FilledButton.icon(onPressed: onPressed, style: style, icon: Icon(icon, size: 18), label: text);
-}
+Widget _inkButton(String label, VoidCallback? onPressed, {IconData? icon, bool danger = false}) =>
+    AppButton.ink(label, onPressed, icon: icon, danger: danger);
 
-Widget _ghostButton(String label, VoidCallback? onPressed) {
-  return TextButton(
-    onPressed: onPressed,
-    style: TextButton.styleFrom(
-      foregroundColor: DashUi.slate,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
-    ),
-    child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
-  );
-}
+Widget _ghostButton(String label, VoidCallback? onPressed) => AppButton.ghost(label, onPressed);
 
-Widget _dialog({required String title, required Widget body, required List<Widget> actions, double width = 440}) {
-  return Dialog(
-    backgroundColor: Colors.white,
-    surfaceTintColor: Colors.transparent,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-    child: ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: width),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 22, 24, 16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.3)),
-            const SizedBox(height: 14),
-            Flexible(child: SingleChildScrollView(child: body)),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                for (var i = 0; i < actions.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 8),
-                  actions[i],
-                ],
-              ],
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-}
+Widget _dialog({
+  required String title,
+  required Widget body,
+  required List<Widget> actions,
+  double width = 440,
+  IconData? icon,
+  Color iconColor = DashUi.ink,
+  String? subtitle,
+}) => AppDialog(
+  title: title,
+  subtitle: subtitle,
+  icon: icon,
+  iconColor: iconColor,
+  width: width,
+  body: body,
+  actions: actions,
+);
 
+/// A tappable area that works with the mouse, the keyboard (Tab to reach it, Enter or Space to
+/// open it) and shows [builder]'s hover state for either.
 class _Hoverable extends StatefulWidget {
   final VoidCallback onTap;
   final Widget Function(bool hover) builder;
@@ -2023,17 +2775,26 @@ class _Hoverable extends StatefulWidget {
 
 class _HoverableState extends State<_Hoverable> {
   bool _hover = false;
+  bool _focus = false;
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+    return FocusableActionDetector(
+      mouseCursor: SystemMouseCursors.click,
+      onShowHoverHighlight: (v) => setState(() => _hover = v),
+      onShowFocusHighlight: (v) => setState(() => _focus = v),
+      actions: {
+        ActivateIntent: CallbackAction<ActivateIntent>(
+          onInvoke: (_) {
+            widget.onTap();
+            return null;
+          },
+        ),
+      },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onTap,
-        child: widget.builder(_hover),
+        child: widget.builder(_hover || _focus),
       ),
     );
   }
@@ -2063,9 +2824,12 @@ class _AddEmployeeDialog extends StatefulWidget {
 class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   final _name = TextEditingController();
   final _username = TextEditingController();
+  final _email = TextEditingController();
+  final _year = TextEditingController(text: '${DateTime.now().year}');
   String _role = 'Technician';
   double _weight = 1.0;
   bool _eligible = true;
+  bool _callback = true;
   bool _usernameTouched = false;
   bool _busy = false;
   String? _error;
@@ -2075,6 +2839,8 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   void dispose() {
     _name.dispose();
     _username.dispose();
+    _email.dispose();
+    _year.dispose();
     super.dispose();
   }
 
@@ -2091,15 +2857,19 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
     final r = role.toLowerCase();
     setState(() {
       _role = role;
+      // Defaults follow how the current team is set up; every one of them can be changed below.
       if (r.contains('lead')) {
         _weight = 1.5;
         _eligible = true;
+        _callback = true;
       } else if (r.contains('tech')) {
         _weight = 1.0;
         _eligible = true;
+        _callback = true;
       } else {
         _weight = 0;
         _eligible = false;
+        _callback = r.contains('warehouse') || r.contains('sales');
       }
     });
   }
@@ -2111,13 +2881,17 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
       _errorField = null;
     });
     try {
+      final year = int.tryParse(_year.text.trim());
       final result = await widget.submit({
         'name': _name.text.trim(),
         'username': _username.text.trim(),
         'role': _role,
         'tech_weight': _weight,
         'is_commission_eligible': _eligible,
+        'is_callback_eligible': _callback,
         'is_lead': _role.toLowerCase().contains('lead'),
+        if (_email.text.trim().isNotEmpty) 'email': _email.text.trim(),
+        'year_joined': ?year,
       });
       if (mounted) Navigator.pop(context, result);
     } on _ApiError catch (e) {
@@ -2137,36 +2911,70 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
   }
 
   InputDecoration _dec(String field, String hint) => InputDecoration(
-        isDense: true,
-        filled: true,
-        fillColor: _T.field,
-        hintText: hint,
-        hintStyle: const TextStyle(color: DashUi.muted, fontSize: 14),
-        errorText: _errorField == field ? _error : null,
-        errorMaxLines: 3,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.ink)),
-      );
+    isDense: true,
+    filled: true,
+    fillColor: _T.field,
+    hintText: hint,
+    hintStyle: const TextStyle(color: DashUi.muted, fontSize: 14),
+    errorText: _errorField == field ? _error : null,
+    errorMaxLines: 3,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: DashUi.line),
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: DashUi.line),
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide: const BorderSide(color: DashUi.ink),
+    ),
+  );
+
+  Widget _switchRow(String title, bool value, ValueChanged<bool> onChanged) => Row(
+    children: [
+      Expanded(
+        child: Text(
+          title,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink),
+        ),
+      ),
+      Switch(
+        value: value,
+        onChanged: onChanged,
+        activeTrackColor: DashUi.emeraldDeep,
+        inactiveTrackColor: DashUi.line,
+        inactiveThumbColor: Colors.white,
+        trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+      ),
+    ],
+  );
 
   Widget _label(String t) => Padding(
-        padding: const EdgeInsets.only(bottom: 6, top: 14),
-        child: Text(t, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.slate)),
-      );
+    padding: const EdgeInsets.only(bottom: 6, top: 14),
+    child: Text(
+      t,
+      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.slate),
+    ),
+  );
 
   @override
   Widget build(BuildContext context) {
     final canSubmit = !_busy && _name.text.trim().isNotEmpty && _username.text.trim().length >= 2;
     return _dialog(
       title: 'Add employee',
+      icon: Icons.person_add_alt_1_rounded,
       width: 480,
       body: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('They\'ll get a temporary PIN and choose their own at first login.',
-              style: TextStyle(fontSize: 13, color: DashUi.slate)),
+          const Text(
+            'They\'ll get a temporary PIN and choose their own at first login.',
+            style: TextStyle(fontSize: 13, color: DashUi.slate),
+          ),
           _label('Full name, exactly as in Service Fusion'),
           TextField(
             controller: _name,
@@ -2182,9 +2990,47 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
             decoration: _dec('username', 'jsmith'),
             onChanged: (_) => setState(() => _usernameTouched = true),
           ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 3,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _label('Email (optional)'),
+                    TextField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: _dec('email', 'name@integritydoornwa.com'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 2,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _label('Year joined'),
+                    TextField(
+                      controller: _year,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(4)],
+                      decoration: _dec('year_joined', '${DateTime.now().year}'),
+                      onSubmitted: (_) {
+                        if (canSubmit) _go();
+                      },
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
           _label('Role'),
           DropdownButtonFormField<String>(
-            value: widget.roles.any((r) => r.name == _role) ? _role : null,
+            initialValue: widget.roles.any((r) => r.name == _role) ? _role : null,
             isExpanded: true,
             borderRadius: BorderRadius.circular(12),
             dropdownColor: Colors.white,
@@ -2197,29 +3043,18 @@ class _AddEmployeeDialogState extends State<_AddEmployeeDialog> {
           _label('Commission weight'),
           _segmented<double>(
             value: _weight,
-            options: [for (final p in _weightPresets) (p.$1, '${_fmtW(p.$1)}  ${p.$2}')],
+            options: [for (final p in _weightPresets) (p.$1, '${_fmtW(p.$1)}×  ${p.$2}')],
             onChanged: (v) => setState(() => _weight = v),
           ),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              const Expanded(
-                child: Text('Commission eligible',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink)),
-              ),
-              Switch(
-                value: _eligible,
-                onChanged: (v) => setState(() => _eligible = v),
-                activeTrackColor: DashUi.emeraldDeep,
-                inactiveTrackColor: DashUi.line,
-                inactiveThumbColor: Colors.white,
-                trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
-              ),
-            ],
-          ),
+          _switchRow('Commission eligible', _eligible, (v) => setState(() => _eligible = v)),
+          _switchRow('Callback pay eligible', _callback, (v) => setState(() => _callback = v)),
           if (_error != null && _errorField == null) ...[
             const SizedBox(height: 6),
-            Text(_error!, style: const TextStyle(fontSize: 12.5, color: _T.badFg, fontWeight: FontWeight.w600)),
+            Text(
+              _error!,
+              style: const TextStyle(fontSize: 12.5, color: _T.badFg, fontWeight: FontWeight.w600),
+            ),
           ],
         ],
       ),

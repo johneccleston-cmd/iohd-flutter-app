@@ -46,7 +46,7 @@ const List<AccessGroup> kAccessGroups = [
     AccessResource('dash_collections', 'Collections', Icons.account_balance_wallet_outlined, route: '/dashboards/collections'),
   ]),
   AccessGroup('HR', [
-    AccessResource('hr_payroll', 'Payroll', Icons.payments_rounded, route: '/hr'),
+    AccessResource('hr_payroll', 'Payroll', Icons.payments_rounded, route: '/hr/payroll'),
     AccessResource('hr_kpis', "KPI's", Icons.speed_outlined, route: '/hr/kpis'),
     AccessResource('hr_corrections', 'Commission Corrections', Icons.rule_folder_outlined, route: '/hr/corrections'),
   ]),

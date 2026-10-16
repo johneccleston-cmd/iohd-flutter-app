@@ -65,6 +65,50 @@ class _BidKpis {
       );
 }
 
+/// Open estimates in dollars: by stage, and how much of it has gone quiet (same stale rules as the Stale estimates card).
+class _Pipeline {
+  final int requestedCount;
+  final double requestedValue;
+  final int providedCount;
+  final double providedValue;
+  final double staleValue;
+  const _Pipeline(this.requestedCount, this.requestedValue, this.providedCount, this.providedValue, this.staleValue);
+
+  int get count => requestedCount + providedCount;
+  double get value => requestedValue + providedValue;
+  double get quietValue => staleValue.clamp(0.0, value);
+  double get activeValue => value - quietValue;
+
+  static _Pipeline? fromJson(dynamic j) {
+    if (j is! Map) return null;
+    final r = j['requested'] is Map ? j['requested'] as Map : const {};
+    final p = j['provided'] is Map ? j['provided'] as Map : const {};
+    return _Pipeline(
+      int.tryParse(_str(r['count'])) ?? 0,
+      _num(r['value']) ?? 0,
+      int.tryParse(_str(p['count'])) ?? 0,
+      _num(p['value']) ?? 0,
+      _num(j['staleValue']) ?? 0,
+    );
+  }
+}
+
+/// The biggest won estimate of the year.
+class _BigDeal {
+  final double amount;
+  final String customer;
+  final String date; // "2026-09-25", the estimate's date
+  const _BigDeal(this.amount, this.customer, this.date);
+
+  static _BigDeal? fromJson(dynamic j) {
+    if (j is! Map) return null;
+    final amount = _num(j['amount']);
+    if (amount == null || amount <= 0) return null;
+    final who = _str(j['customer']).trim();
+    return _BigDeal(amount, who.isEmpty ? 'A customer' : who, _str(j['date']));
+  }
+}
+
 /// Sales results for the year, from /api/employees/:id/kpis.
 class _SalesKpis {
   final int wonCount;
@@ -108,7 +152,21 @@ class _SalesKpis {
   final _Turnaround? turnaround;
   final _Turnaround? bidTurnaround;
 
+  /// "Sep 10": the status log is only trusted from this day, so turnaround and late counts start here, not in January.
+  final String? since;
+
+  /// Won and lost estimates per month (January first); empty until the backend sends `monthlyClose`.
+  final List<int> closeWon;
+  final List<int> closeLost;
+  final _Pipeline? pipeline;
+  final _BigDeal? largestDeal;
+
   const _SalesKpis({
+    this.since,
+    this.closeWon = const [],
+    this.closeLost = const [],
+    this.pipeline,
+    this.largestDeal,
     this.satisfaction,
     this.mentions = const [],
     this.staleEstimates,
@@ -149,12 +207,19 @@ class _SalesKpis {
     }
 
     final haveMonthly = mbt.isNotEmpty;
+    final mc = j['monthlyClose'] is List ? j['monthlyClose'] as List : const [];
+    int closeAt(int m, String key) => m < mc.length && mc[m] is Map ? int.tryParse(_str((mc[m] as Map)[key])) ?? 0 : 0;
     return _SalesKpis(
+      closeWon: mc.isEmpty ? const [] : [for (var m = 0; m < 12; m++) closeAt(m, 'won')],
+      closeLost: mc.isEmpty ? const [] : [for (var m = 0; m < 12; m++) closeAt(m, 'lost')],
+      pipeline: _Pipeline.fromJson(j['pipeline']),
+      largestDeal: _BigDeal.fromJson(j['largestDeal']),
       monthlyRevenue: haveMonthly ? [series('hardBid', 'revenue'), series('commercial', 'revenue'), series('residential', 'revenue'), series('other', 'revenue')] : const [],
       monthlyProfit: haveMonthly ? [series('hardBid', 'profit'), series('commercial', 'profit'), series('residential', 'profit'), series('other', 'profit')] : const [],
       staleEstimates: int.tryParse(_str(strikes['staleEstimates'])),
       slowEstimates: int.tryParse(_str(strikes['slowEstimates'])),
       focus: _str(j['focus']),
+      since: _shortDay(_str(j['turnaroundSince'])),
       openEstimates: int.tryParse(_str(strikes['openEstimates'])),
       agingEstimates: int.tryParse(_str(strikes['agingEstimates'])),
       satisfaction: _Rating.fromJson(j['satisfaction']),
@@ -184,6 +249,12 @@ class _SalesKpis {
 }
 
 bool _flag(Map m, String key) => m[key] == true;
+
+/// "2026-09-10" -> "Sep 10"; null for anything else.
+String? _shortDay(String iso) {
+  final d = DateTime.tryParse(iso);
+  return d == null ? null : '${_monthLetters[d.month - 1]} ${d.day}';
+}
 
 /// Technician results from /api/employees/:id/kpis.
 /// One month of a tech's results (month the jobs started).
@@ -456,8 +527,6 @@ class _EmployeeDetails {
 
   _SalesKpis? sales;
 
-  /// Won revenue per month (Jan..this month) from the Sales dashboard feed. Null if it couldn't be loaded.
-  List<double?>? monthlyWon;
   _TechKpis? tech;
   _SupervisorKpis? supervisor;
   _ReceivablesKpis? office;
@@ -605,28 +674,6 @@ Future<_EmployeeDetails> _loadDetails(String username, {required bool likelyTech
   return details;
 }
 
-/// A sales rep's won revenue by month this year, from the Sales dashboard feed (people[].monthlyWon, matched by
-/// name). Best effort: null on failure or if the rep isn't listed.
-Future<List<double?>?> _loadMonthlyWon(String name) async {
-  if (name.trim().isEmpty) return null;
-  try {
-    final now = DateTime.now();
-    final res = await http
-        .get(Uri.parse('$kApiBaseUrl/api/dashboards/sales?year=${now.year}'), headers: AuthSession.instance.headers())
-        .timeout(const Duration(seconds: 40));
-    if (res.statusCode != 200) return null;
-    final body = json.decode(res.body);
-    final people = body is Map && body['people'] is List ? body['people'] as List : const [];
-    for (final p in people) {
-      if (p is Map && _str(p['name']).toLowerCase() == name.trim().toLowerCase() && p['monthlyWon'] is List) {
-        final m = p['monthlyWon'] as List;
-        return [for (var i = 0; i < now.month; i++) i < m.length ? (_num(m[i]) ?? 0) : 0.0];
-      }
-    }
-  } catch (_) {}
-  return null;
-}
-
 /// Callbacks and completed jobs for this tech this year (same source as the Technicians dashboard, which
 /// identifies techs by username). Best effort: null on failure or if they aren't listed.
 Future<_TechStats?> _loadTechStats(String username) async {
@@ -725,6 +772,12 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     _Mention('Called ahead, went above and beyond. Would ask for him again.', 'Priya S.', 'Survey'),
   ];
 
+  // Preview quotes for a salesperson (the tech ones talk about a spring and "himself"). Labelled as samples.
+  static const _sampleSalesMentions = [
+    _Mention('Quick quote, clear pricing, and the new door looks great.', 'Sample customer', 'Sample'),
+    _Mention('Answered every question and the install went exactly as promised.', 'Sample customer', 'Sample'),
+  ];
+
   // Preview series for the toggle (months up to today), so the new charts can be seen before anything records them.
   List<double?> _sampleSeries(List<double> v) => [for (var m = 0; m < DateTime.now().month; m++) v[m % v.length]];
   List<double?> _teamPerDayOf(_TechKpis t) {
@@ -758,21 +811,33 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     _data = widget.initial;
     if (_data == null) _load();
     _fetchDetails();
+    _startCycle();
   }
 
-  bool _monthlyTried = false;
+  @override
+  void dispose() {
+    _cycle?.cancel();
+    super.dispose();
+  }
 
-  /// Sales chart view: 0 = won revenue by month, 1.. = revenue and profit lines for each estimate type's tab.
+  /// The sales chart steps to its next tab every 8 seconds. It holds while the cursor is over the chart, with reduced
+  /// motion, or when there is only one tab; picking a tab restarts the 8 seconds.
+  static const _cycleEvery = Duration(seconds: 8);
+  Timer? _cycle;
+  bool _chartHover = false;
+  int _chartTabs = 0; // tabs on the chart now (0: no chart on screen)
+  int _chartShown = 0; // the tab showing now
+
+  void _startCycle() {
+    _cycle?.cancel();
+    _cycle = Timer.periodic(_cycleEvery, (_) {
+      if (!mounted || _chartHover || _chartTabs < 2 || MediaQuery.disableAnimationsOf(context)) return;
+      setState(() => _view = (_chartShown + 1) % _chartTabs);
+    });
+  }
+
+  /// Sales chart view: which tab the chart shows (see [_salesCard]).
   int _view = 0;
-
-  /// Loads the rep's monthly won revenue once both the person (for the name) and their details (for the role) are in.
-  Future<void> _ensureMonthly() async {
-    final d = _details, name = _data?.entry.user.name ?? '';
-    if (_monthlyTried || d == null || d.sales == null || d.isTech || name.isEmpty) return;
-    _monthlyTried = true;
-    final m = await _loadMonthlyWon(name);
-    if (mounted && m != null) setState(() => d.monthlyWon = m);
-  }
 
   Future<void> _fetchDetails() async {
     setState(() {
@@ -786,7 +851,6 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         _details = d;
         _detailsLoading = false;
       });
-      _ensureMonthly();
     } on TimeoutException {
       _detailsFail('The request timed out.');
     } catch (e) {
@@ -830,7 +894,6 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             : null;
         _loading = false;
       });
-      _ensureMonthly();
     } on TimeoutException {
       _fail('The request timed out. Check your connection and try again.');
     } catch (e) {
@@ -1021,7 +1084,9 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         // The tech layout (cards, charts, scorecard bars) fits one screen down to about this height.
         // A sales rep's page (sales card + bidding/type cards) also fits one screen; its hero card takes the spare height.
         final salesLayout = _details?.isTech == false && _details?.sales != null;
-        final needed = _details?.isTech == true ? 560.0 : (salesLayout ? (c.maxWidth < 1450 ? 700.0 : 640.0) : (_details?.supervisor != null ? 545.0 : 450.0));
+        // Residential reps have no Bidding / Estimate mix row, so they fit sooner.
+        final residentialSales = salesLayout && (_details?.sales?.residential ?? false);
+        final needed = _details?.isTech == true ? 560.0 : (salesLayout ? (residentialSales ? 560.0 : 580.0) : (_details?.supervisor != null ? 545.0 : 450.0));
         if (wide && (techLayout || salesLayout) && c.maxHeight >= needed) {
           return SizedBox(
             height: c.maxHeight,
@@ -1030,7 +1095,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               children: [
                 SizedBox(width: 320, child: leftColumn(fill: true)),
                 const SizedBox(width: 12),
-                Expanded(child: _moreGroups(fill: true, chart: c.maxHeight >= 640)),
+                Expanded(child: _moreGroups(fill: true, chart: c.maxHeight >= 640 || salesLayout)),
               ],
             ),
           );
@@ -1080,22 +1145,24 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(height: 84, child: _StaleTube(
-              stale: sales.staleEstimates,
-              aging: sales.agingEstimates,
-              open: sales.openEstimates,
-              employeeId: widget.employeeId,
-              name: _data?.entry.user.name ?? 'Stale estimates',
-            )),
+          // The pipeline card shows the same open / gone-quiet split in dollars and counts, so it replaces this one.
+          if (sales.pipeline == null) ...[
+            SizedBox(height: 84, child: _StaleTube(
+                stale: sales.staleEstimates,
+                aging: sales.agingEstimates,
+                open: sales.openEstimates,
+                employeeId: widget.employeeId,
+                name: _data?.entry.user.name ?? 'Stale estimates',
+              )),
+            const SizedBox(height: 8),
+          ],
+          SizedBox(height: 70, child: _LateCard(count: sales.slowEstimates, since: sales.since, employeeId: widget.employeeId, name: _data?.entry.user.name ?? 'Late estimates')),
           const SizedBox(height: 8),
-          SizedBox(height: 70, child: _LateCard(count: sales.slowEstimates, employeeId: widget.employeeId, name: _data?.entry.user.name ?? 'Late estimates')),
-          const SizedBox(height: 8),
-          SizedBox(height: 70, child: _TurnaroundCard(sales.turnaround)),
+          SizedBox(height: 70, child: _TurnaroundCard(sales.turnaround, since: sales.since)),
         ],
       );
     }
     final ts = d.techStats;
-    final rate = ts?.callbackRatePct;
     final teamRate = ts?.teamCallbackRatePct;
     Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
     Widget card(String title, double? value, Color color, int index, String Function(double) format) => SizedBox(
@@ -1121,7 +1188,24 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           children: [
             Expanded(child: card('Inv. strikes', d.inventoryStrikes.toDouble(), strikeColor(d.inventoryStrikes), 0, (v) => '${v.round()}')),
             const SizedBox(width: 8),
-            Expanded(child: card('Callback rate', rate, ts == null ? DashUi.muted : strikeColor(ts.callbacks), 1, (v) => '${_fmtNum(v)}%')),
+            Expanded(
+              child: Tooltip(
+                message: 'See the callbacks behind these strikes',
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => showDialog<void>(
+                      context: context,
+                      builder: (_) => _CallbackStrikesDialog(employeeId: widget.employeeId, name: _data?.entry.user.name ?? 'Callback strikes'),
+                    ),
+                    child: AbsorbPointer(
+                      child: card('Callback strikes', ts?.callbacks.toDouble(), ts == null ? DashUi.muted : strikeColor(ts.callbacks), 1, (v) => '${v.round()}'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
         if (d.supervisor != null) ...[
@@ -1165,7 +1249,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     final sales = _details?.sales;
     if (sales == null || _details!.isTech) return null;
     return _MentionsCard(
-      mentions: sales.mentions.isNotEmpty ? sales.mentions : (_sample ? _sampleMentions : const []),
+      mentions: sales.mentions.isNotEmpty ? sales.mentions : (_sample ? _sampleSalesMentions : const []),
       satisfaction: sales.satisfaction ?? (_sample ? const _Rating(4.7, 22) : null),
     );
   }
@@ -1231,47 +1315,23 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     }
 
     Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
-    _InfoRow untracked(String label, bool tracked) =>
-        tracked ? _InfoRow(label, '—') : _InfoRow(label, 'Not tracked yet', _muted);
 
     final strikes = <_InfoRow>[
       if (d.isWarehouse) _InfoRow('Warehouse strikes (all-time)', '${d.warehouseStrikes}', strikeColor(d.warehouseStrikes)),
     ];
 
     final sales = d.sales;
-    final bids = sales?.bids;
+    // Zac's Bidding card is off for now (his bid figures are still in the data); only the estimate mix is commercial.
     final commercial = <Widget>[
-      // Bidding and the estimate mix are commercial: a residential salesperson (Heather) doesn't get them.
-      if (sales != null && !sales.residential)
-        _DetailCard(
-          title: 'Bidding',
-          icon: Icons.gavel_rounded,
-          child: _InfoGroup(
-            title: '',
-            rows: [
-              _InfoRow(
-                bids == null
-                    ? 'Bid close rate (no bids yet)'
-                    : 'Bid close rate (${bids.wonCount} won · ${bids.lostCount} lost · ${bids.openCount} open)',
-                bids?.closeRatePct == null ? '—' : '${_fmtNum(bids!.closeRatePct!)}%',
-              ),
-              sales.bidTurnaround != null
-                  ? _InfoRow(
-                      'Bid turnaround (${sales.bidTurnaround!.count} bids, median ${_fmtNum(sales.bidTurnaround!.medianDays)})',
-                      sales.bidTurnaround!.avgText,
-                    )
-                  : untracked('Bid turnaround time', sales.tracksBidTurnaround),
-              untracked('Estimating errors', sales.tracksEstimatingErrors),
-              untracked('Change-order opportunities', sales.tracksChangeOrders),
-            ],
-          ),
-        ),
       if (sales != null && !sales.residential)
         _DetailCard(
           title: 'Estimate mix',
           icon: Icons.pie_chart_rounded,
           trailing: '${DateTime.now().year} year to date',
+          padding: 16,
+          headerGap: 8,
           child: _EstimateMixPie(
+            size: 132,
             types: sales.byType,
             residential: sales.residential,
             employeeId: widget.employeeId,
@@ -1290,6 +1350,8 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             satisfaction: _satisfactionOf(tech),
             mentions: _mentionsOf(tech),
             streak: _streakOf(d),
+            callbackRate: d.techStats?.callbackRatePct,
+            callbackStrikes: d.techStats?.callbacks,
             scorecard: _scoreRows(d, tech),
             techName: (_data?.entry.user.name ?? '').trim().isEmpty ? 'This tech' : _data!.entry.user.name.trim(),
             teamPerDay: _teamPerDayOf(tech),
@@ -1335,7 +1397,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
 
     final wideCards = <Widget>[
       if (sales != null) _salesScorecards(sales),
-      if (sales != null) fill && techCard == null ? Expanded(child: _salesCard(sales, expand: true, monthly: d.monthlyWon, showChart: chart)) : _salesCard(sales, monthly: d.monthlyWon, showChart: true),
+      if (sales != null) fill && techCard == null ? Expanded(child: _salesCard(sales, expand: true, showChart: chart)) : _salesCard(sales, showChart: true),
       if (techCard != null) fill ? Expanded(child: techCard) : techCard,
       if (officeCard != null) _withFeedback(officeCard, off!),
     ];
@@ -1372,11 +1434,28 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     // right, the same spot it has on the technician pages.
     final feedback = _salesFeedbackCard();
     if (sales != null && feedback != null) {
+      // The biggest deal sits above the feedback and the open-estimate pipeline under the chart, for every salesperson.
+      final userName = _data?.entry.user.name ?? 'Estimates';
+      final pipeline = sales.pipeline != null
+          ? _PipelineCard(pipeline: sales.pipeline!, stacked: !sales.residential, staleCount: sales.staleEstimates, employeeId: widget.employeeId, name: userName)
+          : null;
+      final deal = sales.largestDeal != null ? _BigDealCard(deal: sales.largestDeal!, year: DateTime.now().year) : null;
+      Widget feedbackColumn(bool tall) => Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ?deal,
+              if (deal != null) const SizedBox(height: 16),
+              if (tall) Expanded(child: feedback) else SizedBox(height: 226, child: feedback),
+            ],
+          );
+      final sideRow = [if (pipeline != null && !sales.residential) pipeline, ...commercial];
       final main = Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          fill ? Expanded(child: _salesCard(sales, expand: true, monthly: d.monthlyWon, showChart: chart)) : _salesCard(sales, monthly: d.monthlyWon, showChart: true),
-          if (commercial.isNotEmpty) ...[gap, pair(commercial, flex: commercial.length == 2 ? const [4, 6] : null, breakpoint: 760, equalHeight: fill)],
+          fill ? Expanded(child: _salesCard(sales, expand: true, showChart: chart)) : _salesCard(sales, showChart: true),
+          if (pipeline != null && sales.residential) ...[gap, pipeline],
+          // Zac: the pipeline sits beside the estimate mix (one row, so the page still fits without scrolling).
+          if (sideRow.isNotEmpty) ...[gap, pair(sideRow, flex: sideRow.length == 2 ? const [5, 6] : null, breakpoint: 700, equalHeight: fill)],
         ],
       );
       final body = LayoutBuilder(
@@ -1384,7 +1463,15 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           if (c.maxWidth < 760) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [_salesCard(sales, monthly: d.monthlyWon, showChart: true), if (commercial.isNotEmpty) ...[gap, pair(commercial, breakpoint: 900)], gap, SizedBox(height: 226, child: feedback)],
+              children: [
+                ?deal,
+                if (deal != null) gap,
+                _salesCard(sales, showChart: true),
+                if (pipeline != null) ...[gap, pipeline],
+                if (commercial.isNotEmpty) ...[gap, pair(commercial, breakpoint: 900)],
+                gap,
+                SizedBox(height: 226, child: feedback),
+              ],
             );
           }
           return Row(
@@ -1392,7 +1479,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             children: [
               Expanded(child: main),
               const SizedBox(width: 16),
-              SizedBox(width: 240, child: fill ? feedback : SizedBox(height: 226, child: feedback)),
+              SizedBox(width: 240, child: feedbackColumn(fill)),
             ],
           );
         },
@@ -1483,30 +1570,27 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     );
   }
 
-  /// The sales chart panel (no header): won revenue by month, or one tab per estimate type with a revenue line and a
-  /// profit line by month. [expand] fills the height it is given, otherwise it is a fixed height.
-  Widget _salesCard(_SalesKpis s, {bool expand = false, List<double?>? monthly, bool showChart = false}) {
-    if (!showChart) return const SizedBox.shrink();
-    final visible = _mixVisible(s.residential);
-    final typeLabels = _mixLabelsFor(s.residential);
-    final tabs = ['Monthly revenue', for (final k in visible) '${_typeTabName(typeLabels[k])} · rev & profit'];
-    // Without the monthly feed the first tab has nothing to show, so open on the first type.
-    var view = _view.clamp(0, tabs.length - 1);
-    if (monthly == null && view == 0 && tabs.length > 1) view = 1;
+  /// A commercial rep's chart panel: revenue and profit by month for each estimate type (hard bids, other commercial),
+  /// then close rate by month. [expand] fills the height it is given, otherwise it is a fixed height.
+  Widget _salesCard(_SalesKpis s, {bool expand = false, bool showChart = false}) {
+    if (!showChart) {
+      _chartTabs = 0;
+      return const SizedBox.shrink();
+    }
+    if (s.residential) return _residentialChart(s, expand: expand);
+    const visible = [0, 1];
+    final typeLabels = _mixLabelsFor(false);
+    final tabs = [for (final k in visible) '${_typeTabName(typeLabels[k])} · rev & profit', 'Close rate'];
+    final view = _view.clamp(0, tabs.length - 1);
     final now = DateTime.now().month;
     Widget content;
-    if (view == 0) {
-      content = _MonthlyChart(
-        expand: expand,
-        values: monthly ?? const [],
-        color: DashUi.sky,
-        tipFormat: (i) => dashMoney((monthly ?? const [])[i] ?? 0),
-        emptyText: 'No won estimates in ${DateTime.now().year}',
-      );
+    if (view == tabs.length - 1) {
+      content = _closeRateChart(s, expand: expand);
     } else {
-      final k = visible[view - 1];
-      final rev = k < s.monthlyRevenue.length ? s.monthlyRevenue[k] : const <double>[];
-      final prof = k < s.monthlyProfit.length ? s.monthlyProfit[k] : const <double>[];
+      final k = visible[view];
+      List<double> series(List<List<double>> all) => k < all.length ? all[k] : const <double>[];
+      final rev = series(s.monthlyRevenue);
+      final prof = series(s.monthlyProfit);
       content = rev.isEmpty
           ? const Center(child: Text('Monthly figures by type are not available yet.', style: TextStyle(fontSize: 13, color: _muted)))
           : _RevProfitLineChart(
@@ -1515,20 +1599,94 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               expand: expand,
             );
     }
-    return _DetailCard(
-      expand: expand,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: _ChartToggle(labels: tabs, selected: view, onChanged: (i) => setState(() => _view = i))),
-          ),
-          const SizedBox(height: 8),
-          if (expand) Expanded(child: content) else SizedBox(height: 252, child: content),
-        ],
+    return _chartCard(tabs: tabs, view: view, content: content, expand: expand);
+  }
+
+  /// The chart panel around a sales chart: the tab strip and the content, paused for the cycle while hovered.
+  Widget _chartCard({required List<String> tabs, required int view, required Widget content, required bool expand}) {
+    _chartTabs = tabs.length;
+    _chartShown = view;
+    return MouseRegion(
+      onEnter: (_) => _chartHover = true,
+      onExit: (_) => _chartHover = false,
+      child: _DetailCard(
+        expand: expand,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: _ChartToggle(
+                  labels: tabs,
+                  selected: view,
+                  onChanged: (i) {
+                    setState(() => _view = i);
+                    _startCycle();
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            if (expand) Expanded(child: content) else SizedBox(height: 252, child: content),
+          ],
+        ),
       ),
     );
+  }
+
+  /// Close rate by month as a 0-100% line (months with nothing closed are gaps).
+  Widget _closeRateChart(_SalesKpis s, {required bool expand}) {
+    if (s.closeWon.isEmpty) {
+      return const Center(child: Text('Monthly close rates are not available yet.', style: TextStyle(fontSize: 13, color: _muted)));
+    }
+    return _MonthlyChart(
+      expand: expand,
+      values: _closeRates(s),
+      color: DashUi.indigo,
+      line: true,
+      maxValue: 100,
+      axisFormat: (v) => '${v.round()}%',
+      tipFormat: (i) => '${_fmtNum(_closeRates(s)[i] ?? 0)}% · ${s.closeWon[i]} won, ${s.closeLost[i]} lost',
+      emptyText: 'No closed estimates in ${DateTime.now().year}',
+    );
+  }
+
+  List<double?>? _closeSeries;
+  _SalesKpis? _closeFor;
+
+  /// Close rate (won / (won + lost)) per month so far this year, null for a month with nothing closed. Cached so the
+  /// chart's intro animation does not replay on every rebuild.
+  List<double?> _closeRates(_SalesKpis s) {
+    if (identical(_closeFor, s) && _closeSeries != null) return _closeSeries!;
+    final now = DateTime.now().month;
+    _closeFor = s;
+    return _closeSeries = [
+      for (var m = 0; m < now; m++)
+        if (m < s.closeWon.length && s.closeWon[m] + s.closeLost[m] > 0) s.closeWon[m] / (s.closeWon[m] + s.closeLost[m]) * 100 else null,
+    ];
+  }
+
+  /// A residential rep's chart panel: revenue & profit by month, or close rate by month. No plain revenue bars (the
+  /// revenue line says the same thing).
+  Widget _residentialChart(_SalesKpis s, {required bool expand}) {
+    const tabs = ['Revenue & profit', 'Close rate'];
+    final view = _view.clamp(0, tabs.length - 1);
+    final now = DateTime.now().month;
+    Widget content;
+    if (view == 0) {
+      // Everything they sold (every estimate bucket added), so the line matches the scorecards above it.
+      List<double> series(List<List<double>> all) => [for (var m = 0; m < now; m++) all.fold<double>(0, (a, b) => a + (m < b.length ? b[m] : 0))];
+      final rev = series(s.monthlyRevenue);
+      content = s.monthlyRevenue.isEmpty
+          ? const Center(child: Text('Monthly figures are not available yet.', style: TextStyle(fontSize: 13, color: _muted)))
+          : _RevProfitLineChart(revenue: rev, profit: series(s.monthlyProfit), expand: expand);
+    } else {
+      content = _closeRateChart(s, expand: expand);
+    }
+    return _chartCard(tabs: tabs, view: view, content: content, expand: expand);
   }
 }
 
@@ -1541,11 +1699,15 @@ class _DetailCard extends StatelessWidget {
 
   /// Fill the height the parent gives (the child is then centred in what the header leaves).
   final bool expand;
+
+  /// Space between the header row and the content.
+  final double headerGap;
   final Widget child;
   const _DetailCard({
     this.title,
     this.icon,
     this.trailing,
+    this.headerGap = 16,
     this.padding = 22,
     this.expand = false,
     required this.child,
@@ -1583,7 +1745,7 @@ class _DetailCard extends StatelessWidget {
                   ),
               ],
             ),
-            const SizedBox(height: 16),
+            SizedBox(height: headerGap),
           ],
           if (expand) Expanded(child: child) else child,
         ],
@@ -1748,8 +1910,9 @@ const _mixLabels = ['Commercial hard bids', 'Commercial estimates', 'Residential
 /// Labels for the four buckets.
 List<String> _mixLabelsFor(bool residential) => _mixLabels;
 
-/// Which buckets to show: a residential salesperson has no commercial work, so only Residential and Other.
-List<int> _mixVisible(bool residential) => residential ? const [2, 3] : const [0, 1, 2, 3];
+/// Which buckets to show: a residential salesperson has no commercial work, so everything counts as Residential
+/// (the Other bucket is folded into it).
+List<int> _mixVisible(bool residential) => residential ? const [2] : const [0, 1, 2, 3];
 
 /// Estimates this year split into Commercial hard bids, other Commercial estimates and everything else, drawn like the
 /// "Active jobs by status" donut on the Jobs dashboard: a big thick ring with the total in the middle and a plain legend
@@ -1759,14 +1922,17 @@ class _EstimateMixPie extends StatefulWidget {
   final bool residential;
   final String employeeId;
   final String name;
-  const _EstimateMixPie({required this.types, required this.employeeId, required this.name, this.residential = false});
+
+  /// Side of the donut's square; smaller makes the whole block shorter.
+  final double size;
+  const _EstimateMixPie({required this.types, required this.employeeId, required this.name, this.residential = false, this.size = 184});
 
   @override
   State<_EstimateMixPie> createState() => _EstimateMixPieState();
 }
 
 class _EstimateMixPieState extends State<_EstimateMixPie> {
-  static const double _size = 184;
+  double get _size => widget.size;
   List<String> get _labels => _mixLabelsFor(widget.residential);
   static const _colors = [DashUi.indigo, DashUi.sky, DashUi.emerald, DashUi.amber];
   int? _hover;
@@ -1777,6 +1943,10 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
     for (final t in widget.types) {
       out[_mixBucket(t.type)] += t.estimates;
     }
+    if (widget.residential) {
+      out[2] += out[3];
+      out[3] = 0;
+    }
     return out;
   }
 
@@ -1784,7 +1954,7 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
   int? _slice(Offset p, List<int> counts) {
     final total = counts.fold<int>(0, (a, b) => a + b);
     if (total == 0) return null;
-    final d = p - const Offset(_size / 2, _size / 2);
+    final d = p - Offset(_size / 2, _size / 2);
     final r = _MixPiePainter.radiusFor(_size);
     final half = _MixPiePainter.strokeFor(_size) / 2 + 4;
     if (d.distance < r - half || d.distance > r + half) return null;
@@ -1802,7 +1972,7 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
     if (counts[bucket] == 0) return;
     showDialog<void>(
       context: context,
-      builder: (_) => _MixEstimatesDialog(employeeId: widget.employeeId, name: widget.name, bucket: bucket, label: _labels[bucket], color: _colors[bucket]),
+      builder: (_) => _MixEstimatesDialog(employeeId: widget.employeeId, name: widget.name, bucket: bucket, label: _labels[bucket], color: _colors[bucket], withOther: widget.residential),
     );
   }
 
@@ -1830,7 +2000,7 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
         children: [
           Text('$total', style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: _ink, height: 1.05)),
           const SizedBox(height: 2),
-          const Text('Total estimates', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate)),
+          Text(_size < 160 ? 'Estimates' : 'Total estimates', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate)),
         ],
       );
     }
@@ -1861,7 +2031,7 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
                   duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 1000),
                   curve: Curves.easeOutCubic,
                   builder: (context, t, _) => CustomPaint(
-                    size: const Size(_size, _size),
+                    size: Size(_size, _size),
                     painter: _MixPiePainter(counts: counts, colors: _colors, progress: t, hover: h),
                   ),
                 ),
@@ -1871,14 +2041,14 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
           ),
           ),
         ),
-        const SizedBox(width: 20),
+        SizedBox(width: _size < 160 ? 14 : 20),
         Expanded(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               for (final k in _mixVisible(widget.residential))
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 7),
+                  padding: EdgeInsets.symmetric(vertical: _size < 160 ? 4.5 : 7),
                   child: MouseRegion(
                     cursor: counts[k] > 0 ? SystemMouseCursors.click : MouseCursor.defer,
                     onEnter: (_) => setState(() => _hover = k),
@@ -1903,13 +2073,13 @@ class _EstimateMixPieState extends State<_EstimateMixPie> {
                               _labels[k],
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 13, fontWeight: h == k ? FontWeight.w800 : FontWeight.w600, color: h == k ? _ink : _slate),
+                              style: TextStyle(fontSize: _size < 160 ? 12.5 : 13, fontWeight: h == k ? FontWeight.w800 : FontWeight.w600, color: h == k ? _ink : _slate),
                             ),
                           ),
                           const SizedBox(width: 8),
                           Text('${counts[k]}', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _colors[k])),
                           SizedBox(
-                            width: 40,
+                            width: _size < 160 ? 34 : 40,
                             child: Text(
                               total == 0 ? '' : '${(counts[k] / total * 100).round()}%',
                               textAlign: TextAlign.right,
@@ -1937,7 +2107,9 @@ class _MixEstimatesDialog extends StatefulWidget {
   final int bucket;
   final String label;
   final Color color;
-  const _MixEstimatesDialog({required this.employeeId, required this.name, required this.bucket, required this.label, required this.color});
+  /// Also list the "Other" bucket (a residential rep's other estimates count as residential).
+  final bool withOther;
+  const _MixEstimatesDialog({required this.employeeId, required this.name, required this.bucket, required this.label, required this.color, this.withOther = false});
 
   @override
   State<_MixEstimatesDialog> createState() => _MixEstimatesDialogState();
@@ -1970,34 +2142,32 @@ class _MixEstimatesDialogState extends State<_MixEstimatesDialog> {
       _error = null;
     });
     try {
-      final res = await http
-          .get(
-            Uri.parse(
-              '$kApiBaseUrl/api/employees/${Uri.encodeComponent(widget.employeeId)}/mix_estimates'
-              '?year=${DateTime.now().year}&bucket=${widget.bucket}',
-            ),
-            headers: AuthSession.instance.headers(),
-          )
-          .timeout(const Duration(seconds: 40));
-      if (res.statusCode == 401) {
-        AuthSession.instance.logout(); // sends the app back to the sign-in screen
-        throw Exception('Your session expired. Please sign in again.');
+      Future<List<_MixEstimate>> fetch(int bucket) async {
+        final res = await http
+            .get(
+              Uri.parse(
+                '$kApiBaseUrl/api/employees/${Uri.encodeComponent(widget.employeeId)}/mix_estimates'
+                '?year=${DateTime.now().year}&bucket=$bucket',
+              ),
+              headers: AuthSession.instance.headers(),
+            )
+            .timeout(const Duration(seconds: 40));
+        if (res.statusCode == 401) {
+          AuthSession.instance.logout(); // sends the app back to the sign-in screen
+          throw Exception('Your session expired. Please sign in again.');
+        }
+        if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
+        final body = json.decode(res.body);
+        final list = body is Map && body['items'] is List ? body['items'] as List : const [];
+        return [
+          for (final e in list)
+            if (e is Map) _MixEstimate(_str(e['jobId']), _str(e['customerName']), _str(e['category']), _str(e['status']), _str(e['created']), _num(e['value']) ?? 0),
+        ];
       }
-      if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
-      final body = json.decode(res.body);
-      final list = body is Map && body['items'] is List ? body['items'] as List : const [];
-      final items = [
-        for (final e in list)
-          if (e is Map)
-            _MixEstimate(
-              _str(e['jobId']),
-              _str(e['customerName']),
-              _str(e['category']),
-              _str(e['status']),
-              _str(e['created']),
-              _num(e['value']) ?? 0,
-            ),
-      ];
+
+      final parts = await Future.wait([fetch(widget.bucket), if (widget.withOther) fetch(3)]);
+      final items = [for (final p in parts) ...p];
+      if (parts.length > 1) items.sort((a, b) => b.created.compareTo(a.created)); // newest first across both buckets
       if (!mounted) return;
       setState(() {
         _items = items;
@@ -2133,6 +2303,178 @@ class _MixEstimatesDialogState extends State<_MixEstimatesDialog> {
   }
 }
 
+/// The callback visits behind a tech's strikes: customer, job, status and the date of the callback visit.
+class _CallbackStrikesDialog extends StatefulWidget {
+  final String employeeId;
+  final String name;
+  const _CallbackStrikesDialog({required this.employeeId, required this.name});
+
+  @override
+  State<_CallbackStrikesDialog> createState() => _CallbackStrikesDialogState();
+}
+
+class _CallbackStrikesDialogState extends State<_CallbackStrikesDialog> {
+  List<_MixEstimate>? _items; // reuses the estimate row shape: value is unused here
+  String? _error;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$kApiBaseUrl/api/employees/${Uri.encodeComponent(widget.employeeId)}/callbacks?year=${DateTime.now().year}'),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 40));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout(); // sends the app back to the sign-in screen
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
+      final body = json.decode(res.body);
+      final list = body is Map && body['items'] is List ? body['items'] as List : const [];
+      final items = [
+        for (final e in list)
+          if (e is Map) _MixEstimate(_str(e['jobId']), _str(e['customerName']), _str(e['category']), _str(e['status']), _str(e['date']), 0),
+      ];
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } on TimeoutException {
+      _fail('The request timed out.');
+    } catch (e) {
+      _fail(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _fail(String m) {
+    if (!mounted) return;
+    setState(() {
+      _error = m;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const head = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _muted, letterSpacing: 0.6);
+    final Widget body;
+    if (_loading) {
+      body = const Padding(padding: EdgeInsets.all(48), child: Center(child: CircularProgressIndicator(color: Color(0xFFCC0007))));
+    } else if (_error != null) {
+      body = Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: DashUi.muted),
+            const SizedBox(height: 8),
+            Text("Couldn't load the callbacks. $_error", textAlign: TextAlign.center, style: const TextStyle(fontSize: 13.5, color: _slate)),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
+          ],
+        ),
+      );
+    } else if (_items!.isEmpty) {
+      body = const Padding(
+        padding: EdgeInsets.all(40),
+        child: Center(child: Text('No callback strikes this year.', style: TextStyle(fontSize: 14, color: _slate))),
+      );
+    } else {
+      body = Flexible(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 4, 24, 6),
+              child: Row(
+                children: [
+                  Expanded(flex: 5, child: Text('CUSTOMER', style: head)),
+                  Expanded(flex: 3, child: Text('STATUS', style: head, textAlign: TextAlign.right)),
+                  Expanded(flex: 3, child: Text('CALLBACK DATE', style: head, textAlign: TextAlign.right)),
+                ],
+              ),
+            ),
+            for (final e in _items!)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 11),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: _line))),
+                child: Row(
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(e.customer.isEmpty ? 'Unknown' : e.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _ink)),
+                          Text('#${e.jobId}${e.category.isEmpty ? '' : ' · ${e.category}'}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: _muted)),
+                        ],
+                      ),
+                    ),
+                    Expanded(flex: 3, child: Align(alignment: Alignment.centerRight, child: e.status.isEmpty ? const Text('—') : StatusPill(e.status))),
+                    Expanded(flex: 3, child: Text(_prettyDate(e.created), textAlign: TextAlign.right, style: const TextStyle(fontSize: 13.5, color: _slate))),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final n = _items?.length;
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.all(24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680, maxHeight: 640),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 12, 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.replay_rounded, size: 20, color: DashUi.red),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${widget.name} · Callback strikes', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _ink)),
+                        Text(
+                          '${n == null ? '' : '$n ${n == 1 ? 'callback visit' : 'callback visits'} · '}${DateTime.now().year} year to date, newest first',
+                          style: const TextStyle(fontSize: 12.5, color: _muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, size: 20, color: _slate), tooltip: 'Close'),
+                ],
+              ),
+            ),
+            body,
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _MixPiePainter extends CustomPainter {
   final List<int> counts;
   final List<Color> colors;
@@ -2186,19 +2528,19 @@ class _MixPiePainter extends CustomPainter {
 /// Average time from an estimate being created to it being provided, with the median and how many it is based on.
 class _TurnaroundCard extends StatelessWidget {
   final _Turnaround? turnaround;
-  const _TurnaroundCard(this.turnaround);
+  final String? since;
+  const _TurnaroundCard(this.turnaround, {this.since});
 
   @override
   Widget build(BuildContext context) {
     final t = turnaround;
-    return HoverLift(
-      lift: 2,
-      builder: (context, hovering) => Container(
+    // Not tappable, so no hover lift (it would suggest a click that does nothing).
+    return Container(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: hovering ? DashUi.sky.withValues(alpha: 0.55) : DashUi.line),
+          border: Border.all(color: DashUi.line),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -2217,7 +2559,9 @@ class _TurnaroundCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    t == null ? 'no data yet' : '${t.avgDays == 1 ? 'day' : 'days'} avg',
+                    t == null
+                        ? 'no data yet'
+                        : '${t.avgDays == 1 ? 'day' : 'days'} avg · median ${_fmtNum(t.medianDays)}${since == null ? '' : ' · since $since'}',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.muted),
@@ -2227,7 +2571,6 @@ class _TurnaroundCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
     );
   }
 }
@@ -2262,9 +2605,12 @@ class _ChartToggle extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                     border: Border.all(color: i == selected ? DashUi.line : Colors.transparent),
                   ),
-                  child: Text(
-                    labels[i],
-                    style: TextStyle(fontSize: 12.5, fontWeight: i == selected ? FontWeight.w800 : FontWeight.w600, color: i == selected ? DashUi.blue : DashUi.slate),
+                  // Not selectable: the page-wide SelectionArea would otherwise show a text cursor over the label.
+                  child: SelectionContainer.disabled(
+                    child: Text(
+                      labels[i],
+                      style: TextStyle(fontSize: 12.5, fontWeight: i == selected ? FontWeight.w800 : FontWeight.w600, color: i == selected ? DashUi.blue : DashUi.slate),
+                    ),
                   ),
                 ),
               ),
@@ -2361,7 +2707,7 @@ class _LineChartPainter extends CustomPainter {
   static const double left = 46;
   static const double right = 14;
   static const double top = 10;
-  static const double bottom = 24;
+  static const double bottom = 34;
 
   final List<double> revenue;
   final List<double> profit;
@@ -2403,6 +2749,11 @@ class _LineChartPainter extends CustomPainter {
     for (var i = 0; i < n; i++) {
       final tp = _text(_monthLetters[i], TextStyle(fontSize: 11, color: hover == i ? DashUi.ink : DashUi.slate, fontWeight: hover == i ? FontWeight.w800 : FontWeight.w500));
       tp.paint(canvas, Offset(x(i) - tp.width / 2, plot.bottom + 6));
+      if (i == n - 1) {
+        // The series stops at today, so the last month is partial: say so instead of letting it read as a collapse.
+        final so = _text('so far', const TextStyle(fontSize: 10, color: DashUi.muted, fontWeight: FontWeight.w600));
+        so.paint(canvas, Offset(x(i) - so.width / 2, plot.bottom + 6 + tp.height));
+      }
     }
 
     Path linePath(List<double> v) {
@@ -2459,7 +2810,7 @@ class _LineChartPainter extends CustomPainter {
         ..strokeWidth = 1);
       final r = revenue[h], p = profit[h];
       final lines = [
-        _text(_monthLetters[h], const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w700)),
+        _text(h == n - 1 ? '${_monthLetters[h]} so far' : _monthLetters[h], const TextStyle(fontSize: 11, color: Colors.white70, fontWeight: FontWeight.w700)),
         _text('Revenue  ${dashMoney(r)}', const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
         _text('Profit  ${dashMoney(p)}${r > 0 ? '  ·  ${_fmtNum(p / r * 100)}%' : ''}', const TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w700)),
       ];
@@ -2547,7 +2898,11 @@ class _MonthlyChart extends StatefulWidget {
 
   /// Fill the height the parent gives (otherwise a fixed 220px).
   final bool expand;
+
+  /// Fix the top of the axis (100 for a percentage) instead of rounding up from the biggest value.
+  final double? maxValue;
   const _MonthlyChart({
+    this.maxValue,
     required this.values,
     required this.color,
     required this.tipFormat,
@@ -2675,6 +3030,7 @@ class _MonthlyChartState extends State<_MonthlyChart> with TickerProviderStateMi
                             intro: Curves.easeOutCubic.transform(_intro.value),
                             hover: _active == null ? _hoverAnim.value : math.max(_hoverAnim.value, 0.001),
                             fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily,
+                            maxValue: w.maxValue,
                           ),
                         ),
                       ),
@@ -2712,7 +3068,9 @@ class _ChartPainter extends CustomPainter {
   final double intro;
   final double hover;
   final String? fontFamily;
+  final double? maxValue;
   const _ChartPainter({
+    this.maxValue,
     required this.values,
     required this.color,
     required this.line,
@@ -2750,7 +3108,7 @@ class _ChartPainter extends CustomPainter {
     final n = values.length;
     final slot = plot.width / n;
     final focusing = index != null && hover > 0.001;
-    final maxV = _niceMax(values.whereType<double>().fold<double>(0, math.max));
+    final maxV = maxValue ?? _niceMax(values.whereType<double>().fold<double>(0, math.max));
     double y(double v) => plot.bottom - (v / maxV).clamp(0.0, 1.0) * plot.height;
 
     if (focusing) {
@@ -2991,6 +3349,7 @@ class _ChartPainter extends CustomPainter {
       old.values != values ||
       old.color != color ||
       old.line != line ||
+      old.maxValue != maxValue ||
       old.average != average;
 }
 
@@ -3021,14 +3380,29 @@ class _UntrackedNote extends StatelessWidget {
 /// Row of metric cards that wraps to two columns on narrow widths.
 class _CardRow extends StatelessWidget {
   final List<Widget> cards;
-  const _CardRow(this.cards);
+
+  /// A narrower card at the right end of the row (a full-size one when the row wraps).
+  final Widget? small;
+  const _CardRow(this.cards, {this.small});
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        final cols = c.maxWidth >= 640 ? cards.length : (c.maxWidth >= 420 ? 2 : 1);
         const gap = 8.0;
+        final s = small;
+        if (s != null && c.maxWidth >= 640) {
+          const smallW = 150.0;
+          final w = (c.maxWidth - smallW - gap * cards.length) / cards.length;
+          return Row(
+            children: [
+              for (final card in cards) ...[SizedBox(width: w, height: 88, child: card), const SizedBox(width: gap)],
+              SizedBox(width: smallW, height: 88, child: s),
+            ],
+          );
+        }
+        final all = [...cards, ?s];
+        final cols = c.maxWidth >= 640 ? all.length : (c.maxWidth >= 420 ? 2 : 1);
         final w = (c.maxWidth - gap * (cols - 1)) / cols;
         return Wrap(
           spacing: gap,
@@ -3088,6 +3462,10 @@ class _TechPerformance extends StatefulWidget {
   /// Jobs completed since the last callback (null until tracked).
   final int? streak;
 
+  /// This year's callbacks as a percent of completed jobs, and the strike count that colours it (null until loaded).
+  final double? callbackRate;
+  final int? callbackStrikes;
+
   /// The tech's name (chart legend). Falls back to "This tech".
   final String techName;
 
@@ -3102,6 +3480,8 @@ class _TechPerformance extends StatefulWidget {
     this.satisfaction,
     this.mentions = const [],
     this.streak,
+    this.callbackRate,
+    this.callbackStrikes,
     this.techName = 'This tech',
     this.scorecard = const [],
     this.teamPerDay = const [],
@@ -3191,6 +3571,15 @@ class _TechPerformanceState extends State<_TechPerformance> {
         );
     }
 
+    final strikes = widget.callbackStrikes;
+    final callbackCard = AnimatedMetricCard(
+      title: 'Callback rate',
+      value: widget.callbackRate,
+      valueColor: strikes == null ? DashUi.muted : (strikes == 0 ? DashUi.emerald : (strikes == 1 ? DashUi.amber : DashUi.red)),
+      index: 3,
+      format: (v) => '${_fmtNum(v)}%',
+    );
+
     final panelBox = Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
       decoration: DashUi.panel(),
@@ -3219,7 +3608,7 @@ class _TechPerformanceState extends State<_TechPerformance> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _CardRow([
+        _CardRow(small: callbackCard, [
           AnimatedMetricCard(
             title: 'Labor dollars',
             value: tech.laborJobs == 0 ? null : tech.laborDollars,
@@ -3344,7 +3733,7 @@ class _StaleTubeState extends State<_StaleTube> {
 
   @override
   Widget build(BuildContext context) {
-    final total = widget.open ?? 0;
+    final total = widget.open ?? ((widget.stale ?? 0) + (widget.aging ?? 0)); // a missing total must not zero the stale count
     final st = (widget.stale ?? 0).clamp(0, total);
     final ag = (widget.aging ?? 0).clamp(0, total - st);
     final ok = total - st - ag;
@@ -3461,9 +3850,10 @@ class _StaleTubeState extends State<_StaleTube> {
 /// Hovering also lifts the card and points at the click, which opens the list of those estimates.
 class _LateCard extends StatefulWidget {
   final int? count;
+  final String? since;
   final String employeeId;
   final String name;
-  const _LateCard({required this.count, required this.employeeId, required this.name});
+  const _LateCard({required this.count, this.since, required this.employeeId, required this.name});
 
   @override
   State<_LateCard> createState() => _LateCardState();
@@ -3551,7 +3941,7 @@ class _LateCardState extends State<_LateCard> with SingleTickerProviderStateMixi
                                 duration: const Duration(milliseconds: 140),
                                 layoutBuilder: (cur, prev) => Stack(alignment: Alignment.centerLeft, children: [...prev, ?cur]),
                                 child: Text(
-                                  hovering ? 'see the estimates' : 'this year',
+                                  hovering ? 'see the estimates' : (widget.since == null ? 'this year' : 'since ${widget.since}'),
                                   key: ValueKey(hovering),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
@@ -3750,7 +4140,7 @@ class _LateEstimatesDialogState extends State<_LateEstimatesDialog> {
     }
     final rule = 'No activity for more than ${_limit('requestedDays', 5)} days before sending (${_limit('requestedHardBidDays', 14)} for hard bids) '
         'or ${_limit('providedDays', 14)} days once sent';
-    return n == null ? rule : '$n open ${n == 1 ? 'estimate' : 'estimates'} · $rule';
+    return n == null ? rule : '$n stale ${n == 1 ? 'estimate' : 'estimates'} · $rule';
   }
 
   @override
@@ -3888,6 +4278,303 @@ class _LateEstimatesDialogState extends State<_LateEstimatesDialog> {
       ),
     );
   }
+}
+
+/// Open estimates in dollars (Heather's page): the total, how much of it is still moving and how much has gone quiet,
+/// and the split by stage. Tapping opens the list of stale estimates.
+class _PipelineCard extends StatelessWidget {
+  final _Pipeline pipeline;
+
+  /// How many of the open estimates are stale (the count behind the "gone quiet" dollars); null if not sent.
+  final int? staleCount;
+  final String employeeId;
+  final String name;
+
+  /// Always lay out as a narrow card (figures above the bar). Needed beside another card in an equal-height row, which
+  /// cannot hold the LayoutBuilder the wide/narrow switch uses.
+  final bool stacked;
+  const _PipelineCard({required this.pipeline, required this.employeeId, required this.name, this.staleCount, this.stacked = false});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = pipeline;
+    final total = p.value;
+    final active = p.activeValue, quiet = p.quietValue;
+    final still = MediaQuery.disableAnimationsOf(context);
+
+    final fs = stacked ? 13.5 : 12.5; // the side-by-side card has more height to spend, so its type is larger
+    final quietN = staleCount?.clamp(0, p.count);
+    Widget legend(Color c, String label, double v, int? n) => Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 9, height: 9, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(3))),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: fs, color: DashUi.slate)),
+            const SizedBox(width: 5),
+            Text(_compactMoney(v), style: TextStyle(fontSize: fs, fontWeight: FontWeight.w800, color: DashUi.ink)),
+            if (n != null) Text(' · $n', style: TextStyle(fontSize: fs, color: DashUi.muted)),
+          ],
+        );
+    Widget stage(String label, int n, double v) => Text.rich(
+          TextSpan(children: [
+            TextSpan(text: '$label  ', style: const TextStyle(color: DashUi.slate)),
+            TextSpan(text: '$n', style: const TextStyle(fontWeight: FontWeight.w800, color: DashUi.ink)),
+            TextSpan(text: ' · ${_compactMoney(v)}', style: const TextStyle(color: DashUi.muted)),
+          ]),
+          style: TextStyle(fontSize: fs),
+        );
+
+    final bar = TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: still ? Duration.zero : const Duration(milliseconds: 900),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, _) => ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          height: stacked ? 16 : 12,
+          child: total <= 0
+              ? const ColoredBox(color: DashUi.faint)
+              : Align(
+                  alignment: Alignment.centerLeft,
+                  child: FractionallySizedBox(
+                    widthFactor: t,
+                    heightFactor: 1,
+                    child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      if (active > 0) Expanded(flex: (active / total * 1000).round().clamp(1, 1000), child: const ColoredBox(color: DashUi.emerald)),
+                      if (quiet > 0) Expanded(flex: (quiet / total * 1000).round().clamp(1, 1000), child: const ColoredBox(color: DashUi.red)),
+                    ]),
+                  ),
+                ),
+        ),
+      ),
+    );
+
+    final headline = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('ESTIMATE PIPELINE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: DashUi.muted)),
+        const SizedBox(height: 2),
+        Text(total <= 0 ? '—' : _compactMoney(total), style: TextStyle(fontSize: stacked ? 38 : 30, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.15)),
+        Text(p.count == 0 ? 'no open estimates' : '${p.count} open ${p.count == 1 ? 'estimate' : 'estimates'}', style: TextStyle(fontSize: stacked ? 13 : 12, fontWeight: FontWeight.w600, color: DashUi.muted)),
+      ],
+    );
+    final detail = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        bar,
+        const SizedBox(height: 8),
+        Wrap(spacing: 16, runSpacing: 4, children: [legend(DashUi.emerald, 'Still moving', active, quietN == null ? null : p.count - quietN), legend(DashUi.red, 'Gone quiet', quiet, quietN)]),
+        const SizedBox(height: 6),
+        Wrap(spacing: 16, runSpacing: 4, children: [stage('Requested', p.requestedCount, p.requestedValue), stage('Sent', p.providedCount, p.providedValue)]),
+      ],
+    );
+
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (_) => _LateEstimatesDialog(employeeId: employeeId, name: name, kind: _EstimateListKind.stale),
+        ),
+        child: HoverLift(
+          lift: 2,
+          builder: (context, hovering) => Semantics(
+            label: 'Estimate pipeline: ${dashMoney(total)} across ${p.count} open estimates, ${dashMoney(active)} still moving, ${dashMoney(quiet)} gone quiet',
+            child: SelectionContainer.disabled(
+              child: Container(
+              alignment: Alignment.center, // centred when an equal-height row stretches it
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: hovering ? DashUi.emerald.withValues(alpha: 0.55) : DashUi.line),
+              ),
+              child: stacked
+                  ? Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [headline, const SizedBox(height: 10), detail])
+                  : LayoutBuilder(
+                      builder: (context, c) => c.maxWidth < 520
+                          ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [headline, const SizedBox(height: 10), detail])
+                          : Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+                              SizedBox(width: 168, child: headline),
+                              const SizedBox(width: 20),
+                              Expanded(child: detail),
+                            ]),
+                    ),
+            ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The year's largest won deal, dressed up like a win: a gold card with confetti drifting down, a twinkling star or two,
+/// a trophy and an amount that counts up. Still (no drift, no twinkle, no count-up) when the OS asks for reduced motion.
+class _BigDealCard extends StatefulWidget {
+  final _BigDeal deal;
+  final int year;
+  const _BigDealCard({required this.deal, required this.year});
+
+  @override
+  State<_BigDealCard> createState() => _BigDealCardState();
+}
+
+class _BigDealCardState extends State<_BigDealCard> with SingleTickerProviderStateMixin {
+  late final AnimationController _clock = AnimationController(vsync: this, duration: const Duration(seconds: 9));
+  bool _still = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _still = MediaQuery.disableAnimationsOf(context);
+    if (_still) {
+      _clock.stop();
+      _clock.value = 0.3; // a frozen frame with the confetti spread out
+    } else if (!_clock.isAnimating) {
+      _clock.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _clock.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final deal = widget.deal;
+    final deep = Color.lerp(DashUi.amber, DashUi.ink, 0.45)!;
+    final date = deal.date.isEmpty ? null : _prettyDate(deal.date);
+    return Semantics(
+      label: 'Largest deal of ${widget.year}: ${_wholeMoney(deal.amount)} for ${deal.customer}${date == null ? '' : ', estimate dated $date'}',
+      child: Container(
+        clipBehavior: Clip.antiAlias,
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: _gold.withValues(alpha: 0.6)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color.lerp(_gold, Colors.white, 0.86)!, Color.lerp(_gold, Colors.white, 0.62)!],
+          ),
+          boxShadow: [BoxShadow(color: _gold.withValues(alpha: 0.22), blurRadius: 14, offset: const Offset(0, 4))],
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: ExcludeSemantics(
+                child: RepaintBoundary(
+                  child: AnimatedBuilder(
+                    animation: _clock,
+                    builder: (context, _) => CustomPaint(painter: _ConfettiPainter(_clock.value)),
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Row(
+                children: [
+                  Container(
+                    width: 46,
+                    height: 46,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color.lerp(_gold, Colors.white, 0.25)!, DashUi.amber]),
+                      boxShadow: [BoxShadow(color: _gold.withValues(alpha: 0.5), blurRadius: 10)],
+                    ),
+                    child: const Icon(Icons.emoji_events_rounded, size: 26, color: Colors.white),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('LARGEST DEAL · ${widget.year}', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.7, color: deep)),
+                        TweenAnimationBuilder<double>(
+                          key: ValueKey(deal.amount),
+                          tween: Tween(begin: _still ? deal.amount : 0, end: deal.amount),
+                          duration: _still ? Duration.zero : const Duration(milliseconds: 1500),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, v, _) => FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(_wholeMoney(v), style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: deep, height: 1.15, fontFeatures: const [FontFeature.tabularFigures()])),
+                          ),
+                        ),
+                        Text(deal.customer, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.2)), // commercial names run long
+                        if (date != null) Text('Estimate dated $date', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: DashUi.slate)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Confetti pieces that drift down and wrap round (every speed is a whole number of loops per cycle, so the loop is
+/// seamless), plus a few four-point stars that twinkle. Positions come from a fixed seed so every frame agrees.
+class _ConfettiPainter extends CustomPainter {
+  final double t; // 0..1 around the loop
+  const _ConfettiPainter(this.t);
+
+  static const _colors = [_gold, DashUi.sky, DashUi.emerald, DashUi.indigo, DashUi.red];
+  static final _pieces = () {
+    final r = math.Random(11);
+    return [
+      for (var i = 0; i < 26; i++)
+        (x: r.nextDouble(), phase: r.nextDouble(), loops: 1 + r.nextInt(2), spin: 1 + r.nextInt(3), size: 3.5 + r.nextDouble() * 3, color: i % _colors.length, round: i % 4 == 0),
+    ];
+  }();
+  static final _stars = () {
+    final r = math.Random(5);
+    return [for (var i = 0; i < 4; i++) (x: 0.1 + r.nextDouble() * 0.8, y: 0.12 + r.nextDouble() * 0.76, phase: r.nextDouble(), size: 5 + r.nextDouble() * 3)];
+  }();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (final p in _pieces) {
+      final f = (p.phase + t * p.loops) % 1.0;
+      final y = -8 + f * (size.height + 16);
+      final x = p.x * size.width + math.sin((f + p.phase) * 2 * math.pi) * 6;
+      final paint = Paint()..color = _colors[p.color].withValues(alpha: 0.55);
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(t * p.spin * 2 * math.pi + p.phase * 6);
+      if (p.round) {
+        canvas.drawCircle(Offset.zero, p.size * 0.45, paint);
+      } else {
+        canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset.zero, width: p.size, height: p.size * 0.55), const Radius.circular(1)), paint);
+      }
+      canvas.restore();
+    }
+    for (final s in _stars) {
+      final tw = 0.5 + 0.5 * math.sin((t * 2 + s.phase) * 2 * math.pi); // two twinkles per loop
+      final r = s.size * (0.55 + 0.45 * tw);
+      final c = Offset(s.x * size.width, s.y * size.height);
+      final path = Path()
+        ..moveTo(c.dx, c.dy - r)
+        ..quadraticBezierTo(c.dx, c.dy, c.dx + r, c.dy)
+        ..quadraticBezierTo(c.dx, c.dy, c.dx, c.dy + r)
+        ..quadraticBezierTo(c.dx, c.dy, c.dx - r, c.dy)
+        ..quadraticBezierTo(c.dx, c.dy, c.dx, c.dy - r);
+      canvas.drawPath(path, Paint()..color = Colors.white.withValues(alpha: 0.35 + 0.55 * tw));
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _ConfettiPainter old) => old.t != t;
 }
 
 /// Five stars filled to [value] (0-5, partial stars supported).
@@ -5080,23 +5767,25 @@ class _MoraleCardState extends State<_MoraleCard> with SingleTickerProviderState
   Widget build(BuildContext context) {
     final r = widget.rating;
     final reduce = MediaQuery.disableAnimationsOf(context);
-    if (reduce) {
-      _sweep.stop();
+    if (reduce || r == null) {
+      _sweep.stop(); // nothing to animate: the grey trace is still, so don't repaint it every frame
     } else if (!_sweep.isAnimating) {
       _sweep.repeat();
     }
     final color = r == null ? DashUi.muted : _tone(r.avg);
 
-    Widget scoreText({required bool big, CrossAxisAlignment align = CrossAxisAlignment.end}) => Column(
+    Widget scoreText({required bool big, CrossAxisAlignment align = CrossAxisAlignment.end}) => r == null
+        ? const Text('Not tracked yet', style: TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w600))
+        : Column(
           mainAxisSize: MainAxisSize.min,
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: align,
           children: [
-            Text(r == null ? '—' : _fmtNum(r.avg),
+            Text(_fmtNum(r.avg),
                 style: TextStyle(fontSize: big ? 52 : 38, fontWeight: FontWeight.w800, color: color, height: 1)),
             Text(
-              r == null ? 'Not tracked yet' : (widget.isSample ? 'out of 5 · sample' : 'out of 5'),
-              style: TextStyle(fontSize: 11.5, color: widget.isSample ? DashUi.amber : _muted, fontWeight: r == null ? FontWeight.w600 : FontWeight.w400),
+              widget.isSample ? 'out of 5 · sample' : 'out of 5',
+              style: TextStyle(fontSize: 11.5, color: widget.isSample ? DashUi.amber : _muted),
             ),
           ],
         );

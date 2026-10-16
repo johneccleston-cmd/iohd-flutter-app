@@ -23,10 +23,10 @@ import 'widgets/dashboard_kit.dart';
 final NumberFormat _money = NumberFormat.currency(symbol: '\$', decimalDigits: 2);
 double _n(dynamic v) => v is num ? v.toDouble() : (double.tryParse('${v ?? ''}') ?? 0);
 String _ymdOf(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
-DateTime _mondayOf(DateTime d) {
-  final day = DateTime(d.year, d.month, d.day);
-  return day.subtract(Duration(days: day.weekday - DateTime.monday));
-}
+// Calendar math on dates, never Duration: adding 24h blocks to a local date lands on the wrong day across a
+// daylight-saving change.
+DateTime _addDays(DateTime d, int n) => DateTime(d.year, d.month, d.day + n);
+DateTime _mondayOf(DateTime d) => _addDays(d, -(d.weekday - DateTime.monday));
 
 class _ApiError implements Exception {
   final String message;
@@ -79,14 +79,14 @@ class _RunLine {
   final double amountPaid;
 
   _RunLine(Map<String, dynamic> j)
-      : name = '${j['tech_name'] ?? ''}',
-        isSales = j['is_sales'] == true,
-        gross = _n(j['weekly_gross']),
-        hurdle = _n(j['hurdle']),
-        payable = _n(j['payable']),
-        previouslyPaid = _n(j['previously_paid']),
-        carryRecovered = _n(j['carry_recovered']),
-        amountPaid = _n(j['amount_paid']);
+    : name = '${j['tech_name'] ?? ''}',
+      isSales = j['is_sales'] == true,
+      gross = _n(j['weekly_gross']),
+      hurdle = _n(j['hurdle']),
+      payable = _n(j['payable']),
+      previouslyPaid = _n(j['previously_paid']),
+      carryRecovered = _n(j['carry_recovered']),
+      amountPaid = _n(j['amount_paid']);
 }
 
 class _Preview {
@@ -98,12 +98,12 @@ class _Preview {
   final bool weekIsOver;
 
   _Preview(Map<String, dynamic> j)
-      : lines = [for (final l in (j['lines'] as List? ?? const [])) _RunLine(Map<String, dynamic>.from(l as Map))],
-        payable = _n((j['totals'] as Map?)?['payable']),
-        previouslyPaid = _n((j['totals'] as Map?)?['previously_paid']),
-        toPay = _n((j['totals'] as Map?)?['amount_paid']),
-        hasPriorRuns = j['has_prior_runs'] == true,
-        weekIsOver = j['week_is_over'] == true;
+    : lines = [for (final l in (j['lines'] as List? ?? const [])) _RunLine(Map<String, dynamic>.from(l as Map))],
+      payable = _n((j['totals'] as Map?)?['payable']),
+      previouslyPaid = _n((j['totals'] as Map?)?['previously_paid']),
+      toPay = _n((j['totals'] as Map?)?['amount_paid']),
+      hasPriorRuns = j['has_prior_runs'] == true,
+      weekIsOver = j['week_is_over'] == true;
 }
 
 class _Run {
@@ -117,15 +117,18 @@ class _Run {
   final String? voidReason;
 
   _Run(Map<String, dynamic> j)
-      : id = _n(j['id']).round(),
-        type = '${j['run_type'] ?? ''}',
-        status = '${j['status'] ?? ''}',
-        by = '${j['run_by_name'] ?? ''}',
-        notes = (j['notes'] as String?)?.trim().isEmpty ?? true ? null : j['notes'] as String,
-        paid = _n(j['total_amount_paid']),
-        at = DateTime.tryParse('${j['created_at'] ?? ''}')?.toLocal(),
-        voidReason = j['void_reason'] as String?;
+    : id = _n(j['id']).round(),
+      type = '${j['run_type'] ?? ''}',
+      status = '${j['status'] ?? ''}',
+      by = '${j['run_by_name'] ?? ''}',
+      notes = (j['notes'] as String?)?.trim().isEmpty ?? true ? null : j['notes'] as String,
+      paid = _n(j['total_amount_paid']),
+      at = DateTime.tryParse('${j['created_at'] ?? ''}')?.toLocal(),
+      voidReason = j['void_reason'] as String?;
 }
+
+/// Bumped whenever a payroll run is finalized or voided, so kept-alive screens (the commission dashboard) can refetch.
+final ValueNotifier<int> payrollRunVersion = ValueNotifier<int>(0);
 
 /// Opens the run payroll dialog on the pay week containing [initialDate]. [onChanged] fires after a run is
 /// finalized or voided so the caller can refresh its numbers.
@@ -134,6 +137,52 @@ Future<void> showPayrollRunDialog(BuildContext context, {required DateTime initi
     context: context,
     builder: (_) => _PayrollRunDialog(initialDate: initialDate, onChanged: onChanged),
   );
+}
+
+/// Asks why a run is being voided. Pops with the trimmed reason, or null on cancel. The Void button stays off
+/// until a reason is typed, so it never silently does nothing. It owns its controller, so the text field is
+/// not disposed while the dialog is still animating closed.
+class _VoidReasonDialog extends StatefulWidget {
+  final int runId;
+  const _VoidReasonDialog({required this.runId});
+
+  @override
+  State<_VoidReasonDialog> createState() => _VoidReasonDialogState();
+}
+
+class _VoidReasonDialogState extends State<_VoidReasonDialog> {
+  final _reason = TextEditingController();
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text('Void run #${widget.runId}?'),
+      content: SizedBox(
+        width: 380,
+        child: TextField(
+          controller: _reason,
+          autofocus: true,
+          maxLines: 2,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(labelText: 'Reason (required)', border: OutlineInputBorder()),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: DashUi.red),
+          onPressed: _reason.text.trim().isEmpty ? null : () => Navigator.pop(context, _reason.text.trim()),
+          child: const Text('Void run'),
+        ),
+      ],
+    );
+  }
 }
 
 class _PayrollRunDialog extends StatefulWidget {
@@ -196,13 +245,20 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
         _error = e.message;
         _loading = false;
       });
+    } catch (_) {
+      // A reply that does not have the expected shape; without this the spinner would never stop.
+      if (!mounted || id != _requestId) return;
+      setState(() {
+        _error = 'The server sent a payroll preview this screen could not read. Try again.';
+        _loading = false;
+      });
     }
   }
 
   void _stepWeek(int dir) {
     if (_busy) return;
     setState(() {
-      _week = _week.add(Duration(days: 7 * dir));
+      _week = _addDays(_week, 7 * dir);
       _message = null;
       _preview = null;
       _runs = const [];
@@ -220,7 +276,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
 
   Future<void> _finalize() async {
     final p = _preview!;
-    final end = _week.add(const Duration(days: 6));
+    final end = _addDays(_week, 6);
     final label = '${DateFormat('MMM d').format(_week)} – ${DateFormat('MMM d, yyyy').format(end)}';
     final ok = await showDialog<bool>(
       context: context,
@@ -253,6 +309,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
         _message = 'Payroll finalized (run #${res['run_id']}).${warnings.isEmpty ? '' : ' ${warnings.join(' ')}'}';
       });
       widget.onChanged?.call();
+      payrollRunVersion.value++;
       _load();
     } on _ApiError catch (e) {
       if (!mounted) return;
@@ -264,33 +321,11 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
   }
 
   Future<void> _void(_Run run) async {
-    final reason = TextEditingController();
-    final ok = await showDialog<bool>(
+    final text = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Void run #${run.id}?'),
-        content: SizedBox(
-          width: 380,
-          child: TextField(
-            controller: reason,
-            autofocus: true,
-            maxLines: 2,
-            decoration: const InputDecoration(labelText: 'Reason (required)', border: OutlineInputBorder()),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: DashUi.red),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Void run'),
-          ),
-        ],
-      ),
+      builder: (_) => _VoidReasonDialog(runId: run.id),
     );
-    final text = reason.text.trim();
-    reason.dispose();
-    if (ok != true || text.isEmpty || !mounted) return;
+    if (text == null || text.isEmpty || !mounted) return;
     setState(() {
       _busy = true;
       _message = null;
@@ -303,6 +338,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
         _message = 'Run #${run.id} voided.';
       });
       widget.onChanged?.call();
+      payrollRunVersion.value++;
       _load();
     } on _ApiError catch (e) {
       if (!mounted) return;
@@ -315,48 +351,59 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final end = _week.add(const Duration(days: 6));
+    final end = _addDays(_week, 6);
     final label = '${DateFormat('MMM d').format(_week)} – ${DateFormat('MMM d, yyyy').format(end)}';
-    return Dialog(
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 720),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  const Text('Run payroll', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink)),
-                  const Spacer(),
-                  IconButton(
-                    tooltip: 'Previous week',
-                    onPressed: _busy ? null : () => _stepWeek(-1),
-                    icon: const Icon(Icons.chevron_left_rounded),
-                  ),
-                  Text(label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                  IconButton(
-                    tooltip: 'Next week',
-                    onPressed: _busy ? null : () => _stepWeek(1),
-                    icon: const Icon(Icons.chevron_right_rounded),
-                  ),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              if (_message != null) _banner(_message!, DashUi.emeraldDeep),
-              if (_error != null && _preview != null) _banner(_error!, DashUi.red),
-              Flexible(child: _body()),
-              const SizedBox(height: 12),
-              _footer(),
-            ],
+    // Don't let the dialog close while a finalize/void is in flight: the result (and the refresh of the screen
+    // behind) would be lost.
+    return PopScope(
+      canPop: !_busy,
+      child: Dialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900, maxHeight: 720),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    const Text(
+                      'Run payroll',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Previous week',
+                      onPressed: _busy ? null : () => _stepWeek(-1),
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    Text(
+                      label,
+                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                    ),
+                    IconButton(
+                      tooltip: 'Next week',
+                      onPressed: _busy ? null : () => _stepWeek(1),
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: _busy ? null : () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                if (_message != null) _banner(_message!, DashUi.emeraldDeep),
+                if (_error != null && _preview != null) _banner(_error!, DashUi.red),
+                Flexible(child: _body()),
+                const SizedBox(height: 12),
+                _footer(),
+              ],
+            ),
           ),
         ),
       ),
@@ -364,16 +411,19 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
   }
 
   Widget _banner(String text, Color color) => Container(
-        width: double.infinity,
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withValues(alpha: 0.35)),
-        ),
-        child: Text(text, style: TextStyle(fontSize: 12.5, color: color, fontWeight: FontWeight.w600)),
-      );
+    width: double.infinity,
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withValues(alpha: 0.35)),
+    ),
+    child: Text(
+      text,
+      style: TextStyle(fontSize: 12.5, color: color, fontWeight: FontWeight.w600),
+    ),
+  );
 
   Widget _body() {
     if (_loading && _preview == null) {
@@ -386,7 +436,11 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: DashUi.red, fontSize: 13)),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: DashUi.red, fontSize: 13),
+              ),
               const SizedBox(height: 12),
               OutlinedButton(onPressed: _load, child: const Text('Try again')),
             ],
@@ -400,7 +454,10 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           if (!p.weekIsOver)
-            _banner('This pay week is not over yet. You can preview it, but it can only be finalized after Sunday.', DashUi.amber),
+            _banner(
+              'This pay week is not over yet. You can preview it, but it can only be finalized after Sunday.',
+              DashUi.amber,
+            ),
           Row(
             children: [
               _stat('To pay now', _money.format(p.toPay), DashUi.ink),
@@ -412,13 +469,18 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
           if (p.lines.isEmpty)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 28),
-              child: Center(child: Text('Nothing to pay for this week.', style: TextStyle(color: DashUi.muted))),
+              child: Center(
+                child: Text('Nothing to pay for this week.', style: TextStyle(color: DashUi.muted)),
+              ),
             )
           else
             _table(p),
           if (_runs.isNotEmpty) ...[
             const SizedBox(height: 16),
-            const Text('Runs for this week', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink)),
+            const Text(
+              'Runs for this week',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink),
+            ),
             const SizedBox(height: 6),
             for (final r in _runs) _runRow(r),
           ],
@@ -428,26 +490,34 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
   }
 
   Widget _stat(String label, String value, Color color) => Expanded(
-        child: Container(
-          margin: const EdgeInsets.only(right: 10),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: DashUi.panel(radius: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 2),
-              Text(value, style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color)),
-            ],
+    child: Container(
+      margin: const EdgeInsets.only(right: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: DashUi.panel(radius: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600),
           ),
-        ),
-      );
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color),
+          ),
+        ],
+      ),
+    ),
+  );
 
   Widget _table(_Preview p) {
     const head = TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.muted);
     const cell = TextStyle(fontSize: 12.5, color: DashUi.ink);
-    Widget c(String t, {int flex = 2, TextStyle style = cell, TextAlign align = TextAlign.right}) =>
-        Expanded(flex: flex, child: Text(t, style: style, textAlign: align));
+    Widget c(String t, {int flex = 2, TextStyle style = cell, TextAlign align = TextAlign.right}) => Expanded(
+      flex: flex,
+      child: Text(t, style: style, textAlign: align),
+    );
     return Container(
       decoration: DashUi.panel(radius: 12),
       child: Column(
@@ -472,7 +542,12 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               child: Row(
                 children: [
-                  c(l.name, flex: 3, align: TextAlign.left, style: cell.copyWith(fontWeight: FontWeight.w600)),
+                  c(
+                    l.name,
+                    flex: 3,
+                    align: TextAlign.left,
+                    style: cell.copyWith(fontWeight: FontWeight.w600),
+                  ),
                   c(_money.format(l.gross)),
                   c(l.hurdle == 0 ? '—' : _money.format(l.hurdle)),
                   c(_money.format(l.payable)),
@@ -480,7 +555,10 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
                   c(l.carryRecovered == 0 ? '—' : _money.format(l.carryRecovered)),
                   c(
                     _money.format(l.amountPaid),
-                    style: cell.copyWith(fontWeight: FontWeight.w800, color: l.amountPaid < 0 ? DashUi.red : DashUi.ink),
+                    style: cell.copyWith(
+                      fontWeight: FontWeight.w800,
+                      color: l.amountPaid < 0 ? DashUi.red : DashUi.ink,
+                    ),
                   ),
                 ],
               ),
@@ -511,8 +589,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
               ),
             ),
           ),
-          if (!voided && latestFinal)
-            TextButton(onPressed: _busy ? null : () => _void(r), child: const Text('Void')),
+          if (!voided && latestFinal) TextButton(onPressed: _busy ? null : () => _void(r), child: const Text('Void')),
         ],
       ),
     );
@@ -520,10 +597,8 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
 
   Widget _footer() {
     final p = _preview;
-    final needsNothing = p != null &&
-        p.weekIsOver &&
-        p.hasPriorRuns &&
-        p.lines.every((l) => l.amountPaid == 0 && l.carryRecovered == 0);
+    final needsNothing =
+        p != null && p.weekIsOver && p.hasPriorRuns && p.lines.every((l) => l.amountPaid == 0 && l.carryRecovered == 0);
     return Row(
       children: [
         Expanded(
@@ -541,12 +616,19 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
         ),
         const SizedBox(width: 12),
         if (needsNothing)
-          const Text('Already fully paid', style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w600)),
+          const Text(
+            'Already fully paid',
+            style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w600),
+          ),
         const SizedBox(width: 12),
         FilledButton.icon(
           onPressed: _canFinalize ? _finalize : null,
           icon: _busy
-              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                )
               : const Icon(Icons.lock_outline_rounded, size: 18),
           label: Text(p?.hasPriorRuns == true ? 'Finalize adjustment' : 'Finalize payroll'),
           style: FilledButton.styleFrom(

@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../utils/status_colors.dart';
 
@@ -93,7 +97,35 @@ const Map<String, String> _toolLabels = {
   'payroll_preview': 'Payroll',
   'advance_balances': 'Payroll',
   'retainage_and_pool': 'Payroll',
+  'job_notes_tasks': 'Job notes',
+  'job_files_list': 'Job files',
+  'google_reviews': 'Google reviews',
+  'cycle_count_status': 'Cycle counts',
+  'balance_history': 'Balance history',
+  'run_sql': 'Custom query',
 };
+
+/// One line for "How I got this": what was looked up and with which filters, from the tool name and its JSON input.
+String? _describeCall(String tool, String inputJson) {
+  if (tool == 'describe_data') return null; // housekeeping, nothing to show
+  var input = <String, dynamic>{};
+  try {
+    final d = json.decode(inputJson);
+    if (d is Map<String, dynamic>) input = d;
+  } catch (_) {}
+  final label = _toolLabels[tool] ?? tool.replaceAll('_', ' ');
+  if (tool == 'run_sql') {
+    final purpose = (input['purpose'] ?? '').toString().trim();
+    final sql = (input['sql'] ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    final shown = sql.length > 220 ? '${sql.substring(0, 220)}…' : sql;
+    return purpose.isEmpty ? '$label: $shown' : '$label: $purpose ($shown)';
+  }
+  final params = [
+    for (final e in input.entries)
+      if (e.key != 'limit' && e.value != null && e.value.toString().trim().isNotEmpty) '${e.key.replaceAll('_', ' ')} ${e.value}',
+  ];
+  return params.isEmpty ? label : '$label: ${params.join(', ')}';
+}
 
 enum AssistantRole { user, assistant }
 
@@ -115,12 +147,13 @@ class AssistantMessage {
   final AssistantRole role;
   final String text;
   final List<String> sources;
+  final List<String> calls; // what was looked up, one line each, shown under "How I got this"
 
   /// True until the panel has shown this message once, so a new answer animates in and a re-opened
   /// conversation does not replay.
   bool fresh = true;
 
-  AssistantMessage(this.role, this.text, [this.sources = const []]);
+  AssistantMessage(this.role, this.text, [this.sources = const [], this.calls = const []]);
 }
 
 /// The conversation lives here. It survives closing the panel and, via SharedPreferences, an app restart.
@@ -140,6 +173,24 @@ class AssistantChat extends ChangeNotifier {
 
   List<AssistantMessage> get messages => chats[active].messages;
 
+  /// The screen the panel was opened from, sent with each question so "this job" and "here" make sense, and used to
+  /// pick suggestions on the welcome screen. Set by [showAssistantPanel].
+  String pageContext = '';
+  String pagePath = '';
+
+  /// Thumbs up / down on an answer. Fire and forget: the server only logs it, so a failure is not worth showing.
+  Future<void> sendFeedback(String rating, String? question, String answer) async {
+    try {
+      await http
+          .post(
+            Uri.parse('$kApiBaseUrl/api/assistant/feedback'),
+            headers: AuthSession.instance.headers(),
+            body: json.encode({'rating': rating, 'question': question, 'answer': answer}),
+          )
+          .timeout(const Duration(seconds: 15));
+    } catch (_) {}
+  }
+
   bool get canAddChat => !busy && messages.isNotEmpty && chats.length < maxChats;
 
   /// Starts a fresh chat. If the current one is still empty there is nothing to start.
@@ -147,6 +198,19 @@ class AssistantChat extends ChangeNotifier {
     if (!canAddChat) return;
     chats.add(AssistantConversation());
     _switchTo(chats.length - 1);
+  }
+
+  /// Called when the panel opens: lands on the welcome screen while the earlier chat stays in the side list. Reuses an
+  /// empty chat if there is one. Does nothing while a question is in flight, when the current chat is already empty, or
+  /// when the list is full of used chats.
+  void openFresh() {
+    if (busy || messages.isEmpty) return;
+    final empty = chats.indexWhere((c) => c.messages.isEmpty && c.title == null);
+    if (empty >= 0) {
+      selectChat(empty);
+    } else {
+      newChat();
+    }
   }
 
   void selectChat(int i) {
@@ -180,6 +244,61 @@ class AssistantChat extends ChangeNotifier {
   }
 
   bool busy = false;
+  String? status; // what the server says it is doing right now ("Checking what is owed…"), while busy
+  http.Client? _client;
+
+  /// The answer as written so far. Text that arrives (a stream, or a whole answer from a server that does not stream) goes
+  /// into [_streamPending] and is written out to [streamText] at a steady pace, so it reads like typing even when the
+  /// network or the model delivers it in one burst. Cleared when the answer lands, when a lookup starts (that turn was
+  /// not the answer) and on stop.
+  String streamText = '';
+  String _streamPending = '';
+  Timer? _typeTimer;
+  Completer<void>? _caughtUp;
+  bool lastAnswerStreamed = false; // the newest answer was already on screen as it arrived, so it must not replay
+
+  /// Whether an answer from a server that does not stream is also written out gradually. Tests switch this off.
+  static bool animateAnswers = true;
+
+  void _streamReset() {
+    _typeTimer?.cancel();
+    _typeTimer = null;
+    _streamPending = '';
+    streamText = '';
+    _caughtUp?.complete();
+    _caughtUp = null;
+  }
+
+  void _typeFrom(String text) {
+    _streamPending += text;
+    _typeTimer ??= Timer.periodic(const Duration(milliseconds: 33), (_) => _typeTick());
+  }
+
+  /// Reveals a little more of what has arrived: at least ~90 characters a second, and faster when far behind, so the
+  /// view is never more than a couple of seconds behind the text.
+  void _typeTick() {
+    final backlog = _streamPending.length - streamText.length;
+    if (backlog <= 0) {
+      _typeTimer?.cancel();
+      _typeTimer = null;
+      _caughtUp?.complete();
+      _caughtUp = null;
+      return;
+    }
+    final int step = math.max<int>(3, backlog ~/ 60);
+    int end = math.min<int>(_streamPending.length, streamText.length + step);
+    final unit = _streamPending.codeUnitAt(end - 1);
+    if (end < _streamPending.length && unit >= 0xD800 && unit <= 0xDBFF) end++; // never split an emoji in half
+    streamText = _streamPending.substring(0, end);
+    notifyListeners();
+  }
+
+  Future<void> _typeUntilCaughtUp() async {
+    if (streamText.length >= _streamPending.length) return;
+    final done = _caughtUp = Completer<void>();
+    await done.future.timeout(const Duration(seconds: 12), onTimeout: () {});
+  }
+
   String? error;
   DateTime? busySince;
   bool stopped = false; // the last question was cancelled by the user
@@ -189,8 +308,11 @@ class AssistantChat extends ChangeNotifier {
   void stop() {
     if (!busy) return;
     _gen++;
+    _client?.close(); // drops the connection, so a streaming answer stops being read
+    _streamReset();
     busy = false;
     busySince = null;
+    status = null;
     stopped = true;
     notifyListeners();
   }
@@ -204,18 +326,23 @@ class AssistantChat extends ChangeNotifier {
   // name and wiped on sign-out, "New conversation" and when someone else signs in.
   static const _storeKey = 'iohd_assistant_chat';
   static const _keepMessages = 40;
-  bool _loaded = false;
+  Future<void>? _loading;
+  bool get loadDone => _loadDone;
+  bool _loadDone = false; // nothing is written to storage until the saved thread has been read, or it would be overwritten
+  int _loadGen = 0; // bumped by clear() so a read that finishes after a sign-out cannot bring the old thread back
 
-  /// Brings back the saved thread once per app run. Safe to call every time the panel opens.
-  Future<void> ensureLoaded() async {
-    if (_loaded) return;
-    _loaded = true;
+  /// Brings back the saved thread once per app run. Safe to call every time the panel opens. A question asked before
+  /// it finishes is kept: the saved chats are placed before it instead of replacing it.
+  Future<void> ensureLoaded() => _loading ??= _load();
+
+  Future<void> _load() async {
+    final gen = _loadGen;
     try {
       final prefs = await SharedPreferences.getInstance();
       final raw = prefs.getString(_storeKey);
-      if (raw == null) return;
+      if (raw == null || gen != _loadGen) return;
       final d = json.decode(raw) as Map<String, dynamic>;
-      if (d['user'] != AuthSession.instance.name || chats.any((c) => c.messages.isNotEmpty)) return;
+      if (d['user'] != AuthSession.instance.name) return;
       // Older saves hold one thread under "messages", then a list of message lists under "tabs"; the
       // current format is a list of {title, messages} under "tabs".
       final saved = d['tabs'] is List ? d['tabs'] as List : [d['messages'] ?? const []];
@@ -228,7 +355,12 @@ class AssistantChat extends ChangeNotifier {
           final text = (m['text'] ?? '').toString();
           if (text.isEmpty) continue;
           convo.messages.add(
-            AssistantMessage(role, text, [for (final x in (m['sources'] as List? ?? const [])) x.toString()])..fresh = false,
+            AssistantMessage(
+              role,
+              text,
+              [for (final x in (m['sources'] as List? ?? const [])) x.toString()],
+              [for (final x in (m['calls'] as List? ?? const [])) x.toString()],
+            )..fresh = false,
           );
         }
         while (convo.messages.isNotEmpty && convo.messages.first.role != AssistantRole.user) {
@@ -237,18 +369,36 @@ class AssistantChat extends ChangeNotifier {
         loaded.add(convo);
       }
       if (loaded.isEmpty) return;
-      chats
-        ..clear()
-        ..addAll(loaded);
-      active = ((d['active'] as num?)?.toInt() ?? 0).clamp(0, chats.length - 1);
+      final mine = chats.where((c) => c.messages.isNotEmpty).toList();
+      if (mine.isEmpty) {
+        chats
+          ..clear()
+          ..addAll(loaded);
+        active = ((d['active'] as num?)?.toInt() ?? 0).clamp(0, chats.length - 1);
+      } else {
+        // The person started typing before the saved thread arrived: keep what they have, with the saved chats first.
+        final current = chats[active];
+        final room = (maxChats - mine.length).clamp(0, maxChats);
+        chats
+          ..clear()
+          ..addAll(loaded.take(room))
+          ..addAll(mine);
+        active = chats.indexOf(current).clamp(0, chats.length - 1);
+      }
       chatChanges++;
       notifyListeners();
     } catch (_) {
       // unreadable storage: start with an empty chat
+    } finally {
+      if (gen == _loadGen) {
+        _loadDone = true;
+        if (chats.any((c) => c.messages.isNotEmpty)) _save(); // writes the merged thread, if there is one
+      }
     }
   }
 
   Future<void> _save() async {
+    if (!_loadDone) return;
     try {
       final prefs = await SharedPreferences.getInstance();
       if (chats.every((c) => c.messages.isEmpty && c.title == null)) {
@@ -267,7 +417,7 @@ class AssistantChat extends ChangeNotifier {
                 'messages': [
                   for (final m
                       in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
-                    {'role': m.role.name, 'text': m.text, 'sources': m.sources},
+                    {'role': m.role.name, 'text': m.text, 'sources': m.sources, 'calls': m.calls},
                 ],
               },
           ],
@@ -295,6 +445,12 @@ class AssistantChat extends ChangeNotifier {
   /// Wipes every chat (sign-out, a different user). Use [deleteChat] to drop just one.
   void clear() {
     _gen++;
+    _client?.close();
+    _streamReset();
+    status = null;
+    _loadGen++;
+    _loadDone = true; // there is nothing left to read back
+    _loading ??= Future.value();
     chats
       ..clear()
       ..add(AssistantConversation());
@@ -345,42 +501,109 @@ class AssistantChat extends ChangeNotifier {
     ];
   }
 
+  /// Sends the question and returns the status code and JSON body. Asks the server for progress events and shows them
+  /// as they arrive; a server that does not stream (older build, or an error before the answer starts) replies with
+  /// plain JSON, which is handled the same way.
+  Future<(int, Map<String, dynamic>)> _exchange(int gen) async {
+    final client = http.Client();
+    _client = client;
+    try {
+      final req = http.Request('POST', Uri.parse('$kApiBaseUrl/api/assistant'))
+        ..headers.addAll(AuthSession.instance.headers())
+        ..body = json.encode({'messages': _payload(), 'stream': true, if (pageContext.isNotEmpty) 'context': pageContext});
+      final started = DateTime.now();
+      // Debug runs only: when each piece of the stream reaches the app, so "it all appears at once" can be told apart from
+      // "it arrives piece by piece but is not drawn" in the console.
+      void trace(String what) {
+        if (kDebugMode) debugPrint('[assistant stream] +${DateTime.now().difference(started).inMilliseconds}ms $what');
+      }
+
+      final res = await client.send(req);
+      trace('response started, content-type=${res.headers['content-type']}');
+      if (!(res.headers['content-type'] ?? '').contains('text/event-stream')) {
+        Map<String, dynamic> body = const {};
+        try {
+          body = json.decode(await res.stream.bytesToString()) as Map<String, dynamic>;
+        } catch (_) {}
+        return (res.statusCode, body);
+      }
+      (int, Map<String, dynamic>)? result;
+      await for (final line in res.stream.transform(utf8.decoder).transform(const LineSplitter())) {
+        if (gen != _gen) break;
+        if (!line.startsWith('data:')) continue; // heartbeat comments and blank separators
+        final Map<String, dynamic> event;
+        try {
+          event = json.decode(line.substring(5)) as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+        final type = event['type'];
+        trace(type == 'delta' ? 'delta (${(event['text'] ?? '').toString().length} chars)' : '$type');
+        if (type == 'status') {
+          status = event['text']?.toString();
+          notifyListeners();
+        } else if (type == 'delta') {
+          _typeFrom(event['text']?.toString() ?? '');
+        } else if (type == 'reset') {
+          _streamReset(); // that turn was a lookup, not the answer
+          notifyListeners();
+        } else if (type == 'done' || type == 'error') {
+          result = ((event['status'] as num?)?.toInt() ?? 200, event); // the server closes the stream right after this
+        }
+      }
+      return result ?? (502, const {'error': 'The connection closed before the answer arrived. Try again.'});
+    } finally {
+      client.close();
+      if (identical(_client, client)) _client = null;
+    }
+  }
+
   Future<void> _ask() async {
     final gen = ++_gen;
     busy = true;
     busySince = DateTime.now();
     stopped = false;
     error = null;
+    status = null;
+    lastAnswerStreamed = false;
+    _streamReset();
     notifyListeners();
 
     try {
-      final res = await http
-          .post(
-            Uri.parse('$kApiBaseUrl/api/assistant'),
-            headers: AuthSession.instance.headers(),
-            body: json.encode({'messages': _payload()}),
-          )
-          .timeout(const Duration(seconds: 120)); // free-tier hosts wake slowly and answers can take a few lookups
+      // free-tier hosts wake slowly and answers can take a few lookups
+      final (code, body) = await _exchange(gen).timeout(const Duration(seconds: 120));
 
       if (gen != _gen) return; // cancelled while waiting
-      Map<String, dynamic> body = const {};
-      try {
-        body = json.decode(res.body) as Map<String, dynamic>;
-      } catch (_) {}
 
-      switch (res.statusCode) {
+      // A server that sent the answer in one piece: write it out like the streamed ones. Then let any streamed text finish
+      // writing before the finished answer takes its place.
+      if (code == 200 && animateAnswers && streamText.isEmpty && _streamPending.isEmpty) {
+        final whole = (body['answer'] ?? '').toString().trim();
+        if (whole.isNotEmpty) _typeFrom(whole);
+      }
+      await _typeUntilCaughtUp();
+      if (gen != _gen) return;
+
+      switch (code) {
         case 200:
           final answer = (body['answer'] ?? '').toString().trim();
           final tools = <String>{
             for (final t in (body['toolsUsed'] as List? ?? const []))
               if (_toolLabels[t] != null) _toolLabels[t]!,
           }.toList();
+          final calls = <String>[
+            for (final c in (body['calls'] as List? ?? const []))
+              if (c is Map) ?_describeCall(c['tool']?.toString() ?? '', c['input']?.toString() ?? ''),
+          ];
+          // An answer that was already on screen as it was written must not fade in a second time.
+          lastAnswerStreamed = streamText.isNotEmpty;
           messages.add(
             AssistantMessage(
               AssistantRole.assistant,
               answer.isEmpty ? "I couldn't put together an answer. Try rephrasing." : answer,
               tools,
-            ),
+              calls.take(14).toList(),
+            )..fresh = !lastAnswerStreamed,
           );
           _save();
         case 401:
@@ -393,16 +616,19 @@ class AssistantChat extends ChangeNotifier {
         case 503:
           error = 'The assistant is not set up on the server yet.';
         default:
-          error = (body['error'] ?? 'Server error (${res.statusCode}).').toString();
+          error = (body['error'] ?? 'Server error ($code).').toString();
       }
     } on TimeoutException {
+      _client?.close();
       if (gen == _gen) error = 'That took too long. The server may be waking up, so try again in a moment.';
     } catch (_) {
       if (gen == _gen) error = "Couldn't reach the server. Check your connection and try again.";
     } finally {
       if (gen == _gen) {
+        _streamReset();
         busy = false;
         busySince = null;
+        status = null;
         notifyListeners();
       }
     }
@@ -411,6 +637,15 @@ class AssistantChat extends ChangeNotifier {
 
 /// Opens the assistant as a panel sliding in from the right, over whatever screen you are on.
 Future<void> showAssistantPanel(BuildContext context) {
+  final chat = AssistantChat.instance;
+  try {
+    final uri = GoRouterState.of(context).uri;
+    chat.pagePath = uri.path;
+    chat.pageContext = _pageLabel(uri);
+  } catch (_) {
+    chat.pagePath = ''; // not under a router (tests, previews)
+    chat.pageContext = '';
+  }
   return showGeneralDialog<void>(
     context: context,
     barrierDismissible: true,
@@ -428,6 +663,103 @@ Future<void> showAssistantPanel(BuildContext context) {
   );
 }
 
+/// A plain-English name for the screen the person is on, for the assistant ("Job 1096719829 detail page").
+String _pageLabel(Uri uri) {
+  final seg = uri.pathSegments;
+  if (seg.length >= 2 && (seg[0] == 'jobs' || seg[0] == 'estimates')) {
+    return '${seg[0] == 'jobs' ? 'Job' : 'Estimate'} ${seg[1]} detail page';
+  }
+  if (seg.length >= 3 && seg[0] == 'hr' && seg[1] == 'kpis') return 'One employee\'s KPI page';
+  const names = {
+    '/dashboards/financial': 'Financial dashboard',
+    '/dashboards/commissions': 'Commissions dashboard',
+    '/dashboards/technicians': 'Technicians dashboard',
+    '/dashboards/inventory': 'Inventory dashboard',
+    '/dashboards/jobs': 'Jobs dashboard',
+    '/dashboards/estimates': 'Estimates dashboard',
+    '/dashboards/sales': 'Sales dashboard',
+    '/dashboards/collections': 'Collections dashboard',
+    '/jobs': 'Jobs list',
+    '/estimates': 'Estimates list',
+    '/customers': 'Customers list',
+    '/calendar': 'Calendar',
+    '/inventory': 'Inventory list',
+    '/documents': 'Documents',
+    '/hr/payroll': 'Payroll',
+    '/hr/kpis': 'Employee KPIs',
+    '/hr/team': 'Team admin',
+    '/hr/corrections': 'Commission corrections',
+  };
+  return names[uri.path] ?? (seg.isEmpty ? '' : '${seg.join(' / ')} page');
+}
+
+/// Welcome-screen suggestions: a few for the page you are on, then the general ones to fill six.
+List<_Suggestion> _suggestionsFor(String path) {
+  const pages = <String, List<_Suggestion>>{
+    '/dashboards/collections': [
+      _Suggestion(Icons.warning_amber_rounded, 'Over 90 days', 'Which customers have balances over 90 days, and how much?'),
+      _Suggestion(Icons.trending_up_rounded, 'Balance trend', 'How has our outstanding balance changed over the last 30 days?'),
+    ],
+    '/dashboards/financial': [
+      _Suggestion(Icons.show_chart_rounded, 'Profit by month', 'Show completed revenue and profit by month this year.'),
+      _Suggestion(
+        Icons.pie_chart_outline_rounded,
+        'Revenue mix',
+        'What is our revenue mix between residential and commercial this year?',
+      ),
+    ],
+    '/dashboards/jobs': [
+      _Suggestion(Icons.hourglass_bottom_rounded, 'Stuck jobs', 'Which active jobs have been in the same status the longest?'),
+      _Suggestion(Icons.list_alt_rounded, 'Open by status', 'How many open jobs are in each status right now?'),
+    ],
+    '/dashboards/estimates': [
+      _Suggestion(Icons.handshake_outlined, 'Win rate', 'What is our estimate win rate by month this year?'),
+      _Suggestion(Icons.hourglass_empty_rounded, 'No follow-up', 'Which open estimates have not changed status in over 14 days?'),
+    ],
+    '/dashboards/sales': [
+      _Suggestion(Icons.leaderboard_outlined, 'By salesperson', 'How are the salespeople doing on estimates this year?'),
+      _Suggestion(Icons.door_front_door_outlined, 'Door types', 'Which door styles do we win the most revenue on this year?'),
+    ],
+    '/dashboards/technicians': [
+      _Suggestion(Icons.engineering_outlined, 'Tech activity', 'How many days and visits did each technician work this month?'),
+      _Suggestion(Icons.undo_rounded, 'Callbacks', 'How many callbacks have we had this month and who were they on?'),
+    ],
+    '/dashboards/commissions': [
+      _Suggestion(Icons.payments_outlined, 'This week\'s pay', 'What does payroll look like for this week?'),
+      _Suggestion(Icons.savings_outlined, 'Pool balance', 'What is in the retainage and company pool right now?'),
+    ],
+    '/dashboards/inventory': [
+      _Suggestion(Icons.inventory_2_outlined, 'Low stock', 'Which inventory items are low on stock?'),
+      _Suggestion(Icons.fact_check_outlined, 'Cycle counts', 'Where are we on this month\'s cycle counts?'),
+    ],
+    '/customers': [
+      _Suggestion(Icons.person_search_outlined, 'Lapsed customers', 'Which good customers have not had a job in the last year?'),
+      _Suggestion(Icons.groups_outlined, 'Top customers', 'Who are our top 10 customers by revenue this year?'),
+    ],
+    '/calendar': [_Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?')],
+    '/hr/kpis': [
+      _Suggestion(Icons.star_outline_rounded, 'Reviews', 'How are our Google reviews doing, and which techs are mentioned most?'),
+    ],
+  };
+  final seg = path.split('/').where((s) => s.isNotEmpty).toList();
+  final here = (seg.length >= 2 && seg[0] == 'jobs')
+      ? const [
+          _Suggestion(
+            Icons.summarize_outlined,
+            'Summarize this job',
+            'Summarize this job: status, what is owed, payments, and any notes or tasks.',
+          ),
+          _Suggestion(Icons.history_rounded, 'Status history', 'Show the status history of this job.'),
+        ]
+      : (pages[path] ?? const <_Suggestion>[]);
+  final out = [...here];
+  for (final s in _suggestions) {
+    if (out.length >= 6) break;
+    if (!out.any((o) => o.title == s.title)) out.add(s);
+  }
+  return out;
+}
+
 // =============================================================================
 // Answer parsing
 // =============================================================================
@@ -436,7 +768,15 @@ sealed class _Block {}
 
 class _Para extends _Block {
   final String text;
+  bool tight = false; // the next line continues straight on, so only a small gap follows
   _Para(this.text);
+}
+
+class _Rule extends _Block {}
+
+class _Code extends _Block {
+  final String text;
+  _Code(this.text);
 }
 
 class _Head extends _Block {
@@ -447,7 +787,8 @@ class _Head extends _Block {
 class _Item extends _Block {
   final String text;
   final String? number; // null = bullet
-  _Item(this.text, this.number);
+  final int level; // nesting depth, 0 = top level
+  _Item(this.text, this.number, [this.level = 0]);
 }
 
 class _Table extends _Block {
@@ -479,9 +820,15 @@ class _Parsed {
 
 final RegExp _bulletRe = RegExp(r'^\s*[-*•]\s+');
 final RegExp _numberedRe = RegExp(r'^\s*(\d+)[.)]\s+');
-final RegExp _headingRe = RegExp(r'^\s{0,3}#{1,4}\s+(.*)$');
+final RegExp _headingRe = RegExp(r'^\s{0,3}#{1,6}\s+(.*)$');
+final RegExp _ruleRe = RegExp(r'^\s{0,3}([-*_])(\s*\1){2,}\s*$');
+final RegExp _fenceRe = RegExp(r'^\s{0,3}(```|~~~)');
 final RegExp _dashCellRe = RegExp(r'^:?-{2,}:?$');
-final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups|chart)\s*$', caseSensitive: false);
+final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups|chart)\b.*$', caseSensitive: false);
+
+/// Plain text of a line: **bold**, *italic*, `code` and [links](url) lose their markers. Used where the text is
+/// shown without rich formatting (table cells, figures, chart labels, copied text).
+String _stripMd(String s) => s.replaceAllMapped(_inlineRe, (m) => m.group(1) ?? m.group(2) ?? m.group(3) ?? m.group(4) ?? '');
 
 /// Reads the body of a `::: chart` block:
 ///   type: line | bar | hbar      title: ...      format: money | count | percent      series: Revenue | Profit
@@ -498,9 +845,9 @@ _Chart? _parseChart(List<String> body) {
       final k = kv.group(1)!.toLowerCase();
       final v = kv.group(2)!.trim();
       if (k == 'type') kind = v.toLowerCase();
-      if (k == 'title') title = v;
+      if (k == 'title') title = _stripMd(v);
       if (k == 'format') format = v.toLowerCase();
-      if (k == 'series') series = v.split('|').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+      if (k == 'series') series = v.split('|').map((s) => _stripMd(s.trim())).where((s) => s.isNotEmpty).toList();
       continue;
     }
     final parts = b.split('|').map((p) => p.trim()).toList();
@@ -511,7 +858,7 @@ _Chart? _parseChart(List<String> body) {
       if (n != null && n.isFinite) values.add(n); // "NaN" and "Infinity" parse as numbers and would break the axis
     }
     if (values.isEmpty) continue;
-    points.add((parts.first, values));
+    points.add((_stripMd(parts.first), values));
   }
   if (points.length < 2) return null;
   final width = points.map((p) => p.$2.length).reduce((a, b) => a < b ? a : b).clamp(1, 3);
@@ -520,6 +867,80 @@ _Chart? _parseChart(List<String> body) {
   if (kind == 'hbar' && width > 1) kind = 'bar';
   if (series.length != width) series = width == 1 ? [] : [for (var i = 0; i < width; i++) 'Series ${i + 1}'];
   return _Chart(kind, title, format, series, trimmed);
+}
+
+/// The part of a half-written answer that is safe to draw: no half-typed line of markdown, and no stats / chart block or
+/// table until it is complete, so nothing flashes raw "::: chart" text or jumps from paragraph to table.
+String _streamSafe(String text) {
+  final lines = text.split('\n');
+  // The last line is still being typed unless the text ends with a newline: show it up to any marker that is not closed yet
+  // (a bold, italic, code or link still open), and none of it if it is the start of a table row or directive.
+  if (lines.isNotEmpty && lines.last.isNotEmpty) {
+    final l = lines.last;
+    if (l.trimLeft().startsWith(':') || l.trimLeft().startsWith('|')) {
+      lines.removeLast();
+    } else {
+      final off = _bulletRe.firstMatch(l)?.end ?? 0; // a leading "* " bullet is not an italic marker
+      final rest = l.substring(off);
+      var cut = rest.length;
+      void openAt(int i) {
+        if (i >= 0 && i < cut) cut = i;
+      }
+
+      if ('**'.allMatches(rest).length.isOdd) openAt(rest.lastIndexOf('**'));
+      if ('`'.allMatches(rest).length.isOdd) openAt(rest.lastIndexOf('`'));
+      final lb = rest.lastIndexOf('[');
+      if (lb >= 0 && rest.indexOf(')', lb) < 0) openAt(lb);
+      if (rest.replaceAll('**', '').split('*').length.isEven) openAt(rest.lastIndexOf(RegExp(r'(?<!\*)\*(?!\*)')));
+      lines[lines.length - 1] = l.substring(0, off + cut);
+    }
+  }
+  // an opened directive block with no closing ::: yet
+  int? open;
+  for (var i = 0; i < lines.length; i++) {
+    if (_directiveRe.hasMatch(lines[i].trimRight())) {
+      open = i;
+    } else if (open != null && lines[i].trim() == ':::') {
+      open = null;
+    }
+  }
+  if (open != null) lines.removeRange(open, lines.length);
+  // a table with only its header so far
+  var end = lines.length;
+  while (end > 0 && _isRow(lines[end - 1])) {
+    end--;
+  }
+  final tail = lines.sublist(end).where((l) => !_cells(l).every((c) => _dashCellRe.hasMatch(c))).length;
+  if (end < lines.length && tail < 2) lines.removeRange(end, lines.length);
+  return lines.join('\n');
+}
+
+/// What [_streamSafe] is keeping off screen right now, in words ("Drawing the chart…"), or null when nothing is held back.
+String? _streamHolding(String text) {
+  final lines = text.split('\n');
+  String? open;
+  for (final l in lines) {
+    final m = _directiveRe.firstMatch(l.trimRight());
+    if (m != null) {
+      open = m.group(1)!.toLowerCase();
+    } else if (open != null && l.trim() == ':::') {
+      open = null;
+    }
+  }
+  switch (open) {
+    case 'chart':
+      return 'Drawing the chart…';
+    case 'stats':
+      return 'Adding the key figures…';
+    default:
+      break;
+  }
+  var end = lines.length;
+  while (end > 0 && _isRow(lines[end - 1])) {
+    end--;
+  }
+  if (end < lines.length) return 'Building the table…';
+  return null;
 }
 
 bool _isRow(String l) {
@@ -541,12 +962,14 @@ _Parsed _parse(String text) {
   final blocks = <_Block>[];
   final followUps = <String>[];
   final plain = <String>[];
+  _Para? prevPara; // the previous plain line, when nothing but a line break separates it from this one
   var i = 0;
   while (i < lines.length) {
     final line = lines[i].trimRight();
 
     final directive = _directiveRe.firstMatch(line);
     if (directive != null) {
+      prevPara = null;
       final kind = directive.group(1)!.toLowerCase();
       final body = <String>[];
       final opened = i;
@@ -566,7 +989,19 @@ _Parsed _parse(String text) {
       if (kind == 'chart') {
         final chart = _parseChart(body);
         if (chart != null) {
-          blocks.add(chart);
+          if (chart.points.length < (chart.kind == 'hbar' ? 5 : 4)) {
+            // Too few points to be worth drawing (a chart of three bars says less than a sentence): show the numbers as a list.
+            if (chart.title.isNotEmpty) blocks.add(_Para('**${chart.title}**')..tight = true);
+            for (final p in chart.points) {
+              final values = [
+                for (var i = 0; i < p.$2.length; i++)
+                  '${chart.series.length > i ? '${chart.series[i]} ' : ''}${_chartFull(p.$2[i], chart.format)}',
+              ];
+              blocks.add(_Item('${p.$1}: ${values.join(', ')}', null));
+            }
+          } else {
+            blocks.add(chart);
+          }
           // Copied text: the chart as a small list with formatted values, e.g. "Jan: Revenue $213,573, Profit $111,840".
           plain.add(chart.title.isEmpty ? 'Chart' : chart.title);
           for (final p in chart.points) {
@@ -581,9 +1016,12 @@ _Parsed _parse(String text) {
         final items = <(String, String)>[];
         for (final b in body) {
           final parts = b.split('|');
-          if (parts.length >= 2) items.add((parts.first.trim(), parts.sublist(1).join('|').trim()));
+          if (parts.length >= 2) items.add((_stripMd(parts.first.trim()), _stripMd(parts.sublist(1).join('|').trim())));
         }
-        if (items.isNotEmpty) {
+        if (items.length == 1) {
+          // One headline number is a sentence, not a scoreboard.
+          blocks.add(_Para('**${items.first.$2}:** ${items.first.$1}'));
+        } else if (items.isNotEmpty) {
           blocks.add(_Stats(items.take(4).toList()));
           // Copied text: one "label: value" line per card, instead of the cards vanishing or running together.
           for (final it in items.take(4)) {
@@ -600,10 +1038,11 @@ _Parsed _parse(String text) {
     }
 
     if (_isRow(line)) {
+      prevPara = null;
       final tableLines = <String>[];
       while (i < lines.length && _isRow(lines[i])) {
         tableLines.add(lines[i]);
-        plain.add(lines[i]);
+        plain.add(_stripMd(lines[i]));
         i++;
       }
       final rows = [for (final l in tableLines) _cells(l)].where((r) => !r.every((c) => _dashCellRe.hasMatch(c))).toList();
@@ -617,19 +1056,49 @@ _Parsed _parse(String text) {
       continue;
     }
 
+    if (_fenceRe.hasMatch(line)) {
+      // A code fence: shown as-is in a monospace box, not read as bullets and headings.
+      final code = <String>[];
+      i++;
+      while (i < lines.length && !_fenceRe.hasMatch(lines[i])) {
+        code.add(lines[i].trimRight());
+        i++;
+      }
+      if (i < lines.length) i++; // closing fence
+      if (code.isNotEmpty) {
+        blocks.add(_Code(code.join('\n')));
+        plain.addAll(code);
+      }
+      prevPara = null;
+      continue;
+    }
+
     i++;
-    plain.add(line);
     final heading = _headingRe.firstMatch(line);
     final numbered = _numberedRe.firstMatch(line);
-    if (line.trim().isEmpty) continue;
-    if (heading != null) {
+    plain.add(_stripMd(heading != null ? heading.group(1)! : line));
+    if (line.trim().isEmpty) {
+      prevPara = null;
+      continue;
+    }
+    int level() => ((line.length - line.trimLeft().length) ~/ 2).clamp(0, 3);
+    if (_ruleRe.hasMatch(line)) {
+      blocks.add(_Rule());
+      prevPara = null;
+    } else if (heading != null) {
       blocks.add(_Head(heading.group(1)!));
+      prevPara = null;
     } else if (_bulletRe.hasMatch(line)) {
-      blocks.add(_Item(line.replaceFirst(_bulletRe, ''), null));
+      blocks.add(_Item(line.replaceFirst(_bulletRe, ''), null, level()));
+      prevPara = null;
     } else if (numbered != null) {
-      blocks.add(_Item(line.replaceFirst(_numberedRe, ''), numbered.group(1)));
+      blocks.add(_Item(line.replaceFirst(_numberedRe, ''), numbered.group(1), level()));
+      prevPara = null;
     } else {
-      blocks.add(_Para(line.replaceFirst(RegExp(r'^\s*>\s?'), ''))); // a stray "> quote" marker is not shown
+      final para = _Para(line.replaceFirst(RegExp(r'^\s*>\s?'), '')); // a stray "> quote" marker is not shown
+      prevPara?.tight = true;
+      blocks.add(para);
+      prevPara = para;
     }
   }
   return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim());
@@ -659,6 +1128,9 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   final _lastAnswerKey = GlobalKey();
   int _seen = 0;
   int _seenTab = 0;
+  bool _wasBusy = false;
+  String? _lastError;
+  int _lastStream = 0;
   static bool? _sideChoice; // set when the person toggles the chat list; remembered while the app is open
 
   /// The chat list starts open on a roomy window and closed on a narrow one, where it would leave the chat a sliver.
@@ -670,13 +1142,24 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   void initState() {
     super.initState();
     _input.text = _draft;
-    _chat.ensureLoaded().then((_) {
-      if (mounted) _scrollToEnd(jump: true);
-    });
+    // Start on the welcome screen once the saved chats are in. When they already are (the panel was opened before this
+    // run), that is right away rather than after the load future.
+    var fresh = false;
+    void openFresh() {
+      if (!mounted || fresh) return;
+      fresh = true;
+      _chat.openFresh();
+      _scrollToEnd(jump: true);
+    }
+
+    if (_chat.loadDone) WidgetsBinding.instance.addPostFrameCallback((_) => openFresh());
+    _chat.ensureLoaded().then((_) => openFresh());
     _input.addListener(() => _draft = _input.text);
     _scroll.addListener(_onScroll);
     _seen = _chat.messages.length;
     _seenTab = _chat.chatChanges;
+    _wasBusy = _chat.busy;
+    _lastError = _chat.error;
     _chat.addListener(_onChat);
     _inputFocus.addListener(() => setState(() {}));
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToEnd(jump: true));
@@ -709,10 +1192,9 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   }
 
   Future<void> _rename(int i) async {
-    final label = _chat.chats[i].label;
     final name = await showDialog<String>(
       context: context,
-      builder: (_) => _RenameDialog(initial: label == 'New chat' ? '' : label),
+      builder: (_) => _RenameDialog(initial: _chat.chats[i].title ?? ''), // not the shortened auto-label, which ends in "…"
     );
     if (name != null) _chat.renameChat(i, name);
   }
@@ -796,13 +1278,29 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       // A different conversation: show it from the bottom without treating it as a new answer.
       _seenTab = _chat.chatChanges;
       _seen = _chat.messages.length;
+      _wasBusy = _chat.busy;
+      _lastError = _chat.error;
+      // An empty chat has nothing to scroll, so the "Latest" button would be left hanging with no list to jump in.
+      if (_chat.messages.isEmpty && _showJump) setState(() => _showJump = false);
       _scrollToEnd(jump: true);
       return;
     }
     final n = _chat.messages.length;
     final newAnswer = n > _seen && _chat.messages.last.role == AssistantRole.assistant;
+    final streamLen = _chat.streamText.length;
+    final streaming = streamLen != _lastStream;
+    final changed = n != _seen || _chat.busy != _wasBusy || _chat.error != _lastError || streaming;
     _seen = n;
-    if (newAnswer) {
+    _wasBusy = _chat.busy;
+    _lastError = _chat.error;
+    _lastStream = streamLen;
+    if (!changed) return; // a rename or other metadata change should not move the thread
+    if (streaming) {
+      // follow the words as they are written, unless the person has scrolled up to read something
+      if (!_showJump) _scrollToEnd(jump: true);
+      return;
+    }
+    if (newAnswer && !_chat.lastAnswerStreamed) {
       // Start reading a new answer at its first line, not its last.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         final ctx = _lastAnswerKey.currentContext;
@@ -830,7 +1328,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   void _submit([String? text]) {
     final q = (text ?? _input.text).trim();
     if (q.isEmpty || _chat.busy) return;
-    _input.clear();
+    if (text == null) _input.clear(); // a suggestion or follow-up chip must not wipe what is being typed
     _chat.send(q);
     _inputFocus.requestFocus();
   }
@@ -851,8 +1349,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         colorScheme: base.colorScheme.copyWith(primary: _brandRed),
         textSelectionTheme: TextSelectionThemeData(
           cursorColor: _brandRed,
-          selectionHandleColor: _brandRed,
-          selectionColor: _brandRed.withValues(alpha: 0.18),
+          selectionHandleColor: const Color(0xFF1A73E8),
+          selectionColor: const Color(0x663390FF),
         ),
       ),
       child: Material(
@@ -1012,7 +1510,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
             child: ListenableBuilder(
               listenable: _chat,
               builder: (context, _) {
-                final title = _chat.messages.isEmpty ? 'Jarvis' : _chat.chats[_chat.active].label;
+                final current = _chat.chats[_chat.active];
+                final title = current.messages.isEmpty && current.title == null ? 'Jarvis' : current.label;
                 return Text(
                   title,
                   maxLines: 1,
@@ -1086,7 +1585,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  'Ask about jobs, customers, revenue, estimates or inventory. I can look things up but I can’t change anything.',
+                  'Ask about jobs, customers, revenue, estimates, inventory, payroll, reviews or the schedule. I can look things up but I can’t change anything.',
                   textAlign: TextAlign.center,
                   style: TextStyle(fontSize: 14.5, color: _slate, height: 1.5),
                 ),
@@ -1096,7 +1595,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   spacing: 10,
                   runSpacing: 10,
                   children: [
-                    for (final sug in _suggestions) _SuggestionCard(suggestion: sug, onTap: () => _submit(sug.question)),
+                    for (final sug in _suggestionsFor(_chat.pagePath))
+                      _SuggestionCard(suggestion: sug, onTap: () => _submit(sug.question)),
                   ],
                 ),
               ],
@@ -1105,6 +1605,25 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         ),
       ],
     );
+  }
+
+  String get _safeStream => _chat.busy ? _streamSafe(_chat.streamText) : '';
+
+  /// The answer as it is being written, drawn like the finished one but without its buttons.
+  List<Widget> _liveAnswer() {
+    final text = _safeStream;
+    if (text.isEmpty) return const [];
+    return [
+      _AnswerView(
+        key: const ValueKey('live-answer'),
+        message: AssistantMessage(AssistantRole.assistant, text)..fresh = false,
+        streaming: true,
+        isLast: false,
+        onAsk: _submit,
+        onRegenerate: _chat.regenerate,
+        onRate: _chat.sendFeedback,
+      ),
+    ];
   }
 
   Widget _thread() {
@@ -1128,13 +1647,24 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   )
                 else
                   _AnswerView(
-                    key: i == msgs.length - 1 && !_chat.busy ? _lastAnswerKey : ObjectKey(msgs[i]),
+                    key: ObjectKey(msgs[i]), // stable, so a sorted or expanded table survives the next question
+                    anchorKey: i == msgs.length - 1 && !_chat.busy ? _lastAnswerKey : null,
                     message: msgs[i],
+                    question: i > 0 && msgs[i - 1].role == AssistantRole.user ? msgs[i - 1].text : null,
+                    onRate: _chat.sendFeedback,
                     isLast: i == msgs.length - 1 && !_chat.busy && _chat.error == null,
                     onAsk: _submit,
                     onRegenerate: _chat.regenerate,
                   ),
-              if (_chat.busy) _Thinking(since: _chat.busySince, onStop: _chat.stop),
+              ..._liveAnswer(),
+              if (_chat.busy)
+                _Thinking(
+                  since: _chat.busySince,
+                  status: _chat.status,
+                  compact: _safeStream.isNotEmpty,
+                  note: _streamHolding(_chat.streamText),
+                  onStop: _chat.stop,
+                ),
               if (_chat.stopped && !_chat.busy) _StoppedNote(onRetry: _chat.retry),
               if (_chat.error != null) _ErrorNote(message: _chat.error!, onRetry: _chat.retry),
             ],
@@ -1171,13 +1701,22 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                 ),
                 child: _composerField(),
               ),
-              const Padding(
-                padding: EdgeInsets.fromLTRB(0, 8, 0, 10),
-                child: Text(
-                  'Enter to send · Shift+Enter for a new line · ↑ recalls your last question. '
-                  'Read-only, so double-check anything important.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 11.5, color: _muted, height: 1.4),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(0, 8, 0, 10),
+                child: AnimatedBuilder(
+                  animation: _input,
+                  builder: (context, _) {
+                    final len = _input.text.length;
+                    final near = len >= _maxChars * 0.9;
+                    return Text(
+                      near
+                          ? '$len / $_maxChars characters${len >= _maxChars ? ' · that is the limit, anything longer is cut off' : ''}'
+                          : 'Enter to send · Shift+Enter for a new line · ↑ recalls your last question. '
+                                'It only looks things up, but double-check important numbers.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11.5, color: len >= _maxChars ? _bad : _muted, height: 1.4),
+                    );
+                  },
                 ),
               ),
             ],
@@ -1199,7 +1738,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                 // Enter sends, Shift+Enter adds a new line.
                 onKeyEvent: (node, event) {
                   if (event is KeyDownEvent &&
-                      event.logicalKey == LogicalKeyboardKey.enter &&
+                      (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) &&
                       !HardwareKeyboard.instance.isShiftPressed) {
                     _submit();
                     return KeyEventResult.handled;
@@ -1366,7 +1905,7 @@ class _ChatRowState extends State<_ChatRow> {
                     enabled: widget.enabled,
                     padding: EdgeInsets.zero,
                     iconSize: 18,
-                    iconColor: _hover || sel ? _slate : Colors.transparent,
+                    iconColor: _hover || sel ? _slate : _muted,
                     icon: const Icon(Icons.more_horiz_rounded),
                     onSelected: (v) => v == 'rename' ? widget.onRename() : widget.onDelete(),
                     itemBuilder: (_) => const [
@@ -1512,7 +2051,9 @@ class _UserMessageState extends State<_UserMessage> {
   }
 
   Widget _bubble(String text) {
-    final show = _hover && widget.canEdit;
+    // Touch has no hover, so on phones and tablets the actions are simply always there.
+    final touch = const {TargetPlatform.android, TargetPlatform.iOS, TargetPlatform.fuchsia}.contains(Theme.of(context).platform);
+    final show = _hover || touch;
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -1520,29 +2061,33 @@ class _UserMessageState extends State<_UserMessage> {
         AnimatedOpacity(
           duration: const Duration(milliseconds: 120),
           opacity: show ? 1 : 0,
-          child: IgnorePointer(
-            ignoring: !show,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'Copy',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => Clipboard.setData(ClipboardData(text: text)),
-                  icon: const Icon(Icons.content_copy_rounded, size: 15),
-                  color: _muted,
-                ),
-                IconButton(
-                  tooltip: 'Edit and ask again',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: () => setState(() {
-                    _c.text = text;
-                    _editing = true;
-                  }),
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  color: _muted,
-                ),
-              ],
+          child: ExcludeFocus(
+            excluding: !show, // invisible buttons must not be tab stops
+            child: IgnorePointer(
+              ignoring: !show,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    tooltip: 'Copy',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => Clipboard.setData(ClipboardData(text: text)),
+                    icon: const Icon(Icons.content_copy_rounded, size: 15),
+                    color: _muted,
+                  ),
+                  if (widget.canEdit)
+                    IconButton(
+                      tooltip: 'Edit and ask again',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => setState(() {
+                        _c.text = text;
+                        _editing = true;
+                      }),
+                      icon: const Icon(Icons.edit_outlined, size: 16),
+                      color: _muted,
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -1575,7 +2120,8 @@ class _UserMessageState extends State<_UserMessage> {
                 setState(() => _editing = false);
                 return KeyEventResult.handled;
               }
-              if (event.logicalKey == LogicalKeyboardKey.enter && !HardwareKeyboard.instance.isShiftPressed) {
+              if ((event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) &&
+                  !HardwareKeyboard.instance.isShiftPressed) {
                 _send();
                 return KeyEventResult.handled;
               }
@@ -1684,7 +2230,21 @@ class _AnswerView extends StatefulWidget {
   final bool isLast;
   final ValueChanged<String> onAsk;
   final VoidCallback onRegenerate;
-  const _AnswerView({super.key, required this.message, required this.isLast, required this.onAsk, required this.onRegenerate});
+  final GlobalKey? anchorKey; // marks the top of the newest answer, so the thread can scroll to it
+  final bool streaming; // still being written: no buttons yet
+  final String? question; // what was asked, sent along with a thumbs up / down
+  final Future<void> Function(String rating, String? question, String answer) onRate;
+  const _AnswerView({
+    super.key,
+    required this.message,
+    required this.onRate,
+    this.streaming = false,
+    this.question,
+    required this.isLast,
+    required this.onAsk,
+    required this.onRegenerate,
+    this.anchorKey,
+  });
 
   @override
   State<_AnswerView> createState() => _AnswerViewState();
@@ -1695,6 +2255,14 @@ class _AnswerViewState extends State<_AnswerView> {
   late bool _animate = widget.message.fresh;
   bool _copied = false;
   Timer? _copiedTimer;
+  String? _rating; // 'up' | 'down' once the person has voted on this answer
+  bool _showCalls = false;
+
+  void _rate(String r) {
+    if (_rating != null) return;
+    setState(() => _rating = r);
+    widget.onRate(r, widget.question, widget.message.text);
+  }
 
   @override
   void initState() {
@@ -1720,7 +2288,7 @@ class _AnswerViewState extends State<_AnswerView> {
   }
 
   Future<void> _copy() async {
-    await Clipboard.setData(ClipboardData(text: _parsed.plain.replaceAll('**', '')));
+    await Clipboard.setData(ClipboardData(text: _parsed.plain));
     if (!mounted) return;
     setState(() => _copied = true);
     _copiedTimer?.cancel();
@@ -1742,13 +2310,14 @@ class _AnswerViewState extends State<_AnswerView> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          SizedBox.shrink(key: widget.anchorKey),
           SelectionArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [for (final b in blocks) reveal(_blockView(b))],
+              children: [for (final b in blocks) KeyedSubtree(key: ObjectKey(b), child: reveal(_blockView(b)))],
             ),
           ),
-          reveal(_actions()),
+          if (!widget.streaming) reveal(_actions()),
           if (widget.isLast && _parsed.followUps.isNotEmpty) reveal(_followUps()),
         ],
       ),
@@ -1758,7 +2327,7 @@ class _AnswerViewState extends State<_AnswerView> {
   Widget _blockView(_Block b) {
     return switch (b) {
       _Para() => Padding(
-        padding: const EdgeInsets.only(bottom: 14),
+        padding: EdgeInsets.only(bottom: b.tight ? 4 : 14),
         child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
       ),
       _Head() => Padding(
@@ -1770,8 +2339,30 @@ class _AnswerViewState extends State<_AnswerView> {
           ),
         ),
       ),
+      _Rule() => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Divider(height: 1, color: _stroke),
+      ),
+      _Code() => Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(8)),
+          child: Text(
+            b.text,
+            style: const TextStyle(
+              fontFamily: 'Consolas',
+              fontFamilyFallback: ['Menlo', 'Courier New', 'monospace'],
+              fontSize: 13,
+              height: 1.45,
+              color: _ink,
+            ),
+          ),
+        ),
+      ),
       _Item() => Padding(
-        padding: const EdgeInsets.only(left: 2, bottom: 8),
+        padding: EdgeInsets.only(left: 2 + b.level * 18.0, bottom: 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -1811,10 +2402,59 @@ class _AnswerViewState extends State<_AnswerView> {
     };
   }
 
+  Widget _vote(String r, IconData off, IconData on, String tip) {
+    final chosen = _rating == r;
+    return IconButton(
+      tooltip: _rating == null ? tip : (chosen ? 'Thanks for the feedback' : tip),
+      onPressed: _rating == null ? () => _rate(r) : null,
+      visualDensity: VisualDensity.compact,
+      iconSize: 16,
+      color: chosen ? _brandRed : _muted,
+      disabledColor: chosen ? _brandRed : _muted.withValues(alpha: 0.4),
+      icon: Icon(chosen ? on : off),
+    );
+  }
+
   Widget _actions() {
     final sources = widget.message.sources;
+    final calls = widget.message.calls;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [_actionRow(sources, calls), if (_showCalls && calls.isNotEmpty) _callsBox(calls)],
+      ),
+    );
+  }
+
+  /// "How I got this": what was looked up and with which filters, so a number can be checked.
+  Widget _callsBox(List<String> calls) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6, bottom: 2),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      width: double.infinity,
+      decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'How I got this',
+            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _slate),
+          ),
+          const SizedBox(height: 6),
+          for (final c in calls)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text('• $c', style: const TextStyle(fontSize: 11.5, color: _slate, height: 1.4)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _actionRow(List<String> sources, List<String> calls) {
+    return Padding(
+      padding: EdgeInsets.zero,
       child: Wrap(
         spacing: 2,
         runSpacing: 4,
@@ -1826,17 +2466,28 @@ class _AnswerViewState extends State<_AnswerView> {
             color: _copied ? _good : null,
             onTap: _copy,
           ),
-          if (widget.isLast) _MiniAction(icon: Icons.refresh_rounded, label: 'Retry', onTap: widget.onRegenerate),
+          if (widget.isLast) _MiniAction(icon: Icons.refresh_rounded, label: 'Regenerate', onTap: widget.onRegenerate),
+          _vote('up', Icons.thumb_up_outlined, Icons.thumb_up_rounded, 'Good answer'),
+          _vote('down', Icons.thumb_down_outlined, Icons.thumb_down_rounded, 'Not helpful'),
           if (sources.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(left: 10),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.verified_outlined, size: 14, color: _muted),
-                  const SizedBox(width: 5),
-                  Text('Checked ${sources.join(' · ')}', style: const TextStyle(fontSize: 11.5, color: _muted)),
-                ],
+              padding: const EdgeInsets.only(left: 6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: calls.isEmpty ? null : () => setState(() => _showCalls = !_showCalls),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.verified_outlined, size: 14, color: _muted),
+                      const SizedBox(width: 5),
+                      Text('Checked ${sources.join(' · ')}', style: const TextStyle(fontSize: 11.5, color: _muted)),
+                      if (calls.isNotEmpty)
+                        Icon(_showCalls ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: _muted),
+                    ],
+                  ),
+                ),
               ),
             ),
         ],
@@ -1961,12 +2612,69 @@ List<InlineSpan> _inlineSpans(String line, TextStyle base) {
         ),
       );
     } else {
-      spans.add(TextSpan(text: m.group(4)));
+      final url = m.group(5) ?? '';
+      if (url.startsWith('job:') && RegExp(r'^[A-Za-z0-9\-]{3,40}$').hasMatch(url.substring(4))) {
+        // A job the assistant named: a link that opens it in the app.
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: _JobLink(jobId: url.substring(4), label: m.group(4) ?? url.substring(4), style: base),
+          ),
+        );
+      } else {
+        spans.add(TextSpan(text: m.group(4)));
+      }
     }
     last = m.end;
   }
   if (last < line.length) spans.add(TextSpan(text: line.substring(last)));
   return spans;
+}
+
+/// A job number in an answer. Closes the panel and opens that job.
+class _JobLink extends StatefulWidget {
+  final String jobId;
+  final String label;
+  final TextStyle style;
+  const _JobLink({required this.jobId, required this.label, required this.style});
+
+  @override
+  State<_JobLink> createState() => _JobLinkState();
+}
+
+class _JobLinkState extends State<_JobLink> {
+  bool _hover = false;
+
+  void _open() {
+    GoRouter? router;
+    try {
+      router = GoRouter.of(context);
+    } catch (_) {}
+    Navigator.of(context).pop(); // the panel sits on top of the page, so close it first
+    router?.go('/jobs/${Uri.encodeComponent(widget.jobId)}');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: GestureDetector(
+        onTap: _open,
+        child: Text(
+          widget.label,
+          style: widget.style.copyWith(
+            color: _brandRed,
+            fontWeight: FontWeight.w600,
+            decoration: _hover ? TextDecoration.underline : TextDecoration.none,
+            decorationColor: _brandRed,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 /// Key figures as a borderless strip (big number over a small label, hairlines between), so they read as part of
@@ -1994,16 +2702,20 @@ class _StatRow extends StatelessWidget {
             style: const TextStyle(fontSize: 12.5, color: _slate, height: 1.3),
           ),
           const SizedBox(height: 8),
-          _CountUp(
-            value: items[i].$1,
-            animate: animate,
-            style: const TextStyle(
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              letterSpacing: -0.6,
-              color: _ink,
-              height: 1.1,
-              fontFeatures: [FontFeature.tabularFigures()],
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: _CountUp(
+              value: items[i].$1,
+              animate: animate,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -0.6,
+                color: _ink,
+                height: 1.1,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ],
@@ -2101,7 +2813,8 @@ class _CountUp extends StatelessWidget {
 String _chartFull(double v, String format) {
   final neg = v < 0;
   final a = v.abs();
-  final s = _CountUp._fmt(a, format == 'percent' && a % 1 != 0 ? 1 : 0, true);
+  var s = _CountUp._fmt(a, a % 1 == 0 ? 0 : 2, true); // keep cents instead of rounding them away
+  if (format != 'money' && s.contains('.')) s = s.replaceFirst(RegExp(r'\.?0+$'), '');
   final body = switch (format) {
     'money' => '\$$s',
     'percent' => '$s%',
@@ -2113,13 +2826,17 @@ String _chartFull(double v, String format) {
 String _chartCompact(double v, String format) {
   final neg = v < 0;
   final a = v.abs();
+  // Axis steps like 2.5 x 10^n land on values such as 12,500 and 1.25M, so keep a decimal or two instead of rounding.
+  String trim(double v, int dec) {
+    final t = v.toStringAsFixed(dec);
+    return t.contains('.') ? t.replaceFirst(RegExp(r'\.?0+$'), '') : t;
+  }
+
   String s;
   if (a >= 1e6) {
-    s = '${(a / 1e6).toStringAsFixed(a >= 1e7 ? 0 : 1).replaceAll(RegExp(r'\.0$'), '')}M';
-  } else if (a >= 1e4) {
-    s = '${(a / 1e3).toStringAsFixed(0)}K';
+    s = '${trim(a / 1e6, a >= 1e8 ? 0 : (a >= 1e7 ? 1 : 2))}M';
   } else if (a >= 1e3) {
-    s = '${(a / 1e3).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')}K';
+    s = '${trim(a / 1e3, a >= 1e5 ? 0 : (a >= 1e4 ? 1 : 2))}K';
   } else {
     s = a % 1 == 0 ? a.toStringAsFixed(0) : a.toStringAsFixed(1);
   }
@@ -2211,7 +2928,17 @@ class _ChatChartState extends State<_ChatChart> {
   }
 
   Widget _hbars(bool animate) {
-    final maxV = c.points.map((p) => p.$2.first).fold<double>(0, (a, b) => b > a ? b : a);
+    final maxV = c.points.map((p) => p.$2.first.abs()).fold<double>(0, (a, b) => b > a ? b : a);
+    return LayoutBuilder(
+      builder: (context, box) {
+        // 98 = the value column plus the two gaps; the label takes a share of what is left, so a narrow panel does not overflow
+        final labelW = ((box.maxWidth - 98) * 0.42).clamp(56.0, 150.0);
+        return _hbarRows(animate, maxV, labelW);
+      },
+    );
+  }
+
+  Widget _hbarRows(bool animate, double maxV, double labelW) {
     return Column(
       children: [
         for (var i = 0; i < c.points.length; i++)
@@ -2220,7 +2947,7 @@ class _ChatChartState extends State<_ChatChart> {
             child: Row(
               children: [
                 SizedBox(
-                  width: 150,
+                  width: labelW,
                   child: Text(
                     c.points[i].$1,
                     maxLines: 1,
@@ -2241,7 +2968,7 @@ class _ChatChartState extends State<_ChatChart> {
                         child: Container(
                           height: 16,
                           decoration: BoxDecoration(
-                            color: i == 0 ? _brandRed : _brandRed.withValues(alpha: 0.55),
+                            color: c.points[i].$2.first < 0 ? _bad : (i == 0 ? _brandRed : _brandRed.withValues(alpha: 0.55)),
                             borderRadius: BorderRadius.circular(4),
                           ),
                         ),
@@ -2283,14 +3010,22 @@ class _ChatChartState extends State<_ChatChart> {
             builder: (_, t, _) => MouseRegion(
               onHover: (e) => setState(() => _hover = geo.indexAt(e.localPosition.dx)),
               onExit: (_) => setState(() => _hover = null),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Positioned.fill(
-                    child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style)),
-                  ),
-                  if (_hover != null) _tooltip(geo, _hover!),
-                ],
+              // touch has no hover, so a tap shows the same values (tapping the same spot again hides them)
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (d) {
+                  final i = geo.indexAt(d.localPosition.dx);
+                  setState(() => _hover = i == _hover ? null : i);
+                },
+                child: Stack(
+                  clipBehavior: Clip.none,
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(painter: _ChartPainter(c, geo, t, _hover, DefaultTextStyle.of(context).style)),
+                    ),
+                    if (_hover != null) _tooltip(geo, _hover!),
+                  ],
+                ),
               ),
             ),
           );
@@ -2303,7 +3038,9 @@ class _ChatChartState extends State<_ChatChart> {
     final p = c.points[i];
     final x = geo.xCenter(i);
     const w = 150.0;
-    final left = (x - w / 2).clamp(0.0, (geo.size.width - w).clamp(0.0, double.infinity));
+    // Beside the hovered column, not over it, so the bar being read stays visible.
+    final room = (geo.size.width - w).clamp(0.0, double.infinity);
+    final left = (x < geo.size.width / 2 ? x + geo.slot / 2 + 4 : x - geo.slot / 2 - w - 4).clamp(0.0, room);
     return Positioned(
       left: left,
       top: 0,
@@ -2444,10 +3181,12 @@ class _ChartPainter extends CustomPainter {
       );
     }
 
-    // x labels, thinned so they never overlap
-    final step = (g.n * 46 / g.plotW).ceil().clamp(1, g.n);
+    // x labels: long ones are shortened, and the row is thinned by how wide they really are so they never overlap
+    String shorten(String l) => l.length > 14 ? '${l.substring(0, 13)}…' : l;
+    final longest = chart.points.map((p) => shorten(p.$1).length).fold<int>(1, (a, b) => b > a ? b : a);
+    final step = (g.n * (longest * 6.2 + 12) / g.plotW).ceil().clamp(1, g.n);
     for (var i = 0; i < g.n; i += step) {
-      _text(canvas, chart.points[i].$1, Offset(g.xCenter(i), size.height - 9), centre: true);
+      _text(canvas, shorten(chart.points[i].$1), Offset(g.xCenter(i), size.height - 9), centre: true);
     }
 
     if (hover != null) {
@@ -2538,7 +3277,13 @@ class _ChartPainter extends CustomPainter {
           final dim = hover == null || hover == i ? 1.0 : 0.45;
           final color = _colors[s];
           canvas.drawRRect(
-            RRect.fromRectAndCorners(rect, topLeft: const Radius.circular(5), topRight: const Radius.circular(5)),
+            RRect.fromRectAndCorners(
+              rect,
+              topLeft: v >= 0 ? const Radius.circular(5) : Radius.zero,
+              topRight: v >= 0 ? const Radius.circular(5) : Radius.zero,
+              bottomLeft: v < 0 ? const Radius.circular(5) : Radius.zero,
+              bottomRight: v < 0 ? const Radius.circular(5) : Radius.zero,
+            ),
             Paint()
               ..shader = LinearGradient(
                 begin: Alignment.topCenter,
@@ -2594,7 +3339,7 @@ class _ChatTable extends StatefulWidget {
 
 class _ChatTableState extends State<_ChatTable> {
   static const int _fold = 8;
-  static final _numericRe = RegExp(r'^[\$\-+(]?\s?[\d,]*\.?\d+\s?[%)kKmM]?$');
+  static final _numericRe = RegExp(r'^\(?[-+]?\s?\$?\s?[-+]?[\d,]*\.?\d+\s?[%kKmM]?\)?$');
 
   late final int _cols = widget.rows.first.length;
   late final List<String> _header = _fit(widget.rows.first);
@@ -2610,13 +3355,20 @@ class _ChatTableState extends State<_ChatTable> {
   /// Last column whose cells are all dollar amounts: that one gets the data bars.
   late final int? _barCol = () {
     for (var c = _cols - 1; c >= 0; c--) {
-      final dollars = _body.every((r) => r[c].isEmpty || r[c].trim().startsWith(r'$')) && _body.any((r) => r[c].isNotEmpty);
+      final dollars =
+          _body.every((r) => r[c].isEmpty || RegExp(r'^[(\-+]?\s?\$').hasMatch(r[c].trim())) && _body.any((r) => r[c].isNotEmpty);
       if (_numeric[c] && dollars) return c;
     }
     return null;
   }();
 
-  late final bool _statusCol = RegExp(r'status|stage').hasMatch(_header.first.toLowerCase());
+  /// The first column headed Status or Stage gets a colour dot, wherever it sits in the table.
+  late final int? _statusIdx = () {
+    for (var c = 0; c < _cols; c++) {
+      if (RegExp(r'status|stage').hasMatch(_header[c].toLowerCase())) return c;
+    }
+    return null;
+  }();
 
   int? _sortCol;
   bool _asc = true;
@@ -2624,14 +3376,15 @@ class _ChatTableState extends State<_ChatTable> {
   bool _copied = false;
   Timer? _timer;
 
-  List<String> _fit(List<String> r) => [for (var c = 0; c < _cols; c++) c < r.length ? r[c].replaceAll('**', '') : ''];
+  List<String> _fit(List<String> r) => [for (var c = 0; c < _cols; c++) c < r.length ? _stripMd(r[c]) : ''];
 
   bool _isTotal(List<String> r) => RegExp(r'^(grand\s+)?total\b', caseSensitive: false).hasMatch(r.first.trim());
 
   static double _num(String s) {
     var t = s.trim();
-    final neg = t.startsWith('-') || (t.startsWith('(') && t.endsWith(')'));
-    final mult = RegExp(r'[kK]$').hasMatch(t) ? 1e3 : (RegExp(r'[mM]$').hasMatch(t) ? 1e6 : 1.0);
+    final neg = t.contains('-') || (t.startsWith('(') && t.endsWith(')'));
+    final unit = t.replaceAll(')', '');
+    final mult = RegExp(r'[kK]$').hasMatch(unit) ? 1e3 : (RegExp(r'[mM]$').hasMatch(unit) ? 1e6 : 1.0);
     t = t.replaceAll(RegExp(r'[\$,%()\s\-+kKmM]'), '');
     final v = (double.tryParse(t) ?? 0) * mult;
     return neg ? -v : v;
@@ -2668,8 +3421,27 @@ class _ChatTableState extends State<_ChatTable> {
     return rows;
   }
 
+  /// Saves the table as a CSV that opens in Excel (with a byte-order mark so accents and symbols survive).
+  Future<void> _saveCsv() async {
+    String cell(String v) => v.contains(RegExp(r'[",\n]')) ? '"${v.replaceAll('"', '""')}"' : v;
+    final csv = [_header, ..._sorted(), ..._totals].map((r) => r.map(cell).join(',')).join('\r\n');
+    try {
+      await FilePicker.saveFile(
+        fileName: 'jarvis-table.csv',
+        bytes: Uint8List.fromList([0xEF, 0xBB, 0xBF, ...utf8.encode(csv)]),
+        mimeType: 'text/csv',
+        dialogTitle: 'Save table as CSV',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(const SnackBar(content: Text("Couldn't save the file. Try Copy table instead.")));
+      }
+    }
+  }
+
   Future<void> _copy() async {
-    final text = [_header, ..._all].map((r) => r.join('\t')).join('\n');
+    final text = [_header, ..._sorted(), ..._totals].map((r) => r.join('\t')).join('\n'); // in the order on screen
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
     setState(() => _copied = true);
@@ -2737,7 +3509,7 @@ class _ChatTableState extends State<_ChatTable> {
           fontFeatures: _numeric[c] ? const [FontFeature.tabularFigures()] : null,
         ),
       );
-      if (c == 0 && _statusCol && !total) {
+      if (c == _statusIdx && !total) {
         text = Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2813,7 +3585,16 @@ class _ChatTableState extends State<_ChatTable> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          table,
+          LayoutBuilder(
+            builder: (context, box) {
+              final minW = _cols * 110.0;
+              if (box.maxWidth >= minW) return table;
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(width: minW, child: table),
+              );
+            },
+          ),
           Container(
             decoration: const BoxDecoration(
               border: Border(top: BorderSide(color: _stroke)),
@@ -2836,6 +3617,7 @@ class _ChatTableState extends State<_ChatTable> {
                     ),
                   ),
                 const Spacer(),
+                _MiniAction(icon: Icons.download_rounded, label: 'CSV', onTap: _saveCsv),
                 _MiniAction(
                   icon: _copied ? Icons.check_rounded : Icons.table_rows_outlined,
                   label: _copied ? 'Copied' : 'Copy table',
@@ -2865,8 +3647,14 @@ class _SlideGradient extends GradientTransform {
 
 class _Thinking extends StatefulWidget {
   final DateTime? since;
+  final String? status; // the server's own words for what it is doing; the rotating phrases are the fallback
   final VoidCallback onStop;
-  const _Thinking({required this.since, required this.onStop});
+
+  /// True once the answer itself is being written out above: the row shrinks to the pulsing mark (like Claude's chat), which
+  /// stays until the answer is finished so it is always clear whether more is coming.
+  final bool compact;
+  final String? note; // in compact mode, what is being held back ("Drawing the chart…")
+  const _Thinking({required this.since, required this.onStop, this.status, this.compact = false, this.note});
 
   @override
   State<_Thinking> createState() => _ThinkingState();
@@ -2898,8 +3686,40 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
     final still = MediaQuery.disableAnimationsOf(context);
     final secs = _secs;
     final i = (secs ~/ 4).clamp(0, _phrases.length - 1);
+    if (widget.compact) {
+      return Semantics(
+        liveRegion: true,
+        excludeSemantics: true,
+        label: 'Jarvis is still writing',
+        child: Padding(
+          padding: const EdgeInsets.only(top: 2, bottom: 18),
+          child: Row(
+            children: [
+              ScaleTransition(
+                scale: still
+                    ? const AlwaysStoppedAnimation(1.0)
+                    : Tween(begin: 0.85, end: 1.1).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+                child: const Icon(Icons.auto_awesome_rounded, size: 18, color: _brandRed),
+              ),
+              if (widget.note != null) ...[
+                const SizedBox(width: 8),
+                AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: Text(
+                    widget.note!,
+                    key: ValueKey(widget.note),
+                    style: const TextStyle(fontSize: 13, color: _muted),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
     return Semantics(
       liveRegion: true,
+      excludeSemantics: true, // the ticking seconds would otherwise be read out every second
       label: 'Jarvis is working on your question',
       child: Padding(
         padding: const EdgeInsets.only(bottom: 18),
@@ -2924,8 +3744,8 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 250),
                   child: Text(
-                    _phrases[i],
-                    key: ValueKey(i),
+                    widget.status ?? _phrases[i],
+                    key: ValueKey(widget.status ?? i),
                     style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
                   ),
                 ),
@@ -2933,7 +3753,7 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
             ),
             const SizedBox(width: 10),
             Text(
-              secs >= 12 ? '${secs}s · still working, this can take up to a minute' : (secs >= 3 ? '${secs}s' : ''),
+              secs >= 12 ? '${secs}s · still working, this can take a minute or two' : (secs >= 3 ? '${secs}s' : ''),
               style: const TextStyle(fontSize: 11.5, color: _muted, fontFeatures: [FontFeature.tabularFigures()]),
             ),
           ],

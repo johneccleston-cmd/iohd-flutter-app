@@ -5,6 +5,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,6 +88,16 @@ http.Response _handle(http.Request r) {
             'other': [for (var m = 0; m < 12; m++) {'revenue': const [31520, 84674, 77961, 87599, 79919, 38780, 87263, 53342, 137118, 24931, 0, 0][m], 'profit': const [13000, 36000, 33000, 37500, 34000, 16500, 37200, 22800, 58500, 10600, 0, 0][m]}],
           },
           'focus': 'Residential Sales',
+          'turnaroundSince': '2026-09-10',
+          'monthlyClose': [
+            for (final wl in const [(11, 4), (26, 5), (23, 1), (16, 0), (21, 0), (17, 4), (16, 0), (17, 1), (18, 4), (12, 0), (0, 0), (0, 0)]) {'won': wl.$1, 'lost': wl.$2},
+          ],
+          'largestDeal': {'amount': 38608.12, 'customer': 'David and Molli Snell', 'date': '2026-09-25', 'jobId': '1095251088'},
+          'pipeline': {
+            'requested': {'count': 27, 'value': 11611.59},
+            'provided': {'count': 222, 'value': 1510224.69},
+            'staleValue': 1390000,
+          },
           'wonCount': 129,
           'lostCount': 18,
           'closeRatePct': 87.8,
@@ -116,6 +127,15 @@ http.Response _handle(http.Request r) {
           'other': [for (var m = 0; m < 12; m++) {'revenue': 0, 'profit': 0}],
         },
         'focus': 'Commercial Sales',
+        'largestDeal': {'amount': 24000, 'customer': 'Southern Brothers Construction LLC', 'date': '2026-07-14', 'jobId': '1097413576'},
+        'pipeline': {
+          'requested': {'count': 4, 'value': 48073.63},
+          'provided': {'count': 24, 'value': 1185196.31},
+          'staleValue': 351290.33,
+        },
+        'monthlyClose': [
+          for (final wl in const [(0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (0, 0), (2, 0), (0, 0), (1, 0), (1, 1), (0, 0), (0, 0)]) {'won': wl.$1, 'lost': wl.$2},
+        ],
         'wonCount': 4,
         'lostCount': 0,
         'closeRatePct': 100,
@@ -200,13 +220,64 @@ void main() {
 
   testWidgets('late dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_late', tapText: 'Late to send estimates'));
 
-  testWidgets('stale dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_stale', tapText: 'Stale estimates'));
+  testWidgets('stale dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_stale', tapText: 'ESTIMATE PIPELINE'));
 
   testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Hard bids · rev & profit'));
 
   testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Hard bids · rev & profit'));
 
-  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Residential · rev & profit'));
+  testWidgets('chart steps to the next tab every 8 seconds, and holds under the cursor', (tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1500, 720);
+    addTearDown(tester.view.reset);
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true), home: const EmployeeKpiScreen(employeeId: 'zac')));
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('Revenue'), findsOneWidget); // tab 1, hard bids: the revenue and profit lines (legend)
+      for (var i = 0; i < 80; i++) {
+        await tester.pump(const Duration(milliseconds: 100)); // 11s in: past the first 8s tick, before the second
+      }
+      expect(find.text('Revenue'), findsOneWidget); // tab 2, commercial: still lines
+      for (var i = 0; i < 70; i++) {
+        await tester.pump(const Duration(milliseconds: 100)); // 18s in: past the second tick
+      }
+      expect(find.text('Revenue'), findsNothing); // tab 3, close rate: no revenue legend
+      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await g.addPointer(location: const Offset(800, 220));
+      await g.moveTo(const Offset(820, 230));
+      await tester.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 200; i++) {
+        await tester.pump(const Duration(milliseconds: 100)); // 20s under the cursor: it must not move on to tab 1
+      }
+      expect(find.text('Revenue'), findsNothing);
+    }, () => MockClient((r) async => _handle(r)));
+  });
+
+  testWidgets('chart tab labels show a pointer, not a text cursor', (tester) async {
+    tester.view.devicePixelRatio = 1.0;
+    tester.view.physicalSize = const Size(1500, 720);
+    addTearDown(tester.view.reset);
+    await http.runWithClient(() async {
+      await tester.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true), home: const SelectionArea(child: EmployeeKpiScreen(employeeId: 'zac'))));
+      for (var i = 0; i < 30; i++) { await tester.pump(const Duration(milliseconds: 100)); }
+      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await g.addPointer(location: Offset.zero);
+      for (final label in const ['Hard bids · rev & profit', 'Close rate']) {
+        await g.moveTo(tester.getCenter(find.text(label)));
+        await tester.pump();
+        expect(RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1), SystemMouseCursors.click, reason: label);
+      }
+      await g.moveTo(tester.getCenter(find.text('ESTIMATE PIPELINE')));
+      await tester.pump();
+      expect(RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1), SystemMouseCursors.click, reason: 'pipeline card');
+    }, () => MockClient((r) async => _handle(r)));
+  });
+
+  testWidgets('heather close rate', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_closerate', id: 'heather', tapText: 'Close rate'));
+
+  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Revenue & profit'));
 
   testWidgets('main kpi page', (tester) async => _shot(tester, const Size(1500, 720), 'kpi_main', main: true));
 

@@ -142,9 +142,20 @@ final GoRouter _router = GoRouter(
         // HR BRANCH
         StatefulShellBranch(routes: [
           GoRoute(
-            path: '/hr', 
-            builder: (context, state) => const PayrollScreen(),
+            path: '/hr',
+            // Bare /hr (old links, bookmarks) lands on Payroll, keeping any ?start/end/tech query.
+            redirect: (context, state) => state.uri.path == '/hr'
+                ? Uri(path: '/hr/payroll', queryParameters: state.uri.queryParameters.isEmpty ? null : state.uri.queryParameters).toString()
+                : null,
             routes: [
+              GoRoute(
+                path: 'payroll',
+                builder: (context, state) => PayrollScreen(
+                  initialStart: state.uri.queryParameters['start'],
+                  initialEnd: state.uri.queryParameters['end'],
+                  initialTech: state.uri.queryParameters['tech'],
+                ),
+              ),
               GoRoute(
                 path: 'kpis',
                 builder: (context, state) => const KPIDashboardScreen(),
@@ -228,6 +239,11 @@ class IohdHubApp extends StatelessWidget {
           seedColor: brandRed,
           primary: brandRed,
           surface: bgColor,
+        ),
+        // Highlighted text is the usual light blue, not the red primary (the default derives it from primary).
+        textSelectionTheme: const TextSelectionThemeData(
+          selectionColor: Color(0x663390FF),
+          selectionHandleColor: Color(0xFF1A73E8),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.white,

@@ -1,8 +1,12 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:http/http.dart' as http;
 
 import '../config/access.dart';
+import '../config/api_config.dart';
 import '../config/auth_session.dart';
 import 'app_dialog.dart';
 import 'assistant_panel.dart';
@@ -304,6 +308,15 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     );
   }
 
+  bool _assistantOpen = false;
+
+  /// Ctrl+J / Cmd+J and the Ask Jarvis button. Ignored while the panel is already open.
+  void _openAssistant() {
+    if (_assistantOpen) return;
+    _assistantOpen = true;
+    showAssistantPanel(context).whenComplete(() => _assistantOpen = false);
+  }
+
   @override
   Widget build(BuildContext context) {
     final int current = widget.navigationShell.currentIndex;
@@ -313,6 +326,8 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
       bindings: {
         const SingleActivator(LogicalKeyboardKey.keyK, control: true): _focusSearch,
         const SingleActivator(LogicalKeyboardKey.keyK, meta: true): _focusSearch,
+        const SingleActivator(LogicalKeyboardKey.keyJ, control: true): _openAssistant,
+        const SingleActivator(LogicalKeyboardKey.keyJ, meta: true): _openAssistant,
       },
       child: Focus(
         autofocus: true,
@@ -476,7 +491,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                           items: (c) => joined([
                             [
                               ...section(c, null, [
-                                ('hr_payroll', Icons.payments_rounded, 'Payroll', '/hr'),
+                                ('hr_payroll', Icons.payments_rounded, 'Payroll', '/hr/payroll'),
                                 ('hr_kpis', Icons.speed_outlined, "KPI's", '/hr/kpis'),
                               ]),
                               if (session.isAdmin) item(Icons.manage_accounts_rounded, 'Team', '/hr/team', c),
@@ -522,7 +537,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                 _searchField(compact ? 200 : 290, compact: compact),
 
               const SizedBox(width: 10),
-              _AskButton(iconOnly: tight),
+              _AskButton(iconOnly: tight, onTap: _openAssistant),
               const SizedBox(width: 12),
               const _AccountMenu(),
             ],
@@ -635,14 +650,17 @@ class _NavPillState extends State<_NavPill> {
 /// Opens the read-only AI assistant panel.
 class _AskButton extends StatelessWidget {
   final bool iconOnly;
-  const _AskButton({required this.iconOnly});
+  final VoidCallback onTap;
+  const _AskButton({required this.iconOnly, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'Ask Jarvis',
+    return Semantics(
+      button: true,
+      label: 'Ask Jarvis', // no hover tooltip, but screen readers still name the icon-only button
+      excludeSemantics: true,
       child: InkWell(
-        onTap: () => showAssistantPanel(context),
+        onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Container(
           height: 38,
@@ -759,8 +777,70 @@ class _HoverMenuState extends State<_HoverMenu> {
 }
 
 /// The signed-in user, with a sign-out action. Signing out sends the router back to /login.
-class _AccountMenu extends StatelessWidget {
+class _AccountMenu extends StatefulWidget {
   const _AccountMenu();
+
+  @override
+  State<_AccountMenu> createState() => _AccountMenuState();
+}
+
+class _AccountMenuState extends State<_AccountMenu> {
+  String _photoName = ''; // whose photo _photoUrl is (or is being fetched for)
+  String? _photoUrl; // null: no photo, show initials
+
+  /// The sign-in answer carries no photo, so look the person up in the users list the KPI page uses (by name). Anyone
+  /// not in that list (the owner login) or without a photo keeps the initials circle.
+  Future<void> _loadPhoto(String name) async {
+    _photoName = name;
+    _photoUrl = null;
+    if (name.isEmpty) return;
+    try {
+      final res = await http
+          .get(Uri.parse('$kApiBaseUrl/users'), headers: AuthSession.instance.headers())
+          .timeout(const Duration(seconds: 20));
+      if (!mounted || _photoName != name || res.statusCode != 200) return;
+      final body = json.decode(res.body);
+      final list = body is List ? body : (body is Map && body['users'] is List ? body['users'] as List : const []);
+      for (final u in list) {
+        if (u is! Map || (u['name'] ?? '').toString().trim().toLowerCase() != name.trim().toLowerCase()) continue;
+        final url = (u['avatarUrl'] ?? u['avatar_url'] ?? '').toString().trim();
+        // The users list invents an initials image for people with no photo; that is not a photo.
+        if (url.isNotEmpty && !url.contains('ui-avatars.com')) setState(() => _photoUrl = url);
+        return;
+      }
+    } catch (_) {
+      // No photo is fine: the initials circle stays.
+    }
+  }
+
+  /// The photo in a circle of [size], or [initials] when there is none (or it fails to load).
+  Widget _avatar(double size, String initials, {required Color bg, required Color fg, required double fontSize, Border? border}) {
+    final fallback = Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(color: bg, shape: BoxShape.circle, border: border),
+      child: Text(initials, style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w800, color: fg)),
+    );
+    final url = _photoUrl;
+    if (url == null) return fallback;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(shape: BoxShape.circle, border: border),
+      child: ClipOval(
+        child: Image.network(
+          url,
+          width: size,
+          height: size,
+          fit: BoxFit.cover,
+          alignment: const Alignment(0, -0.4), // keeps the face in frame
+          errorBuilder: (context, error, stackTrace) => fallback,
+          loadingBuilder: (context, child, progress) => progress == null ? child : fallback,
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -768,6 +848,13 @@ class _AccountMenu extends StatelessWidget {
       listenable: AuthSession.instance,
       builder: (context, _) {
         final session = AuthSession.instance;
+        if (session.name != _photoName) {
+          // A different person signed in (or the first build): fetch their photo after this frame.
+          final name = session.name;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && name == AuthSession.instance.name && name != _photoName) _loadPhoto(name);
+          });
+        }
         final parts = session.name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
         final initials = parts.isEmpty
             ? '?'
@@ -775,7 +862,7 @@ class _AccountMenu extends StatelessWidget {
 
         return PopupMenuButton<String>(
           tooltip: session.name.isEmpty ? 'Account' : session.name,
-          offset: const Offset(0, 46),
+          offset: const Offset(0, 54),
           onSelected: (value) {
             if (value == 'signout') session.logout();
           },
@@ -789,14 +876,7 @@ class _AccountMenu extends StatelessWidget {
                 padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
                 child: Row(
                   children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      alignment: Alignment.center,
-                      decoration: const BoxDecoration(color: _activeTint, shape: BoxShape.circle),
-                      child: Text(initials,
-                          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _brandRed)),
-                    ),
+                    _avatar(48, initials, bg: _activeTint, fg: _brandRed, fontSize: 17),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Column(
@@ -838,16 +918,13 @@ class _AccountMenu extends StatelessWidget {
               ),
             ),
           ],
-          child: Container(
-            width: 36,
-            height: 36,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              color: _Bar.avatarBg,
-              shape: BoxShape.circle,
-              border: _darkBar ? Border.all(color: _Bar.divider) : null,
-            ),
-            child: Text(initials, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _Bar.avatarText)),
+          child: _avatar(
+            46,
+            initials,
+            bg: _Bar.avatarBg,
+            fg: _Bar.avatarText,
+            fontSize: 16,
+            border: _darkBar ? Border.all(color: _Bar.divider) : null,
           ),
         );
       },

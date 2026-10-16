@@ -214,6 +214,7 @@ Future<void> _shot(WidgetTester tester, Size size, String name, {bool ask = fals
 }
 
 void main() {
+  AssistantChat.animateAnswers = false; // these mock servers send one JSON reply; do not wait for it to be typed out
   setUpAll(() async {
     await _loadFont('Segoe UI', [
       r'C:\Windows\Fonts\segoeui.ttf',

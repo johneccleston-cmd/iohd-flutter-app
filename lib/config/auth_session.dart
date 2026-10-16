@@ -20,6 +20,14 @@ class AuthException implements Exception {
   String toString() => message;
 }
 
+/// The username and PIN were right, but the PIN is a temporary one an admin issued. The person has to choose
+/// their own before they get in; nothing is signed in yet. See [AuthSession.changePin].
+class PinChangeRequired implements Exception {
+  final String username;
+  final String tempPin;
+  const PinChangeRequired(this.username, this.tempPin);
+}
+
 /// Who is signed in to the desktop app.
 ///
 /// The shared [kAuthToken] ships inside every build, so by itself it only says "this is our app".
@@ -152,6 +160,11 @@ class AuthSession extends ChangeNotifier {
       throw const AuthException('Technicians use the tech app. Your account does not have access to this app.');
     }
 
+    // A temporary PIN (new employee or admin reset) is only good for choosing a new one, never for getting in.
+    if (body['needs_pin_change'] == true) {
+      throw PinChangeRequired(user, secret);
+    }
+
     final token = body['token']?.toString();
     if (token == null || token.isEmpty) {
       throw const AuthException('Sign-in failed. Please try again.');
@@ -166,6 +179,53 @@ class AuthSession extends ChangeNotifier {
     _denied = denied is List ? denied.map((e) => e.toString()).toSet() : {};
     unawaited(_persist());
     notifyListeners();
+  }
+
+  /// Replaces a temporary PIN with one the person chose. Exactly 4 digits, because the same PIN signs them in
+  /// to the Android app too and that app only takes 4.
+  Future<void> changePin(String username, String oldPin, String newPin) async {
+    if (!RegExp(r'^\d{4}$').hasMatch(newPin)) {
+      throw const AuthException('Your PIN must be exactly 4 digits.');
+    }
+    if (newPin == oldPin) {
+      throw const AuthException('Choose a different PIN from the temporary one.');
+    }
+
+    late http.Response res;
+    try {
+      res = await http
+          .post(
+            Uri.parse('$kApiBaseUrl/update_pin'),
+            headers: {
+              'Content-Type': 'application/json',
+              if (kAuthToken.isNotEmpty) 'Authorization': 'Bearer $kAuthToken',
+              'x-username': username.trim(),
+              'x-pin': oldPin,
+            },
+            body: json.encode({'newPin': newPin}),
+          )
+          .timeout(const Duration(seconds: 60));
+    } catch (_) {
+      throw const AuthException("Couldn't reach the server. Check your connection and try again.");
+    }
+
+    Map<String, dynamic> body = const {};
+    try {
+      body = json.decode(res.body) as Map<String, dynamic>;
+    } catch (_) {}
+
+    switch (res.statusCode) {
+      case 200:
+        return;
+      case 400:
+        throw AuthException(body['error']?.toString() ?? 'That PIN was not accepted.');
+      case 401:
+        throw const AuthException('The temporary PIN no longer works. Ask an admin to reset it again.');
+      case 429:
+        throw AuthException(body['error']?.toString() ?? 'Too many attempts. Try again in 15 minutes.');
+      default:
+        throw AuthException('Could not save the PIN (server error ${res.statusCode}).');
+    }
   }
 
   void logout() {

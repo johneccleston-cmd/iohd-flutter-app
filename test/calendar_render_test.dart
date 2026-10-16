@@ -90,7 +90,8 @@ void main() {
     await t.tap(find.text('Week'));
     await t.pumpAndSettle();
     expect(find.textContaining('\u00e2'), findsNothing); // the old title showed "â€“"
-    expect(find.textContaining('\u2013'), findsOneWidget);
+    // The period title ("Oct 11 \u2013 17, 2026"); times on the cards use an en dash too ("9:30\u201311:00 AM").
+    expect(find.textContaining(RegExp(r'^[A-Z][a-z]{2} \d+ \u2013 .*\d{4}$')), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -136,7 +137,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('Brett Hall'));
       await t.pumpAndSettle();
-      await t.tapAt(const Offset(10, 400)); // close the menu
+      await t.tap(find.byTooltip('Filter by tech (select several)')); // toggling the button closes the menu
       await t.pumpAndSettle();
     }, _mock);
     expect(t.takeException(), isNull);
@@ -162,6 +163,25 @@ void main() {
     await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/calendar_tech_menu_1280.png'));
   });
 
+  testWidgets('calendar status menu 1280', (t) async {
+    t.view.physicalSize = const Size(1280, 720);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    await http.runWithClient(() async {
+      await t.pumpWidget(RepaintBoundary(
+        key: const ValueKey('shot'),
+        child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+      ));
+      await t.pumpAndSettle();
+      await t.tap(find.text('All statuses'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Need Deposit').first);
+      await t.pumpAndSettle();
+    }, _mock);
+    expect(t.takeException(), isNull);
+    await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/calendar_status_menu_1280.png'));
+  });
+
   testWidgets('ticking tech names does not move the tech button or its menu', (t) async {
     await pumpCalendar(t, const Size(1280, 720));
     final button = find.byTooltip('Filter by tech (select several)');
@@ -179,6 +199,46 @@ void main() {
 
     expect(t.getRect(button), before, reason: 'the button keeps its size and place however many names are ticked');
     expect(t.getTopLeft(find.text('Brett Hall')), itemBefore, reason: 'so the open menu stays put too');
+    expect(t.takeException(), isNull);
+  });
+
+  testWidgets('the jump-to-date picker is black, not the app red', (t) async {
+    t.view.physicalSize = const Size(1280, 720);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+    // The app's own accent, which is what the picker would otherwise be painted in.
+    final red = _theme().copyWith(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFCC0007), primary: const Color(0xFFCC0007)));
+    await http.runWithClient(() async {
+      await t.pumpWidget(RepaintBoundary(
+        key: const ValueKey('shot'),
+        child: MaterialApp(theme: red, home: const CalendarScreen()),
+      ));
+      await t.pumpAndSettle();
+      await t.tap(find.text('October 2026'));
+      await t.pumpAndSettle();
+      expect(find.text('JUMP TO DATE'), findsOneWidget);
+      final picker = t.element(find.text('JUMP TO DATE'));
+      expect(Theme.of(picker).colorScheme.primary, isNot(const Color(0xFFCC0007)));
+      expect(Theme.of(picker).colorScheme.primary, const Color(0xFF1A1C1E));
+    }, _mock);
+    expect(t.takeException(), isNull);
+    await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/calendar_date_picker_1280.png'));
+  });
+
+  testWidgets('an empty day cannot be opened, a day with events can', (t) async {
+    await pumpCalendar(t, const Size(1280, 720));
+    // The mock puts no events on day 6 ((6 * 7) % 6 == 0) and several on day 5.
+    final empty = find.bySemanticsLabel(RegExp(r'October 6, nothing scheduled'));
+    final handle = t.ensureSemantics();
+    expect(empty, findsOneWidget);
+    await t.tapAt(t.getTopLeft(empty) + const Offset(40, 14));
+    await t.pumpAndSettle();
+    expect(find.byType(Dialog), findsNothing, reason: 'nothing to show, so no popup');
+
+    await t.tapAt(t.getTopLeft(find.bySemanticsLabel(RegExp(r'October 5, '))) + const Offset(40, 14));
+    await t.pumpAndSettle();
+    expect(find.byType(Dialog), findsOneWidget);
+    handle.dispose();
     expect(t.takeException(), isNull);
   });
 

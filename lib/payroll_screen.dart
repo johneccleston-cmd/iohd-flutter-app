@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'theme/app_theme.dart';
+import 'package:go_router/go_router.dart';
+
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -36,16 +38,18 @@ part 'payroll_pdf.dart';
 // not record or pay a payroll run.
 // ---------------------------------------------------------------------------
 
-class _P {
-  static const wash = Color(0xFFF8FAFC);
-  static const goodBg = Color(0xFFECFDF5);
-  static const goodFg = Color(0xFF047857);
-  static const toggleActive = Color(0xFF1D4ED8);
-  static const badBg = Color(0xFFFEF2F2);
-  static const badFg = Color(0xFFB91C1C);
-}
+// Tints are built from the DashUi tokens, so a palette change reaches this screen too.
+final Color _goodBg = DashUi.emeraldDeep.withValues(alpha: 0.08);
+final Color _goodBorder = DashUi.emeraldDeep.withValues(alpha: 0.3);
+final Color _badBg = DashUi.red.withValues(alpha: 0.08);
+final Color _badBorder = DashUi.red.withValues(alpha: 0.3);
 
 const List<FontFeature> _figures = [FontFeature.tabularFigures()];
+
+/// A section of the page: no card, just a hairline under it.
+const BoxDecoration _flat = BoxDecoration(
+  border: Border(bottom: BorderSide(color: DashUi.line)),
+);
 
 double _d(dynamic v) {
   if (v is num) return v.toDouble();
@@ -53,6 +57,8 @@ double _d(dynamic v) {
 }
 
 String _s(dynamic v) => v?.toString() ?? '';
+
+Color _cashColor(double v) => v < 0 ? DashUi.red : (v > 0 ? DashUi.emeraldDeep : DashUi.muted);
 
 String _fmt(double v) => dashMoney(v.abs() < 0.005 ? 0 : v);
 
@@ -286,11 +292,18 @@ class _Tech {
 
   double get jobNet => weeks.fold<double>(0, (s, w) => s + w.jobNet);
 
+  /// Sales commission across the weeks. The server's totals don't carry it, so it is summed from the weeks.
+  double get repPay => weeks.fold<double>(0, (s, w) => s + w.repPay);
+
   String get kindLabel {
+    // A rep who also gets callback pay is still a rep; check sales before callback-only.
+    if (isSales || repPay != 0) return 'Sales';
     if (isCallbackOnly) return 'Callback pay only';
-    if (isSales) return 'Sales';
     return role;
   }
+
+  /// True when any pay week finished under its weekly hurdle, so no cash pay was earned for it.
+  bool get underHurdle => weeks.any((w) => w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule);
 }
 
 class _Report {
@@ -314,6 +327,17 @@ class _Report {
       techs = ((j['techs'] as List?) ?? const []).map((e) => _Tech(Map<String, dynamic>.from(e as Map))).toList();
 }
 
+/// A finalized payroll run for one pay week (from GET /api/payroll/runs). Weeks can have several runs when late
+/// corrections are paid as adjustments; [count] is how many are still in effect.
+class _WeekRun {
+  final int id;
+  final int count;
+  final DateTime? at;
+  final double paid;
+
+  const _WeekRun(this.id, this.count, this.at, this.paid);
+}
+
 class _Opt {
   final String key;
   final String label;
@@ -326,6 +350,7 @@ enum _Metric {
   commission('Closed-Job Commission', 'Net to the tech from every closed job', DashUi.ink),
   retainage('Retainage Held', 'Commercial retainage held back on closed jobs', DashUi.indigo),
   pool('Company Pool', 'Pool contribution taken from each closed job', DashUi.slate),
+  sales('Sales Commission', 'Percent of labor on won estimates', DashUi.indigo),
   advCallbacks('Advances & Callbacks', 'Flat advance days and callback pay', DashUi.amber);
 
   final String label;
@@ -351,6 +376,7 @@ const List<_Opt> _kPresets = [
   _Opt('lastMonth', 'Last Month'),
   _Opt('ytd', 'Year to Date'),
   _Opt('custom', 'Custom'),
+  _Opt('pending', 'Pending'), // its own tab: the projected commission on jobs not closed yet
 ];
 
 DateTimeRange _rangeFor(String key) {
@@ -377,21 +403,31 @@ DateTimeRange _rangeFor(String key) {
 // ---------------------------------------------------------------------------
 
 class PayrollScreen extends StatefulWidget {
-  const PayrollScreen({super.key});
+  /// Optional starting view, so a link (`/hr/payroll?start=2026-10-05&end=2026-10-11&tech=12`) opens exactly what the
+  /// sender was looking at. The screen keeps the address bar in step with the dates and person it shows.
+  final String? initialStart;
+  final String? initialEnd;
+  final String? initialTech;
+
+  const PayrollScreen({super.key, this.initialStart, this.initialEnd, this.initialTech});
 
   @override
   State<PayrollScreen> createState() => _PayrollScreenState();
 }
 
 class _PayrollScreenState extends State<PayrollScreen> {
-  DateTimeRange _range = _rangeFor('lastWeek');
+  late DateTimeRange _range = _initialRange();
   _Report? _report;
-  bool _loading = false;
+  bool _loading = true; // the first load starts right after the first frame; don't flash "No report yet"
   String? _error;
   int _requestId = 0;
-  int? _selectedId; // null = everyone (the register)
+  int _pendingRefresh = 0; // bumped after a payroll run so the pending panel reloads
+  bool _sortByDue = false; // register order: false = by name, true = biggest Total Due first
+  Map<String, _WeekRun> _runs = const {}; // latest finalized payroll run per pay-week start (yyyy-MM-dd)
+  late int? _selectedId = int.tryParse(widget.initialTech ?? ''); // null = everyone (the register)
   _Metric? _metric; // scorecard whose log is open
   bool _exporting = false;
+  bool _showPending = false; // the Pending commission tab is open (instead of a pay-week report)
   String? _weekStart; // which pay week is open for the selected technician
   final Set<String> _expandedJobs = {}; // closed-job cards the user has opened (collapsed by default)
 
@@ -405,21 +441,45 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   // ---- Range ---------------------------------------------------------------
 
+  DateTimeRange _initialRange() {
+    final a = _parseDay(widget.initialStart);
+    final b = _parseDay(widget.initialEnd);
+    if (a != null && b != null && !b.isBefore(a)) return DateTimeRange(start: a, end: b);
+    return _rangeFor('lastWeek');
+  }
+
+  /// Mirrors the dates and person into the address bar (replacing, so Back does not step through every click).
+  void _syncUrl() {
+    final router = GoRouter.maybeOf(context);
+    if (router == null) return;
+    // /hr/kpis, /hr/team and /hr/corrections are stacked above this screen, which stays mounted underneath. A
+    // late load finishing there must not rewrite the address and yank the user back to Payroll.
+    if (router.routeInformationProvider.value.uri.path != '/hr/payroll') return;
+    final uri = Uri(
+      path: '/hr/payroll',
+      queryParameters: {
+        'start': _ymd(_range.start),
+        'end': _ymd(_range.end),
+        if (_selectedId != null) 'tech': '$_selectedId',
+      },
+    );
+    if (router.routeInformationProvider.value.uri.toString() != uri.toString()) router.replace(uri.toString());
+  }
+
   DateTimeRange get _shownRange {
     return _range;
   }
 
   String get _activeKey {
     for (final p in _kPresets) {
-      if (p.key == 'custom') continue;
+      if (p.key == 'custom' || p.key == 'pending') continue;
       final r = _rangeFor(p.key);
       if (r.start == _range.start && r.end == _range.end) return p.key;
     }
     return 'custom';
   }
 
-  bool get _canStep =>
-      _range.start.weekday == DateTime.monday && (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
+  bool get _canStep => _range.start.weekday == DateTime.monday && (_daysBetween(_range.start, _range.end) + 1) % 7 == 0;
 
   void _step(int dir) {
     if (!_canStep) return;
@@ -431,20 +491,29 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Future<void> _selectPreset(String key) async {
+    if (key == 'pending') {
+      setState(() => _showPending = true);
+      return;
+    }
     if (key == 'custom') {
       await _pickCustom();
       return;
     }
-    setState(() => _range = _rangeFor(key));
+    setState(() {
+      _showPending = false;
+      _range = _rangeFor(key);
+    });
     _load();
   }
 
   Future<void> _pickCustom() async {
+    // The arrows can step past today + 30 days; the picker asserts if the current range is outside its bounds.
+    final limit = _addDays(_today(), 30);
     final picked = await showDateRangePicker(
       context: context,
       initialDateRange: _range,
-      firstDate: DateTime(2020),
-      lastDate: _addDays(_today(), 30),
+      firstDate: _range.start.isBefore(DateTime(2020)) ? _range.start : DateTime(2020),
+      lastDate: _range.end.isAfter(limit) ? _range.end : limit,
       builder: (context, child) => Theme(
         data: ThemeData.light().copyWith(
           colorScheme: const ColorScheme.light(
@@ -458,7 +527,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    setState(() => _range = picked);
+    setState(() {
+      _showPending = false;
+      _range = picked;
+    });
     _load();
   }
 
@@ -468,12 +540,68 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _selectedId = id;
     _weekStart = null;
     _metric = null;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _syncUrl();
+    });
   });
 
   void _toggleMetric(_Metric m) => setState(() => _metric = _metric == m ? null : m);
 
-  Future<void> _load() async {
+  /// Which pay weeks already have a finalized payroll run. Best effort: if it fails the report still works and the
+  /// weeks simply show no paid status.
+  Future<void> _loadRuns() async {
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$kApiBaseUrl/api/payroll/runs').replace(queryParameters: {'limit': '200'}),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 60));
+      if (!mounted || res.statusCode != 200) return;
+      final body = json.decode(res.body);
+      final byWeek = <String, List<Map<String, dynamic>>>{};
+      for (final r in (body is Map ? body['runs'] as List? : null) ?? const []) {
+        final m = Map<String, dynamic>.from(r as Map);
+        if (_s(m['status']) == 'voided') continue;
+        final key = _s(m['week_start']);
+        if (key.length >= 10) (byWeek[key.substring(0, 10)] ??= []).add(m);
+      }
+      final runs = <String, _WeekRun>{};
+      byWeek.forEach((week, list) {
+        list.sort((a, b) => _d(b['id']).compareTo(_d(a['id'])));
+        final latest = list.first;
+        runs[week] = _WeekRun(
+          _d(latest['id']).round(),
+          list.length,
+          DateTime.tryParse(_s(latest['created_at']))?.toLocal(),
+          list.fold<double>(0, (s, m) => s + _d(m['total_amount_paid'])),
+        );
+      });
+      if (mounted) setState(() => _runs = runs);
+    } catch (_) {
+      // Leave the previous statuses; the report itself does not depend on them.
+    }
+  }
+
+  /// "Paid", "Not run yet" or null (week still in progress or status unknown) for one pay week.
+  ({String label, Color color})? _weekStatus(_Week w) {
+    final run = _runs[w.weekStart.length >= 10 ? w.weekStart.substring(0, 10) : w.weekStart];
+    if (run != null) {
+      final when = run.at == null ? '' : ' · ${DateFormat('MMM d').format(run.at!)}';
+      final extra = run.count > 1 ? ' (${run.count} runs)' : '';
+      return (label: 'Paid · run #${run.id}$when$extra', color: DashUi.emeraldDeep);
+    }
+    final end = _parseDay(w.weekEnd);
+    if (end != null && end.isBefore(_today())) return (label: 'Not run yet', color: DashUi.amber);
+    return null;
+  }
+
+  /// [fresh] skips the server's response cache (the Refresh button, and after a payroll run). Other loads may be
+  /// answered from it, which is what makes the screen open instantly.
+  Future<void> _load({bool fresh = false}) async {
     final id = ++_requestId;
+    _loadRuns();
+    _syncUrl();
     setState(() {
       _loading = true;
       _error = null;
@@ -481,12 +609,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
     try {
       final uri = Uri.parse('$kApiBaseUrl/api/payroll/commission-detail')
-          .replace(queryParameters: {'start': _ymd(_range.start), 'end': _ymd(_range.end)});
+          .replace(queryParameters: {'start': _ymd(_range.start), 'end': _ymd(_range.end), if (fresh) 'fresh': '1'});
       final response = await http
-          .get(
-            uri,
-            headers: AuthSession.instance.headers(),
-          )
+          .get(uri, headers: AuthSession.instance.headers())
           .timeout(const Duration(seconds: 90)); // the hosted server can be slow to wake up
 
       if (!mounted || id != _requestId) return;
@@ -506,7 +631,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
           final body = json.decode(response.body);
           if (body is Map && body['error'] != null) message = body['error'].toString();
         } catch (_) {}
-        if (response.statusCode == 401 || response.statusCode == 403) {
+        if (response.statusCode == 401) {
+          AuthSession.instance.logout(); // sends the app back to the sign-in screen
+          return;
+        }
+        if (response.statusCode == 403) {
           message = 'You do not have access to payroll reports. Sign in with an office account and try again.';
         }
         setState(() {
@@ -522,8 +651,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
       });
     } catch (e) {
       if (!mounted || id != _requestId) return;
+      final unreadable = e is FormatException || e is TypeError;
       setState(() {
-        _error = 'Could not reach the server. Check the connection and try again.';
+        _error = unreadable
+            ? 'The server sent a report this screen could not read. Try again, and tell support if it keeps happening.'
+            : 'Could not reach the server. Check the connection and try again.';
         _loading = false;
       });
     }
@@ -576,29 +708,39 @@ class _PayrollScreenState extends State<PayrollScreen> {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: AppTheme.bgColor,
+      color: Colors.white,
       child: LayoutBuilder(
         builder: (context, c) {
           final w = c.maxWidth;
-          final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 20.0);
-          return SingleChildScrollView(
-            padding: EdgeInsets.all(pad),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1600),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _toolbar(),
-                    const SizedBox(height: 12),
-                    const PayrollPendingPanel(),
-                    const SizedBox(height: 12),
-                    _results(wide: w - pad * 2 >= 1000),
-                  ],
+          final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 24.0);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _toolbar(),
+              Expanded(
+                child: SingleChildScrollView(
+                  padding: EdgeInsets.fromLTRB(pad, 14, pad, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (_showPending)
+                        PayrollPendingPanel(asPage: true, refreshToken: _pendingRefresh)
+                      else
+                        // While a new range loads, the old numbers stay but are dimmed and locked so they are not
+                        // mistaken for the dates in the toolbar.
+                        AnimatedOpacity(
+                          duration: const Duration(milliseconds: 160),
+                          opacity: _loading && _report != null ? 0.45 : 1,
+                          child: IgnorePointer(
+                            ignoring: _loading && _report != null,
+                            child: _results(wide: w - pad * 2 >= 1000),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
+            ],
           );
         },
       ),
@@ -609,30 +751,66 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _toolbar() {
     final range = _shownRange;
-    final label = '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
+    final label = range.start.year == range.end.year
+        ? '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}'
+        : '${DateFormat('MMM d, yyyy').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
     final r = _report;
-    final widened = r != null && (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
-    final String? note = widened ? 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.' : null;
+    final differs = r != null && (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
+    final String? note = _showPending || !differs || _loading
+        ? null
+        : (_error != null
+              ? 'Still showing the previous report, ${_day(r.start)} to ${_day(r.end, year: true)}.'
+              : 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.');
+
+    final title = Semantics(
+      header: true,
+      child: const Text(
+        'PAYROLL',
+        style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+      ),
+    );
 
     return Container(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      decoration: DashUi.panel(radius: 12),
+      constraints: const BoxConstraints(minHeight: 56),
+      padding: const EdgeInsets.fromLTRB(24, 8, 24, 8),
+      decoration: const BoxDecoration(
+        color: DashUi.ink, // the header banner colour every dashboard uses
+        boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: _toolbarControls(label)),
-              const SizedBox(width: 12),
-              _toolbarActions(),
-            ],
+          LayoutBuilder(
+            builder: (context, c) {
+              if (c.maxWidth < 900) {
+                // Not enough room for the date controls and the three action buttons side by side.
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(padding: const EdgeInsets.only(top: 4, bottom: 8), child: title),
+                    _toolbarControls(label, compact: true),
+                    const SizedBox(height: 8),
+                    Align(alignment: Alignment.centerRight, child: _toolbarActions()),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  title,
+                  const SizedBox(width: 28),
+                  Expanded(child: _toolbarControls(label, compact: c.maxWidth < 1560)),
+                  const SizedBox(width: 12),
+                  _toolbarActions(),
+                ],
+              );
+            },
           ),
           if (note != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 4),
             Text(
               note,
-              style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
+              style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w500),
             ),
           ],
         ],
@@ -651,56 +829,120 @@ class _PayrollScreenState extends State<PayrollScreen> {
           style: FilledButton.styleFrom(
             minimumSize: const Size(0, 40),
             padding: const EdgeInsets.symmetric(horizontal: 14),
-            backgroundColor: DashUi.ink,
+            backgroundColor: Colors.white, // the usual dark button would vanish into the dark banner
+            foregroundColor: DashUi.ink,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
           ),
-          onPressed: () => showPayrollRunDialog(context, initialDate: _range.start, onChanged: _load),
+          // Open on the last week of the range, which is the week most likely being paid, not the first.
+          onPressed: () => showPayrollRunDialog(
+            context,
+            initialDate: _range.end,
+            onChanged: () {
+              _load(fresh: true);
+              if (mounted) setState(() => _pendingRefresh++);
+            },
+          ),
         ),
         const SizedBox(width: 8),
-        OutlinedButton.icon(
-          icon: _exporting
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate),
-                )
-              : const Icon(Icons.picture_as_pdf_outlined, size: 18),
-          label: const Text('Export PDF'),
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size(0, 40),
-            padding: const EdgeInsets.symmetric(horizontal: 14),
-            foregroundColor: DashUi.ink,
-            backgroundColor: Colors.white,
-            side: const BorderSide(color: DashUi.line),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        Tooltip(
+          message: 'Exports every technician for these dates',
+          child: OutlinedButton.icon(
+            icon: _exporting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate),
+                  )
+                : const Icon(Icons.picture_as_pdf_outlined, size: 18),
+            label: const Text('Export PDF'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 40),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              foregroundColor: DashUi.ink,
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: DashUi.line),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+            ),
+            onPressed: hasData && !_exporting ? _exportPdf : null,
           ),
-          onPressed: hasData && !_exporting ? _exportPdf : null,
         ),
         const SizedBox(width: 4),
         IconButton(
           tooltip: 'Refresh',
           iconSize: 20,
-          color: DashUi.slate,
+          color: Colors.white,
+          disabledColor: Colors.white38,
           icon: const Icon(Icons.refresh_rounded),
-          onPressed: _loading ? null : _load,
+          onPressed: _loading
+              ? null
+              : () {
+                  _load(fresh: true);
+                  if (_showPending) setState(() => _pendingRefresh++);
+                },
         ),
       ],
     );
   }
 
-  Widget _toolbarControls(String label) {
+  Widget _toolbarControls(String label, {bool compact = false}) {
     return Wrap(
       spacing: 14,
       runSpacing: 10,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        _stepper(label),
-        _pillGroup(items: _kPresets, active: _activeKey, onSelected: _selectPreset),
+        if (!_showPending) _stepper(label),
+        if (compact) ...[
+          _presetMenu(),
+          _pillGroup(
+            items: const [_Opt('pending', 'Pending')],
+            active: _showPending ? 'pending' : '',
+            onSelected: _selectPreset,
+          ),
+        ] else
+          _pillGroup(items: _kPresets, active: _showPending ? 'pending' : _activeKey, onSelected: _selectPreset),
         if (_loading)
-          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate)),
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
       ],
+    );
+  }
+
+  /// The seven range pills collapse into one menu when the toolbar is too narrow to hold them on a single line.
+  Widget _presetMenu() {
+    // The Pending tab is not a date range, so it is never in this menu; it stays beside it as its own tab.
+    final active = _kPresets.firstWhere((p) => p.key == _activeKey);
+    return PopupMenuButton<String>(
+      tooltip: 'Choose a date range',
+      onSelected: _selectPreset,
+      itemBuilder: (_) => [
+        for (final o in _kPresets)
+          if (o.key != 'pending')
+            CheckedPopupMenuItem<String>(
+              value: o.key,
+              checked: !_showPending && o.key == active.key,
+              child: Text(o.label),
+            ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              active.label,
+              style: TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+                color: _showPending ? DashUi.slate : DashUi.blue,
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_drop_down_rounded, size: 20, color: DashUi.slate),
+          ],
+        ),
+      ),
     );
   }
 
@@ -724,7 +966,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          btn(Icons.chevron_left_rounded, 'Previous pay weeks', can ? () => _step(-1) : null),
+          btn(
+            Icons.chevron_left_rounded,
+            can ? 'Previous pay weeks' : 'Stepping needs a range of whole Monday-to-Sunday weeks',
+            can ? () => _step(-1) : null,
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
             child: Text(
@@ -737,7 +983,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
               ),
             ),
           ),
-          btn(Icons.chevron_right_rounded, 'Next pay weeks', can ? () => _step(1) : null),
+          btn(
+            Icons.chevron_right_rounded,
+            can ? 'Next pay weeks' : 'Stepping needs a range of whole Monday-to-Sunday weeks',
+            can ? () => _step(1) : null,
+          ),
         ],
       ),
     );
@@ -756,25 +1006,32 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Widget _pill(String text, bool selected, VoidCallback onTap) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? Colors.white : Colors.white.withValues(alpha: 0),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
-          ),
-          child: Text(
-            text,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-              color: selected ? _P.toggleActive : DashUi.slate,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: text,
+      excludeSemantics: true,
+      onTap: onTap,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOut,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: selected ? Colors.white : Colors.white.withValues(alpha: 0),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
+            ),
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
+                color: selected ? DashUi.blue : DashUi.slate,
+              ),
             ),
           ),
         ),
@@ -846,9 +1103,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
     final banner = _error == null ? <Widget>[] : <Widget>[_errorBanner(), const SizedBox(height: 12)];
 
-    final scorecards = _scorecards(totals, jobNet, report.companyPoolRate, wide);
+    final repTotal = visible.fold<double>(0, (s, t) => s + t.repPay);
+    final scorecards = _scorecards(totals, jobNet, repTotal, report.companyPoolRate, wide);
 
     if (wide) {
+      // On the Everyone register the technician list only repeats the table, so the table gets the full width.
+      final showList = metric != null || selected != null;
+      if (!showList) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [...banner, scorecards, const SizedBox(height: 12), ..._spaced(detail)],
+        );
+      }
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -859,9 +1125,15 @@ class _PayrollScreenState extends State<PayrollScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               SizedBox(width: 280, child: _techList(report)),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(detail)),
+                // The edge line sits on the person's side: their page is the taller of the two.
+                child: Container(
+                  padding: const EdgeInsets.only(left: 20),
+                  decoration: const BoxDecoration(
+                    border: Border(left: BorderSide(color: DashUi.line)),
+                  ),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: _spaced(detail)),
+                ),
               ),
             ],
           ),
@@ -928,18 +1200,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
-        color: _P.badBg,
+        color: _badBg,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFECACA)),
+        border: Border.all(color: _badBorder),
       ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline_rounded, size: 18, color: _P.badFg),
+          const Icon(Icons.error_outline_rounded, size: 18, color: DashUi.red),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
               _error ?? '',
-              style: const TextStyle(fontSize: 13, color: _P.badFg, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 13, color: DashUi.red, fontWeight: FontWeight.w600),
             ),
           ),
           TextButton(onPressed: _loading ? null : _load, child: const Text('Try again')),
@@ -950,32 +1222,45 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   // ---- Scorecards ----------------------------------------------------------
 
-  Widget _scorecards(_Totals t, double jobNet, double poolRate, bool wide) {
+  Widget _scorecards(_Totals t, double jobNet, double repTotal, double poolRate, bool wide) {
+    // A zero figure is greyed so the cards that have something to say stand out.
+    Color tone(double v, Color c) => v.abs() < 0.005 ? DashUi.muted : c;
+
     Widget tappable(_Metric m, Widget card) {
       final on = _metric == m;
-      return Tooltip(
-        message: on ? 'Close the log' : 'See every entry behind ${m.label}',
-        waitDuration: const Duration(milliseconds: 500),
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => _toggleMetric(m),
-            child: Stack(
-              children: [
-                Positioned.fill(child: card),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 160),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: on ? m.color : m.color.withValues(alpha: 0), width: 2),
+      return DecoratedBox(
+        // A soft shadow, so the tile stands up from the white page instead of sitting flat on it.
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: const [
+            BoxShadow(color: Color(0x1A0F172A), blurRadius: 14, offset: Offset(0, 5)),
+            BoxShadow(color: Color(0x0F0F172A), blurRadius: 3, offset: Offset(0, 1)),
+          ],
+        ),
+        child: Tooltip(
+          message: on ? 'Close the log' : 'See every entry behind ${m.label}',
+          waitDuration: const Duration(milliseconds: 500),
+          child: MouseRegion(
+            cursor: SystemMouseCursors.click,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _toggleMetric(m),
+              child: Stack(
+                children: [
+                  Positioned.fill(child: card),
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 160),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: on ? m.color : m.color.withValues(alpha: 0), width: 2),
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -985,31 +1270,53 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final cards = <Widget>[
       tappable(
         _Metric.totalDue,
-        AnimatedMetricCard(title: 'Total Due', value: t.totalDue, valueColor: DashUi.emeraldDeep, index: 0),
+        AnimatedMetricCard(
+          title: 'Total Due',
+          value: t.totalDue,
+          valueColor: tone(t.totalDue, DashUi.emeraldDeep),
+          index: 0,
+        ),
       ),
       tappable(
         _Metric.commission,
-        AnimatedMetricCard(title: 'Closed-Job Commission', value: jobNet, valueColor: DashUi.ink, index: 1),
+        AnimatedMetricCard(
+          title: 'Closed-Job Commission',
+          value: jobNet,
+          valueColor: tone(jobNet, DashUi.ink),
+          index: 1,
+        ),
       ),
       tappable(
         _Metric.retainage,
-        AnimatedMetricCard(title: 'Retainage Held', value: t.retainage, valueColor: DashUi.indigo, index: 2),
-      ),
-      tappable(
-        _Metric.pool,
         AnimatedMetricCard(
-          title: 'Company Pool (${_pct(poolRate * 100)})',
-          value: t.companyPool.abs(),
-          valueColor: DashUi.slate,
-          index: 3,
+          title: 'Retainage Held',
+          value: t.retainage,
+          valueColor: tone(t.retainage, DashUi.indigo),
+          index: 2,
         ),
       ),
+      // Sales pay is not part of any other card, so when someone earned it the card takes the pool's slot.
+      if (repTotal != 0)
+        tappable(
+          _Metric.sales,
+          AnimatedMetricCard(title: 'Sales Commission', value: repTotal, valueColor: DashUi.indigo, index: 3),
+        )
+      else
+        tappable(
+          _Metric.pool,
+          AnimatedMetricCard(
+            title: 'Company Pool (${_pct(poolRate * 100)})',
+            value: t.companyPool.abs(),
+            valueColor: tone(t.companyPool, DashUi.slate),
+            index: 3,
+          ),
+        ),
       tappable(
         _Metric.advCallbacks,
         AnimatedMetricCard(
           title: 'Advances & Callbacks',
           value: t.advancesPaid + t.callbackPay,
-          valueColor: DashUi.amber,
+          valueColor: tone(t.advancesPaid + t.callbackPay, DashUi.amber),
           index: 4,
         ),
       ),
@@ -1082,10 +1389,22 @@ class _PayrollScreenState extends State<PayrollScreen> {
                     t.name,
                     _jobTitle(j),
                     'On job total ${_fmt(j.jobRevenue)}, split ${_pct(j.splitPct)}',
-                    l.techShare,
+                    l.techShare.abs(), // the scorecard shows the pool as a positive amount; keep the log in step
                   ),
                 );
               }
+            }
+          case _Metric.sales:
+            for (final rc in w.repCommissions) {
+              rows.add(
+                _LogRow(
+                  rc.closedOn,
+                  t.name,
+                  'Est ${rc.jobId}${rc.customer.isEmpty ? '' : '  ${rc.customer}'}',
+                  '${_fmt(rc.labor)} labor × ${_pct(rc.ratePct)}${rc.basisLabel.isEmpty ? '' : ', ${rc.basisLabel}'}',
+                  rc.amount,
+                ),
+              );
             }
           case _Metric.advCallbacks:
             for (final a in w.advances) {
@@ -1132,8 +1451,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     Color amountColor(double v) => v < 0 ? DashUi.red : DashUi.ink;
 
     return Container(
-      decoration: DashUi.panel(radius: 12),
-      clipBehavior: Clip.antiAlias,
+      decoration: _flat,
       child: LayoutBuilder(
         builder: (context, c) {
           final narrow = c.maxWidth < 680;
@@ -1342,8 +1660,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _techList(_Report report) {
     return Container(
-      decoration: DashUi.panel(),
-      padding: const EdgeInsets.fromLTRB(10, 14, 10, 10),
+      padding: const EdgeInsets.fromLTRB(0, 4, 14, 10),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1373,14 +1690,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   child: const Icon(Icons.groups_rounded, size: 18, color: Colors.white),
                 ),
                 name: 'Everyone',
-                subtitle: 'Payroll register',
+                subtitle: 'Payroll Register',
                 due: report.techs.fold<double>(0, (s, t) => s + t.totals.totalDue),
                 selected: _selectedId == null,
                 onTap: () => _selectTech(null),
               ),
               for (final t in report.techs)
                 _techRow(
-                  leading: DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 34),
+                  leading: DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 44),
                   name: t.name,
                   subtitle: t.kindLabel,
                   due: t.totals.totalDue,
@@ -1471,27 +1788,36 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   // ---- Everyone: payroll register -----------------------------------------
 
-  static const List<int> _regFlex = [34, 8, 14, 13, 12, 14, 12, 14, 15, 15];
+  // Column widths. The Sales Commission column only exists when someone in the report earned sales commission.
+  static const List<int> _regFlexBase = [34, 8, 14, 13, 12, 14, 14, 15, 15];
+  static const List<int> _regFlexWithRep = [34, 8, 14, 13, 12, 14, 14, 14, 15, 15];
 
-  Widget _registerCell(int i, Widget child) => Expanded(flex: _regFlex[i], child: child);
+  Widget _registerCell(List<int> flex, int i, Widget child) => Expanded(flex: flex[i], child: child);
 
-  Widget _registerText(int i, String text, {Color color = DashUi.ink, FontWeight weight = FontWeight.w600}) {
+  Widget _registerText(
+    List<int> flex,
+    int i,
+    String text, {
+    Color color = DashUi.ink,
+    FontWeight weight = FontWeight.w600,
+  }) {
     return _registerCell(
+      flex,
       i,
       Text(
         text,
         textAlign: TextAlign.right,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 13.5, fontWeight: weight, color: color, fontFeatures: _figures),
+        style: TextStyle(fontSize: 16, fontWeight: weight, color: color, fontFeatures: _figures),
       ),
     );
   }
 
   /// Thin progress bar of the latest pay week's gross toward the weekly hurdle. Nothing for techs with no hurdle.
-  Widget _hurdleBar(_Tech t) {
-    if (t.weeks.isEmpty) return const SizedBox.shrink();
-    final w = t.weeks.last;
+  Widget _hurdleBar(_Tech t) => t.weeks.isEmpty ? const SizedBox.shrink() : _hurdleBarFor(t.weeks.last);
+
+  Widget _hurdleBarFor(_Week w, {double height = 5}) {
     if (w.hurdleRule <= 0) return const SizedBox.shrink();
     final met = w.weeklyGross >= w.hurdleRule;
     final color = met ? DashUi.emeraldDeep : DashUi.amber;
@@ -1505,21 +1831,32 @@ class _PayrollScreenState extends State<PayrollScreen> {
         child: Row(
           children: [
             Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(3),
-                child: LinearProgressIndicator(
-                  value: pct,
-                  minHeight: 5,
-                  backgroundColor: DashUi.line,
-                  valueColor: AlwaysStoppedAnimation(color),
-                ),
-              ),
+              child: met
+                  ? _LiquidBar(height: height)
+                  : ClipRRect(
+                      borderRadius: BorderRadius.circular(height / 2),
+                      child: LinearProgressIndicator(
+                        value: pct,
+                        minHeight: height,
+                        backgroundColor: DashUi.line,
+                        valueColor: AlwaysStoppedAnimation(color),
+                      ),
+                    ),
             ),
             const SizedBox(width: 6),
-            Text(
-              '${_fmt(w.weeklyGross)} / ${_fmt(w.hurdleRule)}',
-              style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: color, fontFeatures: _figures),
-            ),
+            if (met)
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: 1),
+                duration: const Duration(milliseconds: 600),
+                curve: Curves.elasticOut,
+                builder: (context, v, child) => Transform.scale(scale: v, child: child),
+                child: Icon(Icons.check_circle_rounded, size: math.max(16, height + 6), color: DashUi.emeraldDeep),
+              )
+            else
+              Text(
+                '${_fmt(w.weeklyGross)} / ${_fmt(w.hurdleRule)}',
+                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: color, fontFeatures: _figures),
+              ),
           ],
         ),
       ),
@@ -1527,38 +1864,68 @@ class _PayrollScreenState extends State<PayrollScreen> {
   }
 
   Widget _register(_Report report) {
-    const heads = [
+    final showRep = report.techs.any((t) => t.repPay != 0);
+    final flex = showRep ? _regFlexWithRep : _regFlexBase;
+    final heads = [
       'Technician',
       'Jobs',
       'Closed-Job Net',
       'Advances',
       'Callbacks',
+      if (showRep) 'Sales Commission',
       'Gross',
-      'Hurdle',
       'Cash Pay',
       'Retainage Released',
       'Total Due',
     ];
-    const minWidth = 980.0;
+    final minWidth = showRep ? 1100.0 : 1000.0;
 
     double sum(double Function(_Tech) f) => report.techs.fold<double>(0, (s, t) => s + f(t));
 
+    // Name order by default; the Total Due header flips to biggest payout first.
+    final techs = [...report.techs];
+    // The $750 hurdle is judged one pay week at a time, so its bar and flag only make sense on a one-week report.
+    final weekly = _isSingleWeek(report);
+    if (_sortByDue) techs.sort((a, b) => b.totals.totalDue.compareTo(a.totals.totalDue));
+
+    // Zero figures show as a quiet dash so the numbers that matter stand out.
+    (String, Color) money(double v, Color c) => v.abs() < 0.005 ? ('—', DashUi.muted) : (_fmt(v), c);
+
+    /// The figures after the name, for one person or (with [v] summing) for the whole report.
+    List<(String, Color)> figures(String jobs, double Function(double Function(_Tech)) v) => [
+      (jobs, DashUi.ink),
+      money(v((t) => t.jobNet), DashUi.ink),
+      money(v((t) => t.totals.advancesPaid), DashUi.amber),
+      money(v((t) => t.totals.callbackPay), DashUi.amber),
+      if (showRep) money(v((t) => t.repPay), DashUi.indigo),
+      money(v((t) => t.totals.weeklyGross), DashUi.ink),
+      money(v((t) => t.totals.cashPay), DashUi.emeraldDeep),
+      money(v((t) => t.totals.retainageReleased), DashUi.indigo),
+      money(v((t) => t.totals.totalDue), DashUi.emeraldDeep),
+    ];
+
+    final lastCol = heads.length - 1;
     final headRow = Container(
       color: DashUi.faint,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
           for (var i = 0; i < heads.length; i++)
-            _registerCell(
-              i,
-              Text(
-                heads[i],
+            _registerCell(flex, i, () {
+              final sortable = i == 0 || i == lastCol;
+              final active = (i == 0 && !_sortByDue) || (i == lastCol && _sortByDue);
+              final label = Text(
+                heads[i] + (sortable && active ? (i == 0 ? '  ↑' : '  ↓') : ''),
                 textAlign: i == 0 ? TextAlign.left : TextAlign.right,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
-              ),
-            ),
+                maxLines: 2, // "Retainage Released" and "Sales Commission" wrap instead of being cut off
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Colors.black),
+              );
+              if (!sortable) return label;
+              return Tooltip(
+                message: i == 0 ? 'Sort by name' : 'Sort by amount due, highest first',
+                child: InkWell(onTap: () => setState(() => _sortByDue = i == lastCol), child: label),
+              );
+            }()),
         ],
       ),
     );
@@ -1574,11 +1941,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
           child: Row(
             children: [
               _registerCell(
+                flex,
                 0,
                 Row(
                   children: [
-                    DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 30),
-                    const SizedBox(width: 10),
+                    DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 60, square: true),
+                    const SizedBox(width: 14),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1587,30 +1955,43 @@ class _PayrollScreenState extends State<PayrollScreen> {
                             t.name,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                            style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700, color: DashUi.ink),
                           ),
-                          Text(
-                            t.kindLabel,
+                          Text.rich(
+                            TextSpan(
+                              children: [
+                                TextSpan(text: t.kindLabel),
+                                if (weekly && t.underHurdle)
+                                  const TextSpan(
+                                    text: '  ·  Under hurdle, no cash pay',
+                                    style: TextStyle(color: DashUi.amber, fontWeight: FontWeight.w700),
+                                  ),
+                              ],
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 11.5, color: DashUi.muted),
+                            style: const TextStyle(fontSize: 12.5, color: DashUi.muted),
                           ),
-                          _hurdleBar(t),
+                          if (weekly) _hurdleBar(t),
                         ],
                       ),
                     ),
                   ],
                 ),
               ),
-              _registerText(1, '${t.jobCount}'),
-              _registerText(2, _fmt(t.jobNet)),
-              _registerText(3, _fmt(t.totals.advancesPaid), color: DashUi.amber),
-              _registerText(4, _fmt(t.totals.callbackPay), color: DashUi.amber),
-              _registerText(5, _fmt(t.totals.weeklyGross)),
-              _registerText(6, _fmt(-t.totals.hurdleApplied), color: DashUi.slate),
-              _registerText(7, _fmt(t.totals.cashPay), color: DashUi.emeraldDeep),
-              _registerText(8, _fmt(t.totals.retainageReleased), color: DashUi.indigo),
-              _registerText(9, _fmt(t.totals.totalDue), color: DashUi.emeraldDeep, weight: FontWeight.w800),
+              ...() {
+                final cells = figures('${t.jobCount}', (f) => f(t));
+                return [
+                  for (var i = 0; i < cells.length; i++)
+                    _registerText(
+                      flex,
+                      i + 1,
+                      cells[i].$1,
+                      color: cells[i].$2,
+                      weight: i == cells.length - 1 ? FontWeight.w800 : FontWeight.w600,
+                    ),
+                ];
+              }(),
             ],
           ),
         ),
@@ -1623,33 +2004,31 @@ class _PayrollScreenState extends State<PayrollScreen> {
       child: Row(
         children: [
           _registerCell(
+            flex,
             0,
             const Text(
               'Total',
               style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink),
             ),
           ),
-          _registerText(1, '${report.techs.fold<int>(0, (n, t) => n + t.jobCount)}', weight: FontWeight.w800),
-          _registerText(2, _fmt(sum((t) => t.jobNet)), weight: FontWeight.w800),
-          _registerText(3, _fmt(sum((t) => t.totals.advancesPaid)), color: DashUi.amber, weight: FontWeight.w800),
-          _registerText(4, _fmt(sum((t) => t.totals.callbackPay)), color: DashUi.amber, weight: FontWeight.w800),
-          _registerText(5, _fmt(sum((t) => t.totals.weeklyGross)), weight: FontWeight.w800),
-          _registerText(6, _fmt(-sum((t) => t.totals.hurdleApplied)), color: DashUi.slate, weight: FontWeight.w800),
-          _registerText(7, _fmt(sum((t) => t.totals.cashPay)), color: DashUi.emeraldDeep, weight: FontWeight.w800),
-          _registerText(8, _fmt(sum((t) => t.totals.retainageReleased)), color: DashUi.indigo, weight: FontWeight.w800),
-          _registerText(9, _fmt(sum((t) => t.totals.totalDue)), color: DashUi.emeraldDeep, weight: FontWeight.w800),
+          ...() {
+            final cells = figures('${report.techs.fold<int>(0, (n, t) => n + t.jobCount)}', sum);
+            return [
+              for (var i = 0; i < cells.length; i++)
+                _registerText(flex, i + 1, cells[i].$1, color: cells[i].$2, weight: FontWeight.w800),
+            ];
+          }(),
         ],
       ),
     );
 
     final table = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [headRow, for (final t in report.techs) techRow(t), totalRow],
+      children: [headRow, for (final t in techs) techRow(t), totalRow],
     );
 
     return Container(
-      decoration: DashUi.panel(),
-      clipBehavior: Clip.antiAlias,
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1659,13 +2038,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Payroll register',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
-                ),
-                SizedBox(height: 2),
-                Text(
-                  'One line per person for these pay weeks. Select a technician for the full line-item breakdown.',
-                  style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
+                  'Payroll Register',
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: DashUi.ink),
                 ),
               ],
             ),
@@ -1721,10 +2095,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (t.weeks.isNotEmpty) {
       final w = _activeWeek(t);
       if (t.weeks.length > 1) panels.add(_weekStrip(t, w));
-      panels.add(_weekSummary(w));
-      if (w.jobs.isNotEmpty) panels.add(_jobsSection(t, w, report));
+      panels.add(_weekSummary(w, showCashPay: t.weeks.length > 1));
       final days = _dayCards(w);
       if (days != null) panels.add(days);
+      if (w.jobs.isNotEmpty) panels.add(_jobsSection(t, w, report));
     }
 
     if (t.releases.isNotEmpty) panels.add(_releasesPanel(t));
@@ -1732,8 +2106,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (t.weeks.isEmpty && t.releases.isEmpty) {
       panels.add(
         Container(
-          padding: const EdgeInsets.all(20),
-          decoration: DashUi.panel(),
+          padding: const EdgeInsets.symmetric(vertical: 20),
           child: const Text(
             'Nothing to report for this person in these dates.',
             style: TextStyle(color: DashUi.slate, fontSize: 14),
@@ -1742,11 +2115,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
       );
     }
 
-    panels.add(_footnote(report));
     return panels;
   }
 
   // ---- Hero: who and how much -------------------------------------------------
+
+  /// True when the report covers one pay week (Last Week, This Week), where the weekly hurdle can be shown.
+  bool _isSingleWeek(_Report r) {
+    final a = _parseDay(r.start);
+    final b = _parseDay(r.end);
+    return a != null && b != null && _daysBetween(a, b) + 1 <= 7;
+  }
 
   Widget _techHero(_Tech t) {
     final tot = t.totals;
@@ -1754,20 +2133,24 @@ class _PayrollScreenState extends State<PayrollScreen> {
       ('Closed-job net', t.jobNet, DashUi.emeraldDeep),
       ('Advances', tot.advancesPaid, DashUi.sky),
       ('Callbacks', tot.callbackPay, DashUi.amber),
+      ('Sales commission', t.repPay, DashUi.indigo),
       ('Retainage released', tot.retainageReleased, DashUi.indigo),
       ('Weekly hurdle kept', -tot.hurdleApplied, DashUi.muted),
     ].where((p) => p.$2.abs() > 0.004).toList();
+    // With one pay week the ledger below already itemises the same figures; the chips only add
+    // value as a cross-week rollup.
+    if (t.weeks.length <= 1) parts.clear();
 
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 44),
-              const SizedBox(width: 12),
+              DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 104, square: true),
+              const SizedBox(width: 20),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1782,6 +2165,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink),
                         ),
                         if (t.kindLabel.isNotEmpty) _chip(t.kindLabel, DashUi.slate, DashUi.faint),
+                        if (t.underHurdle && _report != null && _isSingleWeek(_report!))
+                          _chip('Under hurdle', DashUi.amber, DashUi.faint),
                       ],
                     ),
                     const SizedBox(height: 2),
@@ -1801,10 +2186,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                     'Total Due',
                     style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
                   ),
-                  Text(
-                    _fmt(tot.totalDue),
-                    style: _num(26, FontWeight.w800, tot.totalDue < 0 ? DashUi.red : DashUi.emeraldDeep),
-                  ),
+                  Text(_fmt(tot.totalDue), style: _num(26, FontWeight.w800, _cashColor(tot.totalDue))),
                 ],
               ),
             ],
@@ -1914,15 +2296,19 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink),
               ),
               const SizedBox(height: 4),
-              Text(
-                _fmt(w.cashPay),
-                style: _num(16, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted),
-              ),
+              Text(_fmt(w.cashPay), style: _num(16, FontWeight.w800, _cashColor(w.cashPay))),
               const SizedBox(height: 2),
               Text(
                 flag,
                 style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: flagColor),
               ),
+              if (_weekStatus(w) case final s?)
+                Text(
+                  s.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: s.color),
+                ),
             ],
           ),
         ),
@@ -1932,12 +2318,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   // ---- Week summary: the ledger --------------------------------------------
 
-  Widget _weekSummary(_Week w) {
+  /// [showCashPay] puts the week's cash pay in the header. With a single pay week it would repeat the hero's
+  /// Total Due and the last ledger row, so it is hidden.
+  Widget _weekSummary(_Week w, {bool showCashPay = true}) {
     final underHurdle = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
 
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1956,24 +2344,40 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       '${_day(w.weekStart)} – ${_day(w.weekEnd, year: true)}',
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: DashUi.ink),
                     ),
+                    if (_weekStatus(w) case final s?)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _dot(s.color),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                s.label,
+                                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: s.color),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                   ],
                 ),
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  const Text(
-                    'Cash Pay',
-                    style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
-                  ),
-                  Text(
-                    _fmt(w.cashPay),
-                    style: _num(22, FontWeight.w800, w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted),
-                  ),
-                ],
-              ),
+              if (showCashPay)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    const Text(
+                      'Cash Pay',
+                      style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+                    ),
+                    Text(_fmt(w.cashPay), style: _num(22, FontWeight.w800, _cashColor(w.cashPay))),
+                  ],
+                ),
             ],
           ),
+          _hurdleBarFor(w, height: 14),
           const SizedBox(height: 10),
           const Divider(height: 1, color: DashUi.line),
           const SizedBox(height: 4),
@@ -2012,12 +2416,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               note: 'Job commission did not cover the advances. Recovered from a later payroll run.',
             ),
           const Divider(height: 14, color: DashUi.line),
-          _ledgerRow(
-            'Cash pay for the week',
-            w.cashPay,
-            color: w.cashPay > 0 ? DashUi.emeraldDeep : DashUi.muted,
-            bold: true,
-          ),
+          _ledgerRow('Cash pay for the week', w.cashPay, color: _cashColor(w.cashPay), bold: true),
         ],
       ),
     );
@@ -2179,7 +2578,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    _chip('Split ${_pct(j.splitPct)}', _P.goodFg, _P.goodBg),
+                    _chip('Split ${_pct(j.splitPct)}', DashUi.emeraldDeep, _goodBg),
                     const SizedBox(width: 16),
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
@@ -2188,7 +2587,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
                           'Net to Tech',
                           style: TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600),
                         ),
-                        Text(_fmt(j.net), style: _num(16, FontWeight.w800, DashUi.emeraldDeep)),
+                        Text(
+                          _fmt(j.net),
+                          style: _num(16, FontWeight.w800, j.net < 0 ? DashUi.red : DashUi.emeraldDeep),
+                        ),
                       ],
                     ),
                   ],
@@ -2250,7 +2652,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
       return TableRow(
         decoration: hairline,
         children: [
-          cell(l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of job commission)' : l.name, style: base),
+          cell(
+            l.isPool ? 'Company pool (${_pct(report.companyPoolRate * 100)} of job commission)' : l.name,
+            style: base,
+          ),
           cell(
             l.isPool ? '' : l.category,
             style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
@@ -2306,9 +2711,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: strong ? _P.goodBg : Colors.white,
+          color: strong ? _goodBg : Colors.white,
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: strong ? const Color(0xFFA7F3D0) : DashUi.line),
+          border: Border.all(color: strong ? _goodBorder : DashUi.line),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -2330,7 +2735,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (j.retainage == 0 && j.advancesRepaid == 0) return const SizedBox.shrink();
 
     return Container(
-      color: _P.wash,
+      color: DashUi.faint,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
       child: Wrap(
         spacing: 10,
@@ -2355,9 +2760,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Widget? _dayCards(_Week w) {
     final cards = <Widget>[
       if (w.advances.isNotEmpty)
-        _dayCard('Advance Days', 'Flat daily advance. Counts toward the weekly hurdle.', w.advances, DashUi.sky),
-      if (w.callbacks.isNotEmpty)
-        _dayCard('Callbacks', 'Flat callback pay, outside any job pool.', w.callbacks, DashUi.amber),
+        _dayCard('Advance Days', w.advances, DashUi.sky),
+      if (w.callbacks.isNotEmpty) _dayCard('Callbacks', w.callbacks, DashUi.amber),
       if (w.repCommissions.isNotEmpty) _repCard(w.repCommissions),
     ];
     if (cards.isEmpty) return null;
@@ -2379,11 +2783,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
-  Widget _dayCard(String title, String subtitle, List<_DayItem> items, Color color) {
+  Widget _dayCard(String title, List<_DayItem> items, Color color) {
     final total = items.fold<double>(0, (s, i) => s + i.amount);
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2399,11 +2803,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
                     Text(
                       title,
                       style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      subtitle,
-                      style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
                     ),
                   ],
                 ),
@@ -2446,8 +2845,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Widget _repCard(List<_RepItem> items) {
     final total = items.fold<double>(0, (s, i) => s + i.amount);
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2492,8 +2891,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      'Est ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}, closed  '
-                      '(${_fmt(i.labor)} labor x ${_pct(i.ratePct)}, ${i.basisLabel})',
+                      'Est ${i.jobId}${i.customer.isEmpty ? '' : '  ${i.customer}'}  ·  '
+                      '${_fmt(i.labor)} labor × ${_pct(i.ratePct)}${i.basisLabel.isEmpty ? '' : ', ${i.basisLabel}'}',
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
@@ -2512,8 +2911,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _releasesPanel(_Tech t) {
     return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: DashUi.panel(radius: 12),
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      decoration: _flat,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -2561,8 +2960,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '${r.jobId.isEmpty ? 'No job' : 'Job ${r.jobId}'}   '
-                      '${r.type == 'callback_deduction' ? 'Callback charge' : 'Retainage held'}',
+                      '${r.jobId.isEmpty ? 'No job' : 'Job ${r.jobId}'}  ·  '
+                      '${r.type == 'callback_deduction' ? 'Callback charge' : 'Retainage released'}',
                       style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
                     ),
                   ),
@@ -2574,17 +2973,84 @@ class _PayrollScreenState extends State<PayrollScreen> {
       ),
     );
   }
+}
 
-  Widget _footnote(_Report report) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-      child: Text(
-        'Amounts show what each pay week is worth before any advance shortfall is carried forward. '
-        'This report does not record or pay a payroll run. A job pays in the week it is closed. '
-        'Advances are ${_fmt(report.dailyAdvance)} per day on multi-week jobs, callbacks pay ${_fmt(report.callbackPay)}, '
-        'and the weekly hurdle is ${_fmt(report.weeklyThreshold)}. Line amounts are rounded to the cent.',
-        style: const TextStyle(fontSize: 12, color: DashUi.muted, height: 1.45, fontWeight: FontWeight.w500),
+/// A cleared weekly hurdle: a full bar of green "liquid" with two waves drifting across it.
+/// Holds still when the OS asks for reduced motion.
+class _LiquidBar extends StatefulWidget {
+  final double height;
+  const _LiquidBar({required this.height});
+
+  @override
+  State<_LiquidBar> createState() => _LiquidBarState();
+}
+
+class _LiquidBarState extends State<_LiquidBar> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 3));
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.of(context).disableAnimations) {
+      _c.stop();
+    } else if (!_c.isAnimating) {
+      _c.repeat();
+    }
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    return super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return RepaintBoundary(
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(widget.height / 2),
+        child: SizedBox(
+          height: widget.height,
+          child: AnimatedBuilder(
+            animation: _c,
+            builder: (context, _) => CustomPaint(painter: _LiquidPainter(_c.value), size: Size.infinite),
+          ),
+        ),
       ),
     );
   }
+}
+
+class _LiquidPainter extends CustomPainter {
+  final double t;
+  _LiquidPainter(this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(
+      Offset.zero & size,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [DashUi.emeraldDeep, Color.lerp(DashUi.emeraldDeep, Colors.white, 0.18)!],
+        ).createShader(Offset.zero & size),
+    );
+    void wave(double phase, double amp, double level, Color color) {
+      final path = Path()..moveTo(0, size.height);
+      for (var x = 0.0; x <= size.width; x += 2) {
+        final y = size.height * level + amp * math.sin((x / size.width) * 2 * math.pi * 3 + phase);
+        path.lineTo(x, y);
+      }
+      path
+        ..lineTo(size.width, size.height)
+        ..close();
+      canvas.drawPath(path, Paint()..color = color);
+    }
+
+    final a = t * 2 * math.pi;
+    wave(a, size.height * 0.16, 0.42, Colors.white.withValues(alpha: 0.22));
+    wave(-a * 1.3 + 1.5, size.height * 0.12, 0.6, Colors.white.withValues(alpha: 0.16));
+  }
+
+  @override
+  bool shouldRepaint(_LiquidPainter old) => old.t != t;
 }

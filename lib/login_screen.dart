@@ -1,9 +1,11 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'config/auth_session.dart';
 import 'theme/app_theme.dart';
+import 'widgets/app_dialog.dart';
 import 'widgets/dashboard_kit.dart';
 
 // ---------------------------------------------------------------------------
@@ -60,13 +62,40 @@ class _LoginScreenState extends State<LoginScreen>
       _error = null;
     });
     try {
-      await AuthSession.instance.login(_username.text, _pin.text);
+      try {
+        await AuthSession.instance.login(_username.text, _pin.text);
+      } on PinChangeRequired catch (need) {
+        // Temporary PIN: they must choose their own before getting in.
+        if (!mounted) return;
+        final newPin = await showDialog<String>(
+          context: context,
+          barrierDismissible: false,
+          builder: (_) => _NewPinDialog(username: need.username, tempPin: need.tempPin),
+        );
+        if (newPin == null) {
+          if (!mounted) return;
+          setState(() => _error = 'Choose a new PIN to finish signing in.');
+          _pin.clear();
+          _pinFocus.requestFocus();
+          return;
+        }
+        // Let the dialog finish closing before the router swaps the page underneath it (on the web, doing both
+        // in the same moment once left the new page blank until a reload).
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        if (!mounted) return;
+        await AuthSession.instance.login(need.username, newPin);
+      }
       // The router sees the new session and moves on to the app.
     } on AuthException catch (e) {
       if (!mounted) return;
       setState(() => _error = e.message);
       _pin.clear();
       _pinFocus.requestFocus();
+    } on PinChangeRequired {
+      // Should not happen right after choosing a PIN; ask them to sign in again.
+      if (!mounted) return;
+      setState(() => _error = 'Your PIN was saved. Sign in again with the new PIN.');
+      _pin.clear();
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -333,6 +362,124 @@ class _LoginScreenState extends State<LoginScreen>
       enabledBorder: border(AppTheme.strokeBorder),
       disabledBorder: border(AppTheme.strokeBorder),
       focusedBorder: border(AppTheme.brandRed, 1.6),
+    );
+  }
+}
+
+/// First sign-in with a temporary PIN: choose a real one. Pops the new PIN once the server has saved it.
+class _NewPinDialog extends StatefulWidget {
+  final String username;
+  final String tempPin;
+  const _NewPinDialog({required this.username, required this.tempPin});
+
+  @override
+  State<_NewPinDialog> createState() => _NewPinDialogState();
+}
+
+class _NewPinDialogState extends State<_NewPinDialog> {
+  final _new = TextEditingController();
+  final _confirm = TextEditingController();
+  final _confirmFocus = FocusNode();
+  bool _show = false;
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _new.dispose();
+    _confirm.dispose();
+    _confirmFocus.dispose();
+    super.dispose();
+  }
+
+  bool get _valid => RegExp(r'^\d{4}$').hasMatch(_new.text) && _new.text == _confirm.text && !_busy;
+
+  String? get _hint {
+    if (_new.text.isNotEmpty && _new.text.length < 4) return 'Use exactly 4 digits.';
+    if (_confirm.text.isNotEmpty && _new.text.length == 4 && _new.text != _confirm.text) return "The PINs don't match yet.";
+    return null;
+  }
+
+  Future<void> _save() async {
+    if (!_valid) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await AuthSession.instance.changePin(widget.username, widget.tempPin, _new.text);
+      if (mounted) Navigator.pop(context, _new.text);
+    } on AuthException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = e.message;
+      });
+    }
+  }
+
+  InputDecoration _dec(String hint) => appFieldDecoration(hint: hint).copyWith(
+        counterText: '',
+        suffixIcon: IconButton(
+          tooltip: _show ? 'Hide PIN' : 'Show PIN',
+          icon: Icon(_show ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 19),
+          onPressed: () => setState(() => _show = !_show),
+        ),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return AppDialog(
+      title: 'Choose your PIN',
+      subtitle: 'Signing in as ${widget.username}',
+      icon: Icons.lock_reset_rounded,
+      width: 440,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const AppNotice(
+            'You signed in with a temporary PIN. Pick a 4 digit PIN of your own. You will use it here and in the tech app.',
+          ),
+          const SizedBox(height: 16),
+          const AppFieldLabel('New PIN'),
+          TextField(
+            controller: _new,
+            autofocus: true,
+            enabled: !_busy,
+            obscureText: !_show,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            textInputAction: TextInputAction.next,
+            onChanged: (_) => setState(() => _error = null),
+            onSubmitted: (_) => _confirmFocus.requestFocus(),
+            decoration: _dec('4 digits'),
+          ),
+          const SizedBox(height: 14),
+          const AppFieldLabel('Confirm new PIN'),
+          TextField(
+            controller: _confirm,
+            focusNode: _confirmFocus,
+            enabled: !_busy,
+            obscureText: !_show,
+            keyboardType: TextInputType.number,
+            maxLength: 4,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            textInputAction: TextInputAction.done,
+            onChanged: (_) => setState(() => _error = null),
+            onSubmitted: (_) => _save(),
+            decoration: _dec('Type it again'),
+          ),
+          if (_hint != null || _error != null) ...[
+            const SizedBox(height: 12),
+            AppNotice(_error ?? _hint!, kind: _error != null ? AppNoticeKind.error : AppNoticeKind.warning),
+          ],
+        ],
+      ),
+      actions: [
+        AppButton.ghost('Cancel', _busy ? null : () => Navigator.pop(context)),
+        AppButton.ink(_busy ? 'Saving…' : 'Save PIN and sign in', _valid ? _save : null, icon: Icons.check_rounded),
+      ],
     );
   }
 }

@@ -11,6 +11,12 @@ class AppTheme {
   static const Color strokeBorder = Color(0xFFE5E7EB);
   static const Color dividerColor = Color(0xFFE5E7EB);
 
+  // Quiet surfaces and readable muted text (about 4.8:1 on white, unlike sectionLabel) for dense schedule screens.
+  static const Color mutedText = Color(0xFF6B7280);
+  static const Color subtleFill = Color(0xFFF3F4F6);
+  static const Color subtleFillLight = Color(0xFFF9FAFB);
+  static const Color todayTint = Color(0xFFE6EDF7);
+
   // Accent Colors
   static const Color brandRed = Color(0xFFCC0007);
   static const Color successGreen = Color(0xFF1A7A4A);

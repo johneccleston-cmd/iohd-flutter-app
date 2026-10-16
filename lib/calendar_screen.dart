@@ -10,10 +10,12 @@ import 'theme/app_theme.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'utils/status_colors.dart';
+import 'widgets/dashboard_kit.dart' show SkeletonPulse;
 
 // Kept public and unchanged in behavior: other screens may import it.
 Color getStatusColor(String? status) => statusColor(status);
@@ -22,16 +24,19 @@ Color getStatusColor(String? status) => statusColor(status);
 // THEME + HELPERS
 // =============================================================================
 
-const _ink = Color(0xFF1A1C1E);
-const _slate = Color(0xFF4B5563);
-const _muted = Color(0xFF9CA3AF);
-const _line = Color(0xFFE5E7EB);
-const _faint = Color(0xFFF3F4F6);
-const _bg = AppTheme.bgColor;
-const _brand = Color(0xFFCC0007);
+const _ink = AppTheme.primaryText;
+const _slate = AppTheme.secondaryText;
+const _muted = AppTheme.sectionLabel;
+
+/// For muted text people actually read (counts, empty-state notes, field labels). `_muted` is only ~2.5:1 on white.
+const _mutedText = AppTheme.mutedText;
+const _line = AppTheme.strokeBorder;
+const _faint = AppTheme.subtleFill;
+const _faintLight = AppTheme.subtleFillLight;
+const _brand = AppTheme.brandRed;
 
 /// Shade of the current day: its square is tinted rather than ringed or coloured.
-const _todayBg = Color(0xFFE6EDF7);
+const _todayBg = AppTheme.todayTint;
 
 DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -43,9 +48,8 @@ DateTime _dayKey(DateTime d) => DateTime.utc(d.year, d.month, d.day);
 bool _sameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 String _ymd(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
-Color _onColor(Color c) => c.computeLuminance() > 0.55 ? const Color(0xFF111827) : Colors.white;
-
-String _titleCase(String s) => s.split(RegExp(r'\s+')).map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
+String _titleCase(String s) =>
+    s.split(RegExp(r'\s+')).map((w) => w.isEmpty ? w : w[0].toUpperCase() + w.substring(1)).join(' ');
 
 bool _truthy(dynamic v) => v == true || v == 1 || (v is String && (v.toLowerCase() == 'true' || v == 't' || v == '1'));
 
@@ -64,6 +68,13 @@ _ChipStyle _styleFor(Color c) {
 // =============================================================================
 // MODEL
 // =============================================================================
+
+/// A load failure whose message is already fit to show. Anything else (a dropped connection, a malformed reply) is
+/// described in plain words instead of printing the raw exception, which includes the request URL.
+class _CalendarError implements Exception {
+  final String message;
+  const _CalendarError(this.message);
+}
 
 class _CalEvent {
   final Map<String, dynamic> raw;
@@ -112,7 +123,12 @@ class _CalEvent {
     final start = fmt(raw['time_start']);
     if (start == null) return null;
     final end = fmt(raw['time_end']);
-    return end == null || end == start ? start : '$start - $end';
+    if (end == null || end == start) return start;
+    // "9:30–11:00 AM" when both fall in the same half of the day: short enough never to wrap awkwardly.
+    if (start.endsWith('AM') == end.endsWith('AM')) {
+      return '${start.substring(0, start.length - 3)}–$end';
+    }
+    return '$start – $end';
   }
 
   /// Minutes after midnight of the visit's start, or null for an all-day job (sorts first).
@@ -133,7 +149,15 @@ class _CalEvent {
   }
 
   /// "Brett, Marcus": first names only, for the month chips; the full names are in the tooltip and the day view.
-  String get techFirstNames => techList.map((t) => t.split(' ').first).join(', ');
+  /// A first name shared by two people on the schedule ([ambiguous]) gets the last initial ("Brett H.").
+  String shortTechs(Set<String> ambiguous) => techList
+      .map((t) {
+        final parts = t.split(RegExp(r'\s+'));
+        final first = parts.first;
+        if (parts.length > 1 && ambiguous.contains(first.toLowerCase())) return '$first ${parts.last[0]}.';
+        return first;
+      })
+      .join(', ');
 
   String get tooltip => [
     customer,
@@ -153,7 +177,9 @@ class _CalEvent {
   static _CalEvent? tryParse(Map<String, dynamic> m) {
     final day = _parseDay(m['event_date']);
     if (day == null) return null;
-    final techs = (m['techs'] ?? '').toString().trim();
+    var techs = (m['techs'] ?? '').toString().trim();
+    // The server writes "Unassigned" when a job has no tech; that is the absence of a name, not a person called that.
+    if (techs.toLowerCase() == 'unassigned') techs = '';
     final customer = (m['customer_name'] ?? '').toString().trim();
     return _CalEvent(
       raw: m,
@@ -189,6 +215,9 @@ class CalendarScreen extends StatefulWidget {
 
 class _CalendarScreenState extends State<CalendarScreen> {
   bool _loading = true;
+  Timer? _slowTimer;
+  Timer? _refreshTimer;
+  bool _slowLoad = false; // still loading after a few seconds: the free-tier server is probably waking up
   String? _error;
   int _requestId = 0;
 
@@ -204,14 +233,30 @@ class _CalendarScreenState extends State<CalendarScreen> {
   _TypeFilter _type = _TypeFilter.all;
   final Set<String> _statusFilter = {};
 
+  /// First names shared by more than one tech on the loaded schedule; month chips add a last initial for them.
+  Set<String> _ambiguous = const {};
+
+  /// A background refresh failed, so what is on screen may be out of date (and when it was last good).
+  bool _stale = false;
+  DateTime? _loadedAt;
+
   @override
   void initState() {
     super.initState();
+    _restoreTechs();
     _ensureLoaded();
+    // Pick up changes made elsewhere (new jobs, rescheduled visits) and roll "today" over at midnight, without a spinner.
+    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+      if (!mounted) return;
+      if (!_loading) _ensureLoaded(force: true, quiet: true);
+      setState(() {});
+    });
   }
 
   @override
   void dispose() {
+    _slowTimer?.cancel();
+    _refreshTimer?.cancel();
     _focusNode.dispose();
     super.dispose();
   }
@@ -237,9 +282,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   /// Fetches a 3-month window around the focused month, and only when the visible range
   /// isn't already inside the loaded window, so flipping between neighboring months is instant.
-  Future<void> _ensureLoaded({bool force = false}) async {
+  ///
+  /// [quiet] is for the background refresh: no loading indicator, and a failure keeps what is on screen.
+  Future<void> _ensureLoaded({bool force = false, bool quiet = false}) async {
     final vs = _visibleStart, ve = _visibleEnd;
-    if (!force && _loadedStart != null && _loadedEnd != null && !vs.isBefore(_loadedStart!) && !ve.isAfter(_loadedEnd!)) {
+    if (!force &&
+        _loadedStart != null &&
+        _loadedEnd != null &&
+        !vs.isBefore(_loadedStart!) &&
+        !ve.isAfter(_loadedEnd!)) {
       // Already held. Drop any request still in flight for a window we no longer need: if it landed it would
       // replace the data with a window that does not cover this view and leave the grid empty.
       if (_loading || _error != null) {
@@ -253,10 +304,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
 
     final id = ++_requestId;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    if (!quiet) {
+      setState(() {
+        _loading = true;
+        _slowLoad = false;
+        _error = null;
+      });
+      _slowTimer?.cancel();
+      _slowTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && id == _requestId && _loading) setState(() => _slowLoad = true);
+      });
+    }
 
     final windowStart = DateTime(_focused.year, _focused.month - 1, 1);
     final windowEnd = DateTime(_focused.year, _focused.month + 2, 1);
@@ -275,8 +333,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
         AuthSession.instance.logout(); // session expired: back to the sign-in screen
         return;
       }
+      if (response.statusCode == 403) {
+        throw const _CalendarError("Your account doesn't have access to the calendar.");
+      }
       if (response.statusCode != 200) {
-        throw Exception('The server returned status ${response.statusCode}.');
+        throw _CalendarError('The server returned status ${response.statusCode}.');
       }
 
       final dynamic body = json.decode(response.body);
@@ -302,21 +363,48 @@ class _CalendarScreenState extends State<CalendarScreen> {
         });
       }
 
+      final firstNames = <String, Set<String>>{};
+      for (final l in grouped.values) {
+        for (final e in l) {
+          for (final t in e.techList) {
+            (firstNames[t.split(RegExp(r'\s+')).first.toLowerCase()] ??= {}).add(t.toLowerCase());
+          }
+        }
+      }
       setState(() {
         _byDay = grouped;
+        _ambiguous = {
+          for (final k in firstNames.entries)
+            if (k.value.length > 1) k.key,
+        };
         _loadedStart = windowStart;
         _loadedEnd = windowEnd;
+        _loadedAt = DateTime.now();
         _loading = false;
+        _error = null;
+        _stale = false;
       });
+      // The window is centred on the month that was focused when this request started. If you moved on within the old
+      // window while it ran (a background refresh does this), what is on screen may now fall outside the new one.
+      if (_visibleStart.isBefore(windowStart) || _visibleEnd.isAfter(windowEnd)) _ensureLoaded();
     } on TimeoutException {
-      _fail(id, 'The server took too long to respond.');
-    } catch (e) {
-      _fail(id, e.toString().replaceFirst('Exception: ', ''));
+      _fail(id, 'The server took too long to respond.', quiet: quiet);
+    } on _CalendarError catch (e) {
+      _fail(id, e.message, quiet: quiet);
+    } on FormatException {
+      _fail(id, 'The server sent a reply the calendar could not read.', quiet: quiet);
+    } catch (_) {
+      _fail(id, "Couldn't reach the server. Check your connection and try again.", quiet: quiet);
     }
   }
 
-  void _fail(int id, String message) {
+  void _fail(int id, String message, {bool quiet = false}) {
     if (!mounted || id != _requestId) return;
+    if (quiet) {
+      // The background refresh failed: keep what is on screen, but say it may be out of date.
+      setState(() => _stale = true);
+      return;
+    }
     setState(() {
       _error = message;
       _loading = false;
@@ -347,7 +435,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   List<String> get _allTechs {
-    final set = <String>{};
+    // A tech saved from an earlier visit stays listed even with nothing in these months, so it can be unticked.
+    final set = <String>{..._techs}..remove(_unassigned);
     var anyUnassigned = false;
     for (final l in _byDay.values) {
       for (final e in l) {
@@ -366,6 +455,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   /// The tech menu's checkboxes in black rather than the app's red accent.
   ThemeData _blackChecks(BuildContext context) => Theme.of(context).copyWith(
+    // The app's red seed tints popup surfaces pink; the filter menus are plain white.
+    menuTheme: MenuThemeData(
+      style: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        side: const WidgetStatePropertyAll(BorderSide(color: _line)),
+        shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+      ),
+    ),
     checkboxTheme: CheckboxThemeData(
       fillColor: WidgetStateProperty.resolveWith((s) => s.contains(WidgetState.selected) ? _ink : Colors.transparent),
       checkColor: const WidgetStatePropertyAll(Colors.white),
@@ -373,10 +471,36 @@ class _CalendarScreenState extends State<CalendarScreen> {
     ),
   );
 
+  // The techs you pick stay picked: a page reload or reopening the app brings the same selection back. It is kept per
+  // person on this device (the other filters are quick toggles and reset).
+  String get _techsKey => 'calendar_techs_${AuthSession.instance.name}';
+
+  Future<void> _restoreTechs() async {
+    try {
+      final saved = (await SharedPreferences.getInstance()).getStringList(_techsKey);
+      if (saved == null || saved.isEmpty || !mounted) return;
+      setState(() => _techs.addAll(saved));
+    } catch (_) {
+      // storage unavailable: start with every tech
+    }
+  }
+
+  Future<void> _saveTechs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (_techs.isEmpty) {
+        await prefs.remove(_techsKey);
+      } else {
+        await prefs.setStringList(_techsKey, _techs.toList());
+      }
+    } catch (_) {}
+  }
+
   bool get _filtersActive => _techs.isNotEmpty || _type != _TypeFilter.all || _statusFilter.isNotEmpty;
 
   void _clearFilters() => setState(() {
     _techs.clear();
+    _saveTechs();
     _statusFilter.clear();
     _type = _TypeFilter.all;
   });
@@ -387,7 +511,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _go(int dir) {
     setState(() {
-      _focused = _view == _CalView.month ? DateTime(_focused.year, _focused.month + dir, 1) : _addDays(_focused, 7 * dir);
+      _focused = _view == _CalView.month
+          ? DateTime(_focused.year, _focused.month + dir, 1)
+          : _addDays(_focused, 7 * dir);
     });
     _ensureLoaded();
   }
@@ -417,6 +543,33 @@ class _CalendarScreenState extends State<CalendarScreen> {
       firstDate: DateTime(2015),
       lastDate: DateTime(2100),
       helpText: 'JUMP TO DATE',
+      // The picker paints its selected day, header and buttons in the theme's primary (the app's red): use black here.
+      builder: (context, child) {
+        final theme = Theme.of(context);
+        return Theme(
+          data: theme.copyWith(
+            colorScheme: theme.colorScheme.copyWith(
+              primary: _ink,
+              onPrimary: Colors.white,
+              // The red seed also tints the dialog's surface pink; plain white instead.
+              surface: Colors.white,
+              surfaceTint: Colors.transparent,
+              surfaceContainerHigh: Colors.white,
+              surfaceContainerHighest: _faint,
+              onSurface: _ink,
+              onSurfaceVariant: _slate,
+              outline: _muted,
+              outlineVariant: _line,
+            ),
+            datePickerTheme: const DatePickerThemeData(
+              backgroundColor: Colors.white,
+              surfaceTintColor: Colors.transparent,
+            ),
+            textButtonTheme: TextButtonThemeData(style: TextButton.styleFrom(foregroundColor: _ink)),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked == null || !mounted) return;
     setState(() => _focused = _dateOnly(picked));
@@ -464,8 +617,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void _openEvent(_CalEvent e) {
     final jobId = (e.raw['job_number'] ?? '').toString().trim();
     if (jobId.isNotEmpty) {
+      // An estimate opens under Estimates so that menu item stays lit, a job under Jobs.
       context.go(
-        '/jobs/${Uri.encodeComponent(jobId)}',
+        '/${e.isEstimate ? 'estimates' : 'jobs'}/${Uri.encodeComponent(jobId)}',
         extra: <String, dynamic>{
           'job_id': jobId,
           'customer_name': e.raw['customer_name'],
@@ -514,7 +668,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         children: [
                           Text(
                             DateFormat('EEEE').format(day).toUpperCase(),
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _muted, letterSpacing: 1),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: _muted,
+                              letterSpacing: 1,
+                            ),
                           ),
                           Text(
                             DateFormat('MMMM d, y').format(day),
@@ -522,13 +681,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            events.isEmpty ? 'Nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                            events.isEmpty
+                                ? 'Nothing scheduled'
+                                : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
                             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(onPressed: () => Navigator.of(ctx).pop(), icon: const Icon(Icons.close_rounded)),
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
                   ],
                 ),
               ),
@@ -540,11 +705,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.event_available_rounded, size: 40, color: Color(0xFFD1D5DB)),
+                        Icon(Icons.event_available_rounded, size: 40, color: _line),
                         SizedBox(height: 8),
                         Text(
                           'Nothing on the schedule',
-                          style: TextStyle(color: _muted, fontWeight: FontWeight.w600),
+                          style: TextStyle(color: _mutedText, fontWeight: FontWeight.w600),
                         ),
                       ],
                     ),
@@ -584,175 +749,55 @@ class _CalendarScreenState extends State<CalendarScreen> {
       autofocus: true,
       onKeyEvent: _onKey,
       child: Scaffold(
-        backgroundColor: _bg,
-        body: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _header(),
-              const SizedBox(height: 12),
-              Expanded(child: _panel()),
-            ],
-          ),
-        ),
+        // One full-bleed screen, not a card floating on a grey page.
+        backgroundColor: Colors.white,
+        body: _panel(),
       ),
     );
   }
 
-  Widget _header() {
-    final title = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          'Calendar',
-          style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: _ink),
-        ),
-      ],
-    );
-
-    final controls = Wrap(
-      spacing: 10,
-      runSpacing: 10,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        Theme(
-          data: _blackChecks(context),
-          child: MenuAnchor(
-            menuChildren: [
-              MenuItemButton(
-                onPressed: _techs.isEmpty ? null : () => setState(() => _techs.clear()),
-                child: const Text('All techs'),
-              ),
-              ..._allTechs.map(
-                (t) => CheckboxMenuButton(
-                  closeOnActivate: false,
-                  value: _techs.contains(t),
-                  onChanged: (on) => setState(() {
-                    if (on == true) {
-                      _techs.add(t);
-                    } else {
-                      _techs.remove(t);
-                    }
-                  }),
-                  child: Text(t),
-                ),
-              ),
-            ],
-            builder: (context, controller, _) => Tooltip(
-              message: 'Filter by tech (select several)',
-              child: InkWell(
-                borderRadius: BorderRadius.circular(10),
-                onTap: () => controller.isOpen ? controller.close() : controller.open(),
-                child: Container(
-                  width: 200, // fixed, so ticking names never resizes the button and shifts the menu under it
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    color: _techs.isNotEmpty ? _faint : Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: _techs.isNotEmpty ? _muted : _line),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Icon(Icons.person_outline_rounded, size: 18, color: _techs.isNotEmpty ? _ink : _slate),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          _techs.isEmpty ? 'All techs' : (_techs.toList()..sort()).join(', '),
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _techs.isNotEmpty ? _ink : _slate),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                      const Icon(Icons.expand_more_rounded, size: 18, color: _muted),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        _SegToggle<_TypeFilter>(
-          options: const [(_TypeFilter.all, 'All'), (_TypeFilter.jobs, 'Jobs'), (_TypeFilter.estimates, 'Estimates')],
-          value: _type,
-          onChanged: (v) => setState(() => _type = v),
-        ),
-        _SegToggle<_CalView>(
-          options: const [(_CalView.month, 'Month'), (_CalView.week, 'Week')],
-          value: _view,
-          onChanged: _setView,
-        ),
-        _IconPill(icon: Icons.refresh_rounded, tooltip: 'Refresh', onTap: () => _ensureLoaded(force: true)),
-      ],
-    );
-
-    return LayoutBuilder(
-      builder: (context, c) {
-        if (c.maxWidth > 1000) {
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              title,
-              const SizedBox(width: 24),
-              Expanded(
-                child: Align(alignment: Alignment.centerRight, child: controls),
-              ),
-            ],
-          );
-        }
-        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [title, const SizedBox(height: 12), controls]);
-      },
-    );
-  }
+  /// Hands the keyboard back to the page after a click on a control, so the arrow keys and T keep working.
+  void _refocus() => WidgetsBinding.instance.addPostFrameCallback((_) {
+    if (mounted && !_isTyping()) _focusNode.requestFocus();
+  });
 
   Widget _panel() {
     return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _line),
-      ),
-      clipBehavior: Clip.antiAlias,
+      color: Colors.white,
       child: Column(
         children: [
-          Padding(padding: const EdgeInsets.fromLTRB(16, 10, 16, 6), child: _navRow()),
+          Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 10), child: _toolbar()),
           SizedBox(
             height: 2,
             child: _loading
-                ? const LinearProgressIndicator(color: _brand, backgroundColor: Colors.transparent, minHeight: 2)
+                ? const LinearProgressIndicator(color: _slate, backgroundColor: Colors.transparent, minHeight: 2)
                 : null,
           ),
-          if (_error != null) _errorBanner(),
+          if (_loading && _slowLoad)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+              color: _faint,
+              child: const Text(
+                'Waking up the server, this can take up to a minute.',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
+              ),
+            ),
+          if (_error != null) _errorBanner() else if (_stale) _staleBanner(),
+          const Divider(height: 1, color: _line),
           Expanded(
             child: LayoutBuilder(
               builder: (context, c) {
-                final grid = _withStatus(_view == _CalView.month ? _monthGrid() : _weekGrid());
-                if (c.maxWidth < 760) {
-                  return Column(
-                    children: [
-                      _legend(),
-                      const Divider(height: 1, color: _line),
-                      Expanded(child: grid),
-                    ],
-                  );
-                }
-                return Column(
-                  children: [
-                    const Divider(height: 1, color: _line),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(width: 210, child: _legend(vertical: true)),
-                          const VerticalDivider(width: 1, color: _line),
-                          Expanded(child: grid),
-                        ],
-                      ),
-                    ),
-                  ],
+                // Phone-width: a day-by-day list reads better than seven squeezed columns.
+                final agenda = c.maxWidth < 700;
+                final body = agenda ? _agenda() : (_view == _CalView.month ? _monthGrid() : _weekGrid());
+                return _withStatus(
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 160),
+                    layoutBuilder: (current, previous) =>
+                        Stack(fit: StackFit.expand, children: [...previous, ?current]),
+                    child: KeyedSubtree(key: ValueKey('$_view|$agenda|${_ymd(_visibleStart)}'), child: body),
+                  ),
                 );
               },
             ),
@@ -762,8 +807,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  /// Loading pill while a window is fetching, and a note over a grid with nothing in it, so a quiet period or a
-  /// filter that hides everything never looks like a broken page.
+  /// A note over a grid with nothing in it, so a quiet period or a filter that hides everything never looks like a
+  /// broken page.
   Widget _withStatus(Widget grid) {
     var visible = 0;
     for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
@@ -774,34 +819,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
       fit: StackFit.expand,
       children: [
         grid,
-        if (_loading)
-          Positioned(
-            top: 10,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: Material(
-                color: Colors.white,
-                elevation: 2,
-                shadowColor: Colors.black26,
-                borderRadius: BorderRadius.circular(20),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: _brand)),
-                      SizedBox(width: 10),
-                      Text(
-                        'Loading schedule…',
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _slate),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
         if (empty)
           Center(
             // Only the note itself takes clicks (for "Clear filters"); the empty days behind it stay clickable.
@@ -835,124 +852,254 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Widget _navRow() {
-    return Stack(
-      alignment: Alignment.center,
+  // ---------------------------------------------------------------------------
+  // Toolbar: navigation, period, filters and view in one row
+  // ---------------------------------------------------------------------------
+
+  Widget _toolbar() {
+    final nav = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _NavBtn(
-                icon: Icons.chevron_left_rounded,
-                tooltip: _view == _CalView.month ? 'Previous month (←)' : 'Previous week (←)',
-                onTap: () => _go(-1),
-              ),
-              const SizedBox(width: 4),
-              _NavBtn(
-                icon: Icons.chevron_right_rounded,
-                tooltip: _view == _CalView.month ? 'Next month (→)' : 'Next week (→)',
-                onTap: () => _go(1),
-              ),
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Jump to today (T)',
-                child: OutlinedButton(
-                  onPressed: _goToday,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: _ink,
-                    side: const BorderSide(color: _line),
-                    minimumSize: const Size(0, 38),
-                    padding: const EdgeInsets.symmetric(horizontal: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    textStyle: _buttonText(context),
-                  ),
-                  child: const Text('Today'),
-                ),
-              ),
-            ],
-          ),
+        _NavBtn(
+          icon: Icons.chevron_left_rounded,
+          tooltip: _view == _CalView.month ? 'Previous month (←)' : 'Previous week (←)',
+          onTap: () {
+            _go(-1);
+            _refocus();
+          },
         ),
-        // Out here, not in the header, so showing it never moves the controls the user is clicking.
-        if (_filtersActive)
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: _clearFilters,
-              icon: const Icon(Icons.filter_alt_off_outlined, size: 17),
-              label: const Text('Clear filters'),
-              style: TextButton.styleFrom(
-                foregroundColor: _slate,
-                minimumSize: const Size(0, 38),
-                textStyle: _buttonText(context),
-              ),
+        const SizedBox(width: 4),
+        _NavBtn(
+          icon: Icons.chevron_right_rounded,
+          tooltip: _view == _CalView.month ? 'Next month (→)' : 'Next week (→)',
+          onTap: () {
+            _go(1);
+            _refocus();
+          },
+        ),
+        const SizedBox(width: 8),
+        Tooltip(
+          message: 'Jump to today (T)',
+          child: OutlinedButton(
+            onPressed: () {
+              _goToday();
+              _refocus();
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _ink,
+              side: const BorderSide(color: _line),
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              textStyle: _buttonText(context),
             ),
-          ),
-        // Centered between the arrows; the side padding keeps it clear of them.
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 170),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: _pickDate,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Flexible(
-                    child: FittedBox(
-                      fit: BoxFit.scaleDown,
-                      child: Text(
-                        _periodTitle,
-                        maxLines: 1,
-                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: _ink),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  const Icon(Icons.expand_more_rounded, color: _muted),
-                ],
-              ),
-            ),
+            child: const Text('Today'),
           ),
         ),
       ],
     );
+
+    final title = InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: _pickDate,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                _periodTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink),
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(Icons.expand_more_rounded, color: _muted),
+          ],
+        ),
+      ),
+    );
+
+    final clear = TextButton.icon(
+      onPressed: () {
+        _clearFilters();
+        _refocus();
+      },
+      icon: const Icon(Icons.filter_alt_off_outlined, size: 17),
+      label: const Text('Clear filters'),
+      style: TextButton.styleFrom(
+        foregroundColor: _slate,
+        minimumSize: const Size(0, 38),
+        textStyle: _buttonText(context),
+      ),
+    );
+
+    final filters = <Widget>[
+      _techMenu(),
+      _statusMenu(),
+      _SegToggle<_TypeFilter>(
+        options: const [(_TypeFilter.all, 'All'), (_TypeFilter.jobs, 'Jobs'), (_TypeFilter.estimates, 'Estimates')],
+        value: _type,
+        onChanged: (v) {
+          setState(() => _type = v);
+          _refocus();
+        },
+      ),
+      _SegToggle<_CalView>(
+        options: const [(_CalView.month, 'Month'), (_CalView.week, 'Week')],
+        value: _view,
+        onChanged: (v) {
+          _setView(v);
+          _refocus();
+        },
+      ),
+      _IconPill(
+        icon: Icons.refresh_rounded,
+        tooltip: 'Refresh',
+        onTap: () {
+          _ensureLoaded(force: true);
+          _refocus();
+        },
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth >= 1100) {
+          // Everything on one line. "Clear filters" sits at the left of the right-aligned group, so showing or
+          // hiding it never moves the controls the user is clicking.
+          return Row(
+            children: [
+              nav,
+              const SizedBox(width: 12),
+              Flexible(
+                child: Align(alignment: Alignment.centerLeft, child: title),
+              ),
+              const SizedBox(width: 12),
+              if (_filtersActive) ...[clear, const SizedBox(width: 6)],
+              for (var i = 0; i < filters.length; i++) ...[if (i > 0) const SizedBox(width: 8), filters[i]],
+            ],
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                nav,
+                const SizedBox(width: 8),
+                Flexible(child: title),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [...filters, if (_filtersActive) clear],
+            ),
+          ],
+        );
+      },
+    );
   }
 
-  Widget _errorBanner() {
+  /// A filter button in the toolbar's style, used by the tech and status menus.
+  Widget _filterButton({required IconData icon, required String label, required bool active, required bool open}) {
     return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(20, 8, 20, 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      width: 150, // fixed, so ticking names never resizes the button and shifts the menu under it
+      height: 40,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFFFEF2F2),
+        color: active ? _faint : Colors.white,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFFECACA)),
+        border: Border.all(color: active ? _muted : _line),
       ),
       child: Row(
         children: [
-          const Icon(Icons.cloud_off_rounded, size: 18, color: Color(0xFFB91C1C)),
-          const SizedBox(width: 10),
+          Icon(icon, size: 18, color: active ? _ink : _slate),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
-              _loadedStart == null
-                  ? "Couldn't load the calendar. ${_error ?? ''}"
-                  : "Couldn't refresh the calendar. ${_error ?? ''} Showing the last loaded data.",
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF991B1B)),
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: active ? _ink : _slate),
             ),
           ),
-          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+          const SizedBox(width: 2),
+          Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18, color: _muted),
         ],
       ),
     );
   }
 
-  Widget _legend({bool vertical = false}) {
+  Widget _techMenu() {
+    return Theme(
+      data: _blackChecks(context),
+      child: MenuAnchor(
+        onClose: _refocus,
+        menuChildren: [
+          MenuItemButton(
+            onPressed: _techs.isEmpty
+                ? null
+                : () => setState(() {
+                    _techs.clear();
+                    _saveTechs();
+                  }),
+            child: const Text('All techs'),
+          ),
+          ..._allTechs.map(
+            (t) => CheckboxMenuButton(
+              closeOnActivate: false,
+              value: _techs.contains(t),
+              onChanged: (on) => setState(() {
+                if (on == true) {
+                  _techs.add(t);
+                } else {
+                  _techs.remove(t);
+                }
+                _saveTechs();
+              }),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  t == _unassigned
+                      ? const Icon(Icons.person_off_outlined, size: 22, color: _slate)
+                      : _Initials(name: t, size: 22, color: _slate),
+                  const SizedBox(width: 8),
+                  Text(t),
+                ],
+              ),
+            ),
+          ),
+        ],
+        builder: (context, controller, _) => Tooltip(
+          message: 'Filter by tech (select several)',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => controller.isOpen ? controller.close() : controller.open(),
+            child: _filterButton(
+              icon: Icons.person_outline_rounded,
+              label: _techs.isEmpty ? 'All techs' : (_techs.length == 1 ? _techs.first : '${_techs.length} techs'),
+              active: _techs.isNotEmpty,
+              open: controller.isOpen,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Status counts for the period on screen. Jobs and estimates keep separate lists, so "Scheduled" can appear in
+  /// both.
+  ({Map<String, int> counts, Map<String, String> labels}) _statusCounts() {
     final counts = <String, int>{};
     final labels = <String, String>{};
     for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
+      // The greyed days from the neighbouring months are not this month's, so they are not counted either.
+      if (_view == _CalView.month && d.month != _focused.month) continue;
       for (final e in _eventsFor(d, ignoreStatus: true)) {
         counts[e.filterKey] = (counts[e.filterKey] ?? 0) + 1;
         labels[e.filterKey] = e.statusLabel;
@@ -964,64 +1111,208 @@ class _CalendarScreenState extends State<CalendarScreen> {
       counts.putIfAbsent(k, () => 0);
       labels.putIfAbsent(k, () => _titleCase(k.split('|').last));
     }
-    if (counts.isEmpty) return const SizedBox.shrink();
+    return (counts: counts, labels: labels);
+  }
 
-    // Job statuses and estimate statuses are separate lists, each busiest first.
+  Widget _statusMenu() {
+    final data = _statusCounts();
+    final counts = data.counts, labels = data.labels;
     List<String> keysOf(String kind) =>
         counts.keys.where((k) => k.startsWith('$kind|')).toList()..sort((a, b) => counts[b]!.compareTo(counts[a]!));
-    final groups = [
-      ('JOB STATUS', 'Jobs', keysOf('job')),
-      ('ESTIMATE STATUS', 'Estimates', keysOf('estimate')),
-    ].where((g) => g.$3.isNotEmpty).toList();
 
-    Widget chip(String k, {bool expand = false}) => _LegendChip(
-      label: labels[k]!,
-      color: getStatusColor(k.split('|').last),
-      count: counts[k]!,
-      selected: _statusFilter.contains(k),
-      dimmed: _kindFiltered(k.startsWith('estimate|')) && !_statusFilter.contains(k),
-      expand: expand,
-      onTap: () => setState(() {
-        if (!_statusFilter.remove(k)) _statusFilter.add(k);
-      }),
+    Widget heading(String text, {bool first = false}) => Padding(
+      padding: EdgeInsets.fromLTRB(16, first ? 6 : 14, 16, 4),
+      child: Text(
+        text,
+        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: _mutedText, letterSpacing: 0.8),
+      ),
     );
 
-    if (vertical) {
-      return ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          for (var i = 0; i < groups.length; i++) ...[
-            Padding(
-              padding: EdgeInsets.fromLTRB(4, i == 0 ? 0 : 14, 4, 10),
-              child: Text(
-                groups[i].$1,
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _ink, letterSpacing: 0.8),
-              ),
-            ),
-            for (final k in groups[i].$3) Padding(padding: const EdgeInsets.only(bottom: 6), child: chip(k, expand: true)),
-          ],
-        ],
+    final children = <Widget>[];
+    if (counts.isEmpty) {
+      children.add(
+        const Padding(
+          padding: EdgeInsets.all(16),
+          child: Text('Nothing to filter in this period', style: TextStyle(fontSize: 13, color: _mutedText)),
+        ),
       );
-    }
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(0, 2, 0, 10),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: Row(
-          children: [
-            for (var i = 0; i < groups.length; i++) ...[
-              Padding(
-                padding: EdgeInsets.only(left: i == 0 ? 0 : 10, right: 8),
-                child: Text(
-                  groups[i].$2.toUpperCase(),
-                  style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: _ink, letterSpacing: 0.8),
+    } else {
+      children.add(
+        MenuItemButton(
+          onPressed: _statusFilter.isEmpty ? null : () => setState(_statusFilter.clear),
+          child: const Text('All statuses'),
+        ),
+      );
+      var first = true;
+      for (final g in [('JOB STATUS', 'job'), ('ESTIMATE STATUS', 'estimate')]) {
+        final keys = keysOf(g.$2);
+        if (keys.isEmpty) continue;
+        children.add(heading(g.$1, first: first));
+        first = false;
+        for (final k in keys) {
+          children.add(
+            CheckboxMenuButton(
+              closeOnActivate: false,
+              value: _statusFilter.contains(k),
+              onChanged: (_) => setState(() {
+                if (!_statusFilter.remove(k)) _statusFilter.add(k);
+              }),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minWidth: 190),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 9,
+                      height: 9,
+                      decoration: BoxDecoration(color: getStatusColor(k.split('|').last), shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(child: Text(labels[k]!)),
+                    const SizedBox(width: 12),
+                    Text(
+                      '${counts[k]}',
+                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: _slate),
+                    ),
+                  ],
                 ),
               ),
-              for (final k in groups[i].$3) Padding(padding: const EdgeInsets.only(right: 8), child: chip(k)),
-            ],
-          ],
+            ),
+          );
+        }
+      }
+    }
+
+    final label = _statusFilter.isEmpty
+        ? 'All statuses'
+        : (_statusFilter.length == 1 ? (labels[_statusFilter.first] ?? 'Status') : '${_statusFilter.length} statuses');
+    return Theme(
+      data: _blackChecks(context),
+      child: MenuAnchor(
+        onClose: _refocus,
+        menuChildren: children,
+        builder: (context, controller, _) => Tooltip(
+          message: 'Filter by status (select several)',
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: () => controller.isOpen ? controller.close() : controller.open(),
+            child: _filterButton(
+              icon: Icons.filter_list_rounded,
+              label: label,
+              active: _statusFilter.isNotEmpty,
+              open: controller.isOpen,
+            ),
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _errorBanner() {
+    final red = _brand;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: red.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: red.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.cloud_off_rounded, size: 18, color: red),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              _loadedStart == null
+                  ? "Couldn't load the calendar. ${_error ?? ''}"
+                  : "Couldn't refresh the calendar. ${_error ?? ''} Showing the last loaded data.",
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _ink),
+            ),
+          ),
+          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+
+  /// The 5-minute background refresh failed. Nothing was lost, but the schedule on screen may be out of date.
+  Widget _staleBanner() {
+    final at = _loadedAt == null ? '' : ' from ${DateFormat('h:mm a').format(_loadedAt!)}';
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+      decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
+      child: Row(
+        children: [
+          const Icon(Icons.sync_problem_rounded, size: 18, color: _slate),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              "Couldn't refresh in the background. Showing the schedule$at.",
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
+            ),
+          ),
+          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+        ],
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Agenda (narrow screens)
+  // ---------------------------------------------------------------------------
+
+  Widget _agenda() {
+    final days = <DateTime>[];
+    for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
+      if (_view == _CalView.month && d.month != _focused.month) continue;
+      if (_eventsFor(d).isNotEmpty) days.add(d);
+    }
+    if (days.isEmpty) return const SizedBox.expand(); // _withStatus puts the "nothing scheduled" note over it
+    return _VScroll(
+      builder: (controller) => ListView.builder(
+        controller: controller,
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
+        itemCount: days.length,
+        itemBuilder: (_, i) {
+          final day = days[i];
+          final events = _eventsFor(day);
+          final isToday = _sameDay(day, DateTime.now());
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Semantics(
+                  header: true,
+                  child: Row(
+                    children: [
+                      _DayNumber(day: day.day, isToday: isToday, size: 32, fontSize: 15),
+                      const SizedBox(width: 10),
+                      Text(
+                        DateFormat('EEEE, MMM d').format(day),
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                for (final e in events)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _EventCard(event: e, onTap: () => _openEvent(e)),
+                  ),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -1045,7 +1336,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
         final weeks = _weeksInGrid;
         final start = _gridStart;
         final twoLine = c.maxWidth / 7 >= 170; // roomy cells show the tech names under the customer
-        final chipH = twoLine ? 36.0 : 22.0;
+        // Chip and day-number heights follow the text size, so a larger system font is not clipped.
+        final f = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final grow = f.clamp(1.0, 1.8);
+        final chipH = (twoLine ? 36.0 : 22.0) * grow;
+        final dayH = _dayHeaderH * grow;
         final fill = math.max(_minRowH, ((c.maxHeight - headerH) / weeks).floorToDouble());
 
         double rowHeight(int w) {
@@ -1054,7 +1349,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             most = math.max(most, _eventsFor(_addDays(start, w * 7 + d)).length);
           }
           // top and bottom padding (4 + 3), the day number, then a chip and its gap per event
-          return math.max(fill, 4 + 3 + _dayHeaderH + most * (chipH + _chipGap) + 2);
+          return math.max(fill, 4 + 3 + dayH + most * (chipH + _chipGap) + 2);
         }
 
         return Column(
@@ -1062,7 +1357,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             Container(
               height: headerH,
               decoration: const BoxDecoration(
-                color: Color(0xFFF9FAFB),
+                color: _faintLight,
                 border: Border(bottom: BorderSide(color: _line)),
               ),
               child: Row(
@@ -1072,7 +1367,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       child: Center(
                         child: Text(
                           d,
-                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: _slate, letterSpacing: 1.2),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: _slate,
+                            letterSpacing: 1.2,
+                          ),
                         ),
                       ),
                     ),
@@ -1080,23 +1380,33 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ),
             ),
             Expanded(
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    for (var w = 0; w < weeks; w++)
-                      SizedBox(
-                        height: rowHeight(w),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            for (var d = 0; d < 7; d++)
-                              Expanded(
-                                child: _monthCell(_addDays(start, w * 7 + d), d == 6, twoLine: twoLine, chipH: chipH),
-                              ),
-                          ],
+              // The scrollbar stays visible whenever a busy month runs past the window, so it is clear there is more.
+              child: _VScroll(
+                builder: (controller) => SingleChildScrollView(
+                  controller: controller,
+                  child: Column(
+                    children: [
+                      for (var w = 0; w < weeks; w++)
+                        SizedBox(
+                          height: rowHeight(w),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              for (var d = 0; d < 7; d++)
+                                Expanded(
+                                  child: _monthCell(
+                                    _addDays(start, w * 7 + d),
+                                    d == 6,
+                                    twoLine: twoLine,
+                                    chipH: chipH,
+                                    dayH: dayH,
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1106,65 +1416,80 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  Widget _monthCell(DateTime day, bool lastCol, {required bool twoLine, required double chipH}) {
+  Widget _monthCell(DateTime day, bool lastCol, {required bool twoLine, required double chipH, required double dayH}) {
     final inMonth = day.month == _focused.month;
     final isToday = _sameDay(day, DateTime.now());
     final events = _eventsFor(day);
+    // First load, nothing to show yet: faint placeholder bars (a different number per day) instead of an empty grid.
+    final skeleton = _loading && _loadedStart == null;
 
-    final bg = isToday ? _todayBg : (!inMonth ? const Color(0xFFF9FAFB) : Colors.white);
+    final bg = isToday ? _todayBg : (!inMonth ? _faintLight : Colors.white);
 
-    return Material(
-      color: bg,
-      child: InkWell(
-        onTap: () => _openDay(day),
-        hoverColor: _faint.withValues(alpha: 0.7),
-        child: Container(
-          decoration: BoxDecoration(
-            border: Border(
-              right: lastCol ? BorderSide.none : const BorderSide(color: _line),
-              bottom: const BorderSide(color: _line),
+    return Semantics(
+      button: events.isNotEmpty,
+      label:
+          '${DateFormat('EEEE, MMMM d').format(day)}${isToday ? ', today' : ''}, '
+          '${events.isEmpty ? 'nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
+      child: Material(
+        color: bg,
+        child: InkWell(
+          onTap: events.isEmpty ? null : () => _openDay(day), // an empty day has nothing to show
+          hoverColor: events.isEmpty ? Colors.transparent : _faint.withValues(alpha: 0.7),
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(
+                right: lastCol ? BorderSide.none : const BorderSide(color: _line),
+                bottom: const BorderSide(color: _line),
+              ),
             ),
-          ),
-          padding: const EdgeInsets.fromLTRB(5, 4, 5, 3),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              SizedBox(
-                height: _dayHeaderH,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Container(
-                    constraints: const BoxConstraints(minWidth: 24),
-                    height: 24,
-                    padding: const EdgeInsets.symmetric(horizontal: 6),
-                    decoration: null,
-                    child: Center(
-                      widthFactor: 1,
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown, // "Oct 1" must shrink, not overflow, in phone-width cells
-                        child: Text(
-                          day.day == 1 ? '${DateFormat('MMM').format(day)} 1' : '${day.day}',
-                          maxLines: 1,
-                          style: TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: isToday ? FontWeight.w800 : FontWeight.w700,
-                            color: inMonth ? _ink : _muted,
-                          ),
-                        ),
-                      ),
+            padding: const EdgeInsets.fromLTRB(5, 4, 5, 3),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  height: dayH,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: _DayNumber(
+                      day: day.day,
+                      label: day.day == 1 ? '${DateFormat('MMM').format(day)} 1' : null,
+                      isToday: isToday,
+                      muted: !inMonth,
+                      size: dayH - 2,
+                      fontSize: 14.5,
                     ),
                   ),
                 ),
-              ),
-              for (final e in events)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: _chipGap),
-                  child: SizedBox(
-                    height: chipH,
-                    child: _EventChip(event: e, twoLine: twoLine, dimmed: !inMonth, onTap: () => _openEvent(e)),
+                if (skeleton)
+                  SkeletonPulse(
+                    child: Column(
+                      children: [
+                        for (var i = 0; i < (day.day * 7 % 3); i++)
+                          Container(
+                            height: 14,
+                            margin: const EdgeInsets.only(bottom: 4),
+                            decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(6)),
+                          ),
+                      ],
+                    ),
                   ),
-                ),
-            ],
+                if (!skeleton)
+                  for (final e in events)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: _chipGap),
+                      child: SizedBox(
+                        height: chipH,
+                        child: _EventChip(
+                          event: e,
+                          twoLine: twoLine,
+                          dimmed: !inMonth,
+                          ambiguous: _ambiguous,
+                          onTap: () => _openEvent(e),
+                        ),
+                      ),
+                    ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1201,59 +1526,60 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final events = _eventsFor(day);
     return Container(
       decoration: BoxDecoration(
-        color: isToday ? _todayBg : (day.weekday >= 6 ? const Color(0xFFFCFCFD) : Colors.white),
+        color: isToday ? _todayBg : (day.weekday >= 6 ? _faintLight : Colors.white),
         border: Border(right: last ? BorderSide.none : const BorderSide(color: _line)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          InkWell(
-            onTap: () => _openDay(day),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-              decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: _line)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    constraints: const BoxConstraints(minWidth: 34),
-                    height: 34,
-                    alignment: Alignment.center,
-                    decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
-                    child: Text(
-                      '${day.day}',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: _ink),
+          Semantics(
+            button: events.isNotEmpty,
+            label:
+                '${DateFormat('EEEE, MMMM d').format(day)}${isToday ? ', today' : ''}, '
+                '${events.isEmpty ? 'nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
+            excludeSemantics: true,
+            child: InkWell(
+              onTap: events.isEmpty ? null : () => _openDay(day),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+                decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: _line)),
+                ),
+                child: Row(
+                  children: [
+                    _DayNumber(day: day.day, isToday: isToday, size: 34, fontSize: 16, rounded: true),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            DateFormat('EEE').format(day).toUpperCase(),
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: _slate,
+                              letterSpacing: 1,
+                            ),
+                          ),
+                          Text(
+                            events.isEmpty
+                                ? 'No events'
+                                : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          DateFormat('EEE').format(day).toUpperCase(),
-                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _slate, letterSpacing: 1),
-                        ),
-                        Text(
-                          events.isEmpty ? 'No events' : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
-                          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: _muted),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           ),
+          // An empty day says "No events" once, in its header; the column below is simply left quiet.
           Expanded(
             child: events.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No events',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _muted),
-                    ),
-                  )
+                ? const SizedBox.expand()
                 : ListView.separated(
                     padding: const EdgeInsets.all(10),
                     itemCount: events.length,
@@ -1276,16 +1602,23 @@ class _EventChip extends StatelessWidget {
   final _CalEvent event;
   final bool twoLine;
   final bool dimmed; // days outside the focused month
+  final Set<String> ambiguous; // first names shared by two techs, which get a last initial
   final VoidCallback onTap;
-  const _EventChip({required this.event, required this.twoLine, required this.onTap, this.dimmed = false});
+  const _EventChip({
+    required this.event,
+    required this.twoLine,
+    required this.onTap,
+    this.dimmed = false,
+    this.ambiguous = const {},
+  });
 
   @override
   Widget build(BuildContext context) {
     final st = _styleFor(event.color);
-    final techs = event.techs.isEmpty ? 'No tech' : event.techFirstNames;
+    final techs = event.techs.isEmpty ? 'No tech' : event.shortTechs(ambiguous);
 
     return Opacity(
-      opacity: dimmed ? 0.6 : 1,
+      opacity: dimmed ? 0.5 : 1,
       child: Tooltip(
         message: event.tooltip,
         waitDuration: const Duration(milliseconds: 450),
@@ -1324,9 +1657,9 @@ class _EventChip extends StatelessWidget {
             child: Text(
               event.customer,
               maxLines: 1,
-              overflow: TextOverflow.clip,
+              overflow: TextOverflow.ellipsis,
               softWrap: false,
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: st.fg),
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: st.fg),
             ),
           )
         : twoLine
@@ -1351,7 +1684,12 @@ class _EventChip extends StatelessWidget {
                 [event.timeLabel ?? 'All day', techs].join('  ·  '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: st.fg.withValues(alpha: 0.7), height: 1.2),
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: st.fg.withValues(alpha: 0.7),
+                  height: 1.2,
+                ),
               ),
             ],
           )
@@ -1360,7 +1698,7 @@ class _EventChip extends StatelessWidget {
               if (time != null) ...[
                 Text(
                   time,
-                  style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: st.fg.withValues(alpha: 0.7)),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: st.fg.withValues(alpha: 0.7)),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -1378,7 +1716,8 @@ class _EventChip extends StatelessWidget {
   }
 }
 
-/// Larger card used in the week view and the day dialog.
+/// Larger card used in the week view, the day dialog and the narrow-screen agenda. When first, then who, then the
+/// status as a small dot and plain words (a solid, shouted pill cut off in narrow columns).
 class _EventCard extends StatelessWidget {
   final _CalEvent event;
   final VoidCallback onTap;
@@ -1387,8 +1726,6 @@ class _EventCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final st = _styleFor(event.color);
-    final pillBg = event.color;
-    final pillFg = _onColor(event.color);
 
     return Material(
       color: st.bg,
@@ -1407,28 +1744,21 @@ class _EventCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      // When the visit is; all-day jobs say so, so every card answers "when" the same way.
                       Row(
                         children: [
-                          Flexible(
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                              decoration: BoxDecoration(color: pillBg, borderRadius: BorderRadius.circular(5)),
-                              child: Text(
-                                event.statusLabel.toUpperCase(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w800, color: pillFg, letterSpacing: 0.5),
+                          Expanded(
+                            child: Text(
+                              event.timeLabel ?? 'All day',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w800,
+                                color: st.fg.withValues(alpha: 0.75),
                               ),
                             ),
                           ),
                           if (event.isEstimate) ...[const SizedBox(width: 6), _EstBadge(color: st.fg)],
                         ],
-                      ),
-                      const SizedBox(height: 6),
-                      // When the visit is; all-day jobs say so, so every card answers "when" the same way.
-                      Text(
-                        event.timeLabel ?? 'All day',
-                        style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: st.fg.withValues(alpha: 0.7)),
                       ),
                       const SizedBox(height: 2),
                       Text(
@@ -1437,8 +1767,36 @@ class _EventCard extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: st.fg, height: 1.2),
                       ),
-                      if (event.techs.isEmpty) ...[
-                        const SizedBox(height: 6),
+                      const SizedBox(height: 6),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Container(
+                              width: 8,
+                              height: 8,
+                              decoration: BoxDecoration(color: event.color, shape: BoxShape.circle),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              event.statusLabel,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: st.fg.withValues(alpha: 0.85),
+                                height: 1.2,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      if (event.techs.isEmpty)
                         Text(
                           'No tech assigned',
                           style: TextStyle(
@@ -1447,14 +1805,13 @@ class _EventCard extends StatelessWidget {
                             fontStyle: FontStyle.italic,
                             color: st.fg.withValues(alpha: 0.6),
                           ),
-                        ),
-                      ] else ...[
-                        const SizedBox(height: 6),
+                        )
+                      else
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Icon(Icons.person_outline_rounded, size: 14, color: st.fg.withValues(alpha: 0.75)),
-                            const SizedBox(width: 4),
+                            _InitialsStack(names: event.techList, color: st.fg),
+                            const SizedBox(width: 6),
                             Expanded(
                               child: Text(
                                 event.techs,
@@ -1462,13 +1819,12 @@ class _EventCard extends StatelessWidget {
                                   fontSize: 12,
                                   fontWeight: FontWeight.w600,
                                   color: st.fg.withValues(alpha: 0.85),
-                                  height: 1.2,
+                                  height: 1.35,
                                 ),
                               ),
                             ),
                           ],
                         ),
-                      ],
                     ],
                   ),
                 ),
@@ -1478,6 +1834,155 @@ class _EventCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// A tech's initials in a small circle ("BH"), so who is on a job can be spotted at a glance.
+class _Initials extends StatelessWidget {
+  final String name;
+  final double size;
+  final Color color;
+  const _Initials({required this.name, required this.size, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final text = parts.isEmpty
+        ? '?'
+        : (parts.length == 1 ? parts.first[0] : parts.first[0] + parts.last[0]).toUpperCase();
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        shape: BoxShape.circle,
+        border: Border.all(color: Colors.white, width: 1.5),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(fontSize: math.max(10, size * 0.45), fontWeight: FontWeight.w800, color: color, height: 1),
+      ),
+    );
+  }
+}
+
+/// Overlapping initials for up to three techs, with "+N" for the rest.
+class _InitialsStack extends StatelessWidget {
+  final List<String> names;
+  final Color color;
+  const _InitialsStack({required this.names, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    const size = 24.0, step = 17.0;
+    final shown = names.take(3).toList();
+    final extra = names.length - shown.length;
+    final count = shown.length + (extra > 0 ? 1 : 0);
+    return ExcludeSemantics(
+      child: SizedBox(
+        width: size + step * (count - 1),
+        height: size,
+        child: Stack(
+          children: [
+            for (var i = 0; i < shown.length; i++)
+              Positioned(
+                left: i * step,
+                child: _Initials(name: shown[i], size: size, color: color),
+              ),
+            if (extra > 0)
+              Positioned(
+                left: shown.length * step,
+                child: Container(
+                  width: size,
+                  height: size,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.2),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  child: Text(
+                    '+$extra',
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: color, height: 1),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The day number. Today is the one filled dark circle (or rounded square in the week view), the standard cue, so it
+/// is found at a glance without relying on a faint tint.
+class _DayNumber extends StatelessWidget {
+  final int day;
+  final String? label; // "Oct 1" on the first of a month
+  final bool isToday;
+  final bool muted; // a day from the neighbouring month
+  final double size;
+  final double fontSize;
+  final bool rounded;
+  const _DayNumber({
+    required this.day,
+    required this.isToday,
+    required this.size,
+    required this.fontSize,
+    this.label,
+    this.muted = false,
+    this.rounded = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = isToday ? Colors.white : (muted ? _muted : _ink);
+    return Container(
+      constraints: BoxConstraints(minWidth: size),
+      height: size,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: isToday ? _ink : (rounded ? _faint : null),
+        borderRadius: BorderRadius.circular(rounded ? 10 : size / 2),
+      ),
+      child: Center(
+        widthFactor: 1,
+        child: FittedBox(
+          fit: BoxFit.scaleDown, // "Oct 1" must shrink, not overflow, in phone-width cells
+          child: Text(
+            label ?? '$day',
+            maxLines: 1,
+            style: TextStyle(fontSize: fontSize, fontWeight: isToday ? FontWeight.w800 : FontWeight.w700, color: fg),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A vertical scroll area with an always-visible scrollbar. It owns its controller, so two of them can exist at once
+/// while the grid cross-fades between months.
+class _VScroll extends StatefulWidget {
+  final Widget Function(ScrollController controller) builder;
+  const _VScroll({required this.builder});
+
+  @override
+  State<_VScroll> createState() => _VScrollState();
+}
+
+class _VScrollState extends State<_VScroll> {
+  final ScrollController _controller = ScrollController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scrollbar(controller: _controller, thumbVisibility: true, child: widget.builder(_controller));
   }
 }
 
@@ -1495,7 +2000,7 @@ class _EstBadge extends StatelessWidget {
       ),
       child: Text(
         'EST',
-        style: TextStyle(fontSize: 8.5, fontWeight: FontWeight.w800, color: color, letterSpacing: 0.4, height: 1.2),
+        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: color, letterSpacing: 0.4, height: 1.2),
       ),
     );
   }
@@ -1510,18 +2015,24 @@ class _EventDetails extends StatelessWidget {
   final VoidCallback onClose;
   const _EventDetails({required this.event, required this.onClose});
 
-  static const _known = {'event_date', 'status', 'is_estimate', 'customer_name', 'techs'};
+  static const _known = {'event_date', 'status', 'is_estimate', 'customer_name', 'techs', 'job_number'};
+
+  /// Fields that are shown properly elsewhere in the dialog (the time) or are only ids and timestamps.
+  static final _internal = RegExp(
+    r'(^|_)(id|ids|uuid)$|^time_(start|end)$|(^|_)(created|updated|synced)(_at)?$|^raw',
+    caseSensitive: false,
+  );
 
   static String _prettyKey(String k) => _titleCase(k.replaceAll(RegExp(r'[_\-]+'), ' ').trim());
 
   @override
   Widget build(BuildContext context) {
     final c = event.color;
-    final on = _onColor(c);
 
     final extras = <MapEntry<String, String>>[];
     event.raw.forEach((k, v) {
       if (_known.contains(k) || v == null || v is Map || v is List) return;
+      if (_internal.hasMatch(k)) return; // ids, raw time columns and bookkeeping are not for people
       final s = v.toString().trim();
       if (s.isEmpty) return;
       extras.add(MapEntry(_prettyKey(k), s));
@@ -1531,41 +2042,66 @@ class _EventDetails extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.fromLTRB(22, 20, 22, 20),
-          color: c,
+        // A thin strip in the status colour, then a plain header: a full block of lime or pink was garish.
+        Container(height: 6, color: c),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(22, 18, 22, 14),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
-                    decoration: BoxDecoration(color: on.withValues(alpha: 0.18), borderRadius: BorderRadius.circular(6)),
-                    child: Text(
-                      event.statusLabel.toUpperCase(),
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: on, letterSpacing: 0.6),
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: c.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          event.statusLabel,
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: _ink),
+                        ),
+                      ],
                     ),
                   ),
-                  if (event.isEstimate) ...[const SizedBox(width: 8), _EstBadge(color: on)],
+                  if (event.isEstimate) ...[const SizedBox(width: 8), const _EstBadge(color: _slate)],
                 ],
               ),
               const SizedBox(height: 12),
               Text(
                 event.customer,
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: on, height: 1.15),
+                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: _ink, height: 1.15),
               ),
             ],
           ),
         ),
+        const Divider(height: 1, color: _line),
         Flexible(
           child: SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(22, 18, 22, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _DetailRow(icon: Icons.event_rounded, label: 'Date', value: DateFormat('EEEE, MMMM d, y').format(event.day)),
-                _DetailRow(icon: Icons.assignment_outlined, label: 'Type', value: event.isEstimate ? 'Estimate' : 'Job'),
+                _DetailRow(
+                  icon: Icons.event_rounded,
+                  label: 'Date',
+                  value: DateFormat('EEEE, MMMM d, y').format(event.day),
+                ),
+                _DetailRow(icon: Icons.schedule_rounded, label: 'Time', value: event.timeLabel ?? 'All day'),
+                _DetailRow(
+                  icon: Icons.assignment_outlined,
+                  label: 'Type',
+                  value: event.isEstimate ? 'Estimate' : 'Job',
+                ),
                 _DetailRow(
                   icon: Icons.engineering_outlined,
                   label: event.techList.length > 1 ? 'Techs' : 'Tech',
@@ -1608,7 +2144,12 @@ class _DetailRow extends StatelessWidget {
               children: [
                 Text(
                   label.toUpperCase(),
-                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: _muted, letterSpacing: 0.7),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: _mutedText,
+                    letterSpacing: 0.7,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 SelectableText(
@@ -1656,7 +2197,7 @@ class _SegToggle<T> extends StatelessWidget {
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
                   decoration: BoxDecoration(
                     color: o.$1 == value ? Colors.white : Colors.transparent,
                     borderRadius: BorderRadius.circular(8),
@@ -1722,88 +2263,6 @@ class _NavBtn extends StatelessWidget {
           borderRadius: BorderRadius.circular(10),
           onTap: onTap,
           child: SizedBox(width: 38, height: 38, child: Icon(icon, size: 24, color: _ink)),
-        ),
-      ),
-    );
-  }
-}
-
-class _LegendChip extends StatelessWidget {
-  final String label;
-  final Color color;
-  final int count;
-  final bool selected;
-  final bool dimmed;
-  final bool expand; // fill the row (sidebar) instead of hugging the text (wrapped strip)
-  final VoidCallback onTap;
-  const _LegendChip({
-    required this.label,
-    required this.color,
-    required this.count,
-    required this.selected,
-    required this.dimmed,
-    required this.onTap,
-    this.expand = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final chip = AnimatedContainer(
-      duration: const Duration(milliseconds: 150),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-      decoration: BoxDecoration(
-        color: selected ? color.withValues(alpha: 0.14) : Colors.white,
-        borderRadius: BorderRadius.circular(expand ? 10 : 20),
-        border: Border.all(color: selected ? color : _line, width: selected ? 1.5 : 1),
-      ),
-      child: Row(
-        mainAxisSize: expand ? MainAxisSize.max : MainAxisSize.min,
-        children: [
-          Container(
-            width: 9,
-            height: 9,
-            decoration: BoxDecoration(color: dimmed ? color.withValues(alpha: 0.35) : color, shape: BoxShape.circle), // fade the dot, never the text
-          ),
-          const SizedBox(width: 8),
-          // In the sidebar the label takes every spare pixel (a Spacer here would split them and cut the label short).
-          if (expand)
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _ink),
-              ),
-            )
-          else
-            Flexible(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _ink),
-              ),
-            ),
-          const SizedBox(width: 8),
-          Text(
-            '$count',
-            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: dimmed ? _muted : _slate),
-          ),
-        ],
-      ),
-    );
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: '$label, $count',
-      excludeSemantics: true,
-      child: Tooltip(
-        message: selected ? 'Showing only $label. Click to remove' : 'Show only $label',
-        waitDuration: const Duration(milliseconds: 600),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(expand ? 10 : 20),
-          onTap: onTap,
-          child: chip,
         ),
       ),
     );

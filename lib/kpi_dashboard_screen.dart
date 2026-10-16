@@ -59,16 +59,33 @@ String _fmtNum(double v) {
   return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
 }
 
+/// "2 yrs 8 mo", "1 yr", "5 months", "Less than a month".
 String _fmtTenure(double? years) {
   if (years == null) return '—';
-  if (years < 1) {
-    final m = (years * 12).round();
-    if (m <= 0) return 'Less than a month';
-    return '$m ${m == 1 ? 'Month' : 'Months'}';
-  }
-  final t = _fmtNum(years);
-  return '$t ${t == '1' ? 'Year' : 'Years'}';
+  final total = (years * 12).round();
+  if (total <= 0) return 'Less than a month';
+  if (total < 12) return '$total ${total == 1 ? 'month' : 'months'}';
+  final y = total ~/ 12, m = total % 12;
+  final yPart = '$y ${y == 1 ? 'yr' : 'yrs'}';
+  return m == 0 ? yPart : '$yPart $m mo';
 }
+
+/// "Admin", "Warehouse", "Lead Technician": the API sends raw role values in any case.
+String _prettyRole(String raw) {
+  final words = raw.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+  return words.map((w) => w[0].toUpperCase() + w.substring(1).toLowerCase()).join(' ');
+}
+
+Color _roleColor(String title) {
+  final t = title.toLowerCase();
+  if (t.contains('tech')) return DashUi.blue;
+  if (t.contains('sales')) return DashUi.emeraldDeep;
+  if (t.contains('admin') || t.contains('manager')) return DashUi.amber;
+  if (t.contains('office')) return DashUi.indigo;
+  return _slate;
+}
+
+bool _reduceMotion(BuildContext context) => MediaQuery.maybeOf(context)?.disableAnimations ?? false;
 
 Color _scoreColor(double? s) {
   if (s == null) return _muted;
@@ -77,13 +94,17 @@ Color _scoreColor(double? s) {
   return _gold;
 }
 
+/// Whole completed years ("2 yrs"), so it never disagrees with the exact tenure shown beside it.
 String? _milestone(double? y) {
-  if (y == null) return null;
-  if (y >= 10) return '10+ yrs';
-  if (y >= 5) return '5+ yrs';
-  if (y >= 3) return '3+ yrs';
-  if (y >= 1) return '1+ yr';
-  return null;
+  if (y == null || y < 1) return null;
+  final n = y.floor();
+  return '$n ${n == 1 ? 'yr' : 'yrs'}';
+}
+
+/// A failure with a message that is safe to show as is.
+class _KpiLoadError implements Exception {
+  final String message;
+  const _KpiLoadError(this.message);
 }
 
 // =============================================================================
@@ -132,9 +153,9 @@ class _EmployeeUser {
     ], 'Unnamed');
 
     return _EmployeeUser(
-      id: firstNonEmpty([json['id'], json['user_id']], '0'),
+      id: firstNonEmpty([json['id'], json['user_id']], name),
       name: name,
-      jobTitle: firstNonEmpty([json['jobTitle'], json['job_title'], json['title'], json['role']], 'Employee'),
+      jobTitle: _prettyRole(firstNonEmpty([json['jobTitle'], json['job_title'], json['title'], json['role']], 'Employee')),
       avatarUrl: firstNonEmpty(
         [json['avatarUrl'], json['avatar_url'], json['profile_image']],
         'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(name)}&background=E2E8F0&color=475569&size=512',
@@ -155,13 +176,24 @@ class _Entry {
 
 /// Loads active employees, sorted by score, with ranks (ties share a rank).
 Future<List<_Entry>> _loadEntries() async {
-  final response = await http.get(
-    Uri.parse('$kApiBaseUrl/users'),
-    headers: AuthSession.instance.headers(),
-  ).timeout(const Duration(seconds: 60));
+  final http.Response response;
+  try {
+    response = await http.get(
+      Uri.parse('$kApiBaseUrl/users'),
+      headers: AuthSession.instance.headers(),
+    ).timeout(const Duration(seconds: 60));
+  } on TimeoutException {
+    throw const _KpiLoadError('The request timed out.');
+  } catch (_) {
+    throw const _KpiLoadError("Couldn't reach the server.");
+  }
 
+  if (response.statusCode == 401) {
+    AuthSession.instance.logout();
+    throw const _KpiLoadError('Your session expired. Please sign in again.');
+  }
   if (response.statusCode != 200) {
-    throw Exception('Failed to load users (status ${response.statusCode})');
+    throw _KpiLoadError('The server had a problem loading employees (code ${response.statusCode}).');
   }
 
   final dynamic body = json.decode(response.body);
@@ -212,7 +244,10 @@ Future<List<_Entry>> _loadEntries() async {
 // SCREEN STATE
 // =============================================================================
 
-class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTickerProviderStateMixin {
+class _KPIDashboardContentState extends State<KPIDashboardContent> {
+  /// Width of one card slot (card 360 + 20 gap); used for the "1–4 of 9" counter and the arrows.
+  static const double _slot = 380;
+
   bool _isLoading = true;
   String? _errorMessage;
 
@@ -226,53 +261,47 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
 
   final ScrollController _scroll = ScrollController();
 
-  // Edge-scroll ticker
-  late final Ticker _edgeTicker;
-  Duration _lastTick = Duration.zero;
-  double _hoverX = 0.5;
-
   @override
   void initState() {
     super.initState();
-    _edgeTicker = createTicker(_onTick);
+    _scroll.addListener(_onScroll);
     _fetchAndSortUsers();
   }
 
   @override
   void dispose() {
-    _edgeTicker.dispose();
+    _scroll.removeListener(_onScroll);
     _scroll.dispose();
     super.dispose();
   }
 
-  void _onTick(Duration elapsed) {
-    final dt = ((elapsed - _lastTick).inMicroseconds / 1e6).clamp(0.0, 0.05);
-    _lastTick = elapsed;
-    if (!_scroll.hasClients) return;
-
-    const edge = 0.18;
-    const maxSpeed = 1100.0;
-
-    double dir = 0;
-    double intensity = 0;
-    if (_hoverX > 1 - edge) {
-      dir = 1;
-      intensity = (_hoverX - (1 - edge)) / edge;
-    } else if (_hoverX < edge) {
-      dir = -1;
-      intensity = (edge - _hoverX) / edge;
-    }
-    if (dir == 0) return;
-
-    final pos = _scroll.position;
-    final target = pos.pixels + dir * (intensity * intensity) * maxSpeed * dt;
-    _scroll.jumpTo(target.clamp(pos.minScrollExtent, pos.maxScrollExtent));
+  void _onScroll() {
+    if (mounted) setState(() {});
   }
 
-  void _startEdgeScroll() {
-    if (_edgeTicker.isActive) return;
-    _lastTick = Duration.zero;
-    _edgeTicker.start();
+  bool get _canLeft => _scroll.hasClients && _scroll.offset > 4;
+  bool get _canRight => _scroll.hasClients && _scroll.offset < _scroll.position.maxScrollExtent - 4;
+
+  void _page(int dir) {
+    if (!_scroll.hasClients) return;
+    final pos = _scroll.position;
+    final target = (pos.pixels + dir * _slot * 2).clamp(pos.minScrollExtent, pos.maxScrollExtent);
+    _scroll.animateTo(
+      target,
+      duration: _reduceMotion(context) ? Duration.zero : const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
+  /// "1–4 of 9", from what is actually on screen.
+  String get _rangeLabel {
+    final n = _entries.length;
+    if (!_scroll.hasClients) return '$n employees';
+    final pos = _scroll.position;
+    final first = (pos.pixels / _slot).floor() + 1;
+    final last = ((pos.pixels + pos.viewportDimension) / _slot).floor().clamp(first, n);
+    if (first <= 1 && last >= n) return '$n employees';
+    return '${first.clamp(1, n)}–$last of $n';
   }
 
   Future<void> _fetchAndSortUsers() async {
@@ -298,10 +327,14 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
         _seen.clear();
         _isLoading = false;
       });
-    } on TimeoutException {
-      _fail('The request timed out. Check your connection and try again.');
-    } catch (e) {
-      _fail(e.toString().replaceFirst('Exception: ', ''));
+      // The arrows, counter and edge fade need the list's extent, which exists only after its first layout.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() {});
+      });
+    } on _KpiLoadError catch (e) {
+      _fail(e.message);
+    } catch (_) {
+      _fail("Couldn't load the team list.");
     }
   }
 
@@ -315,150 +348,240 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> with SingleTi
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFFCC0007)));
-    }
+    if (_isLoading) return const _KpiSkeleton();
 
     if (_errorMessage != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline_rounded, color: Color(0xFFEF4444), size: 48),
-            const SizedBox(height: 12),
-            const Text(
-              'Database Fetch Failed',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
-            ),
-            const SizedBox(height: 4),
-            Text(_errorMessage!, style: const TextStyle(fontSize: 13, color: _slate)),
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
-              onPressed: _fetchAndSortUsers,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Retry Connection'),
-              style: ElevatedButton.styleFrom(backgroundColor: _ink, foregroundColor: Colors.white),
-            ),
-          ],
-        ),
+      return DashErrorPanel(
+        title: "Couldn't load the team",
+        message: _errorMessage!,
+        onRetry: _fetchAndSortUsers,
       );
     }
 
     if (_entries.isEmpty) {
-      return const Center(
-        child: Text('No active employee records found.', style: TextStyle(fontSize: 14, color: _slate)),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.groups_outlined, size: 40, color: _muted),
+            const SizedBox(height: 10),
+            const Text('No active employees yet', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: _ink)),
+            const SizedBox(height: 4),
+            const Text('Add people in Team admin and they will show up here.', style: TextStyle(fontSize: 13, color: _slate)),
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _fetchAndSortUsers,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Refresh'),
+            ),
+          ],
+        ),
       );
     }
+
+    final tiles = <Widget>[
+      _StatTile(
+        icon: Icons.verified_rounded,
+        color: const Color(0xFF10B981),
+        label: 'TEAM AVG INTEGRITY',
+        value: _teamAvgScore == null
+            ? const _StatText('—')
+            : _CountUp(value: _teamAvgScore!, format: (v) => '${_fmtNum(v)}%'),
+      ),
+      _StatTile(
+        icon: Icons.monitor_heart_rounded,
+        color: _avgMorale == null ? _muted : (_avgMorale! >= 4 ? const Color(0xFF10B981) : (_avgMorale! >= 3 ? const Color(0xFFD97706) : const Color(0xFFDC2626))),
+        label: 'AVG EMPLOYEE MORALE',
+        value: _avgMorale == null
+            ? const _StatText('Not tracked yet', muted: true)
+            : _CountUp(value: _avgMorale!, format: (v) => '${_fmtNum(v)} / 5'),
+      ),
+      _StatTile(
+        icon: Icons.groups_rounded,
+        color: const Color(0xFF2563EB),
+        label: 'EMPLOYEES',
+        value: _CountUp(value: _entries.length.toDouble(), format: (v) => v.round().toString()),
+      ),
+      _StatTile(
+        icon: Icons.hourglass_bottom_rounded,
+        color: const Color(0xFF6366F1),
+        label: 'AVG TENURE',
+        value: _avgTenure == null
+            ? const _StatText('—')
+            : _CountUp(value: _avgTenure!, format: (v) => '${_fmtNum(v)} yrs'),
+      ),
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ---- Team summary strip ----
+        // ---- Header: title, "1-4 of 9", arrows, refresh ----
         Row(
           children: [
-            Expanded(
-              child: _StatTile(
-                icon: Icons.verified_rounded,
-                color: const Color(0xFF10B981),
-                label: 'TEAM AVG INTEGRITY',
-                value: _teamAvgScore == null
-                    ? const _StatText('—')
-                    : _CountUp(value: _teamAvgScore!, format: (v) => '${_fmtNum(v)}%'),
-              ),
+            const Expanded(
+              child: Text('Team KPIs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _ink)),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatTile(
-                icon: Icons.monitor_heart_rounded,
-                color: _avgMorale == null ? _muted : (_avgMorale! >= 4 ? const Color(0xFF10B981) : (_avgMorale! >= 3 ? const Color(0xFFD97706) : const Color(0xFFDC2626))),
-                label: 'AVG EMPLOYEE MORALE',
-                value: _avgMorale == null
-                    ? const _StatText('Not tracked yet', muted: true)
-                    : _CountUp(value: _avgMorale!, format: (v) => '${_fmtNum(v)} / 5'),
-              ),
+            Text(_rangeLabel, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _slate)),
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Previous employees',
+              onPressed: _canLeft ? () => _page(-1) : null,
+              icon: const Icon(Icons.chevron_left_rounded),
+              visualDensity: VisualDensity.compact,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatTile(
-                icon: Icons.groups_rounded,
-                color: const Color(0xFF2563EB),
-                label: 'EMPLOYEES',
-                value: _CountUp(value: _entries.length.toDouble(), format: (v) => v.round().toString()),
-              ),
+            IconButton(
+              tooltip: 'Next employees',
+              onPressed: _canRight ? () => _page(1) : null,
+              icon: const Icon(Icons.chevron_right_rounded),
+              visualDensity: VisualDensity.compact,
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _StatTile(
-                icon: Icons.hourglass_bottom_rounded,
-                color: const Color(0xFF6366F1),
-                label: 'AVG TENURE',
-                value: _avgTenure == null
-                    ? const _StatText('—')
-                    : _CountUp(value: _avgTenure!, format: (v) => '${_fmtNum(v)} yrs'),
-              ),
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: _fetchAndSortUsers,
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              visualDensity: VisualDensity.compact,
             ),
           ],
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 6),
+
+        // ---- Team summary strip (2x2 when narrow so labels are not cut off) ----
+        LayoutBuilder(
+          builder: (context, c) {
+            if (c.maxWidth >= 1000) {
+              return Row(
+                children: [
+                  for (var i = 0; i < tiles.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 12),
+                    Expanded(child: tiles[i]),
+                  ],
+                ],
+              );
+            }
+            return Column(
+              children: [
+                Row(children: [Expanded(child: tiles[0]), const SizedBox(width: 12), Expanded(child: tiles[1])]),
+                const SizedBox(height: 12),
+                Row(children: [Expanded(child: tiles[2]), const SizedBox(width: 12), Expanded(child: tiles[3])]),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 12),
 
         // ---- Cards (Expands into all remaining vertical space) ----
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              return Listener(
-                // Vertical mouse wheel scrolls the row sideways
-                onPointerSignal: (e) {
-                  if (e is PointerScrollEvent &&
-                      _scroll.hasClients &&
-                      e.scrollDelta.dy.abs() > e.scrollDelta.dx.abs()) {
-                    final pos = _scroll.position;
-                    _scroll.jumpTo((pos.pixels + e.scrollDelta.dy).clamp(pos.minScrollExtent, pos.maxScrollExtent));
-                  }
-                },
-                child: MouseRegion(
-                  onEnter: (e) {
-                    _hoverX = (e.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0);
-                    _startEdgeScroll();
-                  },
-                  onExit: (_) => _edgeTicker.stop(),
-                  onHover: (e) => _hoverX = (e.localPosition.dx / constraints.maxWidth).clamp(0.0, 1.0),
-                  child: ScrollConfiguration(
-                    behavior: ScrollConfiguration.of(context).copyWith(
-                      scrollbars: false,
-                      dragDevices: {
-                        PointerDeviceKind.touch,
-                        PointerDeviceKind.mouse,
-                        PointerDeviceKind.trackpad,
-                        PointerDeviceKind.stylus,
-                      },
-                    ),
-                    child: ListView.builder(
-                      controller: _scroll,
-                      scrollDirection: Axis.horizontal,
-                      clipBehavior: Clip.none,
-                      padding: const EdgeInsets.only(right: 32, bottom: 8, top: 4),
-                      itemCount: _entries.length,
-                      itemBuilder: (context, index) {
-                        final e = _entries[index];
-                        final key = e.user.id;
-                        return _EmployeeFullHeightCard(
-                          key: ValueKey(key),
-                          user: e.user,
-                          rank: e.rank,
-                          teamAvg: _teamAvgScore,
-                          teamSize: _entries.length,
-                          index: index,
-                          animate: _seen.add(key),
-                        );
-                      },
-                    ),
+          child: Listener(
+            // Vertical mouse wheel scrolls the row sideways
+            onPointerSignal: (e) {
+              if (e is PointerScrollEvent && _scroll.hasClients && e.scrollDelta.dy.abs() > e.scrollDelta.dx.abs()) {
+                final pos = _scroll.position;
+                _scroll.jumpTo((pos.pixels + e.scrollDelta.dy).clamp(pos.minScrollExtent, pos.maxScrollExtent));
+              }
+            },
+            child: Stack(
+              children: [
+                ScrollConfiguration(
+                  behavior: ScrollConfiguration.of(context).copyWith(
+                    scrollbars: false,
+                    dragDevices: {
+                      PointerDeviceKind.touch,
+                      PointerDeviceKind.mouse,
+                      PointerDeviceKind.trackpad,
+                      PointerDeviceKind.stylus,
+                    },
+                  ),
+                  child: ListView.builder(
+                    controller: _scroll,
+                    scrollDirection: Axis.horizontal,
+                    // Clipped to the page so cards never run past the tiles above; the padding leaves
+                    // room for the hover lift and shadow inside the clip.
+                    padding: const EdgeInsets.fromLTRB(8, 12, 32, 14),
+                    itemCount: _entries.length,
+                    itemBuilder: (context, index) {
+                      final e = _entries[index];
+                      final key = e.user.id;
+                      return _EmployeeFullHeightCard(
+                        key: ValueKey(key),
+                        user: e.user,
+                        rank: e.rank,
+                        teamAvg: _teamAvgScore,
+                        teamSize: _entries.length,
+                        index: index,
+                        animate: _seen.add(key),
+                      );
+                    },
                   ),
                 ),
-              );
-            },
+                // Soft edge fade: tells you there are more cards off to the right.
+                if (_canRight)
+                  Positioned(
+                    top: 0,
+                    bottom: 0,
+                    right: 0,
+                    width: 48,
+                    child: IgnorePointer(
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            colors: [
+                              const Color(0xFFE2E8F0).withValues(alpha: 0),
+                              const Color(0xFFE2E8F0).withValues(alpha: 0.9),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Loading placeholder shaped like the page: four tiles over a row of cards.
+class _KpiSkeleton extends StatelessWidget {
+  const _KpiSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return SkeletonPulse(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SkeletonBox(h: 22, w: 120),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              for (var i = 0; i < 4; i++) ...[
+                if (i > 0) const SizedBox(width: 12),
+                const Expanded(child: SkeletonBox(h: 64, r: 14)),
+              ],
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: ClipRect(
+              child: OverflowBox(
+                alignment: Alignment.topLeft,
+                maxWidth: 4 * 380,
+                child: Row(
+                  children: [
+                    for (var i = 0; i < 4; i++)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 20, bottom: 8),
+                        child: SizedBox(width: 360, height: double.infinity, child: SkeletonBox(r: 18)),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -474,6 +597,7 @@ class _CountUp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (_reduceMotion(context)) return _StatText(format(value));
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: value),
       duration: const Duration(milliseconds: 900),
@@ -618,12 +742,18 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
 
   late final AnimationController _shine; // rotates the gold border on rank #1
   bool _hovered = false;
+  bool _focused = false; // keyboard focus gets the same lift as hover
   Offset _tilt = Offset.zero; // cursor position within the card, -1..1 on each axis
 
   @override
   void initState() {
     super.initState();
     _shine = AnimationController(vsync: this, duration: const Duration(seconds: 4));
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
     _syncShine();
   }
 
@@ -634,12 +764,17 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
   }
 
   void _syncShine() {
-    if (widget.rank == 1) {
+    if (widget.rank == 1 && !_reduceMotion(context)) {
       if (!_shine.isAnimating) _shine.repeat();
     } else {
       _shine.stop();
     }
   }
+
+  void _open() => context.go(
+        '/hr/kpis/${Uri.encodeComponent(widget.user.id)}',
+        extra: _EmployeeKpiArgs(_Entry(widget.user, widget.rank), widget.teamAvg, widget.teamSize),
+      );
 
   @override
   void dispose() {
@@ -675,9 +810,9 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
     final isFirst = widget.rank == 1;
     final shadow = [
       BoxShadow(
-        color: (isFirst ? _gold : Colors.black).withValues(alpha: (isFirst ? 0.18 : 0.03) + 0.11 * h),
+        color: (isFirst ? _gold : Colors.black).withValues(alpha: (isFirst ? 0.18 : 0.03) + (isFirst ? 0.04 : 0.11) * h),
         blurRadius: 8 + 16 * h,
-        offset: Offset(8 * h, 2 + 8 * h),
+        offset: Offset((isFirst ? 3 : 8) * h, 2 + 8 * h),
       ),
     ];
 
@@ -713,70 +848,93 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
 
   @override
   Widget build(BuildContext context) {
+    final reduce = _reduceMotion(context);
+    final lifted = _hovered || _focused;
+    final u = widget.user;
+    final tenureText = u.yearsWorked == null ? 'tenure unknown' : 'tenure ${_fmtTenure(u.yearsWorked)}';
+    final scoreText = u.integrityScore == null ? 'no integrity score' : 'integrity score ${_fmtNum(u.integrityScore!)} percent';
+
     final card = Padding(
       padding: const EdgeInsets.only(right: 20),
       child: SizedBox(
         width: 360,
         child: LayoutBuilder(
           builder: (context, c) {
-            return MouseRegion(
-              cursor: SystemMouseCursors.click,
-              onEnter: (_) => setState(() => _hovered = true),
-              onExit: (_) => setState(() {
-                _hovered = false;
-                _tilt = Offset.zero;
-              }),
-              onHover: (e) => setState(() {
-                _tilt = Offset(
-                  (e.localPosition.dx / c.maxWidth * 2 - 1).clamp(-1.0, 1.0),
-                  (e.localPosition.dy / c.maxHeight * 2 - 1).clamp(-1.0, 1.0),
-                );
-              }),
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () => context.go(
-                  '/hr/kpis/${Uri.encodeComponent(widget.user.id)}',
-                  extra: _EmployeeKpiArgs(_Entry(widget.user, widget.rank), widget.teamAvg, widget.teamSize),
-                ),
-                child: TweenAnimationBuilder<double>(
-                tween: Tween<double>(end: _hovered ? 1.0 : 0.0),
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                builder: (context, h, _) => TweenAnimationBuilder<Offset>(
-                  tween: Tween<Offset>(end: _tilt),
-                  duration: const Duration(milliseconds: 90),
-                  builder: (context, tilt, _) => Transform(
-                    alignment: Alignment.center,
-                    transform: _matrix(h, tilt),
-                    child: _frame(
-                      h,
-                      Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          ColoredBox(color: Colors.white, child: _content(context)),
-                          // Glare that follows the cursor
-                          Positioned.fill(
-                            child: IgnorePointer(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  gradient: RadialGradient(
-                                    center: Alignment(tilt.dx, tilt.dy),
-                                    radius: 0.85,
-                                    colors: [
-                                      Colors.white.withValues(alpha: 0.22 * h),
-                                      Colors.white.withValues(alpha: 0),
-                                    ],
+            return Semantics(
+              button: true,
+              label: '${u.name}, ${u.jobTitle}, $tenureText, $scoreText. Opens their KPI page.',
+              excludeSemantics: true,
+              onTap: _open,
+              child: FocusableActionDetector(
+                mouseCursor: SystemMouseCursors.click,
+                actions: {
+                  ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) {
+                    _open();
+                    return null;
+                  }),
+                },
+                onFocusChange: (f) {
+                  if (f && mounted) Scrollable.ensureVisible(context, duration: reduce ? Duration.zero : const Duration(milliseconds: 200), alignment: 0.1);
+                },
+                onShowFocusHighlight: (f) => setState(() => _focused = f),
+                child: MouseRegion(
+                  onEnter: (_) => setState(() => _hovered = true),
+                  onExit: (_) => setState(() {
+                    _hovered = false;
+                    _tilt = Offset.zero;
+                  }),
+                  onHover: (e) => setState(() {
+                    _tilt = Offset(
+                      (e.localPosition.dx / c.maxWidth * 2 - 1).clamp(-1.0, 1.0),
+                      (e.localPosition.dy / c.maxHeight * 2 - 1).clamp(-1.0, 1.0),
+                    );
+                  }),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _open,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(end: lifted ? 1.0 : 0.0),
+                      duration: reduce ? Duration.zero : const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      builder: (context, h, _) => TweenAnimationBuilder<Offset>(
+                        tween: Tween<Offset>(end: reduce ? Offset.zero : _tilt),
+                        duration: const Duration(milliseconds: 90),
+                        builder: (context, tilt, _) => Transform(
+                          alignment: Alignment.center,
+                          // No lift/tilt with reduced motion; the border and shadow still show hover and focus.
+                          transform: _matrix(reduce ? 0 : h, tilt),
+                          child: _frame(
+                            h,
+                            Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                ColoredBox(color: Colors.white, child: _content(context)),
+                                // Glare that follows the cursor
+                                if (!reduce)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          gradient: RadialGradient(
+                                            center: Alignment(tilt.dx, tilt.dy),
+                                            radius: 0.85,
+                                            colors: [
+                                              Colors.white.withValues(alpha: 0.22 * h),
+                                              Colors.white.withValues(alpha: 0),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
+                              ],
                             ),
                           ),
-                        ],
+                        ),
                       ),
                     ),
                   ),
                 ),
-              ),
               ),
             );
           },
@@ -784,9 +942,10 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
       ),
     );
 
-    // Staggered slide/fade-in the first time a card is built
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: widget.animate ? 0.0 : 1.0, end: 1.0),
+    // Staggered slide/fade-in the first time a card is built (skipped with reduced motion)
+    final animateIn = widget.animate && !reduce;
+    final entering = TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: animateIn ? 0.0 : 1.0, end: 1.0),
       duration: Duration(milliseconds: 500 + math.min(widget.index, 8) * 90),
       curve: Curves.easeOutCubic,
       child: card,
@@ -798,6 +957,12 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
         );
       },
     );
+
+    // On tall windows cap the card height instead of stretching the gaps between its sections.
+    return Align(
+      alignment: Alignment.topLeft,
+      child: ConstrainedBox(constraints: const BoxConstraints(maxHeight: 660), child: entering),
+    );
   }
 
   Widget _content(BuildContext context) {
@@ -807,6 +972,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
     final trophy = _trophyColor;
     final isFirst = rank == 1;
     final milestone = _milestone(widget.user.yearsWorked);
+    final reduce = _reduceMotion(context);
 
     double? delta;
     if (score != null && widget.teamAvg != null) delta = score - widget.teamAvg!;
@@ -816,14 +982,14 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
       children: [
         // HEADER PHOTO
         Expanded(
-          flex: 4,
+          flex: 3,
           child: Stack(
             fit: StackFit.expand,
             children: [
               Container(color: _faint),
               AnimatedScale(
-                scale: _hovered ? 1.06 : 1.0,
-                duration: const Duration(milliseconds: 300),
+                scale: _hovered && !reduce ? 1.06 : 1.0,
+                duration: reduce ? Duration.zero : const Duration(milliseconds: 300),
                 curve: Curves.easeOutCubic,
                 child: Image.network(
                   widget.user.avatarUrl,
@@ -846,13 +1012,13 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                 top: 0,
                 left: 0,
                 right: 0,
-                height: 60,
+                height: 48,
                 child: DecoratedBox(
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: [Colors.black.withValues(alpha: 0.4), Colors.transparent],
+                      colors: [Colors.black.withValues(alpha: 0.22), Colors.transparent],
                     ),
                   ),
                 ),
@@ -936,7 +1102,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
         Expanded(
           flex: 5,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 20),
+            padding: const EdgeInsets.fromLTRB(24, 14, 24, 18),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -950,12 +1116,19 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      widget.user.jobTitle,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: _slate),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: _roleColor(widget.user.jobTitle).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        widget.user.jobTitle,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: _roleColor(widget.user.jobTitle)),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ],
                 ),
@@ -981,7 +1154,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
 
                 // Animated score ring + count-up + delta vs team average
                 TweenAnimationBuilder<double>(
-                  tween: Tween<double>(begin: widget.animate ? 0.0 : 1.0, end: 1.0),
+                  tween: Tween<double>(begin: widget.animate && !reduce ? 0.0 : 1.0, end: 1.0),
                   duration: const Duration(milliseconds: 1100),
                   curve: Curves.easeOutCubic,
                   builder: (context, t, _) {

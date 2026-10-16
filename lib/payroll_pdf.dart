@@ -127,7 +127,6 @@ List<pw.Widget> _pdfCover(_Report r, String range) {
         'Advances',
         'Callbacks',
         'Gross',
-        'Hurdle',
         'Cash pay',
         'Retainage released',
         'Total due',
@@ -141,14 +140,13 @@ List<pw.Widget> _pdfCover(_Report r, String range) {
             _fmt(t.totals.advancesPaid),
             _fmt(t.totals.callbackPay),
             _fmt(t.totals.weeklyGross),
-            _fmt(-t.totals.hurdleApplied),
             _fmt(t.totals.cashPay),
             _fmt(t.totals.retainageReleased),
             _fmt(t.totals.totalDue),
           ],
       ],
-      flex: const [3.2, 0.9, 1.6, 1.4, 1.4, 1.5, 1.4, 1.5, 1.8, 1.6],
-      right: const {1, 2, 3, 4, 5, 6, 7, 8, 9},
+      flex: const [3.4, 0.9, 1.7, 1.5, 1.5, 1.6, 1.6, 1.9, 1.7],
+      right: const {1, 2, 3, 4, 5, 6, 7, 8},
       foot: [
         'Total',
         '${r.techs.fold<int>(0, (n, t) => n + t.jobCount)}',
@@ -156,7 +154,6 @@ List<pw.Widget> _pdfCover(_Report r, String range) {
         _fmt(sum((t) => t.totals.advancesPaid)),
         _fmt(sum((t) => t.totals.callbackPay)),
         _fmt(sum((t) => t.totals.weeklyGross)),
-        _fmt(-sum((t) => t.totals.hurdleApplied)),
         _fmt(sum((t) => t.totals.cashPay)),
         _fmt(sum((t) => t.totals.retainageReleased)),
         _fmt(sum((t) => t.totals.totalDue)),
@@ -193,7 +190,8 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r) {
               pw.SizedBox(height: 2),
               _pt(
                 '${t.kindLabel}  |  ${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
-                '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed',
+                '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed'
+                '${t.underHurdle ? '  |  Under the weekly hurdle in at least one week, no cash pay for it' : ''}',
                 size: 9,
                 color: _pSlate,
               ),
@@ -219,7 +217,6 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r) {
         'Advances',
         'Callbacks',
         'Weekly gross',
-        'Hurdle',
         'Cash pay',
         'Retainage released',
         'Total due',
@@ -230,16 +227,25 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r) {
           _fmt(tot.advancesPaid),
           _fmt(tot.callbackPay),
           _fmt(tot.weeklyGross),
-          _fmt(-tot.hurdleApplied),
           _fmt(tot.cashPay),
           _fmt(tot.retainageReleased),
           _fmt(tot.totalDue),
         ],
       ],
-      flex: const [1, 1, 1, 1, 1, 1, 1.2, 1],
-      right: const {0, 1, 2, 3, 4, 5, 6, 7},
+      flex: const [1, 1, 1, 1, 1, 1.2, 1],
+      right: const {0, 1, 2, 3, 4, 5, 6},
     ),
   );
+  if (t.repPay != 0) {
+    out.add(pw.SizedBox(height: 4));
+    out.add(
+      _pt(
+        'Includes sales commission of ${_fmt(t.repPay)}, shown in the pay week ledgers below.',
+        size: 8.5,
+        color: _pSlate,
+      ),
+    );
+  }
 
   if (t.weeks.isEmpty && t.releases.isEmpty) {
     out.add(pw.SizedBox(height: 12));
@@ -286,7 +292,12 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r) {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         _pt('Pay week ${_day(w.weekStart)} to ${_day(w.weekEnd, year: true)}', size: 12.5, bold: true),
-        _pt('Cash pay ${_fmt(w.cashPay)}', size: 12.5, bold: true, color: w.cashPay > 0 ? _pGreen : _pMuted),
+        _pt(
+          'Cash pay ${_fmt(w.cashPay)}',
+          size: 12.5,
+          bold: true,
+          color: w.cashPay < 0 ? _pRed : (w.cashPay > 0 ? _pGreen : _pMuted),
+        ),
       ],
     ),
   );
@@ -294,6 +305,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r) {
 
   final ledger = <List<String>>[
     ['Closed-job commission (net to tech)', _fmt(w.jobNet)],
+    if (w.hurdleCredit > 0) ['Retainage held this week (counts toward the hurdle, not paid now)', _fmt(w.hurdleCredit)],
     if (w.advancesPaid != 0) ['Advances paid', _fmt(w.advancesPaid)],
     if (w.callbackPay != 0) ['Callback pay', _fmt(w.callbackPay)],
     if (w.repPay != 0) ['Sales commission (closed jobs)', _fmt(w.repPay)],
@@ -414,9 +426,6 @@ List<pw.Widget> _pdfJob(_Job j, _Report r) {
         size: 8,
       ),
     // Only worth a line when something comes off the share; otherwise it just repeats the Net to tech in the header.
-    if (showPayout) ...[
-      pw.SizedBox(height: 3),
-      _pt(payout.toString(), size: 8.5, bold: true, color: _pSlate),
-    ],
+    if (showPayout) ...[pw.SizedBox(height: 3), _pt(payout.toString(), size: 8.5, bold: true, color: _pSlate)],
   ];
 }

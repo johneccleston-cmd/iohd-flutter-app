@@ -57,11 +57,15 @@ class DashAvatar extends StatelessWidget {
   /// Tints the initials fallback (soft gradient + coloured letters) instead of flat grey.
   final Color? accent;
 
+  /// Rounded square instead of a circle.
+  final bool square;
+
   const DashAvatar({
     super.key,
     required this.name,
     required this.imageUrl,
     required this.size,
+    this.square = false,
     this.ringColor,
     this.ringWidth = 0,
     this.glowColor,
@@ -102,19 +106,20 @@ class DashAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final image = ClipOval(
-      child: SizedBox(
-        width: size,
-        height: size,
-        child: imageUrl.isEmpty
-            ? _fallback()
-            : Image.network(
-                imageUrl,
-                fit: BoxFit.cover,
-                errorBuilder: (_, _, _) => _fallback(),
-              ),
-      ),
+    final box = SizedBox(
+      width: size,
+      height: size,
+      child: imageUrl.isEmpty
+          ? _fallback()
+          : Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => _fallback(),
+            ),
     );
+    final image = square
+        ? ClipRRect(borderRadius: BorderRadius.circular(size * 0.12), child: box)
+        : ClipOval(child: box);
 
     if (ringWidth <= 0 && glowColor == null) return image;
 

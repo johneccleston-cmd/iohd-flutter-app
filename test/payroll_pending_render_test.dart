@@ -77,6 +77,11 @@ Future<void> _shot(WidgetTester tester, String name, {bool empty = false, bool e
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+    // The panel starts collapsed and only loads once opened.
+    await tester.tap(find.text('Pending commission'));
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
     if (expand) {
       await tester.tap(find.text('Daniel Baty'));
       await tester.pump(const Duration(milliseconds: 200));

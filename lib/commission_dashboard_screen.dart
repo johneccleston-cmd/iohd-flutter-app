@@ -185,6 +185,17 @@ class _CommissionDashboardContentState
   void initState() {
     super.initState();
     _fetchLiveCommissionData();
+    payrollRunVersion.addListener(_onPayrollRun);
+  }
+
+  @override
+  void dispose() {
+    payrollRunVersion.removeListener(_onPayrollRun);
+    super.dispose();
+  }
+
+  void _onPayrollRun() {
+    if (mounted) _fetchLiveCommissionData(fresh: true);
   }
 
   @override
@@ -561,13 +572,6 @@ class _CommissionDashboardContentState
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      if (person.strikes > 0 || person.penalties != 0) ...[
-                        const SizedBox(width: 8),
-                        _StrikeChip(
-                          strikes: person.strikes,
-                          penalties: person.penalties,
-                        ),
-                      ],
                     ],
                   ),
                   const Divider(height: 1, color: Color(0xFFE2E8F0)),
@@ -620,51 +624,6 @@ class _CommissionDashboardContentState
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _StrikeChip extends StatelessWidget {
-  final int strikes;
-  final double penalties;
-  const _StrikeChip({required this.strikes, required this.penalties});
-
-  @override
-  Widget build(BuildContext context) {
-    final parts = <String>[
-      if (strikes > 0) '$strikes ${strikes == 1 ? 'strike' : 'strikes'}',
-      // The ledger stores callback deductions as negative amounts.
-      if (penalties != 0) '-${_money(penalties.abs())}',
-    ];
-    return Tooltip(
-      message: 'Callback strikes and retainage penalties this year',
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: const Color(0xFFFEF2F2),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFFECACA)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.warning_amber_rounded,
-              size: 12,
-              color: Color(0xFFDC2626),
-            ),
-            const SizedBox(width: 4),
-            Text(
-              parts.join(' · '),
-              style: const TextStyle(
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFFB91C1C),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

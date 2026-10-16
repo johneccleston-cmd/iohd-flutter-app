@@ -68,6 +68,7 @@ Future<void> _open(WidgetTester tester) async {
 }
 
 void main() {
+  AssistantChat.animateAnswers = false; // these mock servers send one JSON reply; do not wait for it to be typed out
   setUpAll(() async {
     await _loadFont('Segoe UI', [r'C:\Windows\Fonts\segoeui.ttf', r'C:\Windows\Fonts\segoeuib.ttf', r'C:\Windows\Fonts\seguisb.ttf']);
     await _loadFont('Cambria', [r'C:\Windows\Fonts\cambria.ttc', r'C:\Windows\Fonts\cambriab.ttf']);
@@ -93,6 +94,12 @@ void main() {
     });
     await http.runWithClient(() async {
       await _open(tester);
+      // Opening starts on the welcome screen, with the saved chat waiting in the sidebar.
+      expect(find.textContaining('Ask about jobs'), findsOneWidget);
+      expect(find.text('How many jobs are open?'), findsOneWidget);
+      expect(find.textContaining('42 open jobs'), findsNothing);
+      await tester.tap(find.text('How many jobs are open?'));
+      await _pumpMs(tester, 300);
       expect(find.text('How many jobs are open?'), findsNWidgets(3)); // the thread, its sidebar entry and the header title
       expect(find.textContaining('42 open jobs'), findsOneWidget);
       expect(find.textContaining('Ask about jobs'), findsNothing);
@@ -103,6 +110,8 @@ void main() {
     _sent.clear();
     await http.runWithClient(() async {
       await _open(tester);
+      await tester.tap(find.text('How many jobs are open?')); // the panel opens on the welcome screen; pick the saved chat
+      await _pumpMs(tester, 300);
       // hover the question so the edit button shows, then press it
       final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await mouse.addPointer(location: Offset.zero);
@@ -126,7 +135,7 @@ void main() {
     }, () => MockClient(_server));
 
     final saved = json.decode((await SharedPreferences.getInstance()).getString('iohd_assistant_chat')!);
-    expect((((saved['tabs'] as List).single as Map)['messages'] as List).map((m) => m['text']), [
+    expect((((saved['tabs'] as List).first as Map)['messages'] as List).map((m) => m['text']), [
       'How many jobs are open this week?',
       'Answer 1',
     ]);
