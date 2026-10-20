@@ -101,6 +101,9 @@ Map<String, dynamic> _full() => {
       'payments': [
         {'amount': '1500.00', 'received_on': '2026-10-09T15:00:00Z', 'payment_type': 'Check', 'transaction_type': 'Payment'},
       ],
+      'stripePayments': [
+        {'id': 'stripe-pi_1', 'amount': '1225.00', 'received_on': '2026-10-17T15:00:00Z', 'kind': 'payment'},
+      ],
       'history': [
         {'old_status': 'Created', 'new_status': 'Scheduled', 'changed_at': '2026-10-01T14:00:00Z'},
         {'old_status': 'Scheduled', 'new_status': 'Final Invoice Sent', 'changed_at': '2026-10-09T14:00:00Z'},
@@ -163,6 +166,11 @@ http.Client _mock({int filesStatus = 200}) => MockClient((req) async {
         return http.Response(jsonEncode({'success': true}), 200);
       }
       if (req.method == 'DELETE') return http.Response(jsonEncode({'success': true}), 200);
+      if (req.method == 'POST' && path.endsWith('/payment-link')) {
+        final body = jsonDecode(req.body);
+        if ((body['amount'] as num) > 100000) return http.Response(jsonEncode({'error': 'Amount must be between \$1 and \$250000.'}), 400);
+        return http.Response(jsonEncode({'url': 'https://integrity-backend-cr02.onrender.com/pay/eyJqIjoiMTA5NjE4MzEzNyJ9.abc123', 'amount': body['amount'], 'type': body['type']}), 200);
+      }
       return http.Response(jsonEncode(_full()), 200);
     });
 
@@ -215,6 +223,39 @@ void main() {
       await t.pump(const Duration(milliseconds: 400));
       expect(find.textContaining('is not saved yet'), findsOneWidget);
       expect(find.text('Final Invoice Sent'), findsWidgets); // value on screen is unchanged
+    }, () => _mock());
+  });
+
+  testWidgets('request payment makes a pay link', (t) async {
+    t.view.physicalSize = const Size(1500, 900);
+    t.view.devicePixelRatio = 1;
+    await http.runWithClient(() async {
+      await t.pumpWidget(RepaintBoundary(
+        key: const ValueKey('shot'),
+        child: MaterialApp(
+          theme: ThemeData(useMaterial3: true, fontFamily: 'Segoe UI'),
+          home: const JobDetailScreen(jobId: '1096183137'),
+        ),
+      ));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Payment'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Request payment'));
+      await t.pumpAndSettle();
+      // Starts on the balance due (950.00).
+      expect(find.widgetWithText(TextField, '950.00'), findsOneWidget);
+      await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/job_detail_request_payment.png'));
+      await t.enterText(find.byType(TextField), '999999');
+      await t.tap(find.text('Create link'));
+      await t.pumpAndSettle();
+      expect(find.textContaining('Amount must be between'), findsOneWidget);
+      await t.enterText(find.byType(TextField), '1225');
+      await t.tap(find.text('Create link'));
+      await t.pumpAndSettle();
+      expect(find.textContaining('/pay/eyJ'), findsOneWidget);
+      expect(find.text('Copy link'), findsOneWidget);
+      expect(t.takeException(), isNull);
+      await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/job_detail_payment_link.png'));
     }, () => _mock());
   });
 

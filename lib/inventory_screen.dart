@@ -1,21 +1,21 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'widgets/dashboard_kit.dart';
+import 'widgets/flat_page.dart';
 
 // --- Shared Design Tokens ---
-const Color _brandRed = Color(0xFFCC0007);
-const Color _inkColor = Color(0xFF181B1F);
-const Color _slateColor = Color(0xFF5B6572);
-const Color _strokeBorder = Color(0xFFE4E7EC);
-const Color _fieldFill = Color(0xFFF6F7F9);
-const Color _okGreen = Color(0xFF1E7B4F);
-const Color _warnAmber = Color(0xFFB45309);
-const Color _pageBg = AppTheme.bgColor;
+const Color _brandRed = DashUi.red;
+const Color _inkColor = DashUi.ink;
+const Color _slateColor = DashUi.slate;
+const Color _strokeBorder = DashUi.line;
+const Color _fieldFill = DashUi.faint;
+const Color _okGreen = DashUi.emeraldDeep;
+const Color _warnAmber = DashUi.amber;
 
 // Used until the API returns a per-item minimum.
 const int _kLowStockThreshold = 5;
@@ -46,9 +46,8 @@ class _Item {
 
   factory _Item.fromJson(Map<String, dynamic> j) {
     final rawQty = j['qty'];
-    final qty = int.tryParse('$rawQty') ??
-        double.tryParse('$rawQty')?.round() ??
-        0;
+    final qty =
+        int.tryParse('$rawQty') ?? double.tryParse('$rawQty')?.round() ?? 0;
     final rawSku = (j['sku'] ?? '').toString().trim();
     return _Item(
       name: (j['name'] ?? 'Unknown').toString(),
@@ -109,10 +108,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
     });
 
     try {
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/get_full_inventory'),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 15));
+      final response = await http
+          .get(
+            Uri.parse('$kApiBaseUrl/get_full_inventory'),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 15));
       if (!mounted) return;
 
       if (response.statusCode == 200) {
@@ -167,8 +168,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
         case _SortBy.name:
           return a.name.toLowerCase().compareTo(b.name.toLowerCase());
         case _SortBy.category:
-          final c = a.category.toLowerCase().compareTo(b.category.toLowerCase());
-          return c != 0 ? c : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+          final c = a.category.toLowerCase().compareTo(
+            b.category.toLowerCase(),
+          );
+          return c != 0
+              ? c
+              : a.name.toLowerCase().compareTo(b.name.toLowerCase());
         case _SortBy.stock:
           return a.stock.compareTo(b.stock);
         case _SortBy.status:
@@ -214,144 +219,66 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: _pageBg,
-      body: LayoutBuilder(builder: (context, c) {
-        final narrow = c.maxWidth < 720;
-        final pad = narrow ? 16.0 : 32.0;
+      backgroundColor: Colors.white,
+      body: LayoutBuilder(
+        builder: (context, c) {
+          final narrow = c.maxWidth < 720;
 
-        return Padding(
-          padding: EdgeInsets.fromLTRB(pad, pad, pad, narrow ? 0 : pad),
-          child: Column(
+          return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildHeader(narrow),
-              const SizedBox(height: 20),
-              if (_errorMessage.isNotEmpty && _items.isNotEmpty) ...[
+              _buildHeader(),
+              SizedBox(
+                height: 3,
+                child: _isLoading && _items.isNotEmpty
+                    ? const LinearProgressIndicator(
+                        minHeight: 3,
+                        color: _inkColor,
+                        backgroundColor: _strokeBorder,
+                      )
+                    : null,
+              ),
+              if (_errorMessage.isNotEmpty && _items.isNotEmpty)
                 _buildErrorBanner(),
-                const SizedBox(height: 16),
-              ],
-              if (_items.isNotEmpty) ...[
-                _buildMetrics(narrow),
-                const SizedBox(height: 20),
-              ],
+              if (_items.isNotEmpty) _buildMetrics(),
               Expanded(child: _buildBody(narrow)),
             ],
-          ),
-        );
-      }),
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildHeader(bool narrow) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Inventory',
-                    style: TextStyle(
-                        fontSize: 26,
-                        fontWeight: FontWeight.w800,
-                        color: _inkColor,
-                        letterSpacing: -0.6),
-                  ),
-                  if (_lastUpdated != null) ...[
-                    const SizedBox(height: 2),
-                    Text(_updatedText(),
-                        style: const TextStyle(
-                            fontSize: 13, color: _slateColor)),
-                  ],
-                ],
-              ),
-            ),
-            OutlinedButton.icon(
-              onPressed: _isLoading ? null : _fetchInventory,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Refresh',
-                  style: TextStyle(fontWeight: FontWeight.w600)),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: _inkColor,
-                side: const BorderSide(color: _strokeBorder),
-                backgroundColor: Colors.white,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
-              ),
-            ),
-          ],
-        ),
-        if (_isLoading && _items.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: const LinearProgressIndicator(
-              minHeight: 3,
-              color: _brandRed,
-              backgroundColor: _strokeBorder,
+  Widget _buildHeader() {
+    return PageBanner(
+      title: 'Stock Levels',
+      actions: [
+        if (_lastUpdated != null)
+          Text(
+            _updatedText(),
+            style: const TextStyle(
+              fontSize: 12.5,
+              color: Colors.white70,
+              fontWeight: FontWeight.w500,
             ),
           ),
-        ],
+        PageBanner.refresh(onPressed: _isLoading ? null : _fetchInventory),
       ],
     );
   }
 
   // ---- metrics ------------------------------------------------------------
-  Widget _buildMetrics(bool narrow) {
+  Widget _buildMetrics() {
     final totalUnits = _items.fold<int>(0, (s, i) => s + i.stock);
     final low = _count(_Status.low);
     final out = _count(_Status.out);
 
-    final cards = [
-      _MetricCard(
-          title: 'Unique items',
-          value: '${_items.length}',
-          icon: Icons.inventory_2_outlined),
-      _MetricCard(
-          title: 'Units on hand',
-          value: '$totalUnits',
-          icon: Icons.stacked_bar_chart_rounded),
-      _MetricCard(
-          title: 'Low stock',
-          value: '$low',
-          icon: Icons.warning_amber_rounded,
-          tone: low > 0 ? _warnAmber : null),
-      _MetricCard(
-          title: 'Out of stock',
-          value: '$out',
-          icon: Icons.remove_shopping_cart_outlined,
-          tone: out > 0 ? _brandRed : null),
-    ];
-
-    if (!narrow) {
-      return Row(
-        children: [
-          for (int i = 0; i < cards.length; i++) ...[
-            Expanded(child: cards[i]),
-            if (i != cards.length - 1) const SizedBox(width: 16),
-          ],
-        ],
-      );
-    }
-    return Column(
-      children: [
-        Row(children: [
-          Expanded(child: cards[0]),
-          const SizedBox(width: 12),
-          Expanded(child: cards[1]),
-        ]),
-        const SizedBox(height: 12),
-        Row(children: [
-          Expanded(child: cards[2]),
-          const SizedBox(width: 12),
-          Expanded(child: cards[3]),
-        ]),
+    return FlatStats(
+      stats: [
+        FlatStat('Unique items', '${_items.length}'),
+        FlatStat('Units on hand', '$totalUnits'),
+        FlatStat('Low stock', '$low', tone: low > 0 ? _warnAmber : null),
+        FlatStat('Out of stock', '$out', tone: out > 0 ? _brandRed : null),
       ],
     );
   }
@@ -380,39 +307,29 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
     final visible = _visible;
 
-    return Container(
-      margin: EdgeInsets.only(bottom: narrow ? 16 : 0),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _strokeBorder),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildToolbar(visible.length),
-          const Divider(height: 1, color: _strokeBorder),
-          if (!narrow) _buildTableHeader(),
-          Expanded(
-            child: visible.isEmpty
-                ? _buildNoMatches()
-                : RefreshIndicator(
-                    color: _brandRed,
-                    onRefresh: _fetchInventory,
-                    child: ListView.separated(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      itemCount: visible.length,
-                      separatorBuilder: (_, __) =>
-                          const Divider(height: 1, color: _strokeBorder),
-                      itemBuilder: (_, i) => narrow
-                          ? _narrowRow(visible[i])
-                          : _wideRow(visible[i]),
-                    ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildToolbar(visible.length),
+        const Divider(height: 1, color: _strokeBorder),
+        if (!narrow) _buildTableHeader(),
+        Expanded(
+          child: visible.isEmpty
+              ? _buildNoMatches()
+              : RefreshIndicator(
+                  color: _brandRed,
+                  onRefresh: _fetchInventory,
+                  child: ListView.separated(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    itemCount: visible.length,
+                    separatorBuilder: (_, _) =>
+                        const Divider(height: 1, color: _strokeBorder),
+                    itemBuilder: (_, i) =>
+                        narrow ? _narrowRow(visible[i]) : _wideRow(visible[i]),
                   ),
-          ),
-        ],
-      ),
+                ),
+        ),
+      ],
     );
   }
 
@@ -421,7 +338,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
         _query.isNotEmpty || _category != null || _statusFilter != null;
 
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -431,8 +348,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               ConstrainedBox(
-                constraints:
-                    const BoxConstraints(minWidth: 220, maxWidth: 360),
+                constraints: const BoxConstraints(minWidth: 220, maxWidth: 360),
                 child: SizedBox(
                   width: 340,
                   height: 40,
@@ -441,12 +357,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     onChanged: (v) => setState(() => _query = v),
                     style: const TextStyle(fontSize: 14),
                     decoration: InputDecoration(
-                      hintText:
-                          _hasSku ? 'Search name, SKU or category' : 'Search name or category',
+                      hintText: _hasSku
+                          ? 'Search name, SKU or category'
+                          : 'Search name or category',
                       hintStyle: const TextStyle(
-                          color: Color(0xFF9CA3AF), fontSize: 13),
-                      prefixIcon: const Icon(Icons.search,
-                          size: 18, color: _slateColor),
+                        color: Color(0xFF9CA3AF),
+                        fontSize: 13,
+                      ),
+                      prefixIcon: const Icon(
+                        Icons.search,
+                        size: 18,
+                        color: _slateColor,
+                      ),
                       suffixIcon: _query.isEmpty
                           ? null
                           : IconButton(
@@ -466,8 +388,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(8),
-                        borderSide:
-                            const BorderSide(color: _brandRed, width: 1.2),
+                        borderSide: const BorderSide(
+                          color: _brandRed,
+                          width: 1.2,
+                        ),
                       ),
                     ),
                   ),
@@ -492,11 +416,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 const SizedBox(width: 12),
                 InkWell(
                   onTap: _clearFilters,
-                  child: const Text('Clear filters',
-                      style: TextStyle(
-                          fontSize: 12,
-                          color: _brandRed,
-                          fontWeight: FontWeight.w700)),
+                  child: const Text(
+                    'Clear filters',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: _brandRed,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ),
               ],
             ],
@@ -517,15 +444,21 @@ class _InventoryScreenState extends State<InventoryScreen> {
       child: DropdownButtonHideUnderline(
         child: DropdownButton<String?>(
           value: _category,
-          icon: const Icon(Icons.keyboard_arrow_down_rounded,
-              size: 18, color: _slateColor),
+          icon: const Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: 18,
+            color: _slateColor,
+          ),
           style: const TextStyle(fontSize: 13, color: _inkColor),
           borderRadius: BorderRadius.circular(8),
           items: [
             const DropdownMenuItem<String?>(
-                value: null, child: Text('All categories')),
+              value: null,
+              child: Text('All categories'),
+            ),
             ..._categories.map(
-                (c) => DropdownMenuItem<String?>(value: c, child: Text(c))),
+              (c) => DropdownMenuItem<String?>(value: c, child: Text(c)),
+            ),
           ],
           onChanged: (v) => setState(() => _category = v),
         ),
@@ -562,11 +495,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
           Expanded(flex: 5, child: _sortHeader('Item', _SortBy.name)),
           if (_hasSku)
             const Expanded(
-                flex: 3,
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text('SKU', style: _headStyle),
-                )),
+              flex: 3,
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text('SKU', style: _headStyle),
+              ),
+            ),
           Expanded(flex: 3, child: _sortHeader('Category', _SortBy.category)),
           Expanded(flex: 4, child: _sortHeader('Stock', _SortBy.stock)),
           Expanded(flex: 3, child: _sortHeader('Status', _SortBy.status)),
@@ -575,8 +509,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  static const _headStyle = TextStyle(
-      fontSize: 12, fontWeight: FontWeight.w700, color: _slateColor);
+  static const _headStyle =
+      TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _inkColor);
 
   Widget _sortHeader(String label, _SortBy by) {
     final active = _sortBy == by;
@@ -587,15 +521,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(label,
-                style: _headStyle.copyWith(
-                    color: active ? _inkColor : _slateColor)),
+            Text(label, style: _headStyle),
             const SizedBox(width: 4),
             Icon(
               active
                   ? (_ascending
-                      ? Icons.arrow_upward_rounded
-                      : Icons.arrow_downward_rounded)
+                        ? Icons.arrow_upward_rounded
+                        : Icons.arrow_downward_rounded)
                   : Icons.unfold_more_rounded,
               size: 14,
               color: active ? _inkColor : const Color(0xFF9CA3AF),
@@ -642,25 +574,32 @@ class _InventoryScreenState extends State<InventoryScreen> {
         children: [
           Expanded(
             flex: 5,
-            child: Text(item.name,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 14,
-                    color: _inkColor)),
+            child: Text(
+              item.name,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+                color: _inkColor,
+              ),
+            ),
           ),
           if (_hasSku)
             Expanded(
               flex: 3,
-              child: Text(item.sku.isEmpty ? '—' : item.sku,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, color: _slateColor)),
+              child: Text(
+                item.sku.isEmpty ? '—' : item.sku,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 14, color: _slateColor),
+              ),
             ),
           Expanded(
             flex: 3,
-            child: Text(item.category,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 14, color: _slateColor)),
+            child: Text(
+              item.category,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14, color: _slateColor),
+            ),
           ),
           Expanded(
             flex: 4,
@@ -668,14 +607,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
               children: [
                 SizedBox(
                   width: 44,
-                  child: Text('${item.stock}',
-                      style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: item.status == _Status.inStock
-                              ? _inkColor
-                              : color,
-                          fontFeatures: _figures)),
+                  child: Text(
+                    '${item.stock}',
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: item.status == _Status.inStock ? _inkColor : color,
+                      fontFeatures: _figures,
+                    ),
+                  ),
                 ),
                 Expanded(
                   child: Padding(
@@ -717,15 +657,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(item.name,
-                        style: const TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: 15,
-                            color: _inkColor)),
+                    Text(
+                      item.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 15,
+                        color: _inkColor,
+                      ),
+                    ),
                     const SizedBox(height: 2),
-                    Text(sub,
-                        style: const TextStyle(
-                            fontSize: 13, color: _slateColor)),
+                    Text(
+                      sub,
+                      style: const TextStyle(fontSize: 13, color: _slateColor),
+                    ),
                   ],
                 ),
               ),
@@ -736,16 +680,20 @@ class _InventoryScreenState extends State<InventoryScreen> {
           const SizedBox(height: 12),
           Row(
             children: [
-              Text('${item.stock}',
-                  style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w800,
-                      color:
-                          item.status == _Status.inStock ? _inkColor : color,
-                      fontFeatures: _figures)),
+              Text(
+                '${item.stock}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: item.status == _Status.inStock ? _inkColor : color,
+                  fontFeatures: _figures,
+                ),
+              ),
               const SizedBox(width: 6),
-              const Text('on hand',
-                  style: TextStyle(fontSize: 12, color: _slateColor)),
+              const Text(
+                'on hand',
+                style: TextStyle(fontSize: 12, color: _slateColor),
+              ),
               const SizedBox(width: 16),
               Expanded(child: _stockBar(item)),
             ],
@@ -765,14 +713,19 @@ class _InventoryScreenState extends State<InventoryScreen> {
           children: [
             const Icon(Icons.search_off_rounded, size: 36, color: _slateColor),
             const SizedBox(height: 12),
-            const Text('No items match',
-                style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: _inkColor)),
+            const Text(
+              'No items match',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: _inkColor,
+              ),
+            ),
             const SizedBox(height: 4),
-            const Text('Try a different search or clear the filters.',
-                style: TextStyle(fontSize: 13, color: _slateColor)),
+            const Text(
+              'Try a different search or clear the filters.',
+              style: TextStyle(fontSize: 13, color: _slateColor),
+            ),
             const SizedBox(height: 12),
             TextButton(
               onPressed: _clearFilters,
@@ -797,40 +750,33 @@ class _InventoryScreenState extends State<InventoryScreen> {
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(vertical: 56, horizontal: 24),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: _strokeBorder),
-        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: _fieldFill,
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Icon(icon, size: 30, color: _slateColor),
-            ),
+            Icon(icon, size: 40, color: _slateColor),
             const SizedBox(height: 16),
-            Text(title,
-                style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w800,
-                    color: _inkColor)),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                color: _inkColor,
+              ),
+            ),
             const SizedBox(height: 6),
-            Text(message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 14, color: _slateColor)),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14, color: _slateColor),
+            ),
             const SizedBox(height: 16),
             FilledButton(
               onPressed: onAction,
               style: FilledButton.styleFrom(
                 backgroundColor: _brandRed,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
               child: Text(actionLabel),
             ),
@@ -842,22 +788,26 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   Widget _buildErrorBanner() {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
       decoration: BoxDecoration(
         color: _brandRed.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _brandRed.withValues(alpha: 0.3)),
+        border: Border(
+          bottom: BorderSide(color: _brandRed.withValues(alpha: 0.3)),
+        ),
       ),
       child: Row(
         children: [
           const Icon(Icons.error_outline, color: _brandRed, size: 20),
           const SizedBox(width: 12),
           Expanded(
-            child: Text('$_errorMessage Showing the last loaded data.',
-                style: const TextStyle(
-                    color: _brandRed,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13)),
+            child: Text(
+              '$_errorMessage Showing the last loaded data.',
+              style: const TextStyle(
+                color: _brandRed,
+                fontWeight: FontWeight.w600,
+                fontSize: 13,
+              ),
+            ),
           ),
           TextButton(
             onPressed: _isLoading ? null : _fetchInventory,
@@ -873,68 +823,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
 // ---------------------------------------------------------------------------
 // Small widgets
 // ---------------------------------------------------------------------------
-class _MetricCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color? tone; // null = neutral
-
-  const _MetricCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    this.tone,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final accent = tone ?? _slateColor;
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: tone != null ? tone!.withValues(alpha: 0.45) : _strokeBorder),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: tone != null ? tone!.withValues(alpha: 0.1) : _fieldFill,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Icon(icon, color: accent, size: 22),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        fontSize: 13,
-                        color: _slateColor,
-                        fontWeight: FontWeight.w500)),
-                const SizedBox(height: 2),
-                Text(value,
-                    style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.w800,
-                        color: tone ?? _inkColor,
-                        letterSpacing: -0.5,
-                        fontFeatures: _figures)),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _StatusPill extends StatelessWidget {
   final _Status status;
   final Color color;
@@ -963,9 +851,14 @@ class _StatusPill extends StatelessWidget {
             decoration: BoxDecoration(color: color, shape: BoxShape.circle),
           ),
           const SizedBox(width: 6),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.w700, color: color)),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ],
       ),
     );

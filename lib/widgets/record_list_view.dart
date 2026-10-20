@@ -11,6 +11,7 @@ import '../config/auth_session.dart';
 import '../theme/app_theme.dart';
 import '../utils/status_colors.dart';
 import 'dashboard_kit.dart';
+import 'flat_page.dart';
 
 /// What differs between the Jobs list and the Estimates list. Everything else is shared.
 class RecordListConfig {
@@ -298,61 +299,29 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
   Widget build(BuildContext context) {
     super.build(context);
     return Scaffold(
-      backgroundColor: AppTheme.bgColor,
-      body: LayoutBuilder(
-        builder: (context, c) {
-          final wide = c.maxWidth >= _sidebarBreakpoint;
-          final pad = c.maxWidth < 600 ? 12.0 : (c.maxWidth < 1000 ? 16.0 : 24.0);
-          return Align(
-            alignment: Alignment.topCenter,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1600),
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(pad, (pad * 0.8).roundToDouble(), pad, pad),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _header(),
-                    SizedBox(height: pad * 0.7),
-                    Expanded(
-                      child: wide
-                          ? Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                SizedBox(width: 248, child: _statusSidebar()),
-                                SizedBox(width: pad),
-                                Expanded(child: _tableCard(showMenuFilter: false)),
-                              ],
-                            )
-                          : _tableCard(showMenuFilter: true),
-                    ),
-                  ],
-                ),
-              ),
+      backgroundColor: Colors.white,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageBanner(title: cfg.plural, actions: [PageBanner.refresh(onPressed: _loading ? null : _refresh)]),
+          Expanded(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final wide = c.maxWidth >= _sidebarBreakpoint;
+                return wide
+                    ? Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(width: 248, child: _statusSidebar()),
+                          Expanded(child: _tableCard(showMenuFilter: false)),
+                        ],
+                      )
+                    : _tableCard(showMenuFilter: true);
+              },
             ),
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _header() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                cfg.plural,
-                style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.4),
-              ),
-            ],
           ),
-        ),
-        IconButton(tooltip: 'Refresh', icon: const Icon(Icons.refresh_rounded), onPressed: _loading ? null : _refresh),
-      ],
+        ],
+      ),
     );
   }
 
@@ -360,8 +329,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
 
   Widget _statusSidebar() {
     return Container(
-      decoration: DashUi.panel(),
-      clipBehavior: Clip.antiAlias,
+      decoration: const BoxDecoration(border: Border(right: BorderSide(color: DashUi.line))),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -492,10 +460,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
   // ---- table ----------------------------------------------------------------
 
   Widget _tableCard({required bool showMenuFilter}) {
-    return Container(
-      decoration: DashUi.panel(),
-      clipBehavior: Clip.antiAlias,
-      child: LayoutBuilder(
+    return LayoutBuilder(
         builder: (context, c) {
           final compact = c.maxWidth < _compactBreakpoint;
           return Column(
@@ -509,13 +474,12 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
             ],
           );
         },
-      ),
     );
   }
 
   Widget _toolbar(bool showMenuFilter) {
     return Padding(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
       child: Row(
         children: [
           if (showMenuFilter) ...[_statusMenu(), const SizedBox(width: 10)],
@@ -596,15 +560,15 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
   bool _showPeople(double width) => width >= 880;
 
   Widget _headerRow(double width) {
-    TextStyle s = const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate, letterSpacing: 0.6);
+    TextStyle s = const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink);
     Widget cell(String t, {double? w, TextAlign align = TextAlign.left, int flex = 0}) {
-      final text = Text(t.toUpperCase(), style: s, textAlign: align, maxLines: 1);
+      final text = Text(t, style: s, textAlign: align, maxLines: 1);
       return flex > 0 ? Expanded(flex: flex, child: text) : SizedBox(width: w, child: text);
     }
 
     return Container(
       color: DashUi.faint,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       child: Row(
         children: [
           cell(cfg.idLabel, w: _idW),
@@ -645,7 +609,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
         itemCount: 9,
         separatorBuilder: (_, _) => const Divider(height: 1, color: DashUi.line),
         itemBuilder: (_, _) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           child: Row(
             children: [
               bar(compact ? 150 : 90, 14),
@@ -745,7 +709,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
         onTap: () => _open(r),
         hoverColor: DashUi.faint,
         child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16, vertical: compact ? 12 : 11),
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: compact ? 12 : 11),
           child: compact
               ? Row(
                   children: [
@@ -827,35 +791,23 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
     return DateFormat('MMM d, y').format(DateTime(int.parse(m.group(1)!), int.parse(m.group(2)!), int.parse(m.group(3)!)));
   }
 
-  /// Status as a tinted pill. The text always says the status, so colour is never the only signal.
+  /// Status as a dot and word. The text always says the status, so colour is never the only signal.
   Widget _pill(String status) {
     final c = statusColor(status);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: c.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: c.withValues(alpha: 0.30)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 6,
-            height: 6,
-            decoration: BoxDecoration(color: c, shape: BoxShape.circle),
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            status,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: Color.lerp(c, Colors.black, 0.4)),
           ),
-          const SizedBox(width: 6),
-          Flexible(
-            child: Text(
-              status,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Color.lerp(c, Colors.black, 0.4)),
-            ),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -892,7 +844,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
       ],
     );
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: compact ? 4 : 2),
+      padding: EdgeInsets.symmetric(horizontal: 24, vertical: compact ? 4 : 2),
       decoration: const BoxDecoration(
         color: DashUi.faint,
         border: Border(top: BorderSide(color: DashUi.line)),

@@ -8,9 +8,8 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
-import 'theme/app_theme.dart';
-import 'widgets/app_components.dart';
-import 'widgets/app_dialog.dart';
+import 'widgets/dashboard_kit.dart';
+import 'widgets/flat_page.dart';
 
 /// Browse and search the signed-in person's Google Drive (Shared Drives included).
 ///
@@ -194,14 +193,22 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: AppTheme.bgColor,
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1000),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+      backgroundColor: Colors.white,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageBanner(
+            title: 'Documents',
+            actions: [
+              if (_phase == _Phase.connected && _email != null)
+                Flexible(
+                  child: Text(_email!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: Colors.white70)),
+                ),
+            ],
+          ),
+          Expanded(
             child: switch (_phase) {
-              _Phase.loading => const Center(child: CircularProgressIndicator()),
+              _Phase.loading => const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
               _Phase.error => _message_(Icons.cloud_off_rounded, 'Could not load Documents', _error ?? '', 'Retry', _loadStatus),
               _Phase.notConfigured => _message_(Icons.settings_suggest_rounded, 'Google Drive is not set up yet',
                   'The server needs its Google service account key before Documents can open. Ask whoever manages the backend.', 'Check again', _loadStatus),
@@ -209,25 +216,33 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
               _Phase.connected => _browser(),
             },
           ),
-        ),
+        ],
       ),
     );
   }
 
   Widget _message_(IconData icon, String title, String body, String action, VoidCallback onTap) {
     return Center(
-      child: AppCard(
-        padding: const EdgeInsets.all(28),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 40, color: AppTheme.secondaryText),
-            const SizedBox(height: 12),
-            Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: AppTheme.primaryText)),
+            Icon(icon, size: 44, color: DashUi.slate),
+            const SizedBox(height: 14),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: DashUi.ink)),
             const SizedBox(height: 6),
-            Text(body, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.secondaryText)),
+            Text(body, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14.5, color: DashUi.slate)),
             const SizedBox(height: 18),
-            FilledButton(onPressed: onTap, child: Text(action)),
+            FilledButton(
+              onPressed: onTap,
+              style: FilledButton.styleFrom(
+                backgroundColor: DashUi.ink,
+                minimumSize: const Size(0, 40),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              child: Text(action),
+            ),
           ]),
         ),
       ),
@@ -235,55 +250,65 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
   }
 
   Widget _browser() {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Row(children: [
-        const Text('Documents', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w800, color: AppTheme.primaryText)),
-        const Spacer(),
-        if (_email != null) Flexible(child: Text(_email!, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.secondaryText))),
-      ]),
-      const SizedBox(height: 12),
-      TextField(
-        controller: _search,
-        textInputAction: TextInputAction.search,
-        onSubmitted: (_) => _runSearch(),
-        decoration: appFieldDecoration(hint: 'Search file names and contents (press Enter)').copyWith(
-          prefixIcon: const Icon(Icons.search_rounded),
-          suffixIcon: _search.text.isEmpty && _query.isEmpty
-              ? null
-              : IconButton(
-                  tooltip: 'Clear search',
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () {
-                    _search.clear();
-                    _runSearch();
-                    setState(() {});
-                  },
-                ),
-        ),
-        onChanged: (_) => setState(() {}),
-      ),
-      const SizedBox(height: 10),
-      if (_query.isEmpty)
-        Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
-          for (var i = 0; i < _path.length; i++) ...[
-            if (i > 0) const Icon(Icons.chevron_right_rounded, size: 18, color: AppTheme.sectionLabel),
-            TextButton(
-              onPressed: i == _path.length - 1 ? null : () => _goTo(i),
-              child: Text(_path[i].name),
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      Padding(
+        padding: const EdgeInsets.fromLTRB(24, 16, 24, 8),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: TextField(
+              controller: _search,
+              textInputAction: TextInputAction.search,
+              onSubmitted: (_) => _runSearch(),
+              style: const TextStyle(fontSize: 14),
+              decoration: flatSearchDecoration('Search file names and contents (press Enter)').copyWith(
+                suffixIcon: _search.text.isEmpty && _query.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: 'Clear search',
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: () {
+                          _search.clear();
+                          _runSearch();
+                          setState(() {});
+                        },
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
             ),
-          ],
-        ])
-      else
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Text('Results for "$_query", newest first', style: const TextStyle(color: AppTheme.secondaryText)),
+          ),
         ),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: _query.isEmpty
+            ? Wrap(crossAxisAlignment: WrapCrossAlignment.center, children: [
+                for (var i = 0; i < _path.length; i++) ...[
+                  if (i > 0) const Icon(Icons.chevron_right_rounded, size: 18, color: DashUi.muted),
+                  TextButton(
+                    onPressed: i == _path.length - 1 ? null : () => _goTo(i),
+                    style: TextButton.styleFrom(
+                      foregroundColor: DashUi.slate,
+                      disabledForegroundColor: DashUi.ink,
+                      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                    ),
+                    child: Text(_path[i].name),
+                  ),
+                ],
+              ])
+            : Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                child: Text('Results for "$_query", newest first', style: const TextStyle(fontSize: 14, color: DashUi.slate)),
+              ),
+      ),
+      Container(height: 1, color: DashUi.line),
       Expanded(child: _list()),
     ]);
   }
 
   Widget _list() {
-    if (_listLoading) return const Center(child: CircularProgressIndicator());
+    if (_listLoading) return const Center(child: CircularProgressIndicator(strokeWidth: 2.5));
     if (_listError != null) {
       return _message_(Icons.error_outline_rounded, 'Could not load files', _listError!, 'Retry', _loadFiles);
     }
@@ -291,41 +316,39 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
       return Center(
         child: Text(
           _query.isNotEmpty ? 'Nothing matched "$_query".' : 'This folder is empty.',
-          style: const TextStyle(color: AppTheme.secondaryText),
+          style: const TextStyle(fontSize: 14.5, color: DashUi.slate),
         ),
       );
     }
-    return AppCard(
-      padding: EdgeInsets.zero,
-      child: ListView.separated(
-        itemCount: _items.length + (_nextPage != null ? 1 : 0),
-        separatorBuilder: (_, _) => const Divider(height: 1),
-        itemBuilder: (context, i) {
-          if (i == _items.length) {
-            return Padding(
-              padding: const EdgeInsets.all(12),
-              child: Center(
-                child: _loadingMore
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                    : TextButton(onPressed: () => _loadFiles(more: true), child: const Text('Load more')),
-              ),
-            );
-          }
-          final item = _items[i];
-          final isFolder = item['isFolder'] == true;
-          final modified = DateTime.tryParse('${item['modifiedTime'] ?? ''}')?.toLocal();
-          final owner = item['owner'] as String?;
-          return ListTile(
-            leading: Icon(_iconFor(item), color: isFolder ? AppTheme.notesHeader : AppTheme.secondaryText),
-            title: Text('${item['name']}', maxLines: 1, overflow: TextOverflow.ellipsis),
-            subtitle: modified == null && owner == null
-                ? null
-                : Text([if (modified != null) 'Edited ${DateFormat.yMMMd().format(modified)}', ?owner].join(' · ')),
-            trailing: isFolder ? const Icon(Icons.chevron_right_rounded) : const Icon(Icons.open_in_new_rounded, size: 18),
-            onTap: () => _open(item),
+    return ListView.separated(
+      itemCount: _items.length + (_nextPage != null ? 1 : 0),
+      separatorBuilder: (_, _) => const Divider(height: 1, color: DashUi.line),
+      itemBuilder: (context, i) {
+        if (i == _items.length) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Center(
+              child: _loadingMore
+                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                  : TextButton(onPressed: () => _loadFiles(more: true), child: const Text('Load more')),
+            ),
           );
-        },
-      ),
+        }
+        final item = _items[i];
+        final isFolder = item['isFolder'] == true;
+        final modified = DateTime.tryParse('${item['modifiedTime'] ?? ''}')?.toLocal();
+        final owner = item['owner'] as String?;
+        return ListTile(
+          contentPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 2),
+          leading: Icon(_iconFor(item), color: isFolder ? DashUi.amber : DashUi.slate),
+          title: Text('${item['name']}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink)),
+          subtitle: modified == null && owner == null
+              ? null
+              : Text([if (modified != null) 'Edited ${DateFormat.yMMMd().format(modified)}', ?owner].join(' · '), style: const TextStyle(fontSize: 13.5, color: DashUi.slate)),
+          trailing: isFolder ? const Icon(Icons.chevron_right_rounded) : const Icon(Icons.open_in_new_rounded, size: 18),
+          onTap: () => _open(item),
+        );
+      },
     );
   }
 

@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, FilteringTextInputFormatter;
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -50,6 +51,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   String? _fromEstimate; // for a job: the estimate it most likely came from
   String? _becameJob; // for an estimate: the job it most likely became
   List<Map<String, dynamic>> _payments = const [];
+  List<Map<String, dynamic>> _stripePayments = const []; // shown, but not counted in any total yet
   List<Map<String, dynamic>> _history = const [];
   List<Map<String, dynamic>> _ourFiles = const []; // pictures + documents uploaded here (not Service Fusion's)
   bool _filesEnabled = true; // false when the backend says file storage isn't set up
@@ -81,6 +83,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       _fromEstimate = null;
       _becameJob = null;
       _payments = const [];
+      _stripePayments = const [];
       _history = const [];
       _ourFiles = const [];
       _ourNotes = const [];
@@ -132,6 +135,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _fromEstimate = data['fromEstimate']?.toString();
         _becameJob = data['becameJob']?.toString();
         _payments = rows('payments');
+        _stripePayments = rows('stripePayments');
         _history = rows('history');
         _loading = false;
       });
@@ -1587,6 +1591,24 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       ),
       // An estimate has no balance: Service Fusion carries the whole quote in that field.
       if (!_isEstimate) _sfRow(Icons.account_balance_wallet_outlined, 'Balance Due', job['due_total'] == null ? null : _balanceText(job)),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => _PaymentLinkDialog(
+                jobId: widget.jobId,
+                total: _n(job['total_revenue']),
+                balance: _isEstimate ? 0 : _n(job['due_total']),
+              ),
+            ),
+            icon: const Icon(Icons.link, size: 18),
+            label: const Text('Request payment'),
+          ),
+        ),
+      ),
       if (_payments.isEmpty)
         _emptyTab(Icons.payments_outlined, 'No payments recorded', 'Payments show here once they are received.')
       else
@@ -1612,6 +1634,35 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               ],
             ),
           ),
+      if (_stripePayments.isNotEmpty) ...[
+        const Padding(
+          padding: EdgeInsets.fromLTRB(18, 14, 18, 2),
+          child: Text(
+            'Stripe payments (not counted in the balance or reports yet)',
+            style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.primaryText),
+          ),
+        ),
+        for (final p in _stripePayments)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 9),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    [_dateTime(p['received_on']), p['kind'] == 'refund' ? 'Stripe refund' : 'Stripe']
+                        .where((e) => e.trim().isNotEmpty)
+                        .join('  ·  '),
+                    style: const TextStyle(fontSize: 14, color: AppTheme.secondaryText),
+                  ),
+                ),
+                Text(
+                  _money.format(_n(p['amount'])),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.secondaryText),
+                ),
+              ],
+            ),
+          ),
+      ],
     ];
   }
 
@@ -1987,5 +2038,179 @@ extension _Recolor on Widget {
       );
     }
     return self;
+  }
+}
+
+/// "Request payment": the office picks an amount, the backend returns a signed Stripe pay link for this job, and the
+/// office copies it to the customer. The payment lands on the job by itself once Stripe confirms it.
+class _PaymentLinkDialog extends StatefulWidget {
+  final String jobId;
+  final double total;
+  final double balance;
+  const _PaymentLinkDialog({required this.jobId, required this.total, required this.balance});
+
+  @override
+  State<_PaymentLinkDialog> createState() => _PaymentLinkDialogState();
+}
+
+class _PaymentLinkDialogState extends State<_PaymentLinkDialog> {
+  final _amount = TextEditingController();
+  final _money = NumberFormat.currency(symbol: r'$');
+  String _kind = 'custom';
+  String? _error;
+  String? _url;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Most requests are the 50% deposit or the remaining balance, so start on whichever applies.
+    if (widget.balance > 0) {
+      _pick('final', widget.balance);
+    } else if (widget.total > 0) {
+      _pick('deposit', widget.total / 2);
+    }
+  }
+
+  @override
+  void dispose() {
+    _amount.dispose();
+    super.dispose();
+  }
+
+  void _pick(String kind, double amount) {
+    _kind = kind;
+    _amount.text = amount.toStringAsFixed(2);
+  }
+
+  Future<void> _create() async {
+    final amount = double.tryParse(_amount.text.trim());
+    if (amount == null || amount < 1) {
+      setState(() => _error = 'Enter an amount of at least \$1.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$kApiBaseUrl/api/jobs/${Uri.encodeComponent(widget.jobId)}/payment-link'),
+            headers: AuthSession.instance.headers(),
+            body: json.encode({'amount': amount, 'type': _kind}),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (!mounted) return;
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout(); // sends the app back to the sign-in screen
+        return;
+      }
+      final body = res.body.isEmpty ? <String, dynamic>{} : json.decode(res.body);
+      if (res.statusCode >= 200 && res.statusCode < 300 && body is Map && body['url'] != null) {
+        setState(() {
+          _url = body['url'].toString();
+          _busy = false;
+        });
+      } else {
+        setState(() {
+          _error = body is Map && body['error'] != null ? body['error'].toString() : 'Could not create the link.';
+          _busy = false;
+        });
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _error = 'Could not reach the server.';
+        _busy = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = _url;
+    return AlertDialog(
+      title: Text('Request payment · Job # ${widget.jobId}'),
+      content: SizedBox(
+        width: 480,
+        child: url != null
+            ? Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Send this link to the customer for ${_money.format(double.tryParse(_amount.text) ?? 0)}:'),
+                  const SizedBox(height: 10),
+                  SelectableText(url, style: const TextStyle(fontSize: 13, color: AppTheme.secondaryText)),
+                  const SizedBox(height: 10),
+                  const Text('It stays valid for 30 days. The payment appears on this job once the customer pays.', style: TextStyle(fontSize: 13)),
+                ],
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      if (widget.total > 0)
+                        ChoiceChip(
+                          label: Text('50% deposit ${_money.format(widget.total / 2)}'),
+                          selected: _kind == 'deposit',
+                          onSelected: (_) => setState(() => _pick('deposit', widget.total / 2)),
+                        ),
+                      if (widget.balance > 0)
+                        ChoiceChip(
+                          label: Text('Balance ${_money.format(widget.balance)}'),
+                          selected: _kind == 'final',
+                          onSelected: (_) => setState(() => _pick('final', widget.balance)),
+                        ),
+                      ChoiceChip(
+                        label: const Text('Other amount'),
+                        selected: _kind == 'custom',
+                        onSelected: (_) => setState(() => _kind = 'custom'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: _amount,
+                    autofocus: true,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                    onChanged: (_) => setState(() => _kind = 'custom'),
+                    onSubmitted: (_) => _busy ? null : _create(),
+                    decoration: InputDecoration(labelText: 'Amount', prefixText: r'$ ', errorText: _error),
+                  ),
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: Text(url == null ? 'Cancel' : 'Close')),
+        if (url == null)
+          FilledButton(
+            onPressed: _busy ? null : _create,
+            child: _busy
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('Create link'),
+          )
+        else ...[
+          TextButton(
+            onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+            child: const Text('Open'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              final messenger = ScaffoldMessenger.of(context);
+              await Clipboard.setData(ClipboardData(text: url));
+              messenger
+                ..hideCurrentSnackBar()
+                ..showSnackBar(const SnackBar(content: Text('Link copied')));
+            },
+            child: const Text('Copy link'),
+          ),
+        ],
+      ],
+    );
   }
 }

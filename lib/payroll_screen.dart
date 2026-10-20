@@ -1914,11 +1914,24 @@ class _PayrollScreenState extends State<PayrollScreen> {
             _registerCell(flex, i, () {
               final sortable = i == 0 || i == lastCol;
               final active = (i == 0 && !_sortByDue) || (i == lastCol && _sortByDue);
-              final label = Text(
-                heads[i] + (sortable && active ? (i == 0 ? '  ↑' : '  ↓') : ''),
+              final label = Text.rich(
+                TextSpan(
+                  children: [
+                    TextSpan(text: heads[i]),
+                    // An icon, not an arrow character: the default font has no ↑/↓ glyph and falls back to another face.
+                    if (sortable && active)
+                      WidgetSpan(
+                        alignment: PlaceholderAlignment.middle,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 4),
+                          child: Icon(i == 0 ? Icons.arrow_upward : Icons.arrow_downward, size: 14, color: DashUi.ink),
+                        ),
+                      ),
+                  ],
+                ),
                 textAlign: i == 0 ? TextAlign.left : TextAlign.right,
                 maxLines: 2, // "Retainage Released" and "Sales Commission" wrap instead of being cut off
-                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800, color: Colors.black),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink),
               );
               if (!sortable) return label;
               return Tooltip(
@@ -2008,7 +2021,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             0,
             const Text(
               'Total',
-              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink),
+              style: TextStyle(fontSize: 15.5, fontWeight: FontWeight.w800, color: DashUi.ink),
             ),
           ),
           ...() {

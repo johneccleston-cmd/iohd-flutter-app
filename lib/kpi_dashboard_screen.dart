@@ -11,7 +11,7 @@ import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
-import 'widgets/dashboard_layout.dart';
+import 'widgets/flat_page.dart';
 import 'widgets/status_pill.dart';
 
 part 'employee_kpi_screen.dart';
@@ -21,14 +21,7 @@ class KPIDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DashboardLayout(
-      title: 'KPI\'s',
-      showHeader: false,
-      showYearSelector: false,
-      builder: (context, selectedYear) {
-        return const KPIDashboardContent();
-      },
-    );
+    return const KPIDashboardContent();
   }
 }
 
@@ -114,7 +107,8 @@ class _KpiLoadError implements Exception {
 class _EmployeeUser {
   final String id;
   final String name;
-  final String jobTitle;
+  final String jobTitle; // the raw role: colours and layouts key off it
+  final String displayTitle; // what to print ("Commercial Estimator"); falls back to the role
   final String avatarUrl;
   final double? integrityScore; // null = no score recorded
   final double? yearsWorked; // null = unknown
@@ -124,6 +118,7 @@ class _EmployeeUser {
     required this.id,
     required this.name,
     required this.jobTitle,
+    required this.displayTitle,
     required this.avatarUrl,
     required this.integrityScore,
     required this.yearsWorked,
@@ -152,10 +147,13 @@ class _EmployeeUser {
       '${_str(json['first_name'])} ${_str(json['last_name'])}',
     ], 'Unnamed');
 
+    final jobTitle = _prettyRole(firstNonEmpty([json['jobTitle'], json['job_title'], json['title'], json['role']], 'Employee'));
+    final display = _str(json['displayTitle']);
     return _EmployeeUser(
       id: firstNonEmpty([json['id'], json['user_id']], name),
       name: name,
-      jobTitle: _prettyRole(firstNonEmpty([json['jobTitle'], json['job_title'], json['title'], json['role']], 'Employee')),
+      jobTitle: jobTitle,
+      displayTitle: display.isEmpty ? jobTitle : display,
       avatarUrl: firstNonEmpty(
         [json['avatarUrl'], json['avatar_url'], json['profile_image']],
         'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(name)}&background=E2E8F0&color=475569&size=512',
@@ -348,6 +346,42 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
 
   @override
   Widget build(BuildContext context) {
+    final loaded = !_isLoading && _errorMessage == null && _entries.isNotEmpty;
+    // Full page like payroll: dark banner on top, flat content underneath.
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PageBanner(
+            title: 'Team KPIs',
+            actions: [
+              if (loaded) ...[
+                Text(_rangeLabel, style: const TextStyle(color: Colors.white70, fontSize: 12.5, fontWeight: FontWeight.w600)),
+                IconButton(
+                  tooltip: 'Previous employees',
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  onPressed: _canLeft ? () => _page(-1) : null,
+                  icon: const Icon(Icons.chevron_left_rounded),
+                ),
+                IconButton(
+                  tooltip: 'Next employees',
+                  color: Colors.white,
+                  disabledColor: Colors.white38,
+                  onPressed: _canRight ? () => _page(1) : null,
+                  icon: const Icon(Icons.chevron_right_rounded),
+                ),
+              ],
+            ],
+          ),
+          Expanded(child: _body()),
+        ],
+      ),
+    );
+  }
+
+  Widget _body() {
     if (_isLoading) return const _KpiSkeleton();
 
     if (_errorMessage != null) {
@@ -379,95 +413,76 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
       );
     }
 
-    final tiles = <Widget>[
-      _StatTile(
+    final integrity = _teamAvgScore;
+    final moraleColor = _avgMorale == null ? _muted : (_avgMorale! >= 4 ? DashUi.emerald : (_avgMorale! >= 3 ? DashUi.amber : DashUi.red));
+    final integrityColor = integrity == null ? _muted : (integrity >= 90 ? DashUi.emerald : (integrity >= 75 ? DashUi.amber : DashUi.red));
+    final cards = <Widget>[
+      _HeroCard(
+        index: 0,
         icon: Icons.verified_rounded,
-        color: const Color(0xFF10B981),
-        label: 'TEAM AVG INTEGRITY',
-        value: _teamAvgScore == null
-            ? const _StatText('—')
-            : _CountUp(value: _teamAvgScore!, format: (v) => '${_fmtNum(v)}%'),
+        color: integrityColor,
+        label: 'Team integrity',
+        value: integrity,
+        format: (v) => '${_fmtNum(v)}%',
+        visual: _RingVisual(progress: (integrity ?? 0) / 100, color: integrityColor, icon: Icons.shield_rounded),
       ),
-      _StatTile(
+      _HeroCard(
+        index: 1,
         icon: Icons.monitor_heart_rounded,
-        color: _avgMorale == null ? _muted : (_avgMorale! >= 4 ? const Color(0xFF10B981) : (_avgMorale! >= 3 ? const Color(0xFFD97706) : const Color(0xFFDC2626))),
-        label: 'AVG EMPLOYEE MORALE',
-        value: _avgMorale == null
-            ? const _StatText('Not tracked yet', muted: true)
-            : _CountUp(value: _avgMorale!, format: (v) => '${_fmtNum(v)} / 5'),
+        color: moraleColor,
+        label: 'Employee morale',
+        value: _avgMorale,
+        format: (v) => '${_fmtNum(v)} / 5',
+        emptyText: 'Not tracked yet',
+        visual: _avgMorale == null ? null : _StarsVisual(score: _avgMorale!, color: moraleColor),
       ),
-      _StatTile(
+      _HeroCard(
+        index: 2,
         icon: Icons.groups_rounded,
-        color: const Color(0xFF2563EB),
-        label: 'EMPLOYEES',
-        value: _CountUp(value: _entries.length.toDouble(), format: (v) => v.round().toString()),
+        color: DashUi.blue,
+        label: 'Employees',
+        value: _entries.length.toDouble(),
+        format: (v) => v.round().toString(),
+        visual: _FacesVisual(names: [for (final e in _entries) e.user.name], color: DashUi.blue),
       ),
-      _StatTile(
+      _HeroCard(
+        index: 3,
         icon: Icons.hourglass_bottom_rounded,
-        color: const Color(0xFF6366F1),
-        label: 'AVG TENURE',
-        value: _avgTenure == null
-            ? const _StatText('—')
-            : _CountUp(value: _avgTenure!, format: (v) => '${_fmtNum(v)} yrs'),
+        color: DashUi.indigo,
+        label: 'Avg tenure',
+        value: _avgTenure,
+        format: (v) => '${_fmtNum(v)} yrs',
+        visual: Icon(Icons.workspace_premium_rounded, size: 46, color: DashUi.indigo.withValues(alpha: 0.22)),
       ),
     ];
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // ---- Header: title, "1-4 of 9", arrows, refresh ----
-        Row(
-          children: [
-            const Expanded(
-              child: Text('Team KPIs', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: _ink)),
-            ),
-            Text(_rangeLabel, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: _slate)),
-            const SizedBox(width: 4),
-            IconButton(
-              tooltip: 'Previous employees',
-              onPressed: _canLeft ? () => _page(-1) : null,
-              icon: const Icon(Icons.chevron_left_rounded),
-              visualDensity: VisualDensity.compact,
-            ),
-            IconButton(
-              tooltip: 'Next employees',
-              onPressed: _canRight ? () => _page(1) : null,
-              icon: const Icon(Icons.chevron_right_rounded),
-              visualDensity: VisualDensity.compact,
-            ),
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: _fetchAndSortUsers,
-              icon: const Icon(Icons.refresh_rounded, size: 20),
-              visualDensity: VisualDensity.compact,
-            ),
-          ],
-        ),
-        const SizedBox(height: 6),
-
-        // ---- Team summary strip (2x2 when narrow so labels are not cut off) ----
-        LayoutBuilder(
-          builder: (context, c) {
-            if (c.maxWidth >= 1000) {
-              return Row(
-                children: [
-                  for (var i = 0; i < tiles.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 12),
-                    Expanded(child: tiles[i]),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+          child: LayoutBuilder(
+            builder: (context, c) {
+              if (c.maxWidth >= 1000) {
+                return Row(
+                  children: [
+                    for (var i = 0; i < cards.length; i++) ...[
+                      if (i > 0) const SizedBox(width: 14),
+                      Expanded(child: cards[i]),
+                    ],
                   ],
+                );
+              }
+              return Column(
+                children: [
+                  Row(children: [Expanded(child: cards[0]), const SizedBox(width: 14), Expanded(child: cards[1])]),
+                  const SizedBox(height: 14),
+                  Row(children: [Expanded(child: cards[2]), const SizedBox(width: 14), Expanded(child: cards[3])]),
                 ],
               );
-            }
-            return Column(
-              children: [
-                Row(children: [Expanded(child: tiles[0]), const SizedBox(width: 12), Expanded(child: tiles[1])]),
-                const SizedBox(height: 12),
-                Row(children: [Expanded(child: tiles[2]), const SizedBox(width: 12), Expanded(child: tiles[3])]),
-              ],
-            );
-          },
+            },
+          ),
         ),
-        const SizedBox(height: 12),
 
         // ---- Cards (Expands into all remaining vertical space) ----
         Expanded(
@@ -552,15 +567,17 @@ class _KpiSkeleton extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SkeletonBox(h: 22, w: 120),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              for (var i = 0; i < 4; i++) ...[
-                if (i > 0) const SizedBox(width: 12),
-                const Expanded(child: SkeletonBox(h: 64, r: 14)),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                for (var i = 0; i < 4; i++) ...[
+                  if (i > 0) const SizedBox(width: 14),
+                  const Expanded(child: SkeletonBox(h: 82, r: 18)),
+                ],
               ],
-            ],
+            ),
           ),
           const SizedBox(height: 12),
           Expanded(
@@ -587,83 +604,340 @@ class _KpiSkeleton extends StatelessWidget {
 }
 
 // =============================================================================
-// SUMMARY WIDGETS
+// TOP SCORECARDS
 // =============================================================================
 
-class _CountUp extends StatelessWidget {
-  final double value;
-  final String Function(double) format;
-  const _CountUp({required this.value, required this.format});
-
-  @override
-  Widget build(BuildContext context) {
-    if (_reduceMotion(context)) return _StatText(format(value));
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: value),
-      duration: const Duration(milliseconds: 900),
-      curve: Curves.easeOutCubic,
-      builder: (context, v, _) => _StatText(format(v)),
-    );
-  }
-}
-
-class _StatText extends StatelessWidget {
-  final String text;
-  final bool muted;
-  const _StatText(this.text, {this.muted = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(fontSize: muted ? 16 : 20, fontWeight: FontWeight.w800, color: muted ? _muted : _ink, height: 1.15),
-    );
-  }
-}
-
-class _StatTile extends StatelessWidget {
+/// A scorecard with some life in it: it slides up and fades in one after another, lifts under the cursor, and a soft
+/// shine sweeps across every few seconds (staggered, so the row ripples). All of it stops under reduced motion.
+class _HeroCard extends StatefulWidget {
+  final int index; // position in the row: sets the entrance delay and the shine offset
   final IconData icon;
   final Color color;
   final String label;
-  final Widget value;
-  const _StatTile({required this.icon, required this.color, required this.label, required this.value});
+  final double? value;
+  final String Function(double) format;
+  final String emptyText;
+  final Widget? visual;
+
+  const _HeroCard({
+    required this.index,
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.value,
+    required this.format,
+    this.emptyText = '—',
+    this.visual,
+  });
+
+  @override
+  State<_HeroCard> createState() => _HeroCardState();
+}
+
+class _HeroCardState extends State<_HeroCard> with TickerProviderStateMixin {
+  late final AnimationController _enter = AnimationController(vsync: this, duration: const Duration(milliseconds: 650));
+  late final AnimationController _shine = AnimationController(vsync: this, duration: const Duration(seconds: 7));
+  Timer? _delay;
+  bool _hover = false;
+  bool _started = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_started) return;
+    _started = true;
+    if (_reduceMotion(context)) {
+      _enter.value = 1;
+      return;
+    }
+    _delay = Timer(Duration(milliseconds: 90 * widget.index), () {
+      if (!mounted) return;
+      _enter.forward();
+      _shine.repeat();
+    });
+  }
+
+  @override
+  void dispose() {
+    _delay?.cancel();
+    _enter.dispose();
+    _shine.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _line),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.12), shape: BoxShape.circle),
-            child: Icon(icon, size: 20, color: color),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: _muted, letterSpacing: 0.6),
+    final reduce = _reduceMotion(context);
+    final body = _HeroCardBody(
+      icon: widget.icon,
+      color: widget.color,
+      label: widget.label,
+      value: widget.value,
+      format: widget.format,
+      emptyText: widget.emptyText,
+      visual: widget.visual,
+    );
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hover = true),
+      onExit: (_) => setState(() => _hover = false),
+      child: AnimatedBuilder(
+        animation: _enter,
+        builder: (context, child) {
+          final t = Curves.easeOutBack.transform(_enter.value.clamp(0.0, 1.0));
+          return Opacity(
+            opacity: Curves.easeOut.transform(_enter.value.clamp(0.0, 1.0)),
+            child: Transform.translate(offset: Offset(0, (1 - t) * 22), child: child),
+          );
+        },
+        child: AnimatedSlide(
+          offset: Offset(0, _hover && !reduce ? -0.05 : 0),
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOut,
+          child: Stack(
+            children: [
+              body,
+              if (!reduce)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: AnimatedBuilder(
+                        animation: _shine,
+                        // The sweep takes the first ~22% of the cycle; each card starts a little later than the last.
+                        builder: (context, _) => CustomPaint(painter: _ShinePainter(((_shine.value + widget.index * 0.07) % 1.0) / 0.22)),
+                      ),
+                    ),
+                  ),
                 ),
-                const SizedBox(height: 2),
-                value,
-              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A slanted white highlight that crosses the card once while [t] goes 0 to 1 (nothing drawn outside that range).
+class _ShinePainter extends CustomPainter {
+  final double t;
+  const _ShinePainter(this.t);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (t < 0 || t > 1) return;
+    final band = size.width * 0.22;
+    final x = -band + (size.width + band * 2) * Curves.easeInOut.transform(t);
+    const slant = 22.0;
+    final path = Path()
+      ..moveTo(x, 0)
+      ..lineTo(x + band, 0)
+      ..lineTo(x + band - slant, size.height)
+      ..lineTo(x - slant, size.height)
+      ..close();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..shader = LinearGradient(
+          colors: [Colors.white.withValues(alpha: 0), Colors.white.withValues(alpha: 0.55), Colors.white.withValues(alpha: 0)],
+        ).createShader(Rect.fromLTWH(x - slant, 0, band, size.height)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _ShinePainter old) => old.t != t;
+}
+
+/// The card itself: icon chip and label, a big count-up number, and an optional picture on the right.
+class _HeroCardBody extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final double? value; // null shows [emptyText]
+  final String Function(double) format;
+  final String emptyText;
+  final Widget? visual;
+
+  const _HeroCardBody({
+    required this.icon,
+    required this.color,
+    required this.label,
+    required this.value,
+    required this.format,
+    this.emptyText = '—',
+    this.visual,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final v = value;
+    final reduce = _reduceMotion(context);
+    final number = v == null
+        ? Text(emptyText, style: TextStyle(fontSize: emptyText.length > 2 ? 18 : 30, fontWeight: FontWeight.w800, color: _muted))
+        : TweenAnimationBuilder<double>(
+            tween: Tween(begin: reduce ? v : 0, end: v),
+            duration: reduce ? Duration.zero : const Duration(milliseconds: 900),
+            curve: Curves.easeOutCubic,
+            builder: (context, x, _) => Text(
+              format(x),
+              maxLines: 1,
+              style: TextStyle(fontSize: 30, height: 1.05, fontWeight: FontWeight.w800, letterSpacing: -1, color: color, fontFeatures: const [FontFeature.tabularFigures()]),
+            ),
+          );
+    return Semantics(
+      label: '$label: ${v == null ? emptyText : format(v)}',
+      excludeSemantics: true,
+      child: Container(
+        height: 82,
+        padding: const EdgeInsets.fromLTRB(16, 8, 14, 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            // Solid colours (tint blended onto white) so the shadow underneath never shows through the fill.
+            colors: [
+              Color.alphaBlend(color.withValues(alpha: 0.16), Colors.white),
+              Color.alphaBlend(color.withValues(alpha: 0.04), Colors.white),
+            ],
+          ),
+          border: Border.all(color: color.withValues(alpha: 0.28)),
+          boxShadow: [BoxShadow(color: color.withValues(alpha: 0.12), blurRadius: 14, spreadRadius: -2, offset: const Offset(0, 4))],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 26,
+                        height: 26,
+                        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+                        child: Icon(icon, size: 15, color: Colors.white),
+                      ),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          label.toUpperCase(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: _slate),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: number),
+                ],
+              ),
+            ),
+            if (visual != null) ...[const SizedBox(width: 12), visual!],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A progress ring that fills on load, with an icon in the middle.
+class _RingVisual extends StatelessWidget {
+  final double progress; // 0..1
+  final Color color;
+  final IconData icon;
+  const _RingVisual({required this.progress, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = progress.clamp(0.0, 1.0);
+    final reduce = _reduceMotion(context);
+    return SizedBox(
+      width: 52,
+      height: 52,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: reduce ? p : 0, end: p),
+        duration: reduce ? Duration.zero : const Duration(milliseconds: 900),
+        curve: Curves.easeOutCubic,
+        builder: (context, x, child) => CustomPaint(painter: _RingPainter(progress: x, color: color), child: child),
+        child: Center(child: Icon(icon, size: 20, color: color)),
+      ),
+    );
+  }
+}
+
+/// Five stars, filled to the score (half stars included).
+class _StarsVisual extends StatelessWidget {
+  final double score; // 0..5
+  final Color color;
+  const _StarsVisual({required this.score, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final reduce = _reduceMotion(context);
+    // The stars fill left to right as the number counts up, and each one pops as it fills.
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: reduce ? score : 0, end: score),
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 1100),
+      curve: Curves.easeOutCubic,
+      builder: (context, s, _) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < 5; i++)
+            Transform.scale(
+              scale: reduce ? 1 : 1 + 0.35 * math.sin(((s - i).clamp(0.0, 1.0)) * math.pi),
+              child: Icon(
+                s >= i + 0.75 ? Icons.star_rounded : (s >= i + 0.25 ? Icons.star_half_rounded : Icons.star_outline_rounded),
+                size: 19,
+                color: color,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Overlapping initials for the first few people, with "+N" for the rest.
+class _FacesVisual extends StatelessWidget {
+  final List<String> names;
+  final Color color;
+  const _FacesVisual({required this.names, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    const shown = 4, size = 32.0, step = 22.0;
+    final n = math.min(names.length, shown);
+    final extra = names.length - n;
+    final count = n + (extra > 0 ? 1 : 0);
+    final reduce = _reduceMotion(context);
+    // Each bubble bounces in a beat after the one before it (one tween, staggered with Interval).
+    Widget bubble(int i, String text, Color bg) => Positioned(
+          left: i * step,
+          child: TweenAnimationBuilder<double>(
+            tween: Tween(begin: reduce ? 1 : 0, end: 1),
+            duration: reduce ? Duration.zero : const Duration(milliseconds: 1000),
+            curve: Interval(math.min(0.1 * i + 0.25, 0.6), 1.0, curve: Curves.elasticOut),
+            builder: (context, s, child) => Transform.scale(scale: s, child: child),
+            child: Container(
+              width: size,
+              height: size,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: bg, shape: BoxShape.circle, border: Border.all(color: Colors.white, width: 2)),
+              child: Text(text, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Colors.white)),
             ),
           ),
+        );
+    final palette = [color, DashUi.emerald, DashUi.indigo, DashUi.amber];
+    return SizedBox(
+      width: step * (count - 1) + size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (var i = 0; i < n; i++) bubble(i, names[i].trim().isEmpty ? '?' : names[i].trim()[0].toUpperCase(), palette[i % palette.length]),
+          if (extra > 0) bubble(n, '+$extra', _slate),
         ],
       ),
     );
@@ -862,7 +1136,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
           builder: (context, c) {
             return Semantics(
               button: true,
-              label: '${u.name}, ${u.jobTitle}, $tenureText, $scoreText. Opens their KPI page.',
+              label: '${u.name}, ${u.displayTitle}, $tenureText, $scoreText. Opens their KPI page.',
               excludeSemantics: true,
               onTap: _open,
               child: FocusableActionDetector(
@@ -982,7 +1256,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
       children: [
         // HEADER PHOTO
         Expanded(
-          flex: 3,
+          flex: 4,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1123,7 +1397,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        widget.user.jobTitle,
+                        widget.user.displayTitle,
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: _roleColor(widget.user.jobTitle)),
                         maxLines: 1,

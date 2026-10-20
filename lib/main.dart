@@ -11,6 +11,7 @@ import 'product_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
 import 'jobs_screen.dart';
+import 'projects_screen.dart';
 import 'job_detail_screen.dart';
 import 'payroll_screen.dart'; 
 import 'estimates_screen.dart'; 
@@ -91,7 +92,7 @@ final GoRouter _router = GoRouter(
           GoRoute(path: '/customers', builder: (context, state) => const CustomersScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/projects', builder: (context, state) => const _PlaceholderScreen(title: "Projects")),
+          GoRoute(path: '/projects', builder: (context, state) => const ProjectsScreen()),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(

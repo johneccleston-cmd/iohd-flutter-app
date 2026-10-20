@@ -3,17 +3,16 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'theme/app_theme.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'widgets/flat_page.dart';
 
 // ---------------------------------------------------------------------------
 // Design tokens
 // ---------------------------------------------------------------------------
 class _C {
-  static const bg = AppTheme.bgColor;
   static const surface = Colors.white;
   static const ink = Color(0xFF111827);
   static const muted = Color(0xFF6B7280);
@@ -239,97 +238,47 @@ class _CustomersScreenState extends State<CustomersScreen>
     super.build(context);
 
     return Scaffold(
-      backgroundColor: _C.bg,
-      body: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 24, 24, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _buildHeader(),
-            const SizedBox(height: 20),
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _C.surface,
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: _C.line),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x0A000000),
-                      blurRadius: 12,
-                      offset: Offset(0, 4),
-                    ),
-                  ],
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildToolbar(),
-                    SizedBox(
-                      height: 3,
-                      child: _loading
-                          ? const LinearProgressIndicator(
-                              minHeight: 3,
-                              color: _C.primary,
-                              backgroundColor: Colors.transparent)
-                          : const Divider(height: 1, thickness: 1, color: _C.line),
-                    ),
-                    Expanded(child: _buildBody()),
-                    _buildFooter(),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+      backgroundColor: Colors.white,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildHeader(),
+          SizedBox(
+            height: 3,
+            child: _loading
+                ? const LinearProgressIndicator(
+                    minHeight: 3,
+                    color: _C.ink,
+                    backgroundColor: _C.line)
+                : null,
+          ),
+          _buildToolbar(),
+          const Divider(height: 1, thickness: 1, color: _C.line),
+          Expanded(child: _buildBody()),
+          _buildFooter(),
+        ],
       ),
     );
   }
 
   Widget _buildHeader() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Customers',
-                  style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.5,
-                      color: _C.ink)),
-              const SizedBox(height: 2),
-              Text(
-                _loading && _customers.isEmpty
-                    ? 'Loading directory…'
-                    : _searchController.text.trim().isEmpty
-                        ? '${_fmtInt(_total)} customers in your directory'
-                        : '${_fmtInt(_total)} matching "${_searchController.text.trim()}"',
-                style: const TextStyle(fontSize: 14, color: _C.muted),
-              ),
-            ],
-          ),
-        ),
-        IconButton.outlined(
-          tooltip: 'Refresh',
-          onPressed: _loading ? null : _refresh,
-          icon: const Icon(Icons.refresh_rounded, size: 20),
-          style: IconButton.styleFrom(
-            foregroundColor: _C.muted,
-            side: const BorderSide(color: _C.line),
-            backgroundColor: _C.surface,
-          ),
-        ),
+    return PageBanner(
+      title: 'Customers',
+      actions: [
+        if (!(_loading && _customers.isEmpty))
+          Text('${_fmtInt(_total)} ${_searchController.text.trim().isEmpty ? 'total' : 'matching'}',
+              style: const TextStyle(
+                  fontSize: 12.5,
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w500)),
+        PageBanner.refresh(onPressed: _loading ? null : _refresh),
       ],
     );
   }
 
   Widget _buildToolbar() {
     return Padding(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
       child: Row(
         children: [
           Expanded(
@@ -483,13 +432,13 @@ class _CustomersScreenState extends State<CustomersScreen>
       children: [
         Container(
           color: _C.subtle,
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
           child: Row(
             children: [
-              _headerCell('CUSTOMER', 'name', flex: 30),
-              _headerCell('CONTACT INFO', null, flex: 30),
-              _headerCell('SERVICE LOCATION', 'city', flex: 30),
-              _headerCell('JOBS', 'jobs', flex: 10, align: MainAxisAlignment.center),
+              _headerCell('Customer', 'name', flex: 30),
+              _headerCell('Contact Info', null, flex: 30),
+              _headerCell('Service Location', 'city', flex: 30),
+              _headerCell('Jobs', 'jobs', flex: 10, align: MainAxisAlignment.center),
             ],
           ),
         ),
@@ -511,11 +460,10 @@ class _CustomersScreenState extends State<CustomersScreen>
     final active = sortKey != null && _sortBy == sortKey;
     final text = Text(
       label,
-      style: TextStyle(
-        fontSize: 11.5,
+      style: const TextStyle(
+        fontSize: 14,
         fontWeight: FontWeight.w700,
-        letterSpacing: 0.8,
-        color: active ? _C.primary : _C.muted,
+        color: _C.ink,
       ),
     );
     return Expanded(
@@ -538,7 +486,7 @@ class _CustomersScreenState extends State<CustomersScreen>
                             ? Icons.arrow_upward_rounded
                             : Icons.arrow_downward_rounded,
                         size: 14,
-                        color: _C.primary,
+                        color: _C.ink,
                       ),
                     ],
                   ],
@@ -560,7 +508,7 @@ class _CustomersScreenState extends State<CustomersScreen>
       hoverColor: _C.primarySoft.withOpacity(0.5),
       onTap: () {},
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -653,9 +601,9 @@ class _CustomersScreenState extends State<CustomersScreen>
   // ---- narrow layout: cards -------------------------------------------------
   Widget _buildCardList() {
     return ListView.separated(
-      padding: const EdgeInsets.all(12),
       itemCount: _customers.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 10),
+      separatorBuilder: (_, __) =>
+          const Divider(height: 1, thickness: 1, color: _C.line),
       itemBuilder: (_, i) => _card(_customers[i]),
     );
   }
@@ -669,13 +617,8 @@ class _CustomersScreenState extends State<CustomersScreen>
     final cityState = _cityState(c);
     final address = [location, cityState].whereType<String>().join(' · ');
 
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: _C.surface,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _C.line),
-      ),
+    return Padding(
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -734,7 +677,7 @@ class _CustomersScreenState extends State<CustomersScreen>
     final end = (_page * _pageSize) > _total ? _total : _page * _pageSize;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       decoration: const BoxDecoration(
         color: _C.subtle,
         border: Border(top: BorderSide(color: _C.line)),
@@ -953,14 +896,7 @@ class _StateMessage extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: iconColor.withOpacity(0.08),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 32, color: iconColor),
-              ),
+              Icon(icon, size: 44, color: iconColor),
               const SizedBox(height: 16),
               Text(title,
                   style: const TextStyle(

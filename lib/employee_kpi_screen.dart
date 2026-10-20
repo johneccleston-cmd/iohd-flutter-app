@@ -116,7 +116,7 @@ class _SalesKpis {
   final double? closeRatePct;
   final double wonValue;
   final double grossProfit;
-  final double? markupPct; // profit / cost
+  final double? markupPct; // profit / cost (not shown; the scorecard uses margin)
   final double? marginPct; // profit / revenue
   final int wonWithProfit;
   final List<_TypeKpis> byType;
@@ -963,7 +963,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
                           style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold, color: _ink),
                         ),
                         Text(
-                          user.jobTitle,
+                          user.displayTitle,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontSize: 13, color: _slate),
@@ -1538,7 +1538,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
       ('Estimate close rate', s.closeRatePct, _ink, (v) => '${_fmtNum(v)}%'),
       ('Sales dollars won', s.wonValue, DashUi.sky, _wholeMoney),
       ('Gross profit', s.grossProfit, DashUi.blue, _wholeMoney),
-      ('Markup', s.markupPct, DashUi.blue, (v) => '${_fmtNum(v)}%'),
+      ('Margin %', s.marginPct, DashUi.blue, (v) => '${_fmtNum(v)}%'),
     ];
     Widget card(int i) => SizedBox(
           height: 88,
@@ -1563,7 +1563,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         }
         return Row(
           children: [
-            for (var i = 0; i < 4; i++) ...[if (i > 0) const SizedBox(width: 8), Expanded(child: card(i))],
+            for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(width: 8), Expanded(child: card(i))],
           ],
         );
       },
