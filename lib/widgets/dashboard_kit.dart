@@ -26,6 +26,14 @@ class DashUi {
   static const amber = Color(0xFFD97706);
   static const red = Color(0xFFDC2626);
 
+  // Text-safe tones (at least 4.5:1 on white and on `faint`). `muted`,
+  // `emeraldDeep` and `amber` fail as small text, so use these for readable
+  // secondary text, money and warnings under 18px; keep the brighter ones for
+  // dots, bars, tints and big figures.
+  static const subtle = Color(0xFF64748B);
+  static const emeraldText = Color(0xFF047857);
+  static const amberText = Color(0xFFB45309);
+
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
     color: Colors.white,
     borderRadius: BorderRadius.circular(radius),
@@ -495,6 +503,12 @@ class _SkeletonPulseState extends State<SkeletonPulse>
 
   @override
   Widget build(BuildContext context) {
+    // Reduced motion: a still placeholder instead of a pulse.
+    if (MediaQuery.of(context).disableAnimations) {
+      if (_pulse.isAnimating) _pulse.stop();
+      return widget.child;
+    }
+    if (!_pulse.isAnimating) _pulse.repeat(reverse: true);
     return FadeTransition(
       opacity: Tween<double>(
         begin: 0.45,

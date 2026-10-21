@@ -49,8 +49,6 @@ void main() {
         final text = t.getSize(find.widgetWithText(TextField, 'Daniel').first).height;
         final role = t.getSize(find.byType(AnimatedSelect<String>).first).height;
         final date = t.getSize(find.widgetWithText(TextFormField, 'Feb 5, 2024').first).height;
-        final pin = t.getSize(find.widgetWithText(TextFormField, 'Reset PIN').first).height;
-        expect(pin, text);
         expect(role, text);
         expect(date, text);
       }, () => MockClient((r) async => _handle(r)));

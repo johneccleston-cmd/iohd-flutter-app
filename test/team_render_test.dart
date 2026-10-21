@@ -48,8 +48,9 @@ http.Response _handle(http.Request r) {
       ],
       'users': [
         _user(1, 'Daniel Baty', 'Lead Technician', pay: true),
-        _user(2, 'Heather Vera', 'Office Manager', extra: {'job_title': 'Sales Account Manager', 'is_commission_eligible': false, 'tech_weight': 0.0, 'is_sales_commission_eligible': true, 'five_star': true, 'is_lead': true, 'no_recalls': true, 'badge_top_producer': true, 'badge_team_favorite': true, 'year_joined': 2021, 'hire_date': '2021-03-15'}, denied: ['dash_financial.view', 'dash_commissions.view', 'payments.view', 'payments.create', 'payments.update', 'payments.delete', 'jobs.delete', 'customers.delete']),
-        _user(5, 'Zac Clemens', 'Sales Rep', extra: {'job_title': 'Commercial Estimator', 'is_commission_eligible': false, 'tech_weight': 0.0, 'is_sales_commission_eligible': true}),
+        _user(2, 'Heather Vera', 'Office Manager', extra: {'job_title': 'Sales Account Manager', 'is_commission_eligible': false, 'tech_weight': 0.0, 'is_sales_commission_eligible': true, 'sales_rate_pct': 2.0, 'sales_account_rate_pct': 2.0, 'sales_builder_rate_pct': 2.0, 'five_star': true, 'is_lead': true, 'no_recalls': true, 'badge_top_producer': true, 'badge_team_favorite': true, 'year_joined': 2021, 'hire_date': '2021-03-15'}, denied: ['dash_financial.view', 'dash_commissions.view', 'payments.view', 'payments.create', 'payments.update', 'payments.delete', 'jobs.delete', 'customers.delete']),
+        _user(5, 'Zac Clemens', 'Sales Rep', extra: {'job_title': 'Commercial Estimator', 'is_commission_eligible': true, 'tech_weight': 1.0, 'install_rate_pct': 4.0, 'is_sales_commission_eligible': true, 'sales_rate_pct': 2.0, 'sales_account_rate_pct': 1.0}),
+        _user(6, 'Dennis Gray', 'Warehouse', extra: {'is_commission_eligible': false, 'tech_weight': 1.0}),
         _user(3, 'John Eccleston', 'ADMIN'),
         _user(4, 'Ryan Schwartz', 'ADMIN'),
       ],
@@ -164,13 +165,45 @@ void main() {
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
-      await t.tap(find.text('Commission settings'));
+      final tile = find.text('Commission settings', skipOffstage: false);
+      await t.ensureVisible(tile);
+      await t.pump();
+      await t.tap(tile);
       for (var i = 0; i < 10; i++) {
         await t.pump(const Duration(milliseconds: 100));
       }
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/team_commission_open.png'));
     }, () => MockClient((r) async => _handle(r)));
   });
+  for (final who in ['Zac Clemens', 'Heather Vera', 'Dennis Gray']) {
+    testWidgets('commission expanded: $who', (t) async {
+      t.view.devicePixelRatio = 1.0;
+      t.view.physicalSize = const Size(1440, 900);
+      addTearDown(t.view.reset);
+      await http.runWithClient(() async {
+        await t.pumpWidget(MaterialApp(
+          debugShowCheckedModeBanner: false,
+          theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
+          home: const TeamAdminScreen(),
+        ));
+        for (var i = 0; i < 10; i++) {
+          await t.pump(const Duration(milliseconds: 100));
+        }
+        await t.tap(find.text(who).first);
+        for (var i = 0; i < 10; i++) {
+          await t.pump(const Duration(milliseconds: 100));
+        }
+        final tile = find.text('Commission settings', skipOffstage: false);
+        await t.ensureVisible(tile);
+        await t.pump();
+        await t.tap(tile);
+        for (var i = 0; i < 10; i++) {
+          await t.pump(const Duration(milliseconds: 100));
+        }
+        await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/team_commission_${who.split(' ').first.toLowerCase()}.png'));
+      }, () => MockClient((r) async => _handle(r)));
+    });
+  }
   testWidgets('role menu mid-animation', (t) async => _menuShot(t, 'team_role_menu_mid', 110));
   testWidgets('role menu open', (t) async => _menuShot(t, 'team_role_menu_open', 700));
 }

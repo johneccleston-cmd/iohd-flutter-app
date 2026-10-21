@@ -437,6 +437,9 @@ class _ReceivablesKpis {
   final bool tracksCustomerResponse;
   final _Rating? satisfaction;
   final List<_Mention> mentions;
+
+  /// Cash collected per calendar month, January first (12 entries). Empty until the backend sends it.
+  final List<double> collectedMonthly;
   const _ReceivablesKpis({
     required this.outstanding,
     required this.over90,
@@ -449,6 +452,7 @@ class _ReceivablesKpis {
     required this.tracksCustomerResponse,
     this.satisfaction,
     this.mentions = const [],
+    this.collectedMonthly = const [],
   });
 
   factory _ReceivablesKpis.fromJson(Map<String, dynamic> j) {
@@ -467,11 +471,113 @@ class _ReceivablesKpis {
       tracksMissedCall: _flag(tr, 'missedCallResponse'),
       tracksLeadToBooked: _flag(tr, 'leadToBooked'),
       tracksCustomerResponse: _flag(tr, 'customerResponse'),
+      collectedMonthly: [for (final v in (j['collectedMonthly'] is List ? j['collectedMonthly'] as List : const [])) _num(v) ?? 0],
       satisfaction: _Rating.fromJson(j['satisfaction']),
       mentions: [
         for (final m in (j['reviews'] is List ? j['reviews'] as List : const []))
           ?_Mention.fromJson(m),
       ],
+    );
+  }
+}
+
+/// One cycle count zone in its current period (the warehouse works a zone Wed-Fri of its week).
+class _ZoneCount {
+  final String zone;
+  final String periodStart; // 'YYYY-MM-DD'
+  final String status; // Complete / In progress / Not started
+  final int counted;
+  final DateTime? completedAt;
+
+  /// The work week is over and the zone isn't complete.
+  final bool overdue;
+  const _ZoneCount(this.zone, this.periodStart, this.status, this.counted, this.completedAt, this.overdue);
+
+  bool get complete => status == 'Complete';
+
+  factory _ZoneCount.fromJson(Map j) => _ZoneCount(
+        _str(j['zone']),
+        _str(j['periodStart']),
+        _str(j['status']),
+        int.tryParse(_str(j['counted'])) ?? 0,
+        DateTime.tryParse(_str(j['completedAt']))?.toLocal(),
+        j['overdue'] == true,
+      );
+}
+
+/// Purchase orders still waiting to be received (status Open), from the warehouse part of /api/employees/:id/kpis.
+class _OpenPos {
+  final int count;
+  final double value;
+
+  /// Open POs whose expected date has passed.
+  final int overdue;
+
+  /// Order date of the oldest open PO.
+  final DateTime? oldest;
+  const _OpenPos({required this.count, required this.value, required this.overdue, required this.oldest});
+
+  factory _OpenPos.fromJson(Map j) => _OpenPos(
+        count: int.tryParse(_str(j['count'])) ?? 0,
+        value: _num(j['value']) ?? 0,
+        overdue: int.tryParse(_str(j['overdue'])) ?? 0,
+        oldest: DateTime.tryParse(_str(j['oldest'])),
+      );
+}
+
+/// The warehouse team's page from /api/employees/:id/kpis (company-wide: nothing says which person counted what).
+class _WarehouseKpis {
+  /// All-time strikes on the shared warehouse login, where the 8:30 AM audit records them.
+  final int strikes;
+  final List<_ZoneCount> zones;
+  final int cycleDone;
+  final int itemsCounted;
+  final DateTime? lastCycleCount;
+  final int lowStockCount;
+
+  /// All current techs' inventory strikes added up. Null until the backend sends it.
+  final int? teamInventoryStrikes;
+  final double stockValue;
+  final int itemCount;
+
+  /// Null until the backend sends it.
+  final _OpenPos? openPos;
+  final bool tracksPickAccuracy;
+  final bool tracksReceiving;
+  final bool tracksOrderFill;
+  const _WarehouseKpis({
+    required this.strikes,
+    required this.zones,
+    required this.cycleDone,
+    required this.itemsCounted,
+    required this.lastCycleCount,
+    required this.lowStockCount,
+    this.teamInventoryStrikes,
+    required this.stockValue,
+    required this.itemCount,
+    this.openPos,
+    required this.tracksPickAccuracy,
+    required this.tracksReceiving,
+    required this.tracksOrderFill,
+  });
+
+  factory _WarehouseKpis.fromJson(Map<String, dynamic> j) {
+    final tr = j['tracking'] is Map ? j['tracking'] as Map : const {};
+    int n(dynamic v) => int.tryParse(_str(v)) ?? 0;
+    return _WarehouseKpis(
+      strikes: n(j['strikes']),
+      zones: [for (final z in (j['zones'] is List ? j['zones'] as List : const [])) if (z is Map) _ZoneCount.fromJson(z)],
+      cycleDone: n(j['cycleDone']),
+      itemsCounted: n(j['itemsCounted']),
+      lastCycleCount: DateTime.tryParse(_str(j['lastCycleCount']))?.toLocal(),
+      lowStockCount: n(j['lowStockCount']),
+      teamInventoryStrikes: int.tryParse(_str(j['teamInventoryStrikes'])),
+      stockValue: _num(j['stockValue']) ?? 0,
+      itemCount: n(j['itemCount']),
+      openPos: j['openPos'] is Map ? _OpenPos.fromJson(j['openPos'] as Map) : null,
+      tracksPickAccuracy: _flag(tr, 'pickAccuracy'),
+      tracksReceiving: _flag(tr, 'receivingTime'),
+      tracksOrderFill: _flag(tr, 'orderFillRate'),
     );
   }
 }
@@ -482,10 +588,11 @@ class _KpiBundle {
   final _TechKpis? tech;
   final _SupervisorKpis? supervisor;
   final _ReceivablesKpis? office;
+  final _WarehouseKpis? warehouse;
 
   /// Employee morale, 1-5. Every employee has one.
   final _Rating? morale;
-  const _KpiBundle(this.sales, this.tech, this.supervisor, this.office, this.morale);
+  const _KpiBundle(this.sales, this.tech, this.supervisor, this.office, this.warehouse, this.morale);
 }
 
 /// From /api/tech_stats: this year's callbacks and completed jobs for one tech, plus the team's callback rate.
@@ -530,6 +637,7 @@ class _EmployeeDetails {
   _TechKpis? tech;
   _SupervisorKpis? supervisor;
   _ReceivablesKpis? office;
+  _WarehouseKpis? warehouse;
   _Rating? morale;
 
   _EmployeeDetails({
@@ -598,6 +706,7 @@ Future<_EmployeeDetails> _loadDetailsLegacy(String username) async {
     found.tech = k?.tech;
     found.supervisor = k?.supervisor;
     found.office = k?.office;
+    found.warehouse = k?.warehouse;
     found.morale = k?.morale;
   }
   return found;
@@ -622,12 +731,13 @@ Future<_KpiBundle?> _loadKpis(int userId) async {
 
 _KpiBundle _bundleFrom(Map body) {
   Map<String, dynamic>? part(String key) => body[key] is Map ? Map<String, dynamic>.from(body[key] as Map) : null;
-  final sales = part('sales'), tech = part('tech'), sup = part('supervisor'), office = part('office');
+  final sales = part('sales'), tech = part('tech'), sup = part('supervisor'), office = part('office'), wh = part('warehouse');
   return _KpiBundle(
     sales == null ? null : _SalesKpis.fromJson(sales),
     tech == null ? null : _TechKpis.fromJson(tech),
     sup == null ? null : _SupervisorKpis.fromJson(sup),
     office == null ? null : _ReceivablesKpis.fromJson(office),
+    wh == null ? null : _WarehouseKpis.fromJson(wh),
     _Rating.fromJson(body['morale']),
   );
 }
@@ -669,6 +779,7 @@ Future<_EmployeeDetails> _loadDetails(String username, {required bool likelyTech
   details.tech = k.tech;
   details.supervisor = k.supervisor;
   details.office = k.office;
+  details.warehouse = k.warehouse;
   details.morale = k.morale;
   details.techStats = techStatsF != null ? await techStatsF : (details.isTech ? await _loadTechStats(username) : null);
   return details;
@@ -1139,6 +1250,17 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     }
     if (!d.isTech) {
       final sales = d.sales;
+      if (sales == null && d.warehouse != null) {
+        // Warehouse: the person's own inventory strikes, in the same spot as on Zac's page.
+        return SizedBox(
+          height: 48,
+          child: _MiniStatCard(
+            title: 'Inventory strikes',
+            value: '${d.inventoryStrikes}',
+            color: d.inventoryStrikes == 0 ? DashUi.emerald : (d.inventoryStrikes == 1 ? DashUi.amber : DashUi.red),
+          ),
+        );
+      }
       if (sales == null) return null;
       // Sales negatives: green at none, amber for a few, red past that (colours live in the cards).
       return Column(
@@ -1154,6 +1276,18 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
                 employeeId: widget.employeeId,
                 name: _data?.entry.user.name ?? 'Stale estimates',
               )),
+            const SizedBox(height: 8),
+          ],
+          // Zac (commercial) also sees his own inventory strikes, same colours as the techs' card.
+          if (!sales.residential) ...[
+            SizedBox(
+              height: 48,
+              child: _MiniStatCard(
+                title: 'Inventory strikes',
+                value: '${d.inventoryStrikes}',
+                color: d.inventoryStrikes == 0 ? DashUi.emerald : (d.inventoryStrikes == 1 ? DashUi.amber : DashUi.red),
+              ),
+            ),
             const SizedBox(height: 8),
           ],
           SizedBox(height: 70, child: _LateCard(count: sales.slowEstimates, since: sales.since, employeeId: widget.employeeId, name: _data?.entry.user.name ?? 'Late estimates')),
@@ -1317,7 +1451,9 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
 
     final strikes = <_InfoRow>[
-      if (d.isWarehouse) _InfoRow('Warehouse strikes (all-time)', '${d.warehouseStrikes}', strikeColor(d.warehouseStrikes)),
+      // Without the warehouse module (older backend) fall back to the person's own row, which is usually 0: the audit
+      // records warehouse strikes on the shared warehouse login.
+      if (d.isWarehouse && d.warehouse == null) _InfoRow('Warehouse strikes (all-time)', '${d.warehouseStrikes}', strikeColor(d.warehouseStrikes)),
     ];
 
     final sales = d.sales;
@@ -1357,38 +1493,9 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             teamPerDay: _teamPerDayOf(tech),
           );
     final off = d.office;
-    final officeCard = off == null
-        ? null
-        : _DetailCard(
-            title: 'Receivables and collections',
-            icon: Icons.account_balance_wallet_rounded,
-            trailing: 'Company-wide, ${DateTime.now().year} year to date',
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _FigureRow([
-                  _BigStat('OUTSTANDING', dashMoney(off.outstanding), DashUi.ink,
-                      sub: '${off.aging.fold<int>(0, (t, a) => t + a.jobs)} invoiced jobs'),
-                  _BigStat('OVER 90 DAYS', dashMoney(off.over90), off.over90 > 0 ? DashUi.red : DashUi.emerald,
-                      sub: '90 Day Notice stage'),
-                  _BigStat('COLLECTION RATE', off.collectionRatePct == null ? '—' : '${_fmtNum(off.collectionRatePct!)}%',
-                      DashUi.emeraldDeep,
-                      sub: '${dashMoney(off.collected)} collected'),
-                ]),
-                const SizedBox(height: 16),
-                _InfoGroup(title: 'AR aging', rows: [
-                  for (final a in off.aging) _InfoRow('${a.label} (${a.jobs} jobs)', dashMoney(a.amount)),
-                ]),
-                const SizedBox(height: 16),
-                _UntrackedNote([
-                  if (!off.tracksCallAnswer) 'Call answer rate',
-                  if (!off.tracksMissedCall) 'Missed-call response time',
-                  if (!off.tracksLeadToBooked) 'Lead-to-booked-job rate',
-                  if (!off.tracksCustomerResponse) 'Customer response time',
-                ]),
-              ],
-            ),
-          );
+    final officeCard = off == null ? null : _receivablesCard(off);
+    final wh = d.warehouse;
+    final warehouseCard = wh == null ? null : _warehouseRow(wh);
 
     final smaller = <Widget>[
       if (strikes.isNotEmpty)
@@ -1396,10 +1503,12 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     ];
 
     final wideCards = <Widget>[
+      if (wh != null) _warehouseScorecards(wh),
       if (sales != null) _salesScorecards(sales),
       if (sales != null) fill && techCard == null ? Expanded(child: _salesCard(sales, expand: true, showChart: chart)) : _salesCard(sales, showChart: true),
       if (techCard != null) fill ? Expanded(child: techCard) : techCard,
       if (officeCard != null) _withFeedback(officeCard, off!),
+      ?warehouseCard,
     ];
 
     if (wideCards.isEmpty && smaller.isEmpty && commercial.isEmpty) {
@@ -1506,6 +1615,152 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     );
   }
 
+  /// Company-wide receivables for the AR owner: headline figures, the aging stages beside cash collected by month.
+  Widget _receivablesCard(_ReceivablesKpis off) {
+    final now = DateTime.now().month;
+    final monthly = [for (var m = 0; m < now; m++) m < off.collectedMonthly.length ? off.collectedMonthly[m] : 0.0];
+    final hasMonthly = off.collectedMonthly.isNotEmpty;
+    final thisMonth = hasMonthly ? monthly.last : null;
+    final lastMonth = hasMonthly && monthly.length > 1 ? monthly[monthly.length - 2] : null;
+    final aging = _InfoGroup(title: 'AR aging', rows: [
+      for (final a in off.aging) _InfoRow('${a.label} (${a.jobs} jobs)', _wholeMoney(a.amount)),
+    ]);
+    final chart = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _InfoGroup(title: 'Cash collected by month', rows: []),
+        SizedBox(
+          height: 210,
+          child: _MonthlyChart(
+            expand: true,
+            values: monthly,
+            color: DashUi.emerald,
+            tipFormat: (i) => dashMoney(monthly[i]),
+            emptyText: 'No payments in ${DateTime.now().year} yet',
+          ),
+        ),
+      ],
+    );
+    return _DetailCard(
+      title: 'Receivables and collections',
+      icon: Icons.account_balance_wallet_rounded,
+      trailing: 'Company-wide, ${DateTime.now().year} year to date',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _FigureRow([
+            _BigStat('OUTSTANDING', _wholeMoney(off.outstanding), DashUi.ink,
+                sub: '${off.aging.fold<int>(0, (t, a) => t + a.jobs)} invoiced jobs'),
+            _BigStat('OVER 90 DAYS', _wholeMoney(off.over90), off.over90 > 0 ? DashUi.red : DashUi.emerald,
+                sub: '90 Day Notice stage'),
+            _BigStat('COLLECTION RATE', off.collectionRatePct == null ? '—' : '${_fmtNum(off.collectionRatePct!)}%',
+                DashUi.emeraldDeep,
+                sub: '${_wholeMoney(off.collected)} collected'),
+            if (thisMonth != null)
+              _BigStat('THIS MONTH', _wholeMoney(thisMonth), DashUi.ink,
+                  sub: lastMonth == null ? 'Cash collected' : 'Cash in, ${_wholeMoney(lastMonth)} last month'),
+          ], breakpoint: 520, gap: 14),
+          const SizedBox(height: 16),
+          if (hasMonthly)
+            LayoutBuilder(
+              builder: (context, c) => c.maxWidth < 560
+                  ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [aging, const SizedBox(height: 16), chart])
+                  : Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [Expanded(flex: 5, child: aging), const SizedBox(width: 24), Expanded(flex: 6, child: chart)],
+                    ),
+            )
+          else
+            aging,
+          const SizedBox(height: 16),
+          _UntrackedNote([
+            if (!off.tracksCallAnswer) 'Call answer rate',
+            if (!off.tracksMissedCall) 'Missed-call response time',
+            if (!off.tracksLeadToBooked) 'Lead-to-booked-job rate',
+            if (!off.tracksCustomerResponse) 'Customer response time',
+          ]),
+        ],
+      ),
+    );
+  }
+
+  /// Open POs beside the cycle count zones (stacked on narrow widths). Either card is left out when it has nothing to show.
+  Widget _warehouseRow(_WarehouseKpis w) {
+    final po = w.openPos == null ? null : _openPosCard(w.openPos!);
+    final zones = w.zones.isEmpty ? null : _warehouseCard(w);
+    if (po == null || zones == null) return po ?? zones ?? const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 760) return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [po, const SizedBox(height: 16), zones]);
+        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: po), const SizedBox(width: 16), Expanded(child: zones)]);
+      },
+    );
+  }
+
+  /// Purchase orders ordered but not yet received: how many, what they add up to, and how many are past due.
+  Widget _openPosCard(_OpenPos p) {
+    final oldest = p.oldest;
+    return _DetailCard(
+      title: 'Open POs',
+      icon: Icons.shopping_cart_checkout_rounded,
+      child: _FigureRow([
+        _BigStat('OPEN ORDERS', '${p.count}', DashUi.ink, sub: p.count == 0 ? 'Nothing waiting on a vendor' : 'Not yet received'),
+        _BigStat('OPEN VALUE', _wholeMoney(p.value), DashUi.ink, sub: 'All open POs'),
+        _BigStat('PAST DUE', '${p.overdue}', p.overdue == 0 ? DashUi.emerald : DashUi.red,
+            sub: oldest == null ? 'No open POs' : 'Oldest ${_shortDay(oldest.toIso8601String())}'),
+      ], breakpoint: 300, gap: 14),
+    );
+  }
+
+  /// The warehouse page's cycle count zones, stacked vertically with each zone's current count.
+  Widget _warehouseCard(_WarehouseKpis w) {
+    Widget zoneTile(_ZoneCount z) {
+      final color = z.complete ? DashUi.emerald : (z.overdue ? DashUi.red : DashUi.amber);
+      final label = z.complete ? 'Complete' : (z.overdue ? 'Overdue' : z.status);
+      final week = DateTime.tryParse(z.periodStart);
+      final detail = z.complete
+          ? '${z.completedAt == null ? '' : '${_shortDay(z.completedAt!.toIso8601String())} · '}${z.counted} items'
+          : (z.counted > 0 ? '${z.counted} items so far' : 'Nothing counted yet');
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(z.zone, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
+                  const SizedBox(height: 2),
+                  Text(
+                    [if (week != null) 'Week of ${_monthLetters[week.month - 1]} ${week.day}', detail].join(' · '),
+                    style: const TextStyle(fontSize: 13, color: _slate),
+                  ),
+                ],
+              ),
+            ),
+            Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
+            const SizedBox(width: 6),
+            Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
+          ],
+        ),
+      );
+    }
+
+    return _DetailCard(
+      title: 'Cycle count zones',
+      icon: Icons.warehouse_rounded,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < w.zones.length; i++) ...[
+            if (i > 0) const Divider(height: 1, color: _line),
+            zoneTile(w.zones[i]),
+          ],
+        ],
+      ),
+    );
+  }
+
   /// The receivables card with the customer feedback card in a column on its right (stacked below on narrow widths).
   Widget _withFeedback(Widget card, _ReceivablesKpis off) {
     final feedback = _MentionsCard(mentions: off.mentions, satisfaction: off.satisfaction);
@@ -1528,6 +1783,41 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             ],
           ),
         );
+      },
+    );
+  }
+
+  /// Along the top of the warehouse page: the techs' inventory strikes added up, the person's own, and low stock.
+  Widget _warehouseScorecards(_WarehouseKpis w) {
+    Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
+    final last = w.lastCycleCount;
+    final items = <(String, double?, Color, String)>[
+      ('Team inventory strikes', w.teamInventoryStrikes?.toDouble(), w.teamInventoryStrikes == null ? DashUi.muted : strikeColor(w.teamInventoryStrikes!), ''),
+      ('Low stock items', w.lowStockCount.toDouble(), w.lowStockCount == 0 ? DashUi.emerald : DashUi.ink, ''),
+      (
+        'Cycle counts done',
+        w.cycleDone.toDouble(),
+        DashUi.ink,
+        last == null ? 'None completed yet' : '${w.itemsCounted} items · last ${_shortDay(last.toIso8601String())}',
+      ),
+    ];
+    Widget card(int i) => SizedBox(
+          height: 88,
+          child: AnimatedMetricCard(
+            title: items[i].$1,
+            value: items[i].$2,
+            valueColor: items[i].$3,
+            caption: items[i].$4,
+            index: i,
+            format: (v) => '${v.round()}',
+          ),
+        );
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 480) {
+          return Column(children: [for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(height: 8), card(i)]]);
+        }
+        return Row(children: [for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(width: 8), Expanded(child: card(i))]]);
       },
     );
   }
@@ -1580,7 +1870,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     if (s.residential) return _residentialChart(s, expand: expand);
     const visible = [0, 1];
     final typeLabels = _mixLabelsFor(false);
-    final tabs = [for (final k in visible) '${_typeTabName(typeLabels[k])} · rev & profit', 'Close rate'];
+    final tabs = [for (final k in visible) _typeTabName(typeLabels[k]), 'Close rate'];
     final view = _view.clamp(0, tabs.length - 1);
     final now = DateTime.now().month;
     Widget content;
@@ -1599,11 +1889,12 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               expand: expand,
             );
     }
-    return _chartCard(tabs: tabs, view: view, content: content, expand: expand);
+    final title = view == tabs.length - 1 ? 'Close rate by month' : '${tabs[view]} revenue & profit by month';
+    return _chartCard(tabs: tabs, view: view, content: content, expand: expand, title: title);
   }
 
   /// The chart panel around a sales chart: the tab strip and the content, paused for the cycle while hovered.
-  Widget _chartCard({required List<String> tabs, required int view, required Widget content, required bool expand}) {
+  Widget _chartCard({required List<String> tabs, required int view, required Widget content, required bool expand, String? title}) {
     _chartTabs = tabs.length;
     _chartShown = view;
     return MouseRegion(
@@ -1630,6 +1921,16 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               ),
             ),
             const SizedBox(height: 8),
+            if (title != null) ...[
+              Row(
+                children: [
+                  Container(width: 4, height: 18, decoration: BoxDecoration(color: DashUi.indigo, borderRadius: BorderRadius.circular(2))),
+                  const SizedBox(width: 10),
+                  Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, letterSpacing: -0.2, color: _ink))),
+                ],
+              ),
+              const SizedBox(height: 8),
+            ],
             if (expand) Expanded(child: content) else SizedBox(height: 252, child: content),
           ],
         ),
@@ -1672,7 +1973,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
   /// A residential rep's chart panel: revenue & profit by month, or close rate by month. No plain revenue bars (the
   /// revenue line says the same thing).
   Widget _residentialChart(_SalesKpis s, {required bool expand}) {
-    const tabs = ['Revenue & profit', 'Close rate'];
+    const tabs = ['Sales', 'Close rate'];
     final view = _view.clamp(0, tabs.length - 1);
     final now = DateTime.now().month;
     Widget content;
@@ -1686,7 +1987,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     } else {
       content = _closeRateChart(s, expand: expand);
     }
-    return _chartCard(tabs: tabs, view: view, content: content, expand: expand);
+    return _chartCard(tabs: tabs, view: view, content: content, expand: expand, title: view == 0 ? 'Revenue & profit by month' : 'Close rate by month');
   }
 }
 
@@ -1871,13 +2172,17 @@ class _BigStat extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 6),
-        Text(
-          value,
-          style: TextStyle(
-            fontSize: 30,
-            fontWeight: FontWeight.w800,
-            color: color,
-            height: 1.1,
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            value,
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w800,
+              color: color,
+              height: 1.1,
+            ),
           ),
         ),
         if (sub != null) ...[
@@ -2836,13 +3141,19 @@ class _LineChartPainter extends CustomPainter {
 /// Big figures side by side with dividers; a wrapped grid on narrow widths.
 class _FigureRow extends StatelessWidget {
   final List<Widget> figures;
-  const _FigureRow(this.figures);
+
+  /// Below this width the figures wrap to two columns.
+  final double breakpoint;
+
+  /// Space either side of the dividers between figures.
+  final double gap;
+  const _FigureRow(this.figures, {this.breakpoint = 700, this.gap = 24});
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth < 700) {
+        if (c.maxWidth < breakpoint) {
           return Wrap(
             spacing: 24,
             runSpacing: 16,
@@ -2855,9 +3166,9 @@ class _FigureRow extends StatelessWidget {
             children: [
               for (var i = 0; i < figures.length; i++) ...[
                 if (i > 0)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 24),
-                    child: VerticalDivider(width: 1, color: _line),
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: gap),
+                    child: const VerticalDivider(width: 1, color: _line),
                   ),
                 Expanded(child: figures[i]),
               ],
@@ -3259,9 +3570,12 @@ class _ChartPainter extends CustomPainter {
         final cx = (a.dx + b.dx) / 2;
         path.cubicTo(cx, a.dy, cx, b.dy, b.dx, b.dy);
       }
+      // A run starting in January carries its fill back to the axis, so the half slot before the first month isn't bare.
+      final fromAxis = run.first == 0;
       final area = Path.from(path)
         ..lineTo(pts[run.last]!.dx, plot.bottom)
-        ..lineTo(pts[run.first]!.dx, plot.bottom)
+        ..lineTo(fromAxis ? plot.left : pts[run.first]!.dx, plot.bottom)
+        ..lineTo(fromAxis ? plot.left : pts[run.first]!.dx, pts[run.first]!.dy)
         ..close();
       canvas.drawPath(
         area,
@@ -3848,6 +4162,28 @@ class _StaleTubeState extends State<_StaleTube> {
 /// "Late to send estimates" count card: green up to 15, amber 16-25, red 26 and up. A small clock sits on the right and
 /// its hands run faster the worse the count (still at zero, still with reduced motion; faster again on hover).
 /// Hovering also lifts the card and points at the click, which opens the list of those estimates.
+/// A one-line scorecard: the label on the left, the figure on the right.
+class _MiniStatCard extends StatelessWidget {
+  final String title;
+  final String value;
+  final Color color;
+  const _MiniStatCard({required this.title, required this.value, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: DashUi.line)),
+      child: Row(
+        children: [
+          Expanded(child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate))),
+          Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: color)),
+        ],
+      ),
+    );
+  }
+}
+
 class _LateCard extends StatefulWidget {
   final int? count;
   final String? since;

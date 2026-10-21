@@ -99,18 +99,29 @@ class _BandedDelegate extends StaticSelectionContainerDelegate {
   /// lands in the same band.
   static const double _band = 22;
 
-  static Rect _box(Selectable s) {
-    var r = s.boundingBoxes.first;
-    for (var i = 1; i < s.boundingBoxes.length; i++) {
-      r = r.expandToInclude(s.boundingBoxes[i]);
+  /// Where [s] sits on screen, or null if it can't be measured yet. Text on a page that is still loading, or on a
+  /// page the nav shell keeps alive offstage, has no layout; reading its size throws, and in release that throw
+  /// left the page as a blank grey box.
+  static Rect? _box(Selectable s) {
+    try {
+      final boxes = s.boundingBoxes;
+      if (boxes.isEmpty) return null;
+      var r = boxes.first;
+      for (var i = 1; i < boxes.length; i++) {
+        r = r.expandToInclude(boxes[i]);
+      }
+      return MatrixUtils.transformRect(s.getTransformTo(null), r);
+    } catch (_) {
+      return null;
     }
-    return MatrixUtils.transformRect(s.getTransformTo(null), r);
   }
 
   @override
   Comparator<Selectable> get compareOrder => (a, b) {
         final ra = _box(a);
         final rb = _box(b);
+        // Unmeasured text goes last, so the order stays consistent.
+        if (ra == null || rb == null) return (ra == null ? 1 : 0) - (rb == null ? 1 : 0);
         final ba = (ra.center.dy / _band).floor();
         final bb = (rb.center.dy / _band).floor();
         if (ba != bb) return ba.compareTo(bb);

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
+import 'dart:ui' show PointMode;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
@@ -14,6 +18,8 @@ import 'utils/avatar_image.dart';
 import 'widgets/animated_select.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/dashboard_kit.dart';
+
+part 'team_admin_widgets.dart';
 
 // ---------------------------------------------------------------------------
 // Team admin: every login in the users table, editable in place.
@@ -64,8 +70,13 @@ const Set<String> _sensitive = {
   'role',
   'status',
   'tech_weight',
+  'install_rate_pct',
   'is_commission_eligible',
   'is_callback_eligible',
+  'is_sales_commission_eligible',
+  'sales_rate_pct',
+  'sales_account_rate_pct',
+  'sales_builder_rate_pct',
 };
 
 const Map<String, String> _labels = {
@@ -80,8 +91,12 @@ const Map<String, String> _labels = {
   'tenure_tier': 'Tenure tier',
   'tool_allowance': 'Tool allowance',
   'tech_weight': 'Commission weight',
+  'install_rate_pct': 'Pool cap (% of labor)',
   'is_commission_eligible': 'Commission eligible',
   'is_sales_commission_eligible': 'Sales commission',
+  'sales_rate_pct': 'Sales rate, hard bid / new account',
+  'sales_account_rate_pct': 'Sales rate, existing accounts',
+  'sales_builder_rate_pct': 'Sales rate, high volume builders',
   'is_callback_eligible': 'Callback pay eligible',
   'is_lead': 'Lead',
   'can_collect_payment': 'Can collect payment',
@@ -316,6 +331,15 @@ class _Emp {
 
 const List<String> _groupNames = ['Field team', 'Sales', 'Office and admin', 'Warehouse', 'Other', 'Inactive'];
 
+/// Tints the initials avatar by group, so the roster reads at a glance (photos are unaffected).
+Color _groupAccent(int group) => switch (group) {
+  0 => DashUi.sky,
+  1 => DashUi.indigo,
+  2 => DashUi.slate,
+  3 => DashUi.amber,
+  _ => DashUi.muted,
+};
+
 class _Resp {
   final int status;
   final Map<String, dynamic> body;
@@ -329,7 +353,7 @@ class _Resp {
 
 /// One place for every call: auth headers, a timeout, 401 = sign out, and a readable message when the
 /// server (or Render in front of it) answers with something that isn't our JSON.
-Future<_Resp> _send(String method, Uri uri, {Object? body}) async {
+Future<_Resp> _send(String method, Uri uri, {Object? body, Duration timeout = _timeout}) async {
   final h = AuthSession.instance.headers();
   final http.Response res;
   try {
@@ -338,7 +362,7 @@ Future<_Resp> _send(String method, Uri uri, {Object? body}) async {
       'POST' => http.post(uri, headers: h, body: body == null ? null : jsonEncode(body)),
       _ => http.patch(uri, headers: h, body: jsonEncode(body)),
     };
-    res = await req.timeout(_timeout);
+    res = await req.timeout(timeout);
   } on TimeoutException {
     throw _ApiError('The server took too long to answer. Check your connection and try again.', null);
   } catch (_) {
@@ -405,6 +429,16 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   String? _historyError;
   int _historyReq = 0;
   bool _pinBusy = false;
+  // The badge just clicked, so only that tile does its little pop.
+  String? _poppedBadge;
+
+  // This year's scorecard per person (see _Glance), fetched when they are opened and kept until Refresh.
+  final Map<int, _Glance> _glances = {};
+  final Set<int> _glanceBusy = {};
+  final Map<int, String> _glanceErrors = {};
+
+  // Until this moment the roster rows slide in one after another; rows built later (scrolling, filtering) just appear.
+  DateTime? _introUntil;
   // Which collapsible blocks are open, so their chevrons keep in step when the screen rebuilds.
   final Set<String> _openTiles = {};
   bool _refreshing = false;
@@ -414,6 +448,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   final _searchCtl = TextEditingController();
   final _detailScroll = ScrollController();
   final _weightCtl = TextEditingController();
+  final _capCtl = TextEditingController();
+  final _salesTopCtl = TextEditingController();
+  final _salesAcctCtl = TextEditingController();
+  final _salesBuilderCtl = TextEditingController();
+  // True when this person has a separate rate for existing accounts; false = one flat rate on everything.
+  bool _salesSplit = false;
 
   final _firstCtl = TextEditingController();
   final _lastCtl = TextEditingController();
@@ -443,6 +483,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       _jobTitleCtl,
       _allowanceCtl,
       _weightCtl,
+      _capCtl,
+      _salesTopCtl,
+      _salesAcctCtl,
+      _salesBuilderCtl,
     ]) {
       c.dispose();
     }
@@ -488,10 +532,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           .map((u) => _Emp(Map<String, dynamic>.from(u)))
           .toList();
       if (!mounted) return;
+      final firstLoad = _users.isEmpty;
       setState(() {
         _roles = roles;
         _users = users;
         _loading = false;
+        if (firstLoad) _introUntil = DateTime.now().add(const Duration(milliseconds: 1400));
       });
       // Keep the person you were on (and any edits in progress); otherwise start with nobody picked.
       final keep = keepSelection && _selected != null;
@@ -510,7 +556,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   /// Reload the roster without losing the person you're on or what you've typed.
   Future<void> _refresh() async {
     if (_refreshing) return;
-    setState(() => _refreshing = true);
+    setState(() {
+      _refreshing = true;
+      _glances.clear();
+      _glanceErrors.clear();
+    });
     final before = _draft.length;
     await _load();
     if (!mounted) return;
@@ -577,6 +627,12 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     switch (key) {
       case 'tech_weight':
         return v == null ? 1.0 : _d(v);
+      case 'install_rate_pct':
+        return v == null || '$v'.trim().isEmpty || _d(v) <= 0 ? null : _d(v);
+      case 'sales_rate_pct':
+      case 'sales_account_rate_pct':
+      case 'sales_builder_rate_pct':
+        return v == null || '$v'.trim().isEmpty ? null : _d(v);
       case 'tool_allowance':
         return _d(v);
       case 'tenure_tier':
@@ -634,6 +690,16 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final a = _d(e.raw['tool_allowance']);
     _allowanceCtl.text = a == 0 ? '' : a.toStringAsFixed(a == a.roundToDouble() ? 0 : 2);
     _weightCtl.text = _fmtW(e.weight);
+    final cap = _norm('install_rate_pct', e.raw['install_rate_pct']);
+    _capCtl.text = cap == null ? '' : _fmtW(_d(cap));
+    final top = _norm('sales_rate_pct', e.raw['sales_rate_pct']);
+    _salesTopCtl.text = top == null ? '' : _fmtW(_d(top));
+    final acct = _norm('sales_account_rate_pct', e.raw['sales_account_rate_pct']);
+    _salesAcctCtl.text = acct == null ? '' : _fmtW(_d(acct));
+    // Two rates that are the same pay the same as one flat rate, so only a real difference shows the second box.
+    _salesSplit = acct != null && (top == null || _d(acct) != _d(top));
+    final bld = _norm('sales_builder_rate_pct', e.raw['sales_builder_rate_pct']);
+    _salesBuilderCtl.text = bld == null ? '' : _fmtW(_d(bld));
   }
 
   Future<void> _openEmployee(_Emp e, {bool force = false}) async {
@@ -650,6 +716,55 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     _fillControllers(e);
     if (_detailScroll.hasClients) _detailScroll.jumpTo(0);
     _loadHistory(e.id);
+    _loadGlance(e, fresh: force);
+  }
+
+  /// This year's numbers for [e]: their KPIs, plus the callback streak for a tech. Kept per person, so going back to
+  /// someone is instant. Owners and admins have nothing measured, so nothing is asked for.
+  Future<void> _loadGlance(_Emp e, {bool fresh = false}) async {
+    if (_isOwnerAdmin(e.role)) return;
+    if (!fresh && (_glances.containsKey(e.id) || _glanceBusy.contains(e.id))) return;
+    setState(() {
+      _glanceBusy.add(e.id);
+      _glanceErrors.remove(e.id);
+    });
+    final year = DateTime.now().year;
+    try {
+      // The callback streak is a nice-to-have: if it fails, the rest of the scorecard still shows.
+      final streak = e.isField
+          ? _send(
+              'GET',
+              Uri.parse('$kApiBaseUrl/api/tech_stats?year=$year'),
+              timeout: const Duration(seconds: 40),
+            ).then<_Resp?>((r) => r, onError: (_) => null)
+          : Future<_Resp?>.value(null);
+      final res = await _send(
+        'GET',
+        Uri.parse('$kApiBaseUrl/api/employees/${e.id}/kpis?year=$year'),
+        timeout: const Duration(seconds: 40),
+      );
+      final stats = await streak;
+      if (!res.ok) throw _ApiError(res.error('The server answered ${res.status}.'), null);
+      final g = _Glance.from(res.body, stats != null && stats.status == 200 ? stats.body : null, e);
+      if (mounted) setState(() => _glances[e.id] = g);
+    } on _ApiError catch (err) {
+      if (mounted) setState(() => _glanceErrors[e.id] = err.message);
+    } catch (_) {
+      if (mounted) setState(() => _glanceErrors[e.id] = 'Something went wrong reading them.');
+    } finally {
+      if (mounted) setState(() => _glanceBusy.remove(e.id));
+    }
+  }
+
+  /// Their full KPI page. Unsaved edits would be lost on the way, so that is asked first.
+  Future<void> _openKpis(_Emp e) async {
+    if (_dirty) {
+      final leave = await _confirmDiscard();
+      if (leave != true || !mounted) return;
+      _discard();
+    }
+    if (!mounted) return;
+    GoRouter.maybeOf(context)?.go('/hr/kpis/${Uri.encodeComponent(e.username)}');
   }
 
   void _discard() {
@@ -836,9 +951,18 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Future<bool?> _confirmReview(_Emp e) {
     final keys = _labels.keys.where(_draft.containsKey).toList();
     final notes = <String>[];
-    if (_draft.containsKey('tech_weight') || _draft.containsKey('is_commission_eligible')) {
+    if (_draft.containsKey('tech_weight') ||
+        _draft.containsKey('install_rate_pct') ||
+        _draft.containsKey('is_commission_eligible')) {
       notes.add(
         'Open jobs recalculate on the next Service Fusion sync, about 3 minutes. Jobs already paid keep their old weight.',
+      );
+    }
+    if (_draft.containsKey('sales_rate_pct') ||
+        _draft.containsKey('sales_account_rate_pct') ||
+        _draft.containsKey('sales_builder_rate_pct')) {
+      notes.add(
+        'Sales rates apply to every sales commission not yet paid out, including ones already earned. Weeks already paid in a payroll run only change if that run is redone.',
       );
     }
     if (_draft.containsKey('name')) {
@@ -992,6 +1116,14 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
           _allowanceCtl.text = _d(v) == 0 ? '' : _fmtW(_d(v));
         case 'tech_weight':
           _weightCtl.text = _fmtW(_d(v));
+        case 'install_rate_pct':
+          _capCtl.text = v == null ? '' : _fmtW(_d(v));
+        case 'sales_rate_pct':
+          _salesTopCtl.text = v == null ? '' : _fmtW(_d(v));
+        case 'sales_account_rate_pct':
+          _salesAcctCtl.text = v == null ? '' : _fmtW(_d(v));
+        case 'sales_builder_rate_pct':
+          _salesBuilderCtl.text = v == null ? '' : _fmtW(_d(v));
       }
     }
   }
@@ -1120,6 +1252,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     if (v == null || (v is String && v.trim().isEmpty)) return 'None';
     if (_boolKeys.contains(key)) return v == true ? 'On' : 'Off';
     if (key == 'tech_weight') return '${_fmtW(_d(v))}×';
+    if (key == 'install_rate_pct') return '${_fmtW(_d(v))}% of labor';
+    if (key == 'sales_rate_pct' || key == 'sales_account_rate_pct' || key == 'sales_builder_rate_pct') {
+      return '${_fmtW(_d(v))}% of labor';
+    }
     if (key == 'tool_allowance') return dashMoney(_d(v));
     if (key == 'access_denied' && v is List) return '${v.length} of ${kAllAccessKeys.length} allowed';
     if (key == 'avatar_url') return '$v'.contains('/api/avatars/') ? 'Uploaded photo' : 'Photo';
@@ -1132,6 +1268,10 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     if (field == 'role') return _roleLabel(v, _roles);
     if (_boolKeys.contains(field)) return v == 'true' ? 'On' : (v == 'false' ? 'Off' : v);
     if (field == 'tech_weight') return '${_fmtW(_d(v))}×';
+    if (field == 'install_rate_pct') return '${_fmtW(_d(v))}% of labor';
+    if (field == 'sales_rate_pct' || field == 'sales_account_rate_pct' || field == 'sales_builder_rate_pct') {
+      return '${_fmtW(_d(v))}% of labor';
+    }
     if (field == 'tool_allowance') return dashMoney(_d(v));
     if (field == 'avatar_url') return v.contains('/api/avatars/') ? 'Uploaded photo' : 'Photo';
     return v;
@@ -1299,22 +1439,58 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   Widget _roster() {
     final list = _visible();
 
+    final counts = <int, int>{};
+    for (final u in list) {
+      counts[u.group] = (counts[u.group] ?? 0) + 1;
+    }
     final children = <Widget>[];
     int? lastGroup;
+    final intro = _introUntil != null && DateTime.now().isBefore(_introUntil!);
+    var row = 0;
     for (final u in list) {
       if (u.group != lastGroup) {
         lastGroup = u.group;
         children.add(
           Padding(
-            padding: EdgeInsets.fromLTRB(16, children.isEmpty ? 6 : 16, 16, 6),
-            child: Text(
-              _groupNames[u.group],
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.muted),
+            padding: EdgeInsets.fromLTRB(18, children.isEmpty ? 10 : 18, 18, 6),
+            child: Row(
+              children: [
+                Text(
+                  _groupNames[u.group].toUpperCase(),
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: DashUi.muted,
+                    letterSpacing: 0.9,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${counts[u.group]}',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: DashUi.muted,
+                    fontFeatures: _figures,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                const Expanded(child: Divider(height: 1, color: DashUi.line)),
+              ],
             ),
           ),
         );
       }
-      children.add(_rosterRow(u));
+      children.add(
+        _Reveal(
+          key: ValueKey('roster-${u.id}'),
+          delayMs: intro ? math.min(row * 35, 420) : 0,
+          ms: intro ? 380 : 1,
+          from: const Offset(-14, 0),
+          child: _rosterRow(u),
+        ),
+      );
+      row++;
     }
 
     return Container(
@@ -1438,20 +1614,34 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     return _Hoverable(
       onTap: () => _openEmployee(u),
       builder: (hover) => AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        duration: const Duration(milliseconds: 140),
+        margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        padding: const EdgeInsets.fromLTRB(6, 8, 10, 8),
         decoration: BoxDecoration(
-          color: selected ? DashUi.faint : (hover ? _T.wash : DashUi.faint.withValues(alpha: 0)),
-          borderRadius: BorderRadius.circular(10),
+          color: selected ? Colors.white : (hover ? DashUi.faint : DashUi.faint.withValues(alpha: 0)),
+          borderRadius: BorderRadius.circular(12),
           border: Border.all(color: selected ? DashUi.line : DashUi.line.withValues(alpha: 0)),
+          boxShadow: selected
+              ? [BoxShadow(color: DashUi.ink.withValues(alpha: 0.06), blurRadius: 10, offset: const Offset(0, 3))]
+              : const [],
         ),
         child: Opacity(
           opacity: u.active ? 1 : 0.72,
           child: Row(
             children: [
-              DashAvatar(name: u.name, imageUrl: u.avatarUrl, size: 34),
-              const SizedBox(width: 10),
+              // The selected person gets an accent bar, so the choice still reads from across the room.
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 160),
+                width: 3,
+                height: 26,
+                decoration: BoxDecoration(
+                  color: selected ? _groupAccent(u.group) : _groupAccent(u.group).withValues(alpha: 0),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              const SizedBox(width: 7),
+              DashAvatar(name: u.name, imageUrl: u.avatarUrl, size: 36, accent: _groupAccent(u.group)),
+              const SizedBox(width: 11),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -1532,50 +1722,37 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   Widget _detail() {
     final e = _selected;
-    if (e == null) {
-      return Container(
-        alignment: Alignment.center,
-        child: const Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.groups_2_outlined, size: 40, color: DashUi.muted),
-            SizedBox(height: 10),
-            Text(
-              'Pick someone on the left',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
-            ),
-            SizedBox(height: 6),
-            Text(
-              'See and edit their profile, pay weight, permissions and change history.',
-              style: TextStyle(fontSize: 13, color: DashUi.slate),
-            ),
-          ],
-        ),
-      );
-    }
+    if (e == null) return _TeamOverview(users: _users, onOpen: _openEmployee);
 
+    final sections = <Widget>[
+      _profileSection(e),
+      _badgesSection(),
+      _weightSection(),
+      if (!_isOwnerAdmin(_s(_value('role')))) _permissionsSection(),
+      _historySection(),
+    ];
     return Stack(
       children: [
         Positioned.fill(
           child: ListView(
             controller: _detailScroll,
             padding: const EdgeInsets.only(bottom: 110),
+            // Build the whole record up front, so each section's entrance plays as the person opens, not on scroll.
+            scrollCacheExtent: const ScrollCacheExtent.pixels(4000),
             children: [
-              // One panel, not five cards: the sections are told apart by a thin rule, so the page reads as a
-              // single record for this person.
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _hero(e),
-                  _sectionRule(),
-                  _profileSection(e),
-                  _sectionRule(),
-                  _weightSection(),
-                  if (!_isOwnerAdmin(_s(_value('role')))) ...[_sectionRule(), _permissionsSection()],
-                  _sectionRule(),
-                  _historySection(),
-                ],
-              ),
+              _hero(e),
+              // One record, not a stack of cards: the sections are told apart by a thin rule, and come in one after
+              // another when the person opens.
+              for (var i = 0; i < sections.length; i++)
+                _Reveal(
+                  key: ValueKey('section-${e.id}-$i'),
+                  delayMs: 220 + i * 70,
+                  from: const Offset(0, 18),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [if (i > 0) _sectionRule(), sections[i]],
+                  ),
+                ),
             ],
           ),
         ),
@@ -1670,17 +1847,26 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   ];
 
   /// The avatar, with a small camera badge. Click to upload (or replace/remove when there is one already).
-  Widget _photoControl(String name, bool active) {
+  Widget _photoControl(String name, bool active, {double size = 92}) {
     final url = _s(_value('avatar_url'));
     final avatar = Stack(
       clipBehavior: Clip.none,
       children: [
-        DashAvatar(
-          name: name,
-          imageUrl: url,
-          size: 96,
-          ringColor: _draft.containsKey('avatar_url') ? DashUi.indigo : (active ? DashUi.emerald : DashUi.line),
-          ringWidth: 2.5,
+        DecoratedBox(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            boxShadow: [
+              BoxShadow(color: DashUi.ink.withValues(alpha: 0.12), blurRadius: 18, offset: const Offset(0, 6)),
+            ],
+          ),
+          child: DashAvatar(
+            name: name,
+            imageUrl: url,
+            size: size,
+            accent: _groupAccent(_selected?.group ?? 4),
+            ringColor: _draft.containsKey('avatar_url') ? DashUi.indigo : Colors.white,
+            ringWidth: size > 100 ? 4 : 3,
+          ),
         ),
         if (_photoBusy)
           Positioned.fill(
@@ -1705,8 +1891,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               color: Colors.white,
               shape: BoxShape.circle,
               border: Border.all(color: DashUi.line),
+              boxShadow: [
+                BoxShadow(color: DashUi.ink.withValues(alpha: 0.10), blurRadius: 6, offset: const Offset(0, 2)),
+              ],
             ),
-            child: const Icon(Icons.photo_camera_outlined, size: 16, color: DashUi.slate),
+            child: const Icon(Icons.photo_camera_outlined, size: 16, color: DashUi.ink),
           ),
         ),
       ],
@@ -1733,117 +1922,403 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
+  /// "2%", "2% / 1%" or "2%, builders 2%": the sales rates in one go, for the header and the commission summary.
+  String _salesSummary() {
+    final top = _d(_value('sales_rate_pct') ?? 2);
+    final acct = _value('sales_account_rate_pct');
+    final bld = _value('sales_builder_rate_pct');
+    return '${_fmtW(top)}%'
+        '${acct == null || _d(acct) == top ? '' : ' / ${_fmtW(_d(acct))}%'}'
+        '${bld == null ? '' : ', builders ${_fmtW(_d(bld))}%'}';
+  }
+
   Widget _hero(_Emp e) {
     final name = _s(_value('name'));
     final role = _s(_value('role'));
     final active = _value('status') == 'Active';
-    final year = _value('year_joined');
-    final joined = DateTime.tryParse(_s(_value('hire_date')));
+    final me = _isMe(e);
+    final group = active ? e.group : 5;
+    final onBadges = [
+      for (final b in _badges)
+        if (_value(b.key) == true) b,
+    ];
 
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          LayoutBuilder(
-            builder: (context, c) {
-              final narrow = c.maxWidth < 520;
-              final me = _isMe(e);
-              // One deliberate button instead of a toggle next to the name; the review step still follows.
-              final status = Tooltip(
-                message: me ? "You can't deactivate your own account." : '',
-                child: active
-                    ? OutlinedButton.icon(
-                        onPressed: me ? null : () => _set('status', 'Inactive'),
-                        icon: const Icon(Icons.person_off_outlined, size: 17),
-                        label: const Text('Deactivate…', style: TextStyle(fontWeight: FontWeight.w700)),
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: _T.badFg,
-                          side: BorderSide(color: me ? DashUi.line : _T.badFg.withValues(alpha: 0.4)),
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                        ),
-                      )
-                    : FilledButton.icon(
-                        onPressed: () => _set('status', 'Active'),
-                        icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
-                        label: const Text('Reactivate', style: TextStyle(fontWeight: FontWeight.w700)),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: DashUi.emeraldDeep,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    // One deliberate button instead of a toggle next to the name; the review step still follows.
+    final status = Tooltip(
+      message: me ? "You can't deactivate your own account." : '',
+      child: active
+          ? OutlinedButton.icon(
+              onPressed: me ? null : () => _set('status', 'Inactive'),
+              icon: const Icon(Icons.person_off_outlined, size: 17),
+              label: const Text('Deactivate…', style: TextStyle(fontWeight: FontWeight.w700)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _T.badFg,
+                backgroundColor: Colors.white,
+                side: BorderSide(color: me ? DashUi.line : _T.badFg.withValues(alpha: 0.4)),
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            )
+          : FilledButton.icon(
+              onPressed: () => _set('status', 'Active'),
+              icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
+              label: const Text('Reactivate', style: TextStyle(fontWeight: FontWeight.w700)),
+              style: FilledButton.styleFrom(
+                backgroundColor: DashUi.emeraldDeep,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+            ),
+    );
+    // The tooltip says where their PIN stands; PINs are stored encrypted, so it can only be reset.
+    final pin = Tooltip(
+      message: !e.hasPin
+          ? 'No PIN yet. Sets a temporary one they must change at login.'
+          : e.needsPinChange
+          ? 'They must choose a new PIN at next login. PINs are stored encrypted.'
+          : 'PIN set. PINs are stored encrypted, so nobody can look one up.',
+      child: OutlinedButton.icon(
+        onPressed: _pinBusy ? null : _resetPin,
+        icon: _pinBusy
+            ? const SizedBox(width: 15, height: 15, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.ink))
+            : const Icon(Icons.key_rounded, size: 17),
+        label: Text(
+          _pinBusy ? 'Working…' : (e.hasPin ? 'Reset PIN' : 'Set temporary PIN'),
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: DashUi.ink,
+          backgroundColor: Colors.white,
+          side: const BorderSide(color: DashUi.line),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      ),
+    );
+    final actions = Wrap(spacing: 8, runSpacing: 8, children: [pin, status]);
+
+    final nameBlock = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 10,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            Text(
+              name.isEmpty ? 'Unnamed' : name,
+              style: const TextStyle(
+                fontSize: 28,
+                fontWeight: FontWeight.w800,
+                color: DashUi.ink,
+                letterSpacing: -0.7,
+                height: 1.1,
+              ),
+            ),
+            _statusPill(active),
+            if (me) _chip('You', DashUi.emeraldDeep, _T.goodBg),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Text.rich(
+          TextSpan(
+            style: const TextStyle(fontSize: 14, color: DashUi.slate, fontWeight: FontWeight.w500, height: 1.4),
+            children: [
+              TextSpan(
+                text: _titleLabel(_s(_value('job_title')), role, _roles),
+                style: const TextStyle(color: DashUi.ink, fontWeight: FontWeight.w700),
+              ),
+              TextSpan(text: '   ·   @${_s(_value('username'))}'),
+            ],
+          ),
+        ),
+        if (onBadges.isNotEmpty || _grantsAdmin(role)) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              if (_grantsAdmin(role))
+                _chip('Admin access', DashUi.indigo, _T.changedFill, icon: Icons.admin_panel_settings_outlined),
+              for (final b in onBadges)
+                Tooltip(
+                  message: b.meaning,
+                  child: _chip(b.label, b.fg, b.bg, icon: b.icon, iconColor: b.color),
+                ),
+            ],
+          ),
+        ],
+      ],
+    );
+
+    const coverH = 116.0, photo = 108.0, pad = 28.0;
+    return LayoutBuilder(
+      builder: (context, c) {
+        // Too narrow to sit the name beside the photo: it goes under it instead.
+        final stacked = c.maxWidth < 560;
+        // On a very wide window everything under the cover stops where the sections below do (28 + 1200).
+        final right = math.max(pad, c.maxWidth - 1228);
+        final head = c.maxWidth >= 780
+            ? Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(child: nameBlock),
+                  const SizedBox(width: 16),
+                  actions,
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [nameBlock, const SizedBox(height: 14), actions],
+              );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _CoverBanner(accent: _groupAccent(group), icon: _groupIcon(group), height: coverH),
+                    Padding(
+                      padding: EdgeInsets.fromLTRB(
+                        stacked ? pad : pad + photo + 22,
+                        stacked ? photo / 2 + 16 : 14,
+                        right,
+                        0,
+                      ),
+                      child: ConstrainedBox(
+                        constraints: BoxConstraints(minHeight: stacked ? 0 : photo / 2 + 6),
+                        child: _Reveal(
+                          key: ValueKey('name-${e.id}'),
+                          delayMs: 60,
+                          from: const Offset(-16, 0),
+                          child: head,
                         ),
                       ),
-              );
-              final identity = Row(
-                children: [
-                  _photoControl(name, active),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name.isEmpty ? 'Unnamed' : name,
-                          style: const TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.w800,
-                            color: DashUi.ink,
-                            letterSpacing: -0.4,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 6,
-                          children: [
-                            _chip('@${_s(_value('username'))}', DashUi.slate, DashUi.faint),
-                            _chip(_titleLabel(_s(_value('job_title')), role, _roles), DashUi.ink, DashUi.faint),
-                            if (_grantsAdmin(role)) _chip('Admin access', DashUi.indigo, const Color(0xFFEEF2FF)),
-                            if (joined != null)
-                              _chip('Joined ${DateFormat.yMMMd().format(joined)}', DashUi.slate, DashUi.faint)
-                            else if (year != null)
-                              _chip('Joined $year', DashUi.slate, DashUi.faint),
-                            for (final b in _badges)
-                              if (_value(b.key) == true) _chip(b.label, b.fg, b.bg),
-                            if (!active) _chip('Inactive', _T.badFg, _T.badBg),
-                            if (_isMe(e)) _chip('You', DashUi.emeraldDeep, _T.goodBg),
-                          ],
-                        ),
-                      ],
                     ),
+                  ],
+                ),
+                Positioned(
+                  left: pad,
+                  top: coverH - photo / 2,
+                  child: _Reveal(
+                    key: ValueKey('photo-${e.id}'),
+                    ms: 560,
+                    from: const Offset(0, 10),
+                    fromScale: 0.8,
+                    curve: Curves.easeOutBack,
+                    child: _photoControl(name, active, size: photo),
                   ),
-                ],
-              );
-              if (narrow) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [identity, const SizedBox(height: 14), status],
-                );
-              }
-              return Row(
-                children: [
-                  Expanded(child: identity),
-                  const SizedBox(width: 12),
-                  status,
-                ],
-              );
-            },
-          ),
-          if (_attentionFor(e).isNotEmpty) ...[
-            const SizedBox(height: 12),
-            for (final msg in _attentionFor(e))
+                ),
+              ],
+            ),
+            if (_attentionFor(e).isNotEmpty || _fieldErrors['status'] != null)
               Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: _note(Icons.error_outline_rounded, msg, fg: _T.amberFg, bg: _T.amberBg),
+                padding: EdgeInsets.fromLTRB(pad, 16, right, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final msg in _attentionFor(e))
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: _note(
+                          Icons.error_outline_rounded,
+                          msg,
+                          fg: _T.amberFg,
+                          bg: _T.amberBg,
+                          line: const Color(0xFFFDE68A),
+                        ),
+                      ),
+                    if (_fieldErrors['status'] != null)
+                      _note(Icons.error_outline_rounded, _fieldErrors['status']!, fg: _T.badFg, bg: _T.badBg),
+                  ],
+                ),
               ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(pad, 18, right, 0),
+              child: _Reveal(key: ValueKey('facts-${e.id}'), delayMs: 140, child: _metaStrip(e)),
+            ),
+            _scorecard(e, right: right),
+            _sectionRule(),
           ],
-          if (_fieldErrors['status'] != null) ...[
-            const SizedBox(height: 10),
-            _note(Icons.error_outline_rounded, _fieldErrors['status']!, fg: _T.badFg, bg: _T.badBg),
-          ],
+        );
+      },
+    );
+  }
+
+  Widget _statusPill(bool active) {
+    final fg = active ? _T.goodFg : _T.badFg;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(9, 3, 10, 3),
+      decoration: BoxDecoration(
+        color: active ? _T.goodBg : _T.badBg,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: fg.withValues(alpha: 0.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _PulseDot(color: active ? DashUi.emerald : DashUi.red, pulse: active),
+          const SizedBox(width: 7),
+          Text(
+            active ? 'Active' : 'Inactive',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: fg),
+          ),
         ],
       ),
+    );
+  }
+
+  /// The plain facts about this person, each one a full phrase so it reads without a label: how long they've been
+  /// here, how much they've been on jobs lately, and (for techs) their inventory strikes.
+  Widget _metaStrip(_Emp e) {
+    Widget item(IconData icon, String strong, String rest, {Color? tone}) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 17, color: tone ?? DashUi.slate),
+        const SizedBox(width: 7),
+        Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(
+                text: strong,
+                style: TextStyle(fontWeight: FontWeight.w800, color: tone ?? DashUi.ink),
+              ),
+              TextSpan(text: rest),
+            ],
+          ),
+          style: const TextStyle(
+            fontSize: 13.5,
+            color: DashUi.slate,
+            fontWeight: FontWeight.w500,
+            fontFeatures: _figures,
+          ),
+        ),
+      ],
+    );
+
+    final joined = DateTime.tryParse(_s(_value('hire_date')));
+    final year = _value('year_joined');
+    final strikesShown = (_glances[e.id]?.stats ?? const <_Stat>[]).any((s) => s.label == 'Inventory strikes');
+    final strikes = _d(e.raw['inventory_strikes']).round();
+    final items = <Widget>[
+      if (joined != null)
+        item(Icons.event_available_rounded, _tenure(joined), ' with IOHD, since ${DateFormat.yMMMd().format(joined)}')
+      else if (year != null)
+        item(Icons.event_available_rounded, 'Since $year', ' with IOHD'),
+      if (e.isField && !strikesShown)
+        item(
+          Icons.inventory_2_outlined,
+          strikes == 0 ? 'No' : '$strikes',
+          ' inventory ${strikes == 1 ? 'strike' : 'strikes'}',
+          tone: strikes == 0 ? _T.goodFg : _T.amberFg,
+        ),
+    ];
+    if (items.isEmpty) return const SizedBox.shrink();
+    return Wrap(spacing: 26, runSpacing: 10, children: items);
+  }
+
+  /// This year's numbers, as scorecard tiles: skeletons while they load, a retry line if they can't, and nothing at
+  /// all for people with nothing measured. The block grows and shrinks smoothly as it changes.
+  Widget _scorecard(_Emp e, {double right = 28}) {
+    final g = _glances[e.id];
+    final busy = _glanceBusy.contains(e.id);
+    final err = _glanceErrors[e.id];
+    final year = DateTime.now().year;
+
+    Widget header({String? scope, bool link = false}) => Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        children: [
+          Text(
+            '$year so far',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.2),
+          ),
+          if (scope != null) ...[
+            const SizedBox(width: 10),
+            Tooltip(
+              message: "These numbers are the whole team's: nothing records which person did what.",
+              child: _chip(scope, DashUi.slate, DashUi.faint, icon: Icons.groups_rounded),
+            ),
+          ],
+          const Spacer(),
+          if (link)
+            TextButton.icon(
+              onPressed: () => _openKpis(e),
+              icon: const Icon(Icons.arrow_forward_rounded, size: 17),
+              iconAlignment: IconAlignment.end,
+              label: const Text('Full KPI page', style: TextStyle(fontWeight: FontWeight.w700)),
+              style: TextButton.styleFrom(foregroundColor: DashUi.ink),
+            ),
+        ],
+      ),
+    );
+
+    Widget? body;
+    if (g != null && g.stats.isNotEmpty) {
+      body = Column(
+        key: ValueKey('glance-${e.id}'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header(scope: g.scope, link: true),
+          _tileRows([
+            for (var i = 0; i < g.stats.length; i++)
+              _StatTile(key: ValueKey('stat-${e.id}-$i'), stat: g.stats[i], index: i),
+          ]),
+        ],
+      );
+    } else if (g == null && busy) {
+      body = Column(
+        key: const ValueKey('glance-loading'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header(),
+          SkeletonPulse(child: _tileRows([for (var i = 0; i < 4; i++) const _StatSkeleton()])),
+        ],
+      );
+    } else if (g == null && err != null) {
+      body = Column(
+        key: const ValueKey('glance-error'),
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          header(),
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
+            decoration: BoxDecoration(
+              color: _T.wash,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: DashUi.line),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.cloud_off_rounded, size: 18, color: DashUi.slate),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    "Couldn't load this year's numbers. $err",
+                    style: const TextStyle(fontSize: 13, color: DashUi.slate, fontWeight: FontWeight.w600),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _loadGlance(e, fresh: true),
+                  child: const Text('Try again', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 320),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      // The tiles' hover glow needs room inside this box (it clips), hence the bottom padding rather than a gap below.
+      child: body == null
+          ? const SizedBox(width: double.infinity, height: 26)
+          : Padding(padding: EdgeInsets.fromLTRB(28, 24, right, 30), child: body),
     );
   }
 
@@ -1856,6 +2331,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final suggestLead = _s(_value('role')).toLowerCase().contains('lead') && !_same(w, 1.5);
     // Office, sales, warehouse and admin people aren't on job commission, so the pay controls start collapsed.
     final offCommission = !isField && !eligible && w == 0;
+    final unpaidSplit = !eligible && w > 0;
 
     void pick(double v) => _set('tech_weight', v);
 
@@ -1863,7 +2339,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Opacity(
-          opacity: eligible ? 1 : 0.6,
+          opacity: eligible || w > 0 ? 1 : 0.6,
           child: Wrap(
             spacing: 12,
             runSpacing: 8,
@@ -1877,6 +2353,30 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                   onChanged: pick,
                 ),
               ),
+              if (eligible)
+                Tooltip(
+                  message: "Pool cap: the most they take from a job's pool, as a percent of the job's labor. Blank means no cap.",
+                  child: SizedBox(
+                    width: 112,
+                    child: TextField(
+                      controller: _capCtl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,3}(\.\d{0,2})?'))],
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(fontSize: 13.5, color: DashUi.ink, fontWeight: FontWeight.w700),
+                      decoration: _dec(
+                        'install_rate_pct',
+                        hint: 'None',
+                        prefix: 'Cap  ',
+                        suffix: '%',
+                      ).copyWith(contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                      onChanged: (t) {
+                        final v = t.trim();
+                        _set('install_rate_pct', v.isEmpty ? null : double.tryParse(v));
+                      },
+                    ),
+                  ),
+                ),
               if (!isPreset)
                 Padding(
                   padding: const EdgeInsets.only(top: 12),
@@ -1906,11 +2406,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             bg: _T.amberBg,
             line: const Color(0xFFFDE68A),
           ),
-        ] else if (!eligible && w > 0 && isField) ...[
+        ] else if (unpaidSplit) ...[
           const SizedBox(height: 10),
           _note(
             Icons.info_outline_rounded,
-            'The weight is ignored while Commission eligible is off.',
+            'Counts in the split on jobs they work, but is not paid commission. Their share is not paid out to anyone.',
             fg: DashUi.slate,
             bg: _T.wash,
           ),
@@ -1919,13 +2419,14 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         _toggleRow(
           'is_commission_eligible',
           'Commission eligible',
-          'Earns job commission and shows up on payroll. Weight only counts when this is on.',
+          'Earns job commission and shows up on payroll. With this off, a weight above 0 still takes a share of the job that is not paid out.',
         ),
         _toggleRow(
           'is_sales_commission_eligible',
           'Sales commission',
-          'Paid a percent of labor on Won estimates they own, after the job closes. Leave Commission eligible off for sales reps.',
+          'Paid a percent of labor on Won estimates they own, after the job closes. Leave Commission eligible off for sales reps, unless they also work jobs with a pool cap.',
         ),
+        if (_value('is_sales_commission_eligible') == true) _salesRateBoxes(),
         _toggleRow(
           'is_callback_eligible',
           'Callback pay eligible',
@@ -1936,6 +2437,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
     return _section(
       title: 'Commission',
+      icon: Icons.payments_outlined,
+      tone: DashUi.emeraldDeep,
       subtitle: offCommission
           ? '${e.name.split(' ').first} is not on job commission.'
           : 'Weight is their share of a job compared with everyone else who worked the same days.',
@@ -1948,14 +2451,90 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             key: ValueKey('comm-${e.id}'),
             title: 'Commission settings',
             summary: [
-              if (eligible) 'Job commission ${_fmtW(w)}×',
-              if (_value('is_sales_commission_eligible') == true) 'Sales commission',
-              if (_value('is_callback_eligible') == true) 'Callback pay',
-              if (!eligible && _value('is_sales_commission_eligible') != true && _value('is_callback_eligible') != true)
-                'Nothing on',
-            ].join('  ·  '),
+              if (eligible)
+                'Job commission: ${_fmtW(w)}× share${_same(w, 1.5) ? ' (lead rate)' : (_same(w, 1) ? ' (standard)' : '')}'
+              else if (w > 0)
+                'In the job split at ${_fmtW(w)}×, not paid',
+              if (eligible && _value('install_rate_pct') != null)
+                'Capped at ${_fmtW(_d(_value('install_rate_pct')))}% of job labor',
+              if (_value('is_sales_commission_eligible') == true) 'Sales commission: ${_salesSummary()} of labor',
+              if (_value('is_callback_eligible') == true) 'Callback pay: on',
+              if (!eligible &&
+                  w == 0 &&
+                  _value('is_sales_commission_eligible') != true &&
+                  _value('is_callback_eligible') != true)
+                'No commission or callback pay',
+            ],
             child: weightControls,
           ),
+        ],
+      ),
+    );
+  }
+
+  /// Sales commission rates, under the Sales commission switch. One standard rate, or a hard bid / new account rate plus
+  /// an existing account rate when the two differ (Zac). The high volume builder rate only shows for whoever has one
+  /// (Heather). Blank uses 2%.
+  Widget _salesRateBoxes() {
+    Widget box(String key, TextEditingController ctl, String label, String hint, String tip) {
+      return Tooltip(
+        message: tip,
+        child: SizedBox(
+          width: 190,
+          child: TextField(
+            controller: ctl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,3}(\.\d{0,2})?'))],
+            textAlign: TextAlign.right,
+            style: const TextStyle(fontSize: 13.5, color: DashUi.ink, fontWeight: FontWeight.w700),
+            decoration: _dec(
+              key,
+              hint: hint,
+              prefix: '$label  ',
+              suffix: '%',
+            ).copyWith(contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+            onChanged: (t) {
+              final v = t.trim();
+              _set(key, v.isEmpty ? null : double.tryParse(v));
+            },
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          box(
+            'sales_rate_pct',
+            _salesTopCtl,
+            _salesSplit ? 'Hard bid / new' : 'Standard',
+            '2',
+            _salesSplit
+                ? 'Percent of labor on Commercial Hard Bid estimates and on new accounts. Blank uses 2%.'
+                : 'Percent of labor on every Won estimate they own. Blank uses 2%.',
+          ),
+          if (_salesSplit)
+            box(
+              'sales_account_rate_pct',
+              _salesAcctCtl,
+              'Existing',
+              '',
+              'Percent of labor on every other estimate they own. Blank pays the same rate as the first box.',
+            ),
+          // Only for someone who has a builder rate saved (Heather); staying put while the box is being edited.
+          if (_base('sales_builder_rate_pct') != null)
+            box(
+              'sales_builder_rate_pct',
+              _salesBuilderCtl,
+              'High volume',
+              'None',
+              'Percent of labor on every closed Lennar and Schuber Mitchell Homes job, whoever sold it, once the job closes. Blank pays nothing.',
+            ),
         ],
       ),
     );
@@ -2013,7 +2592,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
     return _section(
       title: 'Permissions',
-      subtitle: isTech ? null : 'Tick what this person can do. Anything unticked is hidden from their menu or blocked.',
+      icon: Icons.shield_outlined,
+      tone: DashUi.sky,
+      subtitle: isTech
+          ? 'Technicians use the tech app, so only its switches apply.'
+          : 'Tick what this person can do. Anything unticked is hidden from their menu or blocked.',
       trailing: _changedTag('access_denied'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2132,6 +2715,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                           onChanged: (v) => _set(key, v == true),
                           activeColor: DashUi.emeraldDeep,
                           side: const BorderSide(color: DashUi.muted, width: 1.4),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                           materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                           visualDensity: VisualDensity.compact,
                         ),
@@ -2166,6 +2750,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     void Function(AccessGroup, AccessAction) toggleColumn,
   ) {
     final used = {for (final r in group.items) ...r.actions};
+    final keys = [
+      for (final r in group.items)
+        for (final a in r.actions) r.keyFor(a),
+    ];
+    final on = keys.where(allowed.contains).length;
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(12),
@@ -2181,9 +2770,33 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    group.title,
-                    style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: DashUi.slate),
+                  child: Row(
+                    children: [
+                      Text(
+                        group.title,
+                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.ink),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: on == 0 ? DashUi.faint : (on == keys.length ? _T.goodBg : Colors.white),
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                            color: on == keys.length ? _T.goodFg.withValues(alpha: 0.25) : DashUi.line,
+                          ),
+                        ),
+                        child: Text(
+                          on == keys.length ? 'All ${keys.length}' : '$on of ${keys.length}',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: on == keys.length ? _T.goodFg : DashUi.slate,
+                            fontFeatures: _figures,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 for (final a in AccessAction.values.where(used.contains))
@@ -2248,6 +2861,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                                   onChanged: (_) => toggleCell(r, a),
                                   activeColor: DashUi.emeraldDeep,
                                   side: const BorderSide(color: DashUi.muted, width: 1.4),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   visualDensity: VisualDensity.compact,
                                 ),
@@ -2302,141 +2916,112 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       ],
     );
 
-    final badges = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            _fieldLabel('Badges'),
-            const SizedBox(width: 5),
-            const Padding(
-              padding: EdgeInsets.only(bottom: 4),
-              child: Tooltip(
-                message:
-                    'Each badge recognises one KPI. Click to switch it on; it then shows next to the photo and in the '
-                    'tech app. Hover a badge to see what it means.',
-                child: Icon(Icons.info_outline_rounded, size: 14, color: DashUi.muted),
-              ),
-            ),
-          ],
-        ),
-        Wrap(
-          spacing: 6,
-          runSpacing: 6,
-          children: [for (final b in _badges) Tooltip(message: b.meaning, child: _badgePill(b))],
-        ),
-      ],
-    );
-
     return _section(
       title: 'Profile',
+      icon: Icons.badge_outlined,
+      tone: DashUi.indigo,
+      subtitle: 'Name, login and role. The name must match Service Fusion so their jobs line up.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Short boxes sized to what goes in them, flowing onto as many rows as the width needs.
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            crossAxisAlignment: WrapCrossAlignment.start,
-            children: [
-              SizedBox(width: 170, child: _textField('name', 'First name', _firstCtl, onText: _nameBoxesChanged)),
-              SizedBox(width: 170, child: _textField('name', 'Last name', _lastCtl, onText: _nameBoxesChanged)),
-              SizedBox(width: 170, child: _textField('username', 'Username', _usernameCtl)),
-              SizedBox(width: 240, child: roleField),
-              SizedBox(
-                width: 290,
-                child: _textField(
-                  'email',
-                  'Email',
-                  _emailCtl,
-                  type: TextInputType.emailAddress,
-                  hint: 'name@integritydoornwa.com',
+          // An even grid that fills the column: three across when there is room, two when there isn't.
+          _fieldGrid([
+            (1, _textField('name', 'First name', _firstCtl, onText: _nameBoxesChanged)),
+            (1, _textField('name', 'Last name', _lastCtl, onText: _nameBoxesChanged)),
+            (1, _textField('username', 'Username', _usernameCtl)),
+            (1, roleField),
+            (
+              2,
+              _textField(
+                'email',
+                'Email',
+                _emailCtl,
+                type: TextInputType.emailAddress,
+                hint: 'name@integritydoornwa.com',
+              ),
+            ),
+            (1, _dateField('hire_date', 'Date joined')),
+            // Only techs have a tool allowance.
+            if (isTechnicianRole(role))
+              (
+                1,
+                _textField(
+                  'tool_allowance',
+                  'Tool allowance',
+                  _allowanceCtl,
+                  prefix: r'$ ',
+                  type: const TextInputType.numberWithOptions(decimal: true),
+                  formatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,6}(\.\d{0,2})?'))],
+                  hint: '0',
                 ),
               ),
-              SizedBox(width: 170, child: _dateField('hire_date', 'Date joined')),
-              // Only techs have a tool allowance, and it is a small amount, so a small box.
-              if (isTechnicianRole(role))
-                SizedBox(
-                  width: 132,
-                  child: _textField(
-                    'tool_allowance',
-                    'Tool allowance',
-                    _allowanceCtl,
-                    prefix: r'$ ',
-                    type: const TextInputType.numberWithOptions(decimal: true),
-                    formatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d{0,6}(\.\d{0,2})?'))],
-                    hint: '0',
-                  ),
-                ),
-              // Reset PIN sits with the other short fields; the tooltip says where their PIN stands.
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _fieldLabel(' '),
-                  Tooltip(
-                    message: !e.hasPin
-                        ? 'No PIN yet. Sets a temporary one they must change at login.'
-                        : e.needsPinChange
-                        ? 'They must choose a new PIN at next login. PINs are stored encrypted.'
-                        : 'PIN set. PINs are stored encrypted, so nobody can look one up.',
-                    // Drawn by the same input styling as the fields, so it is exactly their height on any font.
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(8),
-                      onTap: _pinBusy ? null : _resetPin,
-                      // A real read-only field draws the button face, so its height is exactly that of the fields.
-                      child: SizedBox(
-                        width: e.hasPin ? 132 : 188,
-                        child: IgnorePointer(
-                          child: TextFormField(
-                            key: ValueKey('pin-${e.id}-${e.hasPin}-$_pinBusy'),
-                            initialValue: _pinBusy ? 'Working…' : (e.hasPin ? 'Reset PIN' : 'Set temporary PIN'),
-                            readOnly: true,
-                            showCursor: false,
-                            enableInteractiveSelection: false,
-                            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
-                            decoration: _dec('reset_pin').copyWith(
-                              prefixIcon: const SizedBox(
-                                width: 34,
-                                height: 0,
-                                child: OverflowBox(
-                                  maxHeight: 24,
-                                  child: Icon(Icons.key_rounded, size: 16, color: DashUi.ink),
-                                ),
-                              ),
-                              prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: 0, maxHeight: 0),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
+          ]),
           if (nameChanged) ...[
-            const SizedBox(height: 8),
-            const Text(
+            const SizedBox(height: 12),
+            _note(
+              Icons.warning_amber_rounded,
               'The name must match Service Fusion exactly. Past work days and ledger rows are renamed when you save.',
-              style: TextStyle(fontSize: 12, color: _T.amberFg, fontWeight: FontWeight.w600, height: 1.35),
+              fg: _T.amberFg,
+              bg: _T.amberBg,
+              line: const Color(0xFFFDE68A),
             ),
           ],
-          const SizedBox(height: 14),
-          badges,
           if (lockedToAdmin) ...[
-            const SizedBox(height: 8),
-            const Text(
-              "You can't remove your own admin access.",
-              style: TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
-            ),
+            const SizedBox(height: 12),
+            _note(Icons.lock_outline_rounded, "You can't remove your own admin access.", fg: DashUi.slate, bg: _T.wash),
           ] else if (_grantsAdmin(role)) ...[
-            const SizedBox(height: 8),
-            const Text(
+            const SizedBox(height: 12),
+            _note(
+              Icons.admin_panel_settings_outlined,
               'This role can open admin screens, including this one.',
-              style: TextStyle(fontSize: 12, color: DashUi.indigo, fontWeight: FontWeight.w600),
+              fg: DashUi.indigo,
+              bg: _T.changedFill,
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  /// Lays [items] out on an even column grid; each item is (columns it spans, widget).
+  Widget _fieldGrid(List<(int, Widget)> items) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        const gap = 14.0;
+        final cols = c.maxWidth >= 600 ? 3 : 2;
+        final colW = ((c.maxWidth - gap * (cols - 1)) / cols).floorToDouble();
+        return Wrap(
+          spacing: gap,
+          runSpacing: 16,
+          children: [
+            for (final (span, child) in items)
+              SizedBox(
+                width: colW * (span > cols ? cols : span) + gap * ((span > cols ? cols : span) - 1),
+                child: child,
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _badgesSection() {
+    return _section(
+      title: 'Badges',
+      icon: Icons.military_tech_outlined,
+      tone: DashUi.amber,
+      subtitle: 'Each one recognises a KPI. The ones switched on show next to their photo and in the tech app.',
+      child: LayoutBuilder(
+        builder: (context, c) {
+          const gap = 10.0;
+          final cols = c.maxWidth >= 600 ? 3 : 2;
+          final w = ((c.maxWidth - gap * (cols - 1)) / cols).floorToDouble();
+          return Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [for (final b in _badges) SizedBox(width: w, child: _badgeTile(b))],
+          );
+        },
       ),
     );
   }
@@ -2448,35 +3033,97 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     child: Divider(height: 1, color: DashUi.line),
   );
 
-  Widget _badgePill(_Badge b) {
-    final (key, label, icon, color) = (b.key, b.label, b.icon, b.color);
-    final on = _value(key) == true;
-    final changed = _draft.containsKey(key);
-    return _Hoverable(
-      onTap: () => _set(key, !on),
-      builder: (hover) => AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: on ? color.withValues(alpha: 0.08) : (hover ? _T.wash : Colors.white),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: changed
-                ? DashUi.indigo
-                : (on ? color.withValues(alpha: 0.45) : (hover ? DashUi.muted : DashUi.line)),
-            width: changed ? 1.5 : 1,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: on ? color : DashUi.muted),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: on ? DashUi.ink : DashUi.slate),
+  /// A badge as a switch you can see: its icon, its name, the KPI it stands for, and a tick when it is on.
+  Widget _badgeTile(_Badge b) {
+    final on = _value(b.key) == true;
+    final changed = _draft.containsKey(b.key);
+    // "Customer rating KPI: consistently rated..." -> "Customer rating KPI"; the full sentence is in the tooltip.
+    final kpi = b.meaning.contains(':') ? b.meaning.split(':').first : b.meaning.split('.').first;
+    return Tooltip(
+      message: b.meaning,
+      waitDuration: const Duration(milliseconds: 500),
+      child: Semantics(
+        button: true,
+        toggled: on,
+        label: b.label,
+        child: _Hoverable(
+          onTap: () {
+            _poppedBadge = b.key;
+            _set(b.key, !on);
+          },
+          builder: (hover) => TweenAnimationBuilder<double>(
+            key: ValueKey('${b.key}-$on'),
+            tween: Tween<double>(begin: _poppedBadge == b.key && !_calm(context) ? 0.92 : 1, end: 1),
+            duration: const Duration(milliseconds: 420),
+            curve: Curves.easeOutBack,
+            builder: (context, scale, child) => Transform.scale(scale: scale, child: child),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 160),
+              padding: const EdgeInsets.fromLTRB(12, 11, 12, 11),
+              decoration: BoxDecoration(
+                color: on ? b.bg : (hover ? _T.wash : Colors.white),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: changed
+                      ? DashUi.indigo
+                      : (on ? b.color.withValues(alpha: 0.40) : (hover ? DashUi.muted : DashUi.line)),
+                  width: changed ? 1.5 : 1,
+                ),
+              ),
+              child: Row(
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: on ? Colors.white : DashUi.faint,
+                      shape: BoxShape.circle,
+                      border: Border.all(color: on ? b.color.withValues(alpha: 0.30) : DashUi.faint),
+                    ),
+                    child: Icon(b.icon, size: 18, color: on ? b.color : DashUi.muted),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          b.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: on ? b.fg : DashUi.ink),
+                        ),
+                        const SizedBox(height: 1),
+                        Text(
+                          kpi,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 260),
+                    transitionBuilder: (child, a) => RotationTransition(
+                      turns: Tween<double>(begin: -0.25, end: 0).animate(a),
+                      child: ScaleTransition(scale: a, child: child),
+                    ),
+                    child: on
+                        ? Icon(Icons.check_circle_rounded, key: const ValueKey('on'), size: 20, color: b.color)
+                        : const Icon(
+                            Icons.add_circle_outline_rounded,
+                            key: ValueKey('off'),
+                            size: 20,
+                            color: DashUi.muted,
+                          ),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -2506,52 +3153,87 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     } else if ((_history ?? const []).isEmpty) {
       body = const Text(
         'No changes recorded yet. Every edit made here is logged with who made it and when.',
-        style: TextStyle(fontSize: 13, color: DashUi.muted),
+        style: TextStyle(fontSize: 13, color: DashUi.slate),
       );
     } else {
       final fmt = DateFormat('MMM d, y  h:mm a');
+      final list = _history!;
       body = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_history!.length >= 60)
+          if (list.length >= 60)
             const Padding(
-              padding: EdgeInsets.only(bottom: 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text('Showing the latest 60 changes.', style: TextStyle(fontSize: 12, color: DashUi.muted)),
-              ),
+              padding: EdgeInsets.only(bottom: 8),
+              child: Text('Showing the latest 60 changes.', style: TextStyle(fontSize: 12, color: DashUi.slate)),
             ),
-          for (var i = 0; i < _history!.length; i++)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              decoration: BoxDecoration(
-                border: i == 0 ? null : const Border(top: BorderSide(color: DashUi.line)),
-              ),
+          // A timeline: a dot per change on one thin line, newest first.
+          for (var i = 0; i < list.length; i++)
+            IntrinsicHeight(
               child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Expanded(
+                  SizedBox(
+                    width: 22,
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        _historyLine(_history![i]),
-                        if (_history![i].note != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(_history![i].note!, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
+                        Container(width: 1.5, height: 14, color: i == 0 ? Colors.transparent : _rail),
+                        Container(
+                          width: 9,
+                          height: 9,
+                          decoration: BoxDecoration(
+                            color: i == 0 ? DashUi.indigo : Colors.white,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: i == 0 ? DashUi.indigo : DashUi.muted, width: 1.5),
                           ),
+                        ),
+                        Expanded(
+                          child: Container(width: 1.5, color: i == list.length - 1 ? Colors.transparent : _rail),
+                        ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(
-                        _history![i].at == null ? '' : fmt.format(_history![i].at!),
-                        style: const TextStyle(fontSize: 12, color: DashUi.slate, fontFeatures: _figures),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 9, bottom: 12),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                _historyLine(list[i]),
+                                if (list[i].note != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      list[i].note!,
+                                      style: const TextStyle(fontSize: 12, color: DashUi.slate),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                list[i].at == null ? '' : fmt.format(list[i].at!),
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  color: DashUi.slate,
+                                  fontWeight: FontWeight.w600,
+                                  fontFeatures: _figures,
+                                ),
+                              ),
+                              Text(list[i].by, style: const TextStyle(fontSize: 12, color: DashUi.slate)),
+                            ],
+                          ),
+                        ],
                       ),
-                      Text(_history![i].by, style: const TextStyle(fontSize: 12, color: DashUi.muted)),
-                    ],
+                    ),
                   ),
                 ],
               ),
@@ -2562,53 +3244,26 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     // Collapsed until asked for: it is long, rarely needed, and used to push everything else off the screen. The key
     // ties the open/closed state to the person, so choosing someone else starts collapsed again.
     final count = _history?.length;
-    return Theme(
-      data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-      child: ExpansionTile(
+    final latest = (_history ?? const <_Change>[]).isEmpty ? null : _history!.first;
+    return _section(
+      title: 'Activity',
+      icon: Icons.history_rounded,
+      tone: DashUi.slate,
+      subtitle: 'Every change made on this screen, with who made it and when.',
+      child: _dropdownTile(
         key: ValueKey('history-${_selectedId ?? 0}'),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-        childrenPadding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
-        expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-        shape: const Border(),
-        collapsedShape: const Border(),
-        trailing: Container(
-          width: 26,
-          height: 26,
-          decoration: BoxDecoration(
-            color: _T.wash,
-            shape: BoxShape.circle,
-            border: Border.all(color: DashUi.line),
-          ),
-          child: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: DashUi.ink),
-        ),
-        title: Row(
-          children: [
-            const Text(
-              'Change history',
-              style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
-            ),
-            if (count != null && count > 0) ...[
-              const SizedBox(width: 8),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(20)),
-                child: Text(
-                  count >= 60 ? '60+' : '$count',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: DashUi.slate,
-                    fontFeatures: _figures,
-                  ),
-                ),
-              ),
-            ],
-          ],
-        ),
-        children: [body],
+        title: 'Change history',
+        badge: count != null && count > 0 ? (count >= 60 ? '60+' : '$count') : null,
+        summary: [
+          if (latest?.at != null)
+            'Latest ${DateFormat.yMMMd().format(latest!.at!)}${latest.by.isEmpty ? '' : ' by ${latest.by}'}',
+        ],
+        child: body,
       ),
     );
   }
+
+  static final Color _rail = DashUi.muted.withValues(alpha: 0.5);
 
   Widget _historyLine(_Change c) {
     const labelStyle = TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink);
@@ -2678,40 +3333,93 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   // ---- Building blocks ------------------------------------------------------
 
-  Widget _section({required String title, String? subtitle, Widget? trailing, required Widget child}) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
+  /// A settings section: on a wide page the title and a line about it sit in a left column and the controls in a
+  /// column of their own (capped, so switches stay near their labels); narrower, the title goes on top.
+  Widget _section({
+    required String title,
+    required IconData icon,
+    required Color tone,
+    String? subtitle,
+    Widget? trailing,
+    required Widget child,
+  }) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        final wide = c.maxWidth >= 900;
+        const pad = 28.0;
+        // A tinted icon beside each title, so the sections can be told apart at a glance down the page.
+        final heading = Row(
+          children: [
+            Container(
+              width: 32,
+              height: 32,
+              decoration: BoxDecoration(color: tone.withValues(alpha: 0.10), borderRadius: BorderRadius.circular(10)),
+              child: Icon(icon, size: 18, color: tone),
+            ),
+            const SizedBox(width: 12),
+            Flexible(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: DashUi.ink,
+                  letterSpacing: -0.2,
+                ),
+              ),
+            ),
+          ],
+        );
+        final about = subtitle == null
+            ? null
+            : Text(
+                subtitle,
+                style: const TextStyle(fontSize: 13, color: DashUi.slate, fontWeight: FontWeight.w500, height: 1.45),
+              );
+        if (!wide) {
+          return Padding(
+            padding: const EdgeInsets.fromLTRB(pad, 22, pad, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: heading),
+                    ?trailing,
+                  ],
+                ),
+                if (about != null) ...[const SizedBox(height: 3), about],
+                const SizedBox(height: 14),
+                child,
+              ],
+            ),
+          );
+        }
+        final headW = c.maxWidth >= 1200 ? 280.0 : 236.0;
+        const gutter = 40.0;
+        final bodyW = (c.maxWidth - pad * 2 - headW - gutter).clamp(0.0, 880.0);
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(pad, 28, pad, 30),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
+              SizedBox(
+                width: headW,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink),
-                    ),
-                    if (subtitle != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        subtitle,
-                        style: const TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500),
-                      ),
-                    ],
+                    heading,
+                    if (about != null) ...[const SizedBox(height: 6), about],
+                    if (trailing != null) ...[const SizedBox(height: 8), trailing],
                   ],
                 ),
               ),
-              ?trailing,
+              const SizedBox(width: gutter),
+              SizedBox(width: bodyW, child: child),
             ],
           ),
-          const SizedBox(height: 10),
-          child,
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -2731,7 +3439,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     ),
   );
 
-  InputDecoration _dec(String key, {String? hint, String? prefix}) {
+  InputDecoration _dec(String key, {String? hint, String? prefix, String? suffix}) {
     final changed = _draft.containsKey(key);
     OutlineInputBorder b(Color c, [double w = 1]) => OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
@@ -2745,6 +3453,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       hintStyle: const TextStyle(fontSize: 13.5, color: DashUi.muted, fontWeight: FontWeight.w500),
       prefixText: prefix,
       prefixStyle: const TextStyle(fontSize: 13.5, color: DashUi.slate, fontWeight: FontWeight.w600),
+      suffixText: suffix,
+      suffixStyle: const TextStyle(fontSize: 13.5, color: DashUi.slate, fontWeight: FontWeight.w700),
       errorText: _fieldErrors[key],
       errorMaxLines: 3,
       contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
@@ -2787,6 +3497,9 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                 break;
               case 'tool_allowance':
                 _set(key, double.tryParse(v) ?? 0.0);
+                break;
+              case 'install_rate_pct':
+                _set(key, v.isEmpty ? null : double.tryParse(v));
                 break;
               default:
                 _set(key, v);
@@ -2877,50 +3590,112 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
-  /// A collapsible block that looks like one: a bordered, tinted bar with a chevron in a circle on the right, so
-  /// it can't be mistaken for plain text. [summary] says what is inside while it is closed.
-  Widget _dropdownTile({Key? key, required String title, String summary = '', required Widget child}) {
-    // No card, no tint: it sits on the section like everything else. The circled chevron says it opens, and turns.
+  /// A collapsible block in a hairline frame, like the permission tables: a title (with an optional count), what is
+  /// inside summed up as small pills while it is closed, and a chevron in a circle that turns when it opens.
+  Widget _dropdownTile({
+    Key? key,
+    required String title,
+    String? badge,
+    List<String> summary = const [],
+    required Widget child,
+  }) {
     final id = (key ?? ValueKey(title)).toString();
     final open = _openTiles.contains(id);
     return KeyedSubtree(
       key: key,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          initiallyExpanded: open,
-          onExpansionChanged: (v) => setState(() => v ? _openTiles.add(id) : _openTiles.remove(id)),
-          tilePadding: EdgeInsets.zero,
-          childrenPadding: const EdgeInsets.only(bottom: 4),
-          expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-          shape: const Border(),
-          collapsedShape: const Border(),
-          trailing: Container(
-            width: 26,
-            height: 26,
-            decoration: BoxDecoration(
-              color: _T.wash,
-              shape: BoxShape.circle,
-              border: Border.all(color: DashUi.line),
+      child: Container(
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
+        // Drawn on top, so the tile's own background can't paint over the frame.
+        foregroundDecoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: open ? DashUi.muted.withValues(alpha: 0.6) : DashUi.line),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Theme(
+          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+          child: ExpansionTile(
+            initiallyExpanded: open,
+            onExpansionChanged: (v) => setState(() => v ? _openTiles.add(id) : _openTiles.remove(id)),
+            tilePadding: const EdgeInsets.fromLTRB(16, 4, 12, 4),
+            childrenPadding: EdgeInsets.zero,
+            expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+            backgroundColor: Colors.white,
+            collapsedBackgroundColor: Colors.white,
+            shape: const Border(),
+            collapsedShape: const Border(),
+            trailing: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: open ? DashUi.ink : _T.wash,
+                shape: BoxShape.circle,
+                border: Border.all(color: open ? DashUi.ink : DashUi.line),
+              ),
+              child: AnimatedRotation(
+                turns: open ? 0.5 : 0,
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                child: Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: open ? Colors.white : DashUi.ink),
+              ),
             ),
-            child: AnimatedRotation(
-              turns: open ? 0.5 : 0,
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              child: const Icon(Icons.keyboard_arrow_down_rounded, size: 20, color: DashUi.ink),
-            ),
-          ),
-          title: Text(
-            title,
-            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink),
-          ),
-          subtitle: summary.isEmpty
-              ? null
-              : Text(
-                  summary,
-                  style: const TextStyle(fontSize: 12, color: DashUi.slate, fontWeight: FontWeight.w600),
+            title: Row(
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink),
                 ),
-          children: [child],
+                if (badge != null) ...[
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(20)),
+                    child: Text(
+                      badge,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: DashUi.slate,
+                        fontFeatures: _figures,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            subtitle: summary.isEmpty
+                ? null
+                : Padding(
+                    padding: const EdgeInsets.only(top: 6, bottom: 2),
+                    child: Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        for (final s in summary)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: _T.wash,
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: DashUi.line),
+                            ),
+                            child: Text(
+                              s,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: DashUi.slate,
+                                fontWeight: FontWeight.w700,
+                                fontFeatures: _figures,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+            children: [
+              const Divider(height: 1, color: DashUi.line),
+              Padding(padding: const EdgeInsets.fromLTRB(16, 14, 16, 14), child: child),
+            ],
+          ),
         ),
       ),
     );
@@ -3012,13 +3787,23 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 // Shared small widgets
 // ---------------------------------------------------------------------------
 
-Widget _chip(String text, Color fg, Color bg) {
+Widget _chip(String text, Color fg, Color bg, {IconData? icon, Color? iconColor}) {
   return Container(
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-    child: Text(
-      text,
-      style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
+    padding: EdgeInsets.fromLTRB(icon == null ? 9 : 7, 4, 9, 4),
+    decoration: BoxDecoration(
+      color: bg,
+      borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: fg.withValues(alpha: 0.16)),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (icon != null) ...[Icon(icon, size: 14, color: iconColor ?? fg), const SizedBox(width: 5)],
+        Text(
+          text,
+          style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
+        ),
+      ],
     ),
   );
 }

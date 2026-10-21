@@ -106,7 +106,14 @@ Future<void> _shot(WidgetTester tester, String name,
     await _pumpN(tester);
     for (final t in taps) {
       // "~Standard" means "the text that contains Standard" (avoids spelling out the × sign).
-      await tester.tap((t.startsWith('~') ? find.textContaining(t.substring(1)) : find.text(t)).last);
+      final target = (t.startsWith('~')
+              ? find.textContaining(t.substring(1), skipOffstage: false)
+              : find.text(t, skipOffstage: false))
+          .last;
+      // Scroll it into view first, as a person would; the profile header is tall enough to push it below the fold.
+      await tester.ensureVisible(target);
+      await tester.pump();
+      await tester.tap(target);
       await _pumpN(tester);
     }
     await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/$name.png'));
@@ -128,9 +135,9 @@ void main() {
   testWidgets('daniel 1440x900', (t) async => _shot(t, 'teamaudit_daniel', taps: ['Daniel Baty']));
   testWidgets('daniel 1024x700', (t) async => _shot(t, 'teamaudit_1024', size: const Size(1024, 700), taps: ['Daniel Baty']));
   testWidgets('heather permissions', (t) async => _shot(t, 'teamaudit_heather', size: const Size(1440, 1600), taps: ['Heather Vera']));
-  testWidgets('dirty + save bar', (t) async => _shot(t, 'teamaudit_dirty', taps: ['Daniel Baty', '~Standard']));
+  testWidgets('dirty + save bar', (t) async => _shot(t, 'teamaudit_dirty', taps: ['Daniel Baty', 'Commission settings', '~Standard']));
   testWidgets('review dialog', (t) async =>
-      _shot(t, 'teamaudit_review', taps: ['Daniel Baty', '~Standard', 'Deactivate…', 'Save changes']));
+      _shot(t, 'teamaudit_review', taps: ['Daniel Baty', 'Commission settings', '~Standard', 'Deactivate…', 'Save changes']));
   testWidgets('add employee dialog', (t) async => _shot(t, 'teamaudit_add', taps: ['Add employee']));
   testWidgets('pin dialog', (t) async => _shot(t, 'teamaudit_pin', taps: ['Daniel Baty', 'Reset PIN', 'Reset PIN']));
   testWidgets('history', (t) async => _shot(t, 'teamaudit_history', size: const Size(1440, 2000), taps: ['Daniel Baty', 'Change history']));

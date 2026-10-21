@@ -222,9 +222,9 @@ void main() {
 
   testWidgets('stale dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_stale', tapText: 'ESTIMATE PIPELINE'));
 
-  testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Hard bids · rev & profit'));
+  testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Hard bids'));
 
-  testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Hard bids · rev & profit'));
+  testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Hard bids'));
 
   testWidgets('chart steps to the next tab every 8 seconds, and holds under the cursor', (tester) async {
     tester.view.devicePixelRatio = 1.0;
@@ -264,7 +264,7 @@ void main() {
       for (var i = 0; i < 30; i++) { await tester.pump(const Duration(milliseconds: 100)); }
       final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
       await g.addPointer(location: Offset.zero);
-      for (final label in const ['Hard bids · rev & profit', 'Close rate']) {
+      for (final label in const ['Hard bids', 'Close rate']) {
         await g.moveTo(tester.getCenter(find.text(label)));
         await tester.pump();
         expect(RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1), SystemMouseCursors.click, reason: label);
@@ -277,7 +277,7 @@ void main() {
 
   testWidgets('heather close rate', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_closerate', id: 'heather', tapText: 'Close rate'));
 
-  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Revenue & profit'));
+  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Sales'));
 
   testWidgets('main kpi page', (tester) async => _shot(tester, const Size(1500, 720), 'kpi_main', main: true));
 
