@@ -1,0 +1,678 @@
+{
+ "question": "Compare this month with last month and explain the major differences.",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Comparing the two periods…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_22",
+   "name": "compare_periods",
+   "input": "{}",
+   "state": "start",
+   "text": "Comparing the two periods…"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_22",
+   "label": "This period, Oct 1 – Oct 27",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_22",
+   "label": "Compared with Sep 1 – Sep 27",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_22",
+   "label": "This period, Oct 1 – Oct 27",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_22",
+   "label": "Compared with Sep 1 – Sep 27",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "tool",
+   "id": "toolu_22",
+   "name": "compare_periods",
+   "state": "done",
+   "ok": true,
+   "ms": 5
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "October "
+  },
+  {
+   "type": "delta",
+   "text": "so far i"
+  },
+  {
+   "type": "delta",
+   "text": "s ahead "
+  },
+  {
+   "type": "delta",
+   "text": "of the s"
+  },
+  {
+   "type": "delta",
+   "text": "ame days"
+  },
+  {
+   "type": "delta",
+   "text": " of Sept"
+  },
+  {
+   "type": "delta",
+   "text": "ember on"
+  },
+  {
+   "type": "delta",
+   "text": " cash co"
+  },
+  {
+   "type": "delta",
+   "text": "llected "
+  },
+  {
+   "type": "delta",
+   "text": "(+6%) an"
+  },
+  {
+   "type": "delta",
+   "text": "d jobs s"
+  },
+  {
+   "type": "delta",
+   "text": "tarted, "
+  },
+  {
+   "type": "delta",
+   "text": "but comp"
+  },
+  {
+   "type": "delta",
+   "text": "leted re"
+  },
+  {
+   "type": "delta",
+   "text": "venue is"
+  },
+  {
+   "type": "delta",
+   "text": " far low"
+  },
+  {
+   "type": "delta",
+   "text": "er, most"
+  },
+  {
+   "type": "delta",
+   "text": "ly becau"
+  },
+  {
+   "type": "delta",
+   "text": "se Octob"
+  },
+  {
+   "type": "delta",
+   "text": "er's wor"
+  },
+  {
+   "type": "delta",
+   "text": "k has no"
+  },
+  {
+   "type": "delta",
+   "text": "t been i"
+  },
+  {
+   "type": "delta",
+   "text": "nvoiced "
+  },
+  {
+   "type": "delta",
+   "text": "yet.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": compar"
+  },
+  {
+   "type": "delta",
+   "text": "e\ntitle:"
+  },
+  {
+   "type": "delta",
+   "text": " October"
+  },
+  {
+   "type": "delta",
+   "text": " so far "
+  },
+  {
+   "type": "delta",
+   "text": "vs the s"
+  },
+  {
+   "type": "delta",
+   "text": "ame days"
+  },
+  {
+   "type": "delta",
+   "text": " of Sept"
+  },
+  {
+   "type": "delta",
+   "text": "ember\npe"
+  },
+  {
+   "type": "delta",
+   "text": "riods: O"
+  },
+  {
+   "type": "delta",
+   "text": "ct 1–27 "
+  },
+  {
+   "type": "delta",
+   "text": "| Sep 1–"
+  },
+  {
+   "type": "delta",
+   "text": "27\nCash "
+  },
+  {
+   "type": "delta",
+   "text": "collecte"
+  },
+  {
+   "type": "delta",
+   "text": "d | $19,"
+  },
+  {
+   "type": "delta",
+   "text": "405 | $1"
+  },
+  {
+   "type": "delta",
+   "text": "8,300 | "
+  },
+  {
+   "type": "delta",
+   "text": "+6% | go"
+  },
+  {
+   "type": "delta",
+   "text": "od\nJobs "
+  },
+  {
+   "type": "delta",
+   "text": "started "
+  },
+  {
+   "type": "delta",
+   "text": "| 11 | 1"
+  },
+  {
+   "type": "delta",
+   "text": "0 | +10%"
+  },
+  {
+   "type": "delta",
+   "text": " | good\n"
+  },
+  {
+   "type": "delta",
+   "text": "Value of"
+  },
+  {
+   "type": "delta",
+   "text": " jobs st"
+  },
+  {
+   "type": "delta",
+   "text": "arted | "
+  },
+  {
+   "type": "delta",
+   "text": "$48,960 "
+  },
+  {
+   "type": "delta",
+   "text": "| $52,99"
+  },
+  {
+   "type": "delta",
+   "text": "6 | -7.6"
+  },
+  {
+   "type": "delta",
+   "text": "% | bad\n"
+  },
+  {
+   "type": "delta",
+   "text": "Complete"
+  },
+  {
+   "type": "delta",
+   "text": "d revenu"
+  },
+  {
+   "type": "delta",
+   "text": "e | $13,"
+  },
+  {
+   "type": "delta",
+   "text": "050 | $4"
+  },
+  {
+   "type": "delta",
+   "text": "1,426 | "
+  },
+  {
+   "type": "delta",
+   "text": "-68.5% |"
+  },
+  {
+   "type": "delta",
+   "text": " bad\nEst"
+  },
+  {
+   "type": "delta",
+   "text": "imates c"
+  },
+  {
+   "type": "delta",
+   "text": "reated |"
+  },
+  {
+   "type": "delta",
+   "text": " 7 | 4 |"
+  },
+  {
+   "type": "delta",
+   "text": " +75% | "
+  },
+  {
+   "type": "delta",
+   "text": "good\nWin"
+  },
+  {
+   "type": "delta",
+   "text": " rate | "
+  },
+  {
+   "type": "delta",
+   "text": "50% | 66"
+  },
+  {
+   "type": "delta",
+   "text": ".7% | -1"
+  },
+  {
+   "type": "delta",
+   "text": "6.7 pts "
+  },
+  {
+   "type": "delta",
+   "text": "| bad\nEx"
+  },
+  {
+   "type": "delta",
+   "text": "penses |"
+  },
+  {
+   "type": "delta",
+   "text": " $5,520 "
+  },
+  {
+   "type": "delta",
+   "text": "| $4,130"
+  },
+  {
+   "type": "delta",
+   "text": " | +33.7"
+  },
+  {
+   "type": "delta",
+   "text": "% | bad\n"
+  },
+  {
+   "type": "delta",
+   "text": "Callback"
+  },
+  {
+   "type": "delta",
+   "text": " visits "
+  },
+  {
+   "type": "delta",
+   "text": "| 3 | 1 "
+  },
+  {
+   "type": "delta",
+   "text": "| +200% "
+  },
+  {
+   "type": "delta",
+   "text": "| bad\n::"
+  },
+  {
+   "type": "delta",
+   "text": ":\n\n- **C"
+  },
+  {
+   "type": "delta",
+   "text": "ompleted"
+  },
+  {
+   "type": "delta",
+   "text": " revenue"
+  },
+  {
+   "type": "delta",
+   "text": " and the"
+  },
+  {
+   "type": "delta",
+   "text": " win rat"
+  },
+  {
+   "type": "delta",
+   "text": "e read l"
+  },
+  {
+   "type": "delta",
+   "text": "ow for O"
+  },
+  {
+   "type": "delta",
+   "text": "ctober:*"
+  },
+  {
+   "type": "delta",
+   "text": "* both c"
+  },
+  {
+   "type": "delta",
+   "text": "ount job"
+  },
+  {
+   "type": "delta",
+   "text": "s and es"
+  },
+  {
+   "type": "delta",
+   "text": "timates "
+  },
+  {
+   "type": "delta",
+   "text": "by today"
+  },
+  {
+   "type": "delta",
+   "text": "'s statu"
+  },
+  {
+   "type": "delta",
+   "text": "s, and O"
+  },
+  {
+   "type": "delta",
+   "text": "ctober's"
+  },
+  {
+   "type": "delta",
+   "text": " have ha"
+  },
+  {
+   "type": "delta",
+   "text": "d less t"
+  },
+  {
+   "type": "delta",
+   "text": "ime to b"
+  },
+  {
+   "type": "delta",
+   "text": "e invoic"
+  },
+  {
+   "type": "delta",
+   "text": "ed or de"
+  },
+  {
+   "type": "delta",
+   "text": "cided.\n-"
+  },
+  {
+   "type": "delta",
+   "text": " **More "
+  },
+  {
+   "type": "delta",
+   "text": "estimate"
+  },
+  {
+   "type": "delta",
+   "text": "s out:**"
+  },
+  {
+   "type": "delta",
+   "text": " 7 creat"
+  },
+  {
+   "type": "delta",
+   "text": "ed worth"
+  },
+  {
+   "type": "delta",
+   "text": " $89,300"
+  },
+  {
+   "type": "delta",
+   "text": ", agains"
+  },
+  {
+   "type": "delta",
+   "text": "t 4 wort"
+  },
+  {
+   "type": "delta",
+   "text": "h $49,25"
+  },
+  {
+   "type": "delta",
+   "text": "0.\n- **E"
+  },
+  {
+   "type": "delta",
+   "text": "xpenses "
+  },
+  {
+   "type": "delta",
+   "text": "are up $"
+  },
+  {
+   "type": "delta",
+   "text": "1,390.**"
+  },
+  {
+   "type": "delta",
+   "text": "\n\n::: ba"
+  },
+  {
+   "type": "delta",
+   "text": "sis\nJobs"
+  },
+  {
+   "type": "delta",
+   "text": " and est"
+  },
+  {
+   "type": "delta",
+   "text": "imates b"
+  },
+  {
+   "type": "delta",
+   "text": "y start "
+  },
+  {
+   "type": "delta",
+   "text": "date, ca"
+  },
+  {
+   "type": "delta",
+   "text": "sh by pa"
+  },
+  {
+   "type": "delta",
+   "text": "yment da"
+  },
+  {
+   "type": "delta",
+   "text": "te. Comp"
+  },
+  {
+   "type": "delta",
+   "text": "leted = "
+  },
+  {
+   "type": "delta",
+   "text": "Final In"
+  },
+  {
+   "type": "delta",
+   "text": "voice Se"
+  },
+  {
+   "type": "delta",
+   "text": "nt, Paid"
+  },
+  {
+   "type": "delta",
+   "text": " & Close"
+  },
+  {
+   "type": "delta",
+   "text": "d, Paid "
+  },
+  {
+   "type": "delta",
+   "text": "in Full,"
+  },
+  {
+   "type": "delta",
+   "text": " Close J"
+  },
+  {
+   "type": "delta",
+   "text": "ob or Go"
+  },
+  {
+   "type": "delta",
+   "text": "ogle Rev"
+  },
+  {
+   "type": "delta",
+   "text": "iew Sent"
+  },
+  {
+   "type": "delta",
+   "text": ".\n:::\n\n:"
+  },
+  {
+   "type": "delta",
+   "text": ":: follo"
+  },
+  {
+   "type": "delta",
+   "text": "wups\nWhi"
+  },
+  {
+   "type": "delta",
+   "text": "ch Octob"
+  },
+  {
+   "type": "delta",
+   "text": "er jobs "
+  },
+  {
+   "type": "delta",
+   "text": "are wait"
+  },
+  {
+   "type": "delta",
+   "text": "ing to b"
+  },
+  {
+   "type": "delta",
+   "text": "e invoic"
+  },
+  {
+   "type": "delta",
+   "text": "ed?\nShow"
+  },
+  {
+   "type": "delta",
+   "text": " cash co"
+  },
+  {
+   "type": "delta",
+   "text": "llected "
+  },
+  {
+   "type": "delta",
+   "text": "by week\n"
+  },
+  {
+   "type": "delta",
+   "text": ":::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "October so far is ahead of the same days of September on cash collected (+6%) and jobs started, but completed revenue is far lower, mostly because October's work has not been invoiced yet.\n\n::: compare\ntitle: October so far vs the same days of September\nperiods: Oct 1–27 | Sep 1–27\nCash collected | $19,405 | $18,300 | +6% | good\nJobs started | 11 | 10 | +10% | good\nValue of jobs started | $48,960 | $52,996 | -7.6% | bad\nCompleted revenue | $13,050 | $41,426 | -68.5% | bad\nEstimates created | 7 | 4 | +75% | good\nWin rate | 50% | 66.7% | -16.7 pts | bad\nExpenses | $5,520 | $4,130 | +33.7% | bad\nCallback visits | 3 | 1 | +200% | bad\n:::\n\n- **Completed revenue and the win rate read low for October:** both count jobs and estimates by today's status, and October's have had less time to be invoiced or decided.\n- **More estimates out:** 7 created worth $89,300, against 4 worth $49,250.\n- **Expenses are up $1,390.**\n\n::: basis\nJobs and estimates by start date, cash by payment date. Completed = Final Invoice Sent, Paid & Closed, Paid in Full, Close Job or Google Review Sent.\n:::\n\n::: followups\nWhich October jobs are waiting to be invoiced?\nShow cash collected by week\n:::",
+   "toolsUsed": [
+    "compare_periods"
+   ],
+   "calls": [
+    {
+     "tool": "compare_periods",
+     "input": "{}",
+     "ms": 5,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

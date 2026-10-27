@@ -1,20 +1,26 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
-import 'config/api_config.dart';
-import 'config/auth_session.dart';
+import 'widgets/dashboard_panels.dart';
+
+// The Inventory dashboard. Everything is as of today (there is no year to pick), apart from the stock movement chart,
+// which appears once stock received and used is recorded.
+//   scorecards  stock value, dead stock, items at or below their reorder point, count accuracy, last cycle count
+//   left        stock value by category, or each category's stock health
+//   right       inventory strikes (fewest first) over stock movement by month
+// The page fits the window without scrolling and without shrinking text (see _Grid).
 
 class InventoryDashboardScreen extends StatelessWidget {
   const InventoryDashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
+    // No year selector: stock, strikes and cycle counts are all "as of now" (the server ignores a year).
     return DashboardLayout(
       title: 'Inventory',
+      showYearSelector: false,
       builder: (context, selectedYear) {
         return InventoryDashboardContent(selectedYear: selectedYear);
       },
@@ -51,21 +57,6 @@ String _moneyFull(double v) {
   final r = v.round();
   final s = r.abs().toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+(?!\d))'), (m) => '${m[1]},');
   return '${r < 0 ? '-' : ''}\$$s';
-}
-
-TextPainter _layoutText(
-  String text,
-  TextStyle style, {
-  double maxWidth = double.infinity,
-  TextAlign align = TextAlign.left,
-}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
 }
 
 // =============================================================================
@@ -199,66 +190,22 @@ class _InventorySummary {
 // SCREEN STATE
 // =============================================================================
 
-class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
+class _InventoryDashboardContentState extends State<InventoryDashboardContent> with DashboardLoading {
   _InventorySummary? _data;
-  bool _isLoading = true;
-  String? _errorMessage;
-  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
-    _fetchInventoryData();
+    dashReload();
   }
 
+  // Everything here is "as of now", so there is no year to send.
   @override
-  void didUpdateWidget(covariant InventoryDashboardContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedYear != widget.selectedYear) {
-      _fetchInventoryData();
-    }
-  }
-
-  Future<void> _fetchInventoryData() async {
-    final requestId = ++_requestId;
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final urlString = '$kApiBaseUrl/api/dashboards/inventory?year=${widget.selectedYear}';
-
-      final response = await http.get(
-        Uri.parse(urlString),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
-
-      if (!mounted || requestId != _requestId) return;
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> jsonBody = json.decode(response.body);
-        setState(() {
-          _data = _InventorySummary.fromJson(jsonBody);
-          _isLoading = false;
-        });
-      } else {
-        throw Exception('The server returned status ${response.statusCode}.');
-      }
-    } on TimeoutException {
-      if (!mounted || requestId != _requestId) return;
-      setState(() {
-        _errorMessage = 'The dashboard took too long to load.';
-        _isLoading = false;
-      });
-    } catch (e) {
-      if (!mounted || requestId != _requestId) return;
-      setState(() {
-        _errorMessage = e.toString();
-        _isLoading = false;
-      });
-    }
-  }
+  Future<void> dashReload({bool fresh = false}) => dashLoad(
+        '/api/dashboards/inventory',
+        fresh: fresh,
+        apply: (body) => _data = _InventorySummary.fromJson(body),
+      );
 
   String _dateLabel(DateTime? d) {
     if (d == null) return '—';
@@ -268,1214 +215,628 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(40.0),
-          child: CircularProgressIndicator(color: DashUi.blue),
-        ),
-      );
-    }
-
-    if (_errorMessage != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.error_outline_rounded, color: DashUi.red, size: 36),
-            const SizedBox(height: 8),
-            Text(_errorMessage!, style: const TextStyle(color: DashUi.ink, fontWeight: FontWeight.w600)),
-            const SizedBox(height: 12),
-            ElevatedButton(
-              onPressed: _fetchInventoryData,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: DashUi.blue,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
+    if (dashLoading) return const _InventorySkeleton();
+    if (dashFailure != null) {
+      return DashErrorPanel.failure(dashFailure!, what: 'inventory', onRetry: dashReload);
     }
 
     final data = _data!;
+    final g = DashGeo.of(context);
+    final last = data.lastCycleCount;
+    final now = DashClock.now();
+    final daysAgo = last == null
+        ? null
+        : DateTime(now.year, now.month, now.day).difference(DateTime(last.year, last.month, last.day)).inDays;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-      // 1. Top scorecards
-        SizedBox(
-          height: 104,
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedMetricCard(
-                  title: 'Total Valuation',
-                  value: data.totalValuation,
-                  format: _moneyFull,
-                  caption: '', // Pass empty string to hide it
-                  valueColor: DashUi.blue,
-                  index: 0,
-                  trend: data.valuationHistory.length >= 2 ? data.valuationHistory : null,
-                  sparkMinWidth: 215,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: AnimatedMetricCard(
-                  // Shows "—" until stock movement is recorded (it used to always say $0).
-                  title: data.deadStockValue == null ? 'Dead stock (not tracked yet)' : 'Dead Stock (90+ Days)',
-                  value: data.deadStockValue,
-                  format: _moneyFull,
-                  caption: '', // Pass empty string to hide it
-                  valueColor: DashUi.red,
-                  index: 1,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: AnimatedMetricCard(
-                  // Items at or below a reorder point that has been set.
-                  title: 'At or below reorder point',
-                  value: data.lowStockCount.toDouble(),
-                  format: (v) => v.round().toString(),
-                  caption: '', // Pass empty string to hide it
-                  valueColor: DashUi.amber,
-                  index: 2,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: AnimatedMetricCard(
-                  // Shows "—" until cycle counts record expected vs counted (it used to be a fixed 98.4%).
-                  title: data.accuracyPct == null ? 'Accuracy (not tracked yet)' : 'Inventory Accuracy',
-                  value: data.accuracyPct,
-                  format: (v) => '${v.toStringAsFixed(1)}%',
-                  caption: '', // Pass empty string to hide it
-                  valueColor: DashUi.emeraldDeep,
-                  index: 3,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: _StaticInfoCard(
-                  title: 'Last Cycle Count',
-                  value: data.lastCycleCount == null ? 'Not yet' : _dateLabel(data.lastCycleCount),
-                  icon: Icons.fact_check_outlined,
-                  iconColor: DashUi.slate,
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // 2. Middle row: Category Breakdown + Inventory Strike Podium
-        Expanded(
-          flex: 6,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Expanded(
-                flex: 6,
-                child: _CategoryBreakdownPanel(categories: data.categories, total: data.totalValuation),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 5,
-                child: _InventoryStrikePodiumPanel(techs: data.topStrikeTechs),
-              ),
-            ],
-          ),
-        ),
-
-        const SizedBox(height: 16),
-
-        // 3. Bottom row: Received/Used/On-Hand trend
-        Expanded(
-          flex: data.movementTracked ? 4 : 2,
-          child: data.movementTracked
-              ? _InventoryTrendChart(data: data.monthly, year: widget.selectedYear)
-              : const _NotTrackedPanel(
-                  title: 'Stock received, used and on hand by month',
-                  message: 'Not tracked yet. Stock movement (receiving and parts used on jobs) is not recorded in the '
-                      'system yet, so there is nothing real to chart. This fills in once it is.',
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-// =============================================================================
-// NOT-TRACKED-YET PANEL (instead of charting made-up numbers)
-// =============================================================================
-
-class _NotTrackedPanel extends StatelessWidget {
-  final String title;
-  final String message;
-  const _NotTrackedPanel({required this.title, required this.message});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: DashUi.panel(),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(12)),
-            child: const Icon(Icons.hourglass_empty_rounded, color: DashUi.muted, size: 20),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                const SizedBox(height: 4),
-                Text(
-                  message,
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.35),
-                ),
-              ],
-            ),
-          ),
-        ],
+    // Everything on this page is "as of now". The two "not tracked yet" cards say so instead of showing a made-up
+    // figure; they fill in once the system records the stock movement and counts they need.
+    final valueCaption = 'Active items at cost · today';
+    final tiles = <Widget>[
+      AnimatedMetricCard(
+        title: 'Stock value',
+        value: data.totalValuation,
+        format: _moneyFull,
+        caption: valueCaption,
+        definition: 'On-hand quantity times unit cost for every active item, as of now. The line is one '
+            'reading a day.',
+        valueColor: DashUi.blue,
+        index: 0,
+        trend: data.valuationHistory.length >= 2 ? data.valuationHistory : null,
+        sparkMinWidth: dashSparkRoom(context, title: 'Stock value', value: _moneyFull(data.totalValuation), caption: valueCaption),
       ),
+      AnimatedMetricCard(
+        // Shows "—" until stock movement is recorded (it used to always say $0).
+        title: data.deadStockValue == null ? 'Dead stock' : 'Dead Stock (90+ Days)',
+        value: data.deadStockValue,
+        format: _moneyFull,
+        caption: data.deadStockValue == null ? 'Not tracked yet' : 'No movement in 90+ days',
+        definition: data.deadStockValue == null
+            ? 'Needs a record of stock received and used, which the system does not keep yet.'
+            : null,
+        valueColor: DashUi.red,
+        index: 1,
+      ),
+      AnimatedMetricCard(
+        // Items at or below a reorder point that has been set.
+        title: 'At or below reorder point',
+        value: data.lowStockCount.toDouble(),
+        format: (v) => v.round().toString(),
+        caption: 'Reorder point set · today',
+        definition: 'Active items whose on-hand quantity is at or below their reorder point. Items with '
+            'no reorder point are not counted.',
+        valueColor: DashUi.amber,
+        index: 2,
+      ),
+      AnimatedMetricCard(
+        // Shows "—" until cycle counts record expected vs counted (it used to be a fixed 98.4%).
+        title: data.accuracyPct == null ? 'Count accuracy' : 'Inventory Accuracy',
+        value: data.accuracyPct,
+        format: (v) => '${v.toStringAsFixed(1)}%',
+        caption: data.accuracyPct == null ? 'Not tracked yet' : 'Counted vs expected',
+        definition: data.accuracyPct == null
+            ? 'Needs cycle counts that record expected and counted quantities, which are not kept yet.'
+            : null,
+        valueColor: DashUi.emeraldDeep,
+        index: 3,
+      ),
+      _DateCard(
+        title: 'Last cycle count',
+        value: last == null ? 'Not yet' : _dateLabel(last),
+        caption: daysAgo == null
+            ? 'No zone counted yet'
+            : daysAgo <= 0
+                ? 'Latest zone finished · today'
+                : 'Latest zone finished · ${dashCount(daysAgo, 'day')} ago',
+        definition: 'When the most recent cycle-count zone was finished.',
+        index: 4,
+      ),
+    ];
+
+    return _Grid(
+      tiles: tiles,
+      categories: (tall, fill) => _CategoryPanel(
+        g: g,
+        categories: data.categories,
+        total: data.totalValuation,
+        tall: tall,
+        fill: fill,
+      ),
+      categoryRows: data.categories.length,
+      strikes: _StrikesPanel(g: g, techs: data.topStrikeTechs),
+      strikeRows: data.topStrikeTechs.length,
+      movement: data.movementTracked
+          ? _MovementChart(months: data.monthly, year: widget.selectedYear)
+          : _NotTrackedPanel(
+              g: g,
+              title: 'Stock received, used and on hand by month',
+              message: 'Not tracked yet. Stock movement (receiving and parts used on jobs) is not recorded in the '
+                  'system yet, so there is nothing real to chart. This fills in once it is.',
+            ),
+      movementTracked: data.movementTracked,
     );
   }
 }
 
 // =============================================================================
-// STATIC INFO CARD
+// GRID (shared by the page and its skeleton)
 // =============================================================================
 
-class _StaticInfoCard extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color iconColor;
+/// Lays the page out to fit the window:
+///   two columns   scorecards; categories | strike ranking over stock movement   (1280x600 and up)
+///   one column    a window narrower than a desktop one: everything in one column that scrolls
+class _Grid extends StatelessWidget {
+  final List<Widget> tiles;
 
-  const _StaticInfoCard({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.iconColor,
+  /// `tall`: two-line rows for a narrow column. `fill`: the panel is given a height to fill.
+  final Widget Function(bool tall, bool fill) categories;
+  final int categoryRows;
+  final Widget strikes;
+  final int strikeRows;
+  final Widget movement;
+  final bool movementTracked;
+
+  const _Grid({
+    required this.tiles,
+    required this.categories,
+    required this.categoryRows,
+    required this.strikes,
+    required this.strikeRows,
+    required this.movement,
+    required this.movementTracked,
   });
 
+  static const _twoColumnsFrom = 1000.0;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: DashUi.panel(radius: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    final g = DashGeo.of(context);
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final bodyH = c.maxHeight - g.tile - dashGap;
+        final strikesH = _StrikesPanel.height(g, strikeRows);
+        // The movement panel below the ranking: a short note while movement isn't tracked, a chart once it is.
+        final movementMin = movementTracked ? 180.0 : _NotTrackedPanel.minHeight(g);
+        final leftInner = (w - dashGap) * 13 / 23 - 40;
+        final tall = leftInner < _CategoryPanel.oneLineWidth(g);
+        final categoriesH = g.rows(categoryRows, tall ? g.rowTall : g.rowWide) + g.line(12.5) + 6;
+        final Widget content;
+        if (w >= _twoColumnsFrom && bodyH >= categoriesH && bodyH >= strikesH + dashGap + movementMin) {
+          content = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Flexible(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Icon(icon, color: iconColor, size: 18),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: DashUi.ink),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// INVENTORY STRIKE PODIUM PANEL
-// =============================================================================
-
-class _InventoryStrikePodiumPanel extends StatelessWidget {
-  final List<_InventoryStrikeTech> techs;
-  const _InventoryStrikePodiumPanel({required this.techs});
-
-  @override
-  Widget build(BuildContext context) {
-    // Simplified rank logic
-    final rank1 = techs.isNotEmpty ? techs[0] : null;
-    final rank2 = techs.length > 1 ? techs[1] : null;
-    final rank3 = techs.length > 2 ? techs[2] : null;
-
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: const [
-              Text(
-                'INVENTORY STRIKES PODIUM',
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.8),
-              ),
-              Icon(Icons.inventory_2_outlined, color: DashUi.amber, size: 18),
-            ],
-          ),
-          const SizedBox(height: 2),
-          // Strikes are a running total per tech (users.inventory_strikes), not per year.
-          const Text(
-            'Fewest strikes ranks first · all-time',
-            style: TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
-          ),
-          const SizedBox(height: 10),
-          Expanded(
-            child: (rank1 == null)
-                ? const Center(child: Text('No inventory strike data recorded.', style: TextStyle(color: DashUi.muted)))
-                : LayoutBuilder(
-                    builder: (context, constraints) {
-                      // 1st place is 167px of avatar + step at full size plus ~66px of fixed text, ring and
-                      // spacing. The old 0.65 minimum overflowed on short windows.
-                      final scale = ((constraints.maxHeight - 66) / 167.0).clamp(0.3, 1.0);
-                      return Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (rank2 != null) _PodiumStep(tech: rank2, rank: 2, scale: scale) else const Spacer(),
-                          _PodiumStep(tech: rank1, rank: 1, scale: scale),
-                          if (rank3 != null) _PodiumStep(tech: rank3, rank: 3, scale: scale) else const Spacer(),
-                        ],
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PodiumStep extends StatelessWidget {
-  final _InventoryStrikeTech tech;
-  final int rank;
-  final double scale;
-
-  const _PodiumStep({required this.tech, required this.rank, required this.scale});
-
-  @override
-  Widget build(BuildContext context) {
-    final isFirst = rank == 1;
-    final color = rank == 1 ? const Color(0xFFF59E0B) : rank == 2 ? const Color(0xFF94A3B8) : const Color(0xFFB45309);
-    final avatarSize = (isFirst ? 82.0 : 64.0) * scale;
-    final stepHeight = (rank == 1 ? 85.0 : rank == 2 ? 60.0 : 40.0) * scale;
-    final strikes = tech.strikeCount;
-
-    return Expanded(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          DashAvatar(
-            name: tech.name,
-            imageUrl: tech.imageUrl,
-            size: avatarSize,
-            ringColor: color,
-            ringWidth: isFirst ? 4 : 3,
-            glowColor: color.withValues(alpha: 0.35),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            tech.name.split(' ').first,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: isFirst ? 15 : 13,
-              fontWeight: isFirst ? FontWeight.w800 : FontWeight.w700,
-              color: DashUi.ink,
-            ),
-          ),
-          Text(
-            '$strikes ${strikes == 1 ? 'strike' : 'strikes'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: isFirst ? 12 : 11,
-              color: DashUi.slate,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Container(
-            height: stepHeight,
-            width: double.infinity,
-            margin: const EdgeInsets.symmetric(horizontal: 4),
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.18),
-              border: Border(top: BorderSide(color: color, width: 3)),
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(8)),
-            ),
-            child: Center(
-              child: Text(
-                rank == 1 ? '1st' : rank == 2 ? '2nd' : '3rd',
-                style: TextStyle(
-                  fontSize: isFirst ? 22 : 18,
-                  fontWeight: FontWeight.w800,
-                  color: color,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// CATEGORY BREAKDOWN PANEL
-// =============================================================================
-
-class _CategoryBreakdownPanel extends StatefulWidget {
-  final List<_CategoryData> categories;
-  final double total;
-  const _CategoryBreakdownPanel({required this.categories, required this.total});
-
-  @override
-  State<_CategoryBreakdownPanel> createState() => _CategoryBreakdownPanelState();
-}
-
-class _CategoryBreakdownPanelState extends State<_CategoryBreakdownPanel> {
-  bool _showHealthView = false;
-
-  Widget _tab(String text, bool active, VoidCallback onTap) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 150),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: active ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(color: active ? DashUi.line : Colors.transparent),
-          ),
-          child: Text(
-            text,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: active ? FontWeight.bold : FontWeight.w600,
-              color: active ? DashUi.ink : DashUi.slate,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Flexible(
-                child: Text(
-                  _showHealthView ? 'STOCK HEALTH BY CATEGORY' : 'VALUATION BY CATEGORY',
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.8),
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.all(3),
-                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(8)),
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
+              Expanded(
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _tab('By Value', !_showHealthView, () => setState(() => _showHealthView = false)),
-                    _tab('Stock Health', _showHealthView, () => setState(() => _showHealthView = true)),
+                    Expanded(flex: 13, child: categories(tall, true)),
+                    const SizedBox(width: dashGap),
+                    Expanded(
+                      flex: 10,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: strikesH, child: strikes),
+                          const SizedBox(height: dashGap),
+                          Expanded(child: movement),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
               ),
             ],
-          ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: widget.categories.isEmpty
-                ? const Center(child: Text('No categories recorded yet.', style: TextStyle(color: DashUi.muted)))
-                : _showHealthView
-                    ? _StockHealthList(categories: widget.categories)
-                    : _ValueList(categories: widget.categories, total: widget.total),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ValueList extends StatefulWidget {
-  final List<_CategoryData> categories;
-  final double total;
-  const _ValueList({required this.categories, required this.total});
-
-  @override
-  State<_ValueList> createState() => _ValueListState();
-}
-
-class _ValueListState extends State<_ValueList> {
-  int? _hovered;
-
-  @override
-  Widget build(BuildContext context) {
-    final maxVal = widget.categories.fold<double>(0, (m, c) => math.max(m, c.total)) * 1.05;
-
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-      children: List.generate(widget.categories.length, (i) {
-        final cat = widget.categories[i];
-        final ratio = maxVal > 0 ? (cat.total / maxVal).clamp(0.02, 1.0) : 0.0;
-        final pct = widget.total > 0 ? cat.total / widget.total * 100 : 0.0;
-        final isHovered = _hovered == i;
-        final isFaded = _hovered != null && !isHovered;
-
-        return MouseRegion(
-          onEnter: (_) => setState(() => _hovered = i),
-          onExit: (_) => setState(() => _hovered = null),
-          child: AnimatedOpacity(
-            duration: const Duration(milliseconds: 200),
-            opacity: isFaded ? 0.35 : 1.0,
-            child: Row(
+          );
+        } else {
+          content = SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(
-                  width: 140,
-                  child: Text(
-                    cat.name,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: isHovered ? FontWeight.w800 : FontWeight.w600,
-                      color: isHovered ? DashUi.ink : DashUi.slate,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Stack(
-                    alignment: Alignment.centerLeft,
-                    children: [
-                      Container(
-                        height: isHovered ? 24 : 20,
-                        decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6)),
-                      ),
-                      FractionallySizedBox(
-                        widthFactor: ratio,
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 400),
-                          curve: Curves.easeOutCubic,
-                          height: isHovered ? 24 : 20,
-                          decoration: BoxDecoration(color: cat.color, borderRadius: BorderRadius.circular(6)),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                SizedBox(
-                  width: 88,
-                  child: Text(
-                    isHovered ? '${pct.toStringAsFixed(1)}%' : _compactMoney(cat.total),
-                    textAlign: TextAlign.end,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isHovered ? FontWeight.w900 : FontWeight.bold,
-                      color: isHovered ? cat.color : DashUi.ink,
-                    ),
-                  ),
-                ),
+                SizedBox(height: g.tile, child: _tileRow(tiles.take(3).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip(3).toList())),
+                const SizedBox(height: dashGap),
+                categories(true, false),
+                const SizedBox(height: dashGap),
+                SizedBox(height: strikesH, child: strikes),
+                const SizedBox(height: dashGap),
+                SizedBox(height: movementTracked ? 300 : _NotTrackedPanel.minHeight(g), child: movement),
               ],
             ),
-          ),
-        );
-      }),
+          );
+        }
+        return SizedBox(width: w, height: c.maxHeight, child: content);
+      },
     );
   }
-}
 
-class _StockHealthList extends StatefulWidget {
-  final List<_CategoryData> categories;
-  const _StockHealthList({required this.categories});
-
-  @override
-  State<_StockHealthList> createState() => _StockHealthListState();
-}
-
-class _StockHealthListState extends State<_StockHealthList> {
-  int? _hovered;
-
-  Widget _legendDot(Color c, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 5),
-        Text(label, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.slate)),
+  Widget _tileRow(List<Widget> row) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < row.length; i++) ...[
+        if (i > 0) const SizedBox(width: 12),
+        Expanded(child: row[i]),
       ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final maxVal = widget.categories.fold<double>(0, (m, c) => math.max(m, c.total)) * 1.05;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Wrap(
-          spacing: 14,
-          children: [
-            _legendDot(DashUi.emeraldDeep, 'Active'),
-            _legendDot(DashUi.amber, 'Low stock'),
-            _legendDot(DashUi.red, 'Dead stock'),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: List.generate(widget.categories.length, (i) {
-              final cat = widget.categories[i];
-              final ratio = maxVal > 0 ? (cat.total / maxVal).clamp(0.02, 1.0) : 0.0;
-              final isHovered = _hovered == i;
-              final isFaded = _hovered != null && !isHovered;
-              final deadShare = cat.total > 0 ? cat.deadValue / cat.total * 100 : 0.0;
-
-              return MouseRegion(
-                onEnter: (_) => setState(() => _hovered = i),
-                onExit: (_) => setState(() => _hovered = null),
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 200),
-                  opacity: isFaded ? 0.35 : 1.0,
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 140,
-                        child: Text(
-                          cat.name,
-                          style: TextStyle(
-                            fontSize: 13,
-                            fontWeight: isHovered ? FontWeight.w800 : FontWeight.w600,
-                            color: isHovered ? DashUi.ink : DashUi.slate,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: FractionallySizedBox(
-                          widthFactor: ratio,
-                          alignment: Alignment.centerLeft,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: SizedBox(
-                              height: isHovered ? 24 : 20,
-                              child: Row(
-                                children: [
-                                  if (cat.activeValue > 0)
-                                    Expanded(flex: (cat.activeValue * 1000).round(), child: Container(color: DashUi.emeraldDeep)),
-                                  if (cat.lowStockValue > 0)
-                                    Expanded(flex: (cat.lowStockValue * 1000).round(), child: Container(color: DashUi.amber)),
-                                  if (cat.deadValue > 0)
-                                    Expanded(flex: (cat.deadValue * 1000).round(), child: Container(color: DashUi.red)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      SizedBox(
-                        width: 88,
-                        child: Text(
-                          isHovered ? '${deadShare.toStringAsFixed(0)}% dead' : _compactMoney(cat.total),
-                          textAlign: TextAlign.end,
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: isHovered ? FontWeight.w900 : FontWeight.bold,
-                            color: isHovered ? DashUi.red : DashUi.ink,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ),
-        ),
-      ],
-    );
-  }
+    ],
+  );
 }
 
 // =============================================================================
-// INVENTORY TREND CHART
+// SCORECARD WITH A DATE (same frame and type as AnimatedMetricCard)
 // =============================================================================
 
-enum _TrendMetric { received, used, onHand }
-
-extension _TrendMetricX on _TrendMetric {
-  String get toggleLabel => switch (this) {
-        _TrendMetric.received => 'Received',
-        _TrendMetric.used => 'Used',
-        _TrendMetric.onHand => 'On Hand',
-      };
-
-  String get caption => switch (this) {
-        _TrendMetric.received => 'Monthly stock received',
-        _TrendMetric.used => 'Monthly stock used',
-        _TrendMetric.onHand => 'On-hand valuation trend',
-      };
-}
-
-class _AxisScale {
-  final double max;
-  final double step;
-  const _AxisScale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
-
-_AxisScale _niceScale(double maxV) {
-  if (maxV <= 0) return const _AxisScale(50000, 10000);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final double nice = norm <= 1 ? 1 : (norm <= 2 ? 2 : (norm <= 5 ? 5 : 10));
-  var step = nice * mag;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _AxisScale(top, step);
-}
-
-class _InventoryTrendChart extends StatefulWidget {
-  final List<_InventoryMonth> data;
-  final int? year;
-  const _InventoryTrendChart({required this.data, this.year});
+class _DateCard extends StatefulWidget {
+  final String title;
+  final String value;
+  final String caption;
+  final String definition;
+  final int index;
+  const _DateCard({
+    required this.title,
+    required this.value,
+    required this.caption,
+    required this.definition,
+    required this.index,
+  });
 
   @override
-  State<_InventoryTrendChart> createState() => _InventoryTrendChartState();
+  State<_DateCard> createState() => _DateCardState();
 }
 
-class _InventoryTrendChartState extends State<_InventoryTrendChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-
-  _TrendMetric _metric = _TrendMetric.received;
-  int? _active;
-  int? _paintedIndex;
+class _DateCardState extends State<_DateCard> with SingleTickerProviderStateMixin {
+  // The same staggered entrance as the scorecards beside it.
+  late final AnimationController _enter = AnimationController(
+    vsync: this,
+    duration: Duration(milliseconds: 520 + widget.index * 110),
+  )..forward();
 
   @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (MediaQuery.disableAnimationsOf(context)) _enter.value = 1;
   }
 
   @override
   void dispose() {
-    _intro.dispose();
-    _hover.dispose();
+    _enter.dispose();
     super.dispose();
   }
 
-  void _setActive(int? i) {
-    if (i == _active) return;
-    setState(() {
-      if (i != null) _paintedIndex = i;
-      _active = i;
-    });
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  void _resetAndReplay() {
-    _active = null;
-    _paintedIndex = null;
-    _hover.value = 0;
-    _intro.forward(from: 0);
-  }
-
-  void _setMetric(_TrendMetric m) {
-    if (m == _metric) return;
-    setState(() => _metric = m);
-    _resetAndReplay();
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - _TrendChartPainter.leftGutter;
-    if (plotW <= 0) return null;
-    final i = ((dx - _TrendChartPainter.leftGutter) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
   @override
   Widget build(BuildContext context) {
-    final data = widget.data;
-    final yearText = widget.year?.toString() ?? 'this year';
-
-    if (data.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: DashUi.panel(),
-        child: Center(
-          child: Text('No inventory activity for $yearText yet.',
-              style: const TextStyle(color: DashUi.muted, fontWeight: FontWeight.w500, fontSize: 14)),
-        ),
-      );
-    }
-
-    final activeData = data.where((d) => d.hasData).toList();
-    final totalReceived = activeData.fold<double>(0, (a, b) => a + b.received);
-    final totalUsed = activeData.fold<double>(0, (a, b) => a + b.used);
-    final latestOnHand = activeData.isNotEmpty ? activeData.last.onHand : 0.0;
-
-    String headlineValue;
-    String headlineLabel;
-    if (_metric == _TrendMetric.received) {
-      headlineValue = _compactMoney(totalReceived);
-      headlineLabel = 'Total received in $yearText';
-    } else if (_metric == _TrendMetric.used) {
-      headlineValue = _compactMoney(totalUsed);
-      headlineLabel = 'Total used in $yearText';
-    } else {
-      headlineValue = _compactMoney(latestOnHand);
-      headlineLabel = 'Latest on-hand value';
-    }
-
-    var maxV = 0.0;
-    for (final p in data) {
-      if (!p.hasData) continue;
-      if (_metric == _TrendMetric.onHand) {
-        maxV = math.max(maxV, p.onHand);
-      } else if (_metric == _TrendMetric.received) {
-        maxV = math.max(maxV, p.received);
-      } else {
-        maxV = math.max(maxV, p.used);
-      }
-    }
-    final scale = _niceScale(maxV);
-
-    double? trendPct;
-    String? trendLabel;
-    if (activeData.length >= 2) {
-      final last = activeData.last;
-      final prev = activeData[activeData.length - 2];
-      double valFor(_InventoryMonth m) => switch (_metric) {
-            _TrendMetric.received => m.received,
-            _TrendMetric.used => m.used,
-            _TrendMetric.onHand => m.onHand,
-          };
-      final valLast = valFor(last);
-      final valPrev = valFor(prev);
-      if (valPrev > 0) {
-        trendPct = (valLast - valPrev) / valPrev * 100;
-        trendLabel = '${last.month} vs ${prev.month}';
-      }
-    }
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 10,
-            children: [
-              Column(
+    final w = widget;
+    final t = CurvedAnimation(
+      parent: _enter,
+      curve: Interval(w.index * 110 / (520 + w.index * 110), 1, curve: Curves.easeOutCubic),
+    );
+    return Semantics(
+      container: true,
+      label: '${w.title}: ${w.value}. ${w.definition}',
+      child: ExcludeSemantics(
+        child: FadeTransition(
+          opacity: t,
+          child: Tooltip(
+            message: w.definition,
+            waitDuration: const Duration(milliseconds: 400),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              decoration: DashUi.panel(radius: 12),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(_metric.caption, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate)),
+                  Text(
+                    w.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.slate),
+                  ),
+                  const SizedBox(height: 4),
+                  // The date at the scorecards' line height, so the card is the same height as theirs.
+                  SizedBox(
+                    height: MediaQuery.textScalerOf(context).scale(28) * 1.1,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        w.value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, height: 1.1, color: DashUi.ink),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 2),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(headlineValue, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1)),
-                      const SizedBox(width: 8),
-                      Text(headlineLabel, style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                      if (trendPct != null) ...[
-                        const SizedBox(width: 8),
-                        _TrendChip(pct: trendPct, label: trendLabel!),
-                      ],
-                    ],
+                  Text(
+                    w.caption,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500, height: 1.3, color: DashUi.subtle),
                   ),
                 ],
               ),
-              _TrendMetricToggle(value: _metric, onChanged: _setMetric),
-            ],
+            ),
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return Stack(
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// CATEGORIES (by value, or split into active, low-stock and dead stock)
+// =============================================================================
+
+class _CategoryPanel extends StatefulWidget {
+  final DashGeo g;
+  final List<_CategoryData> categories;
+  final double total;
+  final bool tall;
+  final bool fill;
+  const _CategoryPanel({
+    required this.g,
+    required this.categories,
+    required this.total,
+    required this.tall,
+    required this.fill,
+  });
+
+  // Column widths at 100% text.
+  static const labelWidth = 150.0;
+  static const amountWidth = 76.0;
+  static const detailWidth = 64.0;
+
+  /// The inner width one-line rows need (the three text columns, padding, and a bar of at least 70 px).
+  static double oneLineWidth(DashGeo g) => (labelWidth + amountWidth + detailWidth) * g.k + 106;
+
+  @override
+  State<_CategoryPanel> createState() => _CategoryPanelState();
+}
+
+class _CategoryPanelState extends State<_CategoryPanel> {
+  bool _health = false;
+
+  static const _active = DashUi.emeraldDeep;
+  static const _low = DashUi.amber;
+  static const _dead = DashUi.red;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = widget;
+    final g = w.g;
+    final cats = w.categories;
+    final maxV = cats.fold<double>(0, (m, c) => math.max(m, c.total));
+    final base = w.tall ? g.rowTall : g.rowWide;
+
+    final header = DashPanelHeader(
+      g: g,
+      title: _health ? 'Stock health by category' : 'Value by category',
+      note: 'today',
+      tooltip: _health
+          ? 'Each category split into active stock, stock at or below its reorder point, and dead stock.'
+          : 'On-hand value of each category, as of now, and its share of the stock value.',
+      trailing: cats.isEmpty
+          ? null
+          : DashSegmented<bool>(
+              value: _health,
+              label: 'Category view',
+              options: const [(false, 'By value'), (true, 'Stock health')],
+              onChanged: (v) => setState(() => _health = v),
+            ),
+    );
+
+    if (cats.isEmpty) {
+      return DashPanel(
+        fill: w.fill,
+        header: header,
+        child: SizedBox(height: 2 * base, child: const DashEmptyNote('No categories recorded yet.')),
+      );
+    }
+
+    // The legend has its own line so every row keeps its width (and is there in both views so nothing moves).
+    final legend = SizedBox(
+      height: g.line(12.5) + 6,
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: ExcludeSemantics(
+          child: _health
+              ? const Wrap(
+                  spacing: 14,
                   children: [
-                    Positioned.fill(
-                      child: MouseRegion(
-                        onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                        onExit: (_) => _setActive(null),
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                          onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                          onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                          child: AnimatedBuilder(
-                            animation: Listenable.merge([_intro, _hover]),
-                            builder: (context, _) {
-                              return CustomPaint(
-                                size: Size.infinite,
-                                painter: _TrendChartPainter(
-                                  data: data,
-                                  metric: _metric,
-                                  scale: scale,
-                                  index: _paintedIndex,
-                                  intro: _intro.value,
-                                  hover: Curves.easeOutCubic.transform(_hover.value),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (activeData.isEmpty)
-                      IgnorePointer(
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 20),
-                            child: Text('Nothing recorded for $yearText yet.',
-                                style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                          ),
-                        ),
-                      ),
+                    DashLegendSwatch(color: _active, text: 'Active'),
+                    DashLegendSwatch(color: _low, text: 'At or below reorder point'),
+                    DashLegendSwatch(color: _dead, text: 'Dead'),
                   ],
+                )
+              : Text('${dashCount(cats.length, 'category')} · ${_moneyFull(w.total)} in all', style: DashText.legend),
+        ),
+      ),
+    );
+
+    final rows = DashRows(
+      count: cats.length,
+      base: base,
+      give: 24,
+      row: (i) {
+        final c = cats[i];
+        final share = dashShare(c.total, w.total);
+        final lowShare = dashShare(c.lowStockValue, c.total);
+        final health = 'active ${_moneyFull(c.activeValue)}, at or below reorder point ${_moneyFull(c.lowStockValue)}, '
+            'dead ${_moneyFull(c.deadValue)}';
+        return DashBarRow(
+          g: g,
+          label: c.name,
+          fraction: maxV > 0 ? c.total / maxV : 0,
+          color: c.color,
+          amount: _moneyFull(c.total),
+          detail: _health ? '$lowShare low' : share,
+          tall: w.tall,
+          labelWidth: _CategoryPanel.labelWidth,
+          amountWidth: _CategoryPanel.amountWidth,
+          detailWidth: _CategoryPanel.detailWidth,
+          bar: _health
+              ? DashStackBar(parts: [(c.activeValue, _active), (c.lowStockValue, _low), (c.deadValue, _dead)])
+              : null,
+          tooltip: _health
+              ? 'Active ${_moneyFull(c.activeValue)}\nAt or below reorder point ${_moneyFull(c.lowStockValue)}\n'
+                  'Dead ${_moneyFull(c.deadValue)}'
+              : (c.name.length > 20 ? c.name : null),
+          semanticsLabel: '${c.name}: ${_moneyFull(c.total)}, $share of stock value. ${health[0].toUpperCase()}${health.substring(1)}',
+        );
+      },
+    );
+
+    return DashPanel(
+      fill: w.fill,
+      header: header,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          legend,
+          if (w.fill) Expanded(child: Align(alignment: Alignment.topCenter, child: rows)) else rows,
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// INVENTORY STRIKES (fewest first, all-time)
+// =============================================================================
+
+class _StrikesPanel extends StatelessWidget {
+  final DashGeo g;
+  final List<_InventoryStrikeTech> techs;
+  const _StrikesPanel({required this.g, required this.techs});
+
+  /// One line per technician, so a stock movement chart below keeps its height.
+  static double rowH(DashGeo g) => math.max(g.rowWide, 34.0);
+  static double height(DashGeo g, int rows) => g.rows(rows, rowH(g));
+
+  @override
+  Widget build(BuildContext context) {
+    return DashPanel(
+      fill: true,
+      header: DashPanelHeader(
+        g: g,
+        title: 'Inventory strikes',
+        note: 'fewest first · all-time',
+        // Strikes are a running total per tech (users.inventory_strikes), not per year.
+        tooltip: 'Strikes for inventory mistakes, a running total per technician (not per year). Fewest ranks first.',
+      ),
+      child: techs.isEmpty
+          ? const DashEmptyNote('No inventory strike data recorded.')
+          : DashRows(
+              count: techs.length,
+              base: rowH(g),
+              give: 14,
+              row: (i) {
+                final t = techs[i];
+                final s = t.strikeCount;
+                return DashPressable(
+                  onTap: null,
+                  label: 'Number ${i + 1}. ${t.name}: ${dashCount(s, 'strike')}',
+                  radius: BorderRadius.circular(8),
+                  builder: (_) => Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      border: i == techs.length - 1 ? null : const Border(bottom: BorderSide(color: DashUi.faint)),
+                    ),
+                    child: Row(
+                      children: [
+                        DashRankBadge(rank: i + 1, size: 24),
+                        const SizedBox(width: 8),
+                        DashAvatar(name: t.name, imageUrl: t.imageUrl, size: 26, accent: DashUi.amber),
+                        const SizedBox(width: 10),
+                        Expanded(child: Text(t.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.name)),
+                        const SizedBox(width: 10),
+                        Text(
+                          dashCount(s, 'strike'),
+                          style: DashText.money.copyWith(color: s == 0 ? DashUi.emeraldText : DashUi.ink),
+                        ),
+                      ],
+                    ),
+                  ),
                 );
               },
             ),
-          ),
-        ],
-      ),
     );
   }
 }
 
-class _TrendChip extends StatelessWidget {
-  final double pct;
-  final String label;
-  const _TrendChip({required this.pct, required this.label});
+// =============================================================================
+// STOCK MOVEMENT (not recorded yet: a note in its place; a chart once it is)
+// =============================================================================
+
+class _NotTrackedPanel extends StatelessWidget {
+  final DashGeo g;
+  final String title;
+  final String message;
+  const _NotTrackedPanel({required this.g, required this.title, required this.message});
+
+  /// The title and three lines of the message.
+  static double minHeight(DashGeo g) => g.panelTop + 3 * g.line(13, 1.4) + 6;
 
   @override
   Widget build(BuildContext context) {
-    final up = pct >= 0;
-    final fg = up ? const Color(0xFF047857) : const Color(0xFFB91C1C);
-    final bg = up ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 12, color: fg),
-          const SizedBox(width: 2),
-          Text('${pct.abs().toStringAsFixed(1)}% $label', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: fg)),
-        ],
-      ),
-    );
-  }
-}
-
-class _TrendMetricToggle extends StatelessWidget {
-  final _TrendMetric value;
-  final ValueChanged<_TrendMetric> onChanged;
-  const _TrendMetricToggle({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: _TrendMetric.values.map((m) {
-          final selected = m == value;
-          return MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => onChanged(m),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: selected ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: selected ? DashUi.line : Colors.transparent),
-                ),
-                child: Text(
-                  m.toggleLabel,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                    color: selected ? const Color(0xFF1D4ED8) : DashUi.slate,
+    return DashPanel(
+      fill: true,
+      header: DashPanelHeader(g: g, title: 'Stock movement', note: 'by month'),
+      child: Semantics(
+        label: '$title. $message',
+        child: ExcludeSemantics(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(9)),
+                child: const Icon(Icons.hourglass_empty_rounded, size: 18, color: DashUi.slate),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: '$title. ', style: const TextStyle(fontWeight: FontWeight.w700, color: DashUi.ink)),
+                      TextSpan(text: message),
+                    ],
                   ),
+                  style: const TextStyle(fontSize: 13, height: 1.4, color: DashUi.slate),
                 ),
               ),
-            ),
-          );
-        }).toList(),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
-class _TrendChartPainter extends CustomPainter {
-  static const double leftGutter = 52;
-  static const double bottomGutter = 24;
-  static const double topPad = 6;
-
-  final List<_InventoryMonth> data;
-  final _TrendMetric metric;
-  final _AxisScale scale;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _TrendChartPainter({
-    required this.data,
-    required this.metric,
-    required this.scale,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
+class _MovementChart extends StatelessWidget {
+  final List<_InventoryMonth> months;
+  final int year;
+  const _MovementChart({required this.months, required this.year});
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(
-      leftGutter,
-      topPad,
-      size.width,
-      size.height - bottomGutter,
+  Widget build(BuildContext context) {
+    List<double> pick(double Function(_InventoryMonth) f) =>
+        [for (var i = 0; i < 12; i++) i < months.length && months[i].hasData ? f(months[i]) : 0.0];
+    DashChartView view(String tab, String title, String row, List<double> values, Color color, {bool line = false}) {
+      final total = values.fold<double>(0, (a, b) => a + b);
+      return DashChartView(
+        tab: tab,
+        title: title,
+        note: line ? null : '${_compactMoney(total)} in $year',
+        series: [DashSeries(row, values, color, kind: line ? DashSeriesKind.line : DashSeriesKind.bar)],
+        axis: _compactMoney,
+        barLabel: line ? null : _compactMoney,
+        tip: (i) => [DashTipRow(row, _moneyFull(values[i]), color: color)],
+        summary: (last) => '$title: ${[for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(values[i])}'].join(', ')}',
+        emptyText: 'No stock movement recorded for $year yet.',
+        semanticsLabel: '$title by month, $year',
+      );
+    }
+
+    return DashMonthChart(
+      year: year,
+      views: [
+        view('Received', 'Stock received', 'Received', pick((m) => m.received), DashUi.sky),
+        view('Used', 'Stock used on jobs', 'Used', pick((m) => m.used), DashUi.amber),
+        view('On hand', 'Stock on hand', 'On hand', pick((m) => m.onHand), DashUi.blue, line: true),
+      ],
     );
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
+  }
+}
 
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
+// =============================================================================
+// SKELETON (the same grid, with placeholders)
+// =============================================================================
 
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
+class _InventorySkeleton extends StatelessWidget {
+  const _InventorySkeleton();
 
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(
-        Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height),
-        const Radius.circular(8),
-      );
-      canvas.drawRRect(r, Paint()..color = const Color(0xFFEFF6FF).withValues(alpha: hover));
-    }
-
-    final ticks = scale.ticks;
-    for (var i = 0; i <= ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(
-        Offset(plot.left, y),
-        Offset(plot.right, y),
-        Paint()
-          ..color = i == 0 ? DashUi.line : DashUi.faint
-          ..strokeWidth = 1,
-      );
-      final tp = _layoutText(_compactMoney(v), const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted));
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    final stagger = 0.4 / n;
-    final onHandPts = <Offset>[];
-
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final has = p.hasData;
-      final isFocus = focusing && index == i;
-      final dim = (focusing && !isFocus) ? 1 - 0.5 * hover : 1.0;
-
-      final cx = plot.left + slotW * (i + 0.5);
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
-
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(
-          fontSize: 12,
-          fontWeight: isFocus ? FontWeight.w800 : FontWeight.w600,
-          color: isFocus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFCBD5E1)),
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return Semantics(
+      label: 'Loading inventory',
+      child: ExcludeSemantics(
+        child: SkeletonPulse(
+          child: _Grid(
+            tiles: List.generate(5, (_) => const DashSkeletonTile()),
+            categories: (tall, fill) => DashSkeletonPanel(rows: 6, rowH: tall ? g.rowTall : g.rowWide),
+            categoryRows: 6,
+            strikes: DashSkeletonPanel(rows: 3, rowH: _StrikesPanel.rowH(g) - 4),
+            strikeRows: 3,
+            movement: const DashSkeletonPanel(rows: 2, rowH: 20),
+            movementTracked: false,
+          ),
         ),
-        maxWidth: slotW,
-        align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 6));
-
-      if (!has) {
-        final stub = RRect.fromRectAndRadius(
-          Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: 16, height: 3),
-          const Radius.circular(2),
-        );
-        canvas.drawRRect(stub, Paint()..color = DashUi.line);
-        continue;
-      }
-
-      if (metric == _TrendMetric.onHand) {
-        onHandPts.add(Offset(cx, yFor(p.onHand)));
-      } else {
-        final barW = math.min(slotW * 0.5, 28.0) + (isFocus ? 4 * hover : 0);
-        final val = metric == _TrendMetric.received ? p.received : p.used;
-        final h = math.max(3.0, (val / scale.max).clamp(0.0, 1.0) * plot.height * localT);
-        final rect = Rect.fromLTWH(cx - barW / 2, plot.bottom - h, barW, h);
-        final r = Radius.circular(math.min(6, barW / 2));
-        final colors = metric == _TrendMetric.received
-            ? const [Color(0xFF0284C7), Color(0xFF38BDF8)]
-            : const [Color(0xFFD97706), Color(0xFFFBBF24)];
-
-        canvas.drawRRect(
-          RRect.fromRectAndCorners(rect, topLeft: r, topRight: r),
-          Paint()
-            ..shader = LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: colors.map((c) => c.withValues(alpha: dim)).toList(),
-            ).createShader(rect),
-        );
-      }
-    }
-
-    if (metric == _TrendMetric.onHand && onHandPts.length > 1) {
-      final path = Path()..moveTo(onHandPts.first.dx, onHandPts.first.dy);
-      for (var i = 1; i < onHandPts.length; i++) {
-        path.lineTo(onHandPts[i].dx, onHandPts[i].dy);
-      }
-      canvas.drawPath(
-        path,
-        Paint()
-          ..color = const Color(0xFF6366F1).withValues(alpha: intro)
-          ..strokeWidth = 2.5
-          ..style = PaintingStyle.stroke
-          ..strokeJoin = StrokeJoin.round
-          ..strokeCap = StrokeCap.round,
-      );
-      for (final pt in onHandPts) {
-        canvas.drawCircle(pt, 5, Paint()..color = Colors.white.withValues(alpha: intro));
-        canvas.drawCircle(pt, 3, Paint()..color = const Color(0xFF6366F1).withValues(alpha: intro));
-      }
-    }
-
-    if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
-  }
-
-  void _paintTooltip(Canvas canvas, Size size, Rect plot, double slotW, double Function(double) yFor) {
-    final i = index!;
-    final p = data[i];
-    final has = p.hasData;
-
-    final val = metric == _TrendMetric.received
-        ? p.received
-        : (metric == _TrendMetric.used ? p.used : p.onHand);
-    final metricName = metric == _TrendMetric.received
-        ? 'Received'
-        : (metric == _TrendMetric.used ? 'Used' : 'On Hand');
-
-    final titleTp = _layoutText('${p.month} Inventory', const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w800));
-    final labelTp = _layoutText(metricName, const TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w700));
-    final valueTp = _layoutText(_compactMoney(val), const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800));
-
-    final tipW = math.max(titleTp.width, labelTp.width + 16 + valueTp.width) + 24;
-    final tipH = 10 + titleTp.height + 4 + labelTp.height + 10;
-
-    final cx = plot.left + slotW * (i + 0.5);
-    final barTop = has ? yFor(val) : plot.bottom - 3;
-
-    double tx, ty;
-    var caretAbove = false;
-    final aboveY = barTop - tipH - 12;
-    if (aboveY >= 0) {
-      ty = aboveY;
-      tx = cx - tipW / 2;
-      caretAbove = true;
-    } else {
-      ty = math.max(plot.top, math.min(barTop - 8, plot.bottom - tipH));
-      final rightX = cx + 16;
-      tx = rightX + tipW <= size.width ? rightX : cx - 16 - tipW;
-    }
-    tx = math.max(0, math.min(tx, size.width - tipW));
-
-    canvas.saveLayer(Rect.fromLTWH(tx - 20, ty - 20, tipW + 40, tipH + 40), Paint()..color = Colors.white.withValues(alpha: hover));
-
-    final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(8));
-    canvas.drawRRect(
-      rrect.shift(const Offset(0, 3)),
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.22)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+      ),
     );
-    canvas.drawRRect(rrect, Paint()..color = DashUi.ink);
-
-    if (caretAbove) {
-      final ccx = math.max(tx + 12, math.min(cx, tx + tipW - 12));
-      final caret = Path()
-        ..moveTo(ccx - 4, ty + tipH)
-        ..lineTo(ccx + 4, ty + tipH)
-        ..lineTo(ccx, ty + tipH + 4)
-        ..close();
-      canvas.drawPath(caret, Paint()..color = DashUi.ink);
-    }
-
-    var y = ty + 10;
-    titleTp.paint(canvas, Offset(tx + 12, y));
-    y += titleTp.height + 4;
-    labelTp.paint(canvas, Offset(tx + 12, y));
-    valueTp.paint(canvas, Offset(tx + tipW - 12 - valueTp.width, y));
-
-    canvas.restore();
   }
-
-  @override
-  bool shouldRepaint(covariant _TrendChartPainter old) =>
-      old.data != data || old.metric != metric || old.intro != intro || old.index != index || old.hover != hover;
 }

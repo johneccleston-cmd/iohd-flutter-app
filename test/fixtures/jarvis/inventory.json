@@ -1,0 +1,567 @@
+{
+ "question": "What inventory issues could affect upcoming jobs?",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Checking materials for upcoming jobs… Checking stock levels…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_14",
+   "name": "upcoming_materials",
+   "input": "{\"days\":14}",
+   "state": "start",
+   "text": "Checking materials for upcoming jobs…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_15",
+   "name": "low_stock_items",
+   "input": "{}",
+   "state": "start",
+   "text": "Checking stock levels…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_15",
+   "name": "low_stock_items",
+   "state": "done",
+   "ok": true,
+   "ms": 1
+  },
+  {
+   "type": "tool",
+   "id": "toolu_14",
+   "name": "upcoming_materials",
+   "state": "done",
+   "ok": true,
+   "ms": 5
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "Two item"
+  },
+  {
+   "type": "delta",
+   "text": "s are sh"
+  },
+  {
+   "type": "delta",
+   "text": "ort for "
+  },
+  {
+   "type": "delta",
+   "text": "work boo"
+  },
+  {
+   "type": "delta",
+   "text": "ked in t"
+  },
+  {
+   "type": "delta",
+   "text": "he next "
+  },
+  {
+   "type": "delta",
+   "text": "14 days:"
+  },
+  {
+   "type": "delta",
+   "text": " Clopay "
+  },
+  {
+   "type": "delta",
+   "text": "Classic "
+  },
+  {
+   "type": "delta",
+   "text": "Steel 16"
+  },
+  {
+   "type": "delta",
+   "text": "x7 White"
+  },
+  {
+   "type": "delta",
+   "text": " doors ("
+  },
+  {
+   "type": "delta",
+   "text": "6 needed"
+  },
+  {
+   "type": "delta",
+   "text": ", 2 on h"
+  },
+  {
+   "type": "delta",
+   "text": "and) and"
+  },
+  {
+   "type": "delta",
+   "text": " LiftMas"
+  },
+  {
+   "type": "delta",
+   "text": "ter 8750"
+  },
+  {
+   "type": "delta",
+   "text": "4-267 op"
+  },
+  {
+   "type": "delta",
+   "text": "eners (2"
+  },
+  {
+   "type": "delta",
+   "text": " needed,"
+  },
+  {
+   "type": "delta",
+   "text": " 1 on ha"
+  },
+  {
+   "type": "delta",
+   "text": "nd).\n\n- "
+  },
+  {
+   "type": "delta",
+   "text": "**Clopay"
+  },
+  {
+   "type": "delta",
+   "text": " Classic"
+  },
+  {
+   "type": "delta",
+   "text": " Steel |"
+  },
+  {
+   "type": "delta",
+   "text": " 16x7 | "
+  },
+  {
+   "type": "delta",
+   "text": "White:**"
+  },
+  {
+   "type": "delta",
+   "text": " short 4"
+  },
+  {
+   "type": "delta",
+   "text": " across "
+  },
+  {
+   "type": "delta",
+   "text": "3 jobs; "
+  },
+  {
+   "type": "delta",
+   "text": "the firs"
+  },
+  {
+   "type": "delta",
+   "text": "t visit "
+  },
+  {
+   "type": "delta",
+   "text": "is today"
+  },
+  {
+   "type": "delta",
+   "text": " (Bay A)"
+  },
+  {
+   "type": "delta",
+   "text": ".\n- **Li"
+  },
+  {
+   "type": "delta",
+   "text": "ftMaster"
+  },
+  {
+   "type": "delta",
+   "text": " 87504-2"
+  },
+  {
+   "type": "delta",
+   "text": "67 Opene"
+  },
+  {
+   "type": "delta",
+   "text": "r:** sho"
+  },
+  {
+   "type": "delta",
+   "text": "rt 1, fo"
+  },
+  {
+   "type": "delta",
+   "text": "r 1 job "
+  },
+  {
+   "type": "delta",
+   "text": "booked t"
+  },
+  {
+   "type": "delta",
+   "text": "oday (Ba"
+  },
+  {
+   "type": "delta",
+   "text": "y C).\n- "
+  },
+  {
+   "type": "delta",
+   "text": "**Bottom"
+  },
+  {
+   "type": "delta",
+   "text": " Seal 18"
+  },
+  {
+   "type": "delta",
+   "text": "ft:** th"
+  },
+  {
+   "type": "delta",
+   "text": "e 3 on h"
+  },
+  {
+   "type": "delta",
+   "text": "and cove"
+  },
+  {
+   "type": "delta",
+   "text": "r what i"
+  },
+  {
+   "type": "delta",
+   "text": "s booked"
+  },
+  {
+   "type": "delta",
+   "text": ", but th"
+  },
+  {
+   "type": "delta",
+   "text": "at empti"
+  },
+  {
+   "type": "delta",
+   "text": "es a she"
+  },
+  {
+   "type": "delta",
+   "text": "lf that "
+  },
+  {
+   "type": "delta",
+   "text": "is alrea"
+  },
+  {
+   "type": "delta",
+   "text": "dy at it"
+  },
+  {
+   "type": "delta",
+   "text": "s reorde"
+  },
+  {
+   "type": "delta",
+   "text": "r point "
+  },
+  {
+   "type": "delta",
+   "text": "of 5 or "
+  },
+  {
+   "type": "delta",
+   "text": "below.\n-"
+  },
+  {
+   "type": "delta",
+   "text": " 1 job w"
+  },
+  {
+   "type": "delta",
+   "text": "ith a pa"
+  },
+  {
+   "type": "delta",
+   "text": "rt order"
+  },
+  {
+   "type": "delta",
+   "text": "ed in wa"
+  },
+  {
+   "type": "delta",
+   "text": "s left o"
+  },
+  {
+   "type": "delta",
+   "text": "ut, as t"
+  },
+  {
+   "type": "delta",
+   "text": "he wareh"
+  },
+  {
+   "type": "delta",
+   "text": "ouse pic"
+  },
+  {
+   "type": "delta",
+   "text": "k list d"
+  },
+  {
+   "type": "delta",
+   "text": "oes.\n\nSu"
+  },
+  {
+   "type": "delta",
+   "text": "ggestion"
+  },
+  {
+   "type": "delta",
+   "text": ": order "
+  },
+  {
+   "type": "delta",
+   "text": "4 doors "
+  },
+  {
+   "type": "delta",
+   "text": "and 1 op"
+  },
+  {
+   "type": "delta",
+   "text": "ener tod"
+  },
+  {
+   "type": "delta",
+   "text": "ay, or c"
+  },
+  {
+   "type": "delta",
+   "text": "onfirm t"
+  },
+  {
+   "type": "delta",
+   "text": "he jobs'"
+  },
+  {
+   "type": "delta",
+   "text": " parts a"
+  },
+  {
+   "type": "delta",
+   "text": "re alrea"
+  },
+  {
+   "type": "delta",
+   "text": "dy on or"
+  },
+  {
+   "type": "delta",
+   "text": "der.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": basis\n"
+  },
+  {
+   "type": "delta",
+   "text": "Jobs wit"
+  },
+  {
+   "type": "delta",
+   "text": "h a tech"
+  },
+  {
+   "type": "delta",
+   "text": "nician v"
+  },
+  {
+   "type": "delta",
+   "text": "isit boo"
+  },
+  {
+   "type": "delta",
+   "text": "ked from"
+  },
+  {
+   "type": "delta",
+   "text": " Oct 27 "
+  },
+  {
+   "type": "delta",
+   "text": "to Nov 9"
+  },
+  {
+   "type": "delta",
+   "text": "; produc"
+  },
+  {
+   "type": "delta",
+   "text": "t lines "
+  },
+  {
+   "type": "delta",
+   "text": "only (la"
+  },
+  {
+   "type": "delta",
+   "text": "bor and "
+  },
+  {
+   "type": "delta",
+   "text": "fees lef"
+  },
+  {
+   "type": "delta",
+   "text": "t out), "
+  },
+  {
+   "type": "delta",
+   "text": "matched "
+  },
+  {
+   "type": "delta",
+   "text": "to stock"
+  },
+  {
+   "type": "delta",
+   "text": " by exac"
+  },
+  {
+   "type": "delta",
+   "text": "t item n"
+  },
+  {
+   "type": "delta",
+   "text": "ame. Pic"
+  },
+  {
+   "type": "delta",
+   "text": "ked or o"
+  },
+  {
+   "type": "delta",
+   "text": "rdered p"
+  },
+  {
+   "type": "delta",
+   "text": "arts are"
+  },
+  {
+   "type": "delta",
+   "text": " kept in"
+  },
+  {
+   "type": "delta",
+   "text": " the war"
+  },
+  {
+   "type": "delta",
+   "text": "ehouse s"
+  },
+  {
+   "type": "delta",
+   "text": "heet, no"
+  },
+  {
+   "type": "delta",
+   "text": "t here.\n"
+  },
+  {
+   "type": "delta",
+   "text": ":::\n\n:::"
+  },
+  {
+   "type": "delta",
+   "text": " followu"
+  },
+  {
+   "type": "delta",
+   "text": "ps\nWhich"
+  },
+  {
+   "type": "delta",
+   "text": " jobs ne"
+  },
+  {
+   "type": "delta",
+   "text": "ed the C"
+  },
+  {
+   "type": "delta",
+   "text": "lopay do"
+  },
+  {
+   "type": "delta",
+   "text": "ors?\nWha"
+  },
+  {
+   "type": "delta",
+   "text": "t else i"
+  },
+  {
+   "type": "delta",
+   "text": "s low on"
+  },
+  {
+   "type": "delta",
+   "text": " stock?\n"
+  },
+  {
+   "type": "delta",
+   "text": ":::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "Two items are short for work booked in the next 14 days: Clopay Classic Steel 16x7 White doors (6 needed, 2 on hand) and LiftMaster 87504-267 openers (2 needed, 1 on hand).\n\n- **Clopay Classic Steel | 16x7 | White:** short 4 across 3 jobs; the first visit is today (Bay A).\n- **LiftMaster 87504-267 Opener:** short 1, for 1 job booked today (Bay C).\n- **Bottom Seal 18ft:** the 3 on hand cover what is booked, but that empties a shelf that is already at its reorder point of 5 or below.\n- 1 job with a part ordered in was left out, as the warehouse pick list does.\n\nSuggestion: order 4 doors and 1 opener today, or confirm the jobs' parts are already on order.\n\n::: basis\nJobs with a technician visit booked from Oct 27 to Nov 9; product lines only (labor and fees left out), matched to stock by exact item name. Picked or ordered parts are kept in the warehouse sheet, not here.\n:::\n\n::: followups\nWhich jobs need the Clopay doors?\nWhat else is low on stock?\n:::",
+   "toolsUsed": [
+    "upcoming_materials",
+    "low_stock_items"
+   ],
+   "calls": [
+    {
+     "tool": "upcoming_materials",
+     "input": "{\"days\":14}",
+     "ms": 5,
+     "ok": true
+    },
+    {
+     "tool": "low_stock_items",
+     "input": "{}",
+     "ms": 1,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

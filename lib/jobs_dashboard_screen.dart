@@ -1,15 +1,21 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'utils/status_colors.dart';
-import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
-import 'config/auth_session.dart';
+import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
+import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
+
+// The Jobs dashboard. The year figures count jobs by start date; active jobs and their statuses are as of today,
+// whatever year the jobs are from.
+//   scorecards  completed jobs, active open jobs, profit margin, average job revenue, new customers
+//   left        the monthly chart (completed jobs, average job value, residential vs commercial, install vs service)
+//               over the year's quick insights
+//   right       active jobs by status; each status opens its jobs
+// The page fits the window without scrolling and without shrinking text (see _Grid).
 
 class JobsDashboardScreen extends StatelessWidget {
   const JobsDashboardScreen({Key? key}) : super(key: key);
@@ -48,41 +54,6 @@ String _compactMoney(num v) {
   if (a >= 1000000) return '$sign\$${_trimZero(a / 1000000)}M';
   if (a >= 1000) return '$sign\$${_trimZero(a / 1000)}k';
   return '$sign\$${a.round()}';
-}
-
-TextPainter _layoutText(
-  String text,
-  TextStyle style, {
-  double maxWidth = double.infinity,
-  TextAlign align = TextAlign.left,
-}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
-}
-
-class _JobsAxisScale {
-  final double max;
-  final double step;
-  const _JobsAxisScale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
-
-_JobsAxisScale _jobsNiceScale(double maxV) {
-  if (maxV <= 0) return const _JobsAxisScale(10, 2);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final nice = norm <= 1 ? 1.0 : (norm <= 2 ? 2.0 : (norm <= 5 ? 5.0 : 10.0));
-  var step = nice * mag;
-  if (step <= 0) step = 1;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _JobsAxisScale(top, step);
 }
 
 // =============================================================================
@@ -137,10 +108,7 @@ const _categoricalPalette = [
 // SCREEN STATE
 // =============================================================================
 
-class _JobsDashboardContentState extends State<JobsDashboardContent> {
-  bool _isLoading = true;
-  String? _errorMessage;
-
+class _JobsDashboardContentState extends State<JobsDashboardContent> with DashboardLoading {
   int _completedYtd = 0;
   int _activeOpenJobs = 0;
   double _avgProfitMargin = 0.0;
@@ -161,16 +129,22 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
   @override
   void initState() {
     super.initState();
-    _fetchDashboardData();
+    dashReload();
   }
 
   @override
   void didUpdateWidget(covariant JobsDashboardContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedYear != widget.selectedYear) {
-      _fetchDashboardData();
-    }
+    if (oldWidget.selectedYear != widget.selectedYear) dashReload();
   }
+
+  @override
+  Future<void> dashReload({bool fresh = false}) => dashLoad(
+        '/api/dashboards/jobs',
+        query: {'year': '${widget.selectedYear}'},
+        fresh: fresh,
+        apply: _apply,
+      );
 
   int _parseInt(dynamic v) => v == null ? 0 : (v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0);
   double _parseDouble(dynamic v) => v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
@@ -205,20 +179,7 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
     return statuses.isEmpty ? null : statuses;
   }
 
-  Future<void> _fetchDashboardData() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/api/dashboards/jobs?year=${widget.selectedYear}'),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60));
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> body = json.decode(response.body);
+  void _apply(Map<String, dynamic> body) {
         final scorecards = body['scorecards'] ?? {};
 
         _completedYtd = _parseInt(scorecards['completedYtd']);
@@ -309,26 +270,6 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
             hasData: total > 0 || res > 0 || com > 0,
           );
         });
-
-        if (mounted) setState(() => _isLoading = false);
-      } else {
-        throw Exception('Status ${response.statusCode}');
-      }
-    } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'The dashboard took too long to load. Check your connection and try again.';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
-          _isLoading = false;
-        });
-      }
-    }
   }
 
   static final _thousands = NumberFormat('#,##0');
@@ -337,58 +278,285 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const _JobsSkeleton();
-    if (_errorMessage != null) return DashErrorPanel(title: "Error loading jobs dashboard", message: _errorMessage!, onRetry: _fetchDashboardData);
+    if (dashLoading) return const _JobsSkeleton();
+    if (dashFailure != null) return DashErrorPanel.failure(dashFailure!, what: 'jobs', onRetry: dashReload);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 86,
-          child: Row(
-            children: [
-              Expanded(child: AnimatedMetricCard(title: 'Completed YTD', value: _completedYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.emeraldDeep, index: 0, trend: dashTrend([for (final m in _monthlyData) m.completedTotal.toDouble()], widget.selectedYear), sparkMinWidth: 215)),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Active Open Jobs', value: _activeOpenJobs.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 1, trend: _activeHistory.length >= 2 ? _activeHistory : null, sparkMinWidth: 215)),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Profit Margin', value: _avgProfitMargin, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.indigo, index: 2, trend: dashTrend(_marginMonthly, widget.selectedYear), sparkMinWidth: 215)),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Job Revenue', value: _avgJobRevenue, format: (v) => _money(v), caption: '', valueColor: DashUi.amber, index: 3, trend: dashTrend([for (final m in _monthlyData) m.completedTotal > 0 ? m.totalRevenue / m.completedTotal : 0.0], widget.selectedYear), sparkMinWidth: 215)),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'New Customers YTD', value: _newCustomersYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.blue, index: 4, trend: dashTrend(_newCustMonthly, widget.selectedYear), sparkMinWidth: 215)),
-            ],
-          ),
-        ),
+    final year = widget.selectedYear;
+    final period = dashPeriodLabel(year);
+    final g = DashGeo.of(context);
+    final statuses = [...?_statusCounts]..sort((a, b) => b.count.compareTo(a.count));
 
-        const SizedBox(height: 16),
+    // Year figures count jobs by start date; Active open jobs is always as of today.
+    double room(String title, String value, String caption) =>
+        dashSparkRoom(context, title: title, value: value, caption: caption);
+    final captions = (
+      completed: 'By start date · $period',
+      active: 'Open, from any year · today',
+      margin: 'Profit ÷ revenue, completed jobs',
+      avg: 'Per completed job · $period',
+      fresh: 'First-ever job in $year',
+    );
+    // The trend lines show together, only when every card still has room for its words beside one.
+    final sparkRoom = [
+      room('Completed jobs', _fmt(_completedYtd), captions.completed),
+      room('Active open jobs', _fmt(_activeOpenJobs), captions.active),
+      room('Profit margin', '${_avgProfitMargin.toStringAsFixed(1)}%', captions.margin),
+      room('Avg job revenue', _money(_avgJobRevenue), captions.avg),
+      room('New customers', _fmt(_newCustomersYtd), captions.fresh),
+    ].reduce(math.max);
 
-        Expanded(
-          flex: 10,
-          child: Row(
+    final tiles = <Widget>[
+      AnimatedMetricCard(title: 'Completed jobs', value: _completedYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: captions.completed, definition: 'Jobs that started $period and are now at a completed status. The line shows them by finished month.', valueColor: DashUi.emeraldDeep, index: 0, trend: dashTrend([for (final m in _monthlyData) m.completedTotal.toDouble()], year), sparkMinWidth: sparkRoom),
+      DashDrillCard(
+        count: _activeOpenJobs,
+        onOpen: () => _openStatuses(context, statuses, heading: 'All active jobs', color: DashUi.sky),
+        card: AnimatedMetricCard(title: 'Active open jobs', value: _activeOpenJobs.toDouble(), format: (v) => _fmt(v.toInt()), caption: captions.active, definition: 'Every job, from any year, that is not at a completed, cancelled or written-off status, as of today. The line is one reading a day.', valueColor: DashUi.sky, index: 1, trend: _activeHistory.length >= 2 ? _activeHistory : null, sparkMinWidth: sparkRoom),
+      ),
+      AnimatedMetricCard(title: 'Profit margin', value: _avgProfitMargin, format: (v) => '${v.toStringAsFixed(1)}%', caption: captions.margin, definition: 'Total profit divided by total revenue on completed jobs that started $period. The line shows it by finished month.', valueColor: DashUi.indigo, index: 2, trend: dashTrend(_marginMonthly, year), sparkMinWidth: sparkRoom),
+      AnimatedMetricCard(title: 'Avg job revenue', value: _avgJobRevenue, format: (v) => _money(v), caption: captions.avg, definition: 'Average revenue of the completed jobs that started $period. The line shows it by finished month.', valueColor: DashUi.amber, index: 3, trend: dashTrend([for (final m in _monthlyData) m.completedTotal > 0 ? m.totalRevenue / m.completedTotal : 0.0], year), sparkMinWidth: sparkRoom),
+      AnimatedMetricCard(title: 'New customers', value: _newCustomersYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: captions.fresh, definition: 'Customers (matched by name) whose first-ever job started $period. The line shows them by finished month.', valueColor: DashUi.blue, index: 4, trend: dashTrend(_newCustMonthly, year), sparkMinWidth: sparkRoom),
+    ];
+
+    return _Grid(
+      tiles: tiles,
+      chart: _JobsChart(data: _monthlyData, year: year),
+      insights: _InsightsStrip(g: g, monthly: _monthlyData, splitCoverage: _splitCoverage, year: year),
+      statuses: (tall, maxRows, fill) => _StatusPanel(
+        g: g,
+        statuses: statuses,
+        total: _activeOpenJobs,
+        tall: tall,
+        maxRows: maxRows,
+        fill: fill,
+        onOpen: (picked, heading, color) => _openStatuses(context, picked, heading: heading, color: color),
+      ),
+    );
+  }
+}
+
+/// Opens the list of active jobs at [statuses] (all-time, the same "active" rule as the status panel).
+void _openStatuses(BuildContext context, List<_JobStatusCount> statuses, {required String heading, required Color color}) {
+  showDialog<void>(
+    context: context,
+    builder: (_) => EstimateListDialog(
+      year: DashClock.now().year,
+      periodLabel: 'All time',
+      noun: 'job',
+      heading: heading,
+      totalLabel: 'in jobs',
+      color: color,
+      icon: Icons.work_outline_rounded,
+      uri: Uri.parse('$kApiBaseUrl/api/dashboards/jobs/drill')
+          .replace(queryParameters: {'status': [for (final s in statuses) s.status]}),
+      initialSort: EstimateListSort.oldest,
+    ),
+  );
+}
+
+// =============================================================================
+// GRID (shared by the page and its skeleton)
+// =============================================================================
+
+/// Lays the page out to fit the window:
+///   two columns   scorecards; chart over quick insights | active jobs by status   (1280x600 and up)
+///   one column    a window narrower than a desktop one: everything in one column that scrolls
+class _Grid extends StatelessWidget {
+  final List<Widget> tiles;
+  final Widget chart;
+  final Widget insights;
+
+  /// `tall`: two-line rows for a narrow column. `maxRows`: statuses that fit (the rest share an "Other" row).
+  final Widget Function(bool tall, int maxRows, bool fill) statuses;
+
+  const _Grid({required this.tiles, required this.chart, required this.insights, required this.statuses});
+
+  static const _twoColumnsFrom = 1000.0;
+  static const _minChart = 220.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final bodyH = c.maxHeight - g.tile - dashGap;
+        final Widget content;
+        if (w >= _twoColumnsFrom && bodyH - dashGap - g.strip >= _minChart) {
+          final rightInner = (w - dashGap) * 10 / 23 - 40;
+          final tall = rightInner < _StatusPanel.oneLineWidth(g);
+          final rowH = tall ? g.rowTall : g.rowWide;
+          final maxRows = math.max(3, ((bodyH - g.panelTop) / rowH).floor());
+          content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
               Expanded(
-                flex: 7, 
-                child: Column(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(flex: 11, child: _InteractiveJobsChart(data: _monthlyData, year: widget.selectedYear)),
-                    const SizedBox(height: 16),
-                    Expanded(flex: 9, child: _AvgJobValueChart(data: _monthlyData, year: widget.selectedYear)),
+                    Expanded(
+                      flex: 13,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: chart),
+                          const SizedBox(height: dashGap),
+                          SizedBox(height: g.strip, child: insights),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: dashGap),
+                    Expanded(flex: 10, child: statuses(tall, maxRows, true)),
                   ],
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 5,
-                child: _JobsStatusPanel(
-                  statusCounts: _statusCounts,
-                  loading: _isLoading,
-                  monthly: _monthlyData,
-                  splitCoverage: _splitCoverage,
-                ),
-              ),
             ],
-          ),
+          );
+        } else {
+          content = SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(height: g.tile, child: _tileRow(tiles.take(3).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip(3).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: 320, child: chart),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.strip, child: insights),
+                const SizedBox(height: dashGap),
+                statuses(false, 99, false),
+              ],
+            ),
+          );
+        }
+        return SizedBox(width: w, height: c.maxHeight, child: content);
+      },
+    );
+  }
+
+  Widget _tileRow(List<Widget> row) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < row.length; i++) ...[
+        if (i > 0) const SizedBox(width: 12),
+        Expanded(child: row[i]),
+      ],
+    ],
+  );
+}
+
+// =============================================================================
+// MONTHLY CHART (completed jobs, average job value, residential vs commercial, install vs service)
+// =============================================================================
+
+class _JobsChart extends StatelessWidget {
+  final List<_MonthlyJobData> data;
+  final int year;
+  const _JobsChart({required this.data, required this.year});
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat('#,##0');
+    _MonthlyJobData? at(int i) => i < data.length ? data[i] : null;
+    List<double> pick(double Function(_MonthlyJobData) f) => [for (var i = 0; i < 12; i++) at(i) == null ? 0.0 : f(at(i)!)];
+    final active = data.where((d) => d.hasData).toList();
+
+    final completed = pick((d) => d.completedTotal.toDouble());
+    final totalCompleted = active.fold<double>(0, (s, d) => s + d.completedTotal);
+    // The average month: completed jobs over the months that have any, as before.
+    final avgPerMonth = active.isEmpty ? 0.0 : totalCompleted / active.length;
+
+    final avgValue = pick((d) => d.completedTotal > 0 ? d.totalRevenue / d.completedTotal : 0.0);
+    final totalRev = active.fold<double>(0, (s, d) => s + d.totalRevenue);
+    final overallAvg = totalCompleted > 0 ? totalRev / totalCompleted : 0.0;
+
+    final res = pick((d) => d.resRevenue);
+    final com = pick((d) => d.comRevenue);
+    final install = pick((d) => d.installCount.toDouble());
+    final service = pick((d) => d.serviceCount.toDouble());
+    String share(double part, double whole) => whole > 0 ? '${(part / whole * 100).round()}%' : '—';
+    String months(List<double> v, int last, String Function(double) f) =>
+        [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${f(v[i])}'].join(', ');
+
+    return DashMonthChart(
+      year: year,
+      views: [
+        DashChartView(
+          tab: 'Completed',
+          title: 'Completed jobs',
+          note: '${fmt.format(totalCompleted)} in $year',
+          series: [DashSeries('Completed jobs', completed, DashUi.indigo)],
+          average: avgPerMonth > 0 ? avgPerMonth : null,
+          averageLabel: avgPerMonth > 0 ? 'Monthly average ${avgPerMonth.toStringAsFixed(1)}' : null,
+          axis: (v) => fmt.format(v),
+          barLabel: (v) => fmt.format(v),
+          badge: DashChangeChip.monthOverMonth(completed, year, what: 'Completed jobs'),
+          tip: (i) => [
+            DashTipRow('Completed', fmt.format(completed[i]), color: DashUi.indigo),
+            DashTipRow('Install', fmt.format(install[i])),
+            DashTipRow('Service', fmt.format(service[i])),
+          ],
+          summary: (last) => 'Completed jobs by month: ${months(completed, last, (v) => fmt.format(v))}',
+          emptyText: 'No job data for $year yet.',
+          semanticsLabel: 'Completed jobs by month, $year',
+        ),
+        DashChartView(
+          tab: 'Avg value',
+          title: 'Average job value',
+          note: '${_compactMoney(overallAvg)} average for $year',
+          series: [DashSeries('Revenue per job', avgValue, DashUi.emeraldDeep)],
+          average: overallAvg > 0 ? overallAvg : null,
+          averageLabel: overallAvg > 0 ? 'Year average ${_compactMoney(overallAvg)}' : null,
+          axis: _compactMoney,
+          barLabel: _compactMoney,
+          badge: DashChangeChip.monthOverMonth(avgValue, year, what: 'Average job value'),
+          tip: (i) => [
+            DashTipRow('Per job', '\$${fmt.format(avgValue[i].round())}', color: DashUi.emeraldDeep),
+            DashTipRow('Revenue', _compactMoney(res[i] + com[i])),
+            DashTipRow('Jobs', fmt.format(completed[i])),
+          ],
+          summary: (last) => 'Average job value by month: ${months(avgValue, last, _compactMoney)}',
+          emptyText: 'No job data for $year yet.',
+          semanticsLabel: 'Average revenue per completed job by month, $year',
+        ),
+        DashChartView(
+          tab: 'Res vs Com',
+          title: 'Residential vs commercial',
+          note: '${_compactMoney(totalRev)} revenue',
+          series: [
+            DashSeries('Residential', res, DashUi.sky),
+            DashSeries('Commercial', com, DashUi.amber),
+          ],
+          stacked: true,
+          axis: _compactMoney,
+          tip: (i) => [
+            DashTipRow('Residential', _compactMoney(res[i]), color: DashUi.sky),
+            DashTipRow('Commercial', _compactMoney(com[i]), color: DashUi.amber),
+            DashTipRow('Commercial share', share(com[i], res[i] + com[i])),
+          ],
+          summary: (last) => 'Commercial revenue by month: ${months(com, last, _compactMoney)}',
+          emptyText: 'No job revenue for $year yet.',
+          semanticsLabel: 'Residential and commercial revenue of completed jobs by month, $year',
+        ),
+        DashChartView(
+          tab: 'Install vs service',
+          title: 'Install vs service',
+          note: '${fmt.format(install.fold<double>(0, (a, b) => a + b) + service.fold<double>(0, (a, b) => a + b))} jobs',
+          series: [
+            DashSeries('Install', install, DashUi.indigo),
+            DashSeries('Service', service, DashUi.sky),
+          ],
+          stacked: true,
+          axis: (v) => fmt.format(v),
+          tip: (i) => [
+            DashTipRow('Install', '${fmt.format(install[i])} · ${share(install[i], install[i] + service[i])}', color: DashUi.indigo),
+            DashTipRow('Service', '${fmt.format(service[i])} · ${share(service[i], install[i] + service[i])}', color: DashUi.sky),
+          ],
+          summary: (last) => 'Install jobs by month: ${months(install, last, (v) => fmt.format(v))}',
+          emptyText: 'No install or service jobs for $year yet.',
+          semanticsLabel: 'Install and service jobs completed by month, $year',
         ),
       ],
     );
@@ -396,1331 +564,35 @@ class _JobsDashboardContentState extends State<JobsDashboardContent> {
 }
 
 // =============================================================================
-// INTERACTIVE JOBS CHART
+// QUICK INSIGHTS (the selected year)
 // =============================================================================
 
-enum _JobsChartMetric { volume, mix, installEstimate }
-
-extension _JobsChartMetricX on _JobsChartMetric {
-  String get toggleLabel => switch (this) {
-        _JobsChartMetric.volume => 'Volume',
-        _JobsChartMetric.mix => 'Res vs Com',
-        _JobsChartMetric.installEstimate => 'Install Split',
-      };
-
-  String get caption => switch (this) {
-        _JobsChartMetric.volume => 'Monthly completed job volume',
-        _JobsChartMetric.mix => 'Residential vs commercial revenue mix',
-        _JobsChartMetric.installEstimate => 'Actual install vs service volume',
-      };
-}
-
-class _InteractiveJobsChart extends StatefulWidget {
-  final List<_MonthlyJobData> data;
-  final int? year;
-  const _InteractiveJobsChart({required this.data, this.year});
-
-  @override
-  State<_InteractiveJobsChart> createState() => _InteractiveJobsChartState();
-}
-
-class _InteractiveJobsChartState extends State<_InteractiveJobsChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-
-  _JobsChartMetric _metric = _JobsChartMetric.volume;
-  int? _active;
-  int? _paintedIndex;
-
-  Timer? _cycleTimer;
-  bool _chartHovering = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
-    _restartCycleTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _InteractiveJobsChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _active = null;
-      _paintedIndex = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _cycleTimer?.cancel();
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _restartCycleTimer() {
-    _cycleTimer?.cancel();
-    _cycleTimer = Timer.periodic(const Duration(seconds: 8), (_) => _autoCycle());
-  }
-
-  void _autoCycle() {
-    if (!mounted || _chartHovering) return;
-    final next = (_metric.index + 1) % _JobsChartMetric.values.length;
-    _setMetric(_JobsChartMetric.values[next]);
-  }
-
-  void _setActive(int? i) {
-    if (i == _active) return;
-    setState(() {
-      if (i != null) _paintedIndex = i;
-      _active = i;
-    });
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  void _resetAndReplay() {
-    _active = null;
-    _paintedIndex = null;
-    _hover.value = 0;
-    _intro.forward(from: 0);
-  }
-
-  void _setMetric(_JobsChartMetric m) {
-    if (m == _metric) return;
-    setState(() => _metric = m);
-    _resetAndReplay();
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - _JobsChartPainter.leftGutter;
-    if (plotW <= 0) return null;
-    final i = ((dx - _JobsChartPainter.leftGutter) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
-  double _metricValue(_MonthlyJobData d) {
-    switch (_metric) {
-      case _JobsChartMetric.volume:
-        return d.completedTotal.toDouble();
-      case _JobsChartMetric.mix:
-        return d.totalRevenue;
-      case _JobsChartMetric.installEstimate:
-        return (d.installCount + d.serviceCount).toDouble();
-    }
-  }
-
-  double? _pct(double prev, double cur) => prev > 0 ? (cur - prev) / prev * 100 : null;
-
-  @override
-  Widget build(BuildContext context) {
-    final data = widget.data;
-    final yearText = widget.year?.toString() ?? 'this year';
-    final activeData = data.where((d) => d.hasData).toList();
-
-    if (activeData.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: DashUi.panel(),
-        child: Center(
-          child: Text('No job data for $yearText yet.', style: const TextStyle(color: DashUi.muted, fontWeight: FontWeight.w500, fontSize: 14)),
-        ),
-      );
-    }
-
-    double headlineNum = 0;
-    for (final d in activeData) {
-      headlineNum += _metricValue(d);
-    }
-
-    String headlineValue;
-    String headlineLabel;
-    switch (_metric) {
-      case _JobsChartMetric.volume:
-        headlineValue = NumberFormat('#,##0').format(headlineNum);
-        headlineLabel = 'Completed jobs in $yearText';
-        break;
-      case _JobsChartMetric.mix:
-        headlineValue = _compactMoney(headlineNum);
-        headlineLabel = 'Residential + commercial revenue';
-        break;
-      case _JobsChartMetric.installEstimate:
-        headlineValue = NumberFormat('#,##0').format(headlineNum);
-        headlineLabel = 'Install + service jobs completed';
-        break;
-    }
-
-    int? peakIndex;
-    var peakValue = 0.0;
-    for (var i = 0; i < data.length; i++) {
-      if (!data[i].hasData) continue;
-      final v = _metricValue(data[i]);
-      if (v > peakValue) {
-        peakValue = v;
-        peakIndex = i;
-      }
-    }
-
-    var maxV = 0.0;
-    for (final d in data) {
-      if (!d.hasData) continue;
-      if (_metric == _JobsChartMetric.mix) {
-        maxV = math.max(maxV, d.totalRevenue);
-      } else if (_metric == _JobsChartMetric.installEstimate) {
-        maxV = math.max(maxV, (d.installCount + d.serviceCount).toDouble());
-      } else {
-        maxV = math.max(maxV, d.completedTotal.toDouble());
-      }
-    }
-    final scale = _jobsNiceScale(maxV);
-
-    double? trendPct;
-    String? trendLabel;
-    if (activeData.length >= 2) {
-      final last = activeData.last;
-      final prev = activeData[activeData.length - 2];
-      trendPct = _pct(_metricValue(prev), _metricValue(last));
-      trendLabel = '${last.month} vs ${prev.month}';
-    }
-
-    final avgForBenchmark = _metric == _JobsChartMetric.volume ? headlineNum / activeData.length : 0.0;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 10,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(_metric.caption, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(headlineValue, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1)),
-                      const SizedBox(width: 10),
-                      Text(headlineLabel, style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                      if (trendPct != null) ...[
-                        const SizedBox(width: 10),
-                        _JobsTrendChip(pct: trendPct, label: trendLabel!),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-              _JobsMetricToggle(value: _metric, onChanged: _setMetric),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return MouseRegion(
-                  onEnter: (_) {
-                    _chartHovering = true;
-                    _cycleTimer?.cancel();
-                  },
-                  onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                  onExit: (_) {
-                    _setActive(null);
-                    _chartHovering = false;
-                    _restartCycleTimer();
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([_intro, _hover]),
-                      builder: (context, _) {
-                        return CustomPaint(
-                          size: Size.infinite,
-                          painter: _JobsChartPainter(
-                            data: data,
-                            metric: _metric,
-                            scale: scale,
-                            avgBenchmark: avgForBenchmark,
-                            peakIndex: peakIndex,
-                            index: _paintedIndex,
-                            intro: _intro.value,
-                            hover: Curves.easeOutCubic.transform(_hover.value),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 18,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            children: [
-              if (_metric == _JobsChartMetric.volume) ...[
-                _legendSwatch(Container(width: 12, height: 12, decoration: BoxDecoration(color: DashUi.indigo, borderRadius: BorderRadius.circular(3))), 'Completed jobs'),
-                _legendSwatch(Container(width: 14, height: 2, color: DashUi.red), 'Monthly avg'),
-              ],
-              if (_metric == _JobsChartMetric.mix) ...[
-                _legendSwatch(Container(width: 12, height: 12, color: DashUi.sky), 'Residential'),
-                _legendSwatch(Container(width: 12, height: 12, color: DashUi.amber), 'Commercial'),
-              ],
-              if (_metric == _JobsChartMetric.installEstimate) ...[
-                _legendSwatch(Container(width: 8, height: 8, decoration: const BoxDecoration(color: DashUi.indigo, shape: BoxShape.circle)), 'Install'),
-                _legendSwatch(Container(width: 8, height: 8, decoration: const BoxDecoration(color: DashUi.sky, shape: BoxShape.circle)), 'Service'),
-              ],
-              if (peakIndex != null)
-                _legendSwatch(
-                  Transform.rotate(angle: math.pi / 4, child: Container(width: 8, height: 8, color: DashUi.amber)),
-                  'Peak in ${data[peakIndex].month}',
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _legendSwatch(Widget swatch, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [swatch, const SizedBox(width: 8), Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate))],
-    );
-  }
-}
-
-class _JobsTrendChip extends StatelessWidget {
-  final double pct;
-  final String label;
-  const _JobsTrendChip({required this.pct, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final up = pct >= 0;
-    final fg = up ? const Color(0xFF047857) : const Color(0xFFB91C1C);
-    final bg = up ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: fg),
-          const SizedBox(width: 2),
-          Text('${pct.abs().toStringAsFixed(1)}% $label', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
-        ],
-      ),
-    );
-  }
-}
-
-class _JobsMetricToggle extends StatelessWidget {
-  final _JobsChartMetric value;
-  final ValueChanged<_JobsChartMetric> onChanged;
-  const _JobsMetricToggle({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: _JobsChartMetric.values.map((m) {
-          final selected = m == value;
-          return MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: GestureDetector(
-              onTap: () => onChanged(m),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: selected ? Colors.white : Colors.transparent,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: selected ? DashUi.line : Colors.transparent),
-                ),
-                child: Text(
-                  m.toggleLabel,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                    color: selected ? const Color(0xFF1D4ED8) : DashUi.slate,
-                  ),
-                ),
-              ),
-            ),
-          );
-        }).toList(),
-      ),
-    );
-  }
-}
-
-class _JobsChartPainter extends CustomPainter {
-  static const double leftGutter = 46;
-  static const double bottomGutter = 26;
-  static const double topPad = 6;
-
-  final List<_MonthlyJobData> data;
-  final _JobsChartMetric metric;
-  final _JobsAxisScale scale;
-  final double avgBenchmark;
-  final int? peakIndex;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _JobsChartPainter({
-    required this.data,
-    required this.metric,
-    required this.scale,
-    required this.avgBenchmark,
-    required this.peakIndex,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(leftGutter, topPad, size.width, size.height - bottomGutter);
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
-
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
-
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
-
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(
-        Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height),
-        const Radius.circular(10),
-      );
-      canvas.drawRRect(r, Paint()..color = const Color(0xFFEFF6FF).withValues(alpha: hover));
-    }
-
-    for (var i = 0; i <= scale.ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(
-        Offset(plot.left, y),
-        Offset(plot.right, y),
-        Paint()
-          ..color = i == 0 ? DashUi.line : DashUi.faint
-          ..strokeWidth = 1,
-      );
-      final label = metric == _JobsChartMetric.mix ? _compactMoney(v) : v.round().toString();
-      final tp = _layoutText(label, const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted));
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    if (metric == _JobsChartMetric.volume && avgBenchmark > 0) {
-      final avgY = yFor(avgBenchmark);
-      final dashPaint = Paint()
-        ..color = DashUi.red
-        ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke;
-      for (double dx = plot.left; dx < plot.right; dx += 8) {
-        canvas.drawLine(Offset(dx, avgY), Offset(dx + 4, avgY), dashPaint);
-      }
-    }
-
-    final stagger = 0.4 / n;
-
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final has = p.hasData;
-      final isFocus = focusing && index == i;
-      final dim = (focusing && !isFocus) ? 1 - 0.5 * hover : 1.0;
-      final cx = plot.left + slotW * (i + 0.5);
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
-
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(
-          fontSize: 12.5,
-          fontWeight: isFocus ? FontWeight.w800 : FontWeight.w600,
-          color: isFocus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFCBD5E1)),
-        ),
-        maxWidth: slotW,
-        align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 8));
-
-      if (!has) {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: 16, height: 3), const Radius.circular(2)),
-          Paint()..color = DashUi.line,
-        );
-        continue;
-      }
-
-      if (metric == _JobsChartMetric.volume) {
-        final barW = math.min(slotW * 0.5, 26.0) + (isFocus ? 4 * hover : 0);
-        final fullH = (p.completedTotal / scale.max).clamp(0.0, 1.0) * plot.height;
-        final h = math.max(3.0, fullH * localT);
-        final rect = Rect.fromLTWH(cx - barW / 2, plot.bottom - h, barW, h);
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(rect, const Radius.circular(5)),
-          Paint()
-            ..shader = LinearGradient(
-              begin: Alignment.bottomCenter,
-              end: Alignment.topCenter,
-              colors: [const Color(0xFF4338CA).withValues(alpha: dim), const Color(0xFF818CF8).withValues(alpha: dim)],
-            ).createShader(rect),
-        );
-      } else if (metric == _JobsChartMetric.mix) {
-        final barW = math.min(slotW * 0.5, 26.0) + (isFocus ? 4 * hover : 0);
-        final comH = ((p.comRevenue / scale.max).clamp(0.0, 1.0) * plot.height) * localT;
-        final resH = ((p.resRevenue / scale.max).clamp(0.0, 1.0) * plot.height) * localT;
-        final yCom = plot.bottom - comH;
-        final yRes = yCom - resH;
-        if (comH > 0.5) {
-          canvas.drawRect(Rect.fromLTWH(cx - barW / 2, yCom, barW, comH), Paint()..color = DashUi.amber.withValues(alpha: dim));
-        }
-        if (resH > 0.5) {
-          canvas.drawRRect(
-            RRect.fromRectAndCorners(Rect.fromLTWH(cx - barW / 2, yRes, barW, resH), topLeft: const Radius.circular(5), topRight: const Radius.circular(5)),
-            Paint()..color = DashUi.sky.withValues(alpha: dim),
-          );
-        }
-      } else {
-        // Stacked Install Split: install volume on the bottom, service above.
-        final barW = math.min(slotW * 0.56, 32.0) + (isFocus ? 4 * hover : 0);
-        final installH = ((p.installCount / scale.max).clamp(0.0, 1.0) * plot.height) * localT;
-        final serviceH = ((p.serviceCount / scale.max).clamp(0.0, 1.0) * plot.height) * localT;
-        final totalH = installH + serviceH;
-        final left = cx - barW / 2;
-        final installRect = Rect.fromLTWH(left, plot.bottom - installH, barW, installH);
-        final serviceRect = Rect.fromLTWH(left, plot.bottom - totalH, barW, serviceH);
-
-        if (installH > 0.5) {
-          canvas.drawRRect(
-            RRect.fromRectAndCorners(
-              installRect,
-              bottomLeft: const Radius.circular(4),
-              bottomRight: const Radius.circular(4),
-              topLeft: serviceH <= 0.5 ? const Radius.circular(5) : Radius.zero,
-              topRight: serviceH <= 0.5 ? const Radius.circular(5) : Radius.zero,
-            ),
-            Paint()..color = DashUi.indigo.withValues(alpha: dim),
-          );
-        }
-        if (serviceH > 0.5) {
-          canvas.drawRRect(
-            RRect.fromRectAndCorners(
-              serviceRect,
-              topLeft: const Radius.circular(5),
-              topRight: const Radius.circular(5),
-            ),
-            Paint()..color = DashUi.sky.withValues(alpha: dim),
-          );
-        }
-      }
-
-      if (peakIndex == i && localT > 0.98) {
-        final val = metric == _JobsChartMetric.mix
-            ? p.totalRevenue
-            : (metric == _JobsChartMetric.installEstimate ? (p.installCount + p.serviceCount).toDouble() : p.completedTotal.toDouble());
-        final topY = yFor(val) - 14;
-        final c = Offset(cx, topY);
-        final path = Path()
-          ..moveTo(c.dx, c.dy - 4)
-          ..lineTo(c.dx + 4, c.dy)
-          ..lineTo(c.dx, c.dy + 4)
-          ..lineTo(c.dx - 4, c.dy)
-          ..close();
-        canvas.drawPath(path, Paint()..color = DashUi.amber.withValues(alpha: dim));
-      }
-    }
-
-    if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
-  }
-
-  void _paintTooltip(Canvas canvas, Size size, Rect plot, double slotW, double Function(double) yFor) {
-    final i = index!;
-    final p = data[i];
-    final has = p.hasData;
-
-    final rows = <(String, String)>[];
-    switch (metric) {
-      case _JobsChartMetric.volume:
-        rows.add(('Completed', has ? p.completedTotal.toString() : '—'));
-        break;
-      case _JobsChartMetric.mix:
-        rows.add(('Residential', _compactMoney(p.resRevenue)));
-        rows.add(('Commercial', _compactMoney(p.comRevenue)));
-        rows.add(('Total', _compactMoney(p.totalRevenue)));
-        break;
-      case _JobsChartMetric.installEstimate:
-        final total = p.installCount + p.serviceCount;
-        final installPct = total > 0 ? (p.installCount / total * 100).round() : 0;
-        final servicePct = total > 0 ? (p.serviceCount / total * 100).round() : 0;
-        rows.add(('Install', '${NumberFormat('#,##0').format(p.installCount)}  ·  $installPct%'));
-        rows.add(('Service', '${NumberFormat('#,##0').format(p.serviceCount)}  ·  $servicePct%'));
-        rows.add(('Total jobs', NumberFormat('#,##0').format(total)));
-        break;
-    }
-
-    final titleTp = _layoutText('${p.month} Detail', const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800));
-    final labelTps = <TextPainter>[];
-    final valueTps = <TextPainter>[];
-    for (final r in rows) {
-      labelTps.add(_layoutText(r.$1, const TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w500)));
-      valueTps.add(_layoutText(r.$2, const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)));
-    }
-
-    final labelW = labelTps.map((t) => t.width).reduce(math.max);
-    final valueW = valueTps.map((t) => t.width).reduce(math.max);
-    final tipW = math.max(titleTp.width, labelW + 16 + valueW) + 28;
-    final rowH = labelTps.first.height;
-    final tipH = 12 + titleTp.height + 6 + rows.length * rowH + (rows.length - 1) * 3 + 12;
-
-    final cx = plot.left + slotW * (i + 0.5);
-    final val = metric == _JobsChartMetric.mix
-        ? p.totalRevenue
-        : (metric == _JobsChartMetric.installEstimate ? (p.installCount + p.serviceCount).toDouble() : p.completedTotal.toDouble());
-    final barTop = has ? yFor(val) : plot.bottom - 3;
-
-    double tx, ty;
-    var caretAbove = false;
-    final aboveY = barTop - tipH - 16;
-    if (aboveY >= 0) {
-      ty = aboveY;
-      tx = cx - tipW / 2;
-      caretAbove = true;
-    } else {
-      ty = math.max(plot.top, math.min(barTop - 8, plot.bottom - tipH));
-      final rightX = cx + slotW * 0.3 + 12;
-      tx = rightX + tipW <= size.width ? rightX : cx - slotW * 0.3 - 12 - tipW;
-    }
-    tx = math.max(0, math.min(tx, size.width - tipW));
-
-    canvas.saveLayer(Rect.fromLTWH(tx - 24, ty - 24, tipW + 48, tipH + 60), Paint()..color = Colors.white.withValues(alpha: hover));
-
-    final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(10));
-    canvas.drawRRect(
-      rrect.shift(const Offset(0, 4)),
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.22)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-    );
-    canvas.drawRRect(rrect, Paint()..color = DashUi.ink);
-
-    if (caretAbove) {
-      final ccx = math.max(tx + 16, math.min(cx, tx + tipW - 16));
-      final caret = Path()
-        ..moveTo(ccx - 5, ty + tipH)
-        ..lineTo(ccx + 5, ty + tipH)
-        ..lineTo(ccx, ty + tipH + 5)
-        ..close();
-      canvas.drawPath(caret, Paint()..color = DashUi.ink);
-    }
-
-    var y = ty + 12;
-    titleTp.paint(canvas, Offset(tx + 14, y));
-    y += titleTp.height + 6;
-    for (var k = 0; k < rows.length; k++) {
-      labelTps[k].paint(canvas, Offset(tx + 14, y));
-      valueTps[k].paint(canvas, Offset(tx + tipW - 14 - valueTps[k].width, y));
-      y += rowH + 3;
-    }
-
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _JobsChartPainter old) =>
-      old.data != data ||
-      old.metric != metric ||
-      old.intro != intro ||
-      old.index != index ||
-      old.hover != hover ||
-      old.peakIndex != peakIndex ||
-      old.avgBenchmark != avgBenchmark;
-}
-
-// =============================================================================
-// AVG JOB VALUE LINE CHART
-// =============================================================================
-
-class _AvgJobValueChart extends StatefulWidget {
-  final List<_MonthlyJobData> data;
-  final int? year;
-  const _AvgJobValueChart({required this.data, this.year});
-
-  @override
-  State<_AvgJobValueChart> createState() => _AvgJobValueChartState();
-}
-
-class _AvgJobValueChartState extends State<_AvgJobValueChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-  int? _paintedIndex;
-  bool _chartHovering = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
-  }
-
-  @override
-  void didUpdateWidget(covariant _AvgJobValueChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _paintedIndex = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _setActive(int? i) {
-    if (i == _paintedIndex) return;
-    setState(() => _paintedIndex = i);
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - _AvgValuePainter.leftGutter;
-    if (plotW <= 0) return null;
-    final i = ((dx - _AvgValuePainter.leftGutter) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
-  double _avgValue(_MonthlyJobData d) => d.completedTotal > 0 ? d.totalRevenue / d.completedTotal : 0.0;
-  double? _pct(double prev, double cur) => prev > 0 ? (cur - prev) / prev * 100 : null;
-
-  @override
-  Widget build(BuildContext context) {
-    final data = widget.data;
-    final activeData = data.where((d) => d.hasData).toList();
-
-    if (activeData.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: DashUi.panel(),
-        child: const Center(child: Text('No data for avg job value yet.', style: TextStyle(color: DashUi.muted))),
-      );
-    }
-
-    double totalRev = 0;
-    int totalJobs = 0;
-    for (final d in activeData) {
-      totalRev += d.totalRevenue;
-      totalJobs += d.completedTotal;
-    }
-    final overallAvg = totalJobs > 0 ? totalRev / totalJobs : 0.0;
-
-    var maxV = 0.0;
-    int? peakIndex;
-    var peakValue = 0.0;
-
-    for (var i = 0; i < data.length; i++) {
-      if (!data[i].hasData) continue;
-      final val = _avgValue(data[i]);
-      maxV = math.max(maxV, val);
-      if (val > peakValue) {
-        peakValue = val;
-        peakIndex = i;
-      }
-    }
-    final scale = _jobsNiceScale(maxV);
-
-    double? trendPct;
-    String? trendLabel;
-    if (activeData.length >= 2) {
-      final last = activeData.last;
-      final prev = activeData[activeData.length - 2];
-      trendPct = _pct(_avgValue(prev), _avgValue(last));
-      trendLabel = '${last.month} vs ${prev.month}';
-    }
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Average Job Value', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text('\$${NumberFormat('#,##0').format(overallAvg)}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1)),
-                      const SizedBox(width: 10),
-                      const Text('YTD Average', style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                      if (trendPct != null) ...[
-                        const SizedBox(width: 10),
-                        _JobsTrendChip(pct: trendPct, label: trendLabel!),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(width: 12, height: 3, color: DashUi.emeraldDeep),
-                  const SizedBox(width: 6),
-                  const Text('Avg Rev / Job', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                ],
-              )
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return MouseRegion(
-                  onEnter: (_) => _chartHovering = true,
-                  onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                  onExit: (_) {
-                    _setActive(null);
-                    _chartHovering = false;
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([_intro, _hover]),
-                      builder: (context, _) {
-                        return CustomPaint(
-                          size: Size.infinite,
-                          painter: _AvgValuePainter(
-                            data: data,
-                            scale: scale,
-                            peakIndex: peakIndex,
-                            index: _paintedIndex,
-                            intro: _intro.value,
-                            hover: Curves.easeOutCubic.transform(_hover.value),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AvgValuePainter extends CustomPainter {
-  static const double leftGutter = 46;
-  static const double bottomGutter = 26;
-  static const double topPad = 6;
-
-  final List<_MonthlyJobData> data;
-  final _JobsAxisScale scale;
-  final int? peakIndex;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _AvgValuePainter({
-    required this.data,
-    required this.scale,
-    required this.peakIndex,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
-
-  double _avgValue(_MonthlyJobData d) => d.completedTotal > 0 ? d.totalRevenue / d.completedTotal : 0.0;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(leftGutter, topPad, size.width, size.height - bottomGutter);
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
-
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
-
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
-
-    // Hover Highlight
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height), const Radius.circular(10));
-      canvas.drawRRect(r, Paint()..color = const Color(0xFFEFF6FF).withValues(alpha: hover));
-    }
-
-    // Grid lines
-    for (var i = 0; i <= scale.ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(
-        Offset(plot.left, y), Offset(plot.right, y),
-        Paint()..color = i == 0 ? DashUi.line : DashUi.faint..strokeWidth = 1,
-      );
-      final label = '\$${(v >= 1000 ? '${(v / 1000).toStringAsFixed(v % 1000 == 0 ? 0 : 1)}k' : v.round())}';
-      final tp = _layoutText(label, const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted));
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    final validPts = <Offset>[];
-    final stagger = 0.4 / n;
-
-    // Labels & Points calculation
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final isFocus = focusing && index == i;
-      final cx = plot.left + slotW * (i + 0.5);
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
-
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(fontSize: 12.5, fontWeight: isFocus ? FontWeight.w800 : FontWeight.w600, color: isFocus ? DashUi.ink : (p.hasData ? DashUi.slate : const Color(0xFFCBD5E1))),
-        maxWidth: slotW, align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 8));
-
-      if (p.hasData) {
-        final targetY = yFor(_avgValue(p));
-        final animY = plot.bottom - (plot.bottom - targetY) * localT;
-        validPts.add(Offset(cx, animY));
-      } else {
-        canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: 16, height: 3), const Radius.circular(2)), Paint()..color = DashUi.line);
-      }
-    }
-
-    // Draw Line and Gradient Fill
-    if (validPts.isNotEmpty) {
-      final path = Path()..moveTo(validPts.first.dx, validPts.first.dy);
-      for (var i = 1; i < validPts.length; i++) {
-        path.lineTo(validPts[i].dx, validPts[i].dy);
-      }
-
-      // Fill area under the line
-      final areaPath = Path.from(path);
-      areaPath.lineTo(validPts.last.dx, plot.bottom);
-      areaPath.lineTo(validPts.first.dx, plot.bottom);
-      areaPath.close();
-
-      canvas.drawPath(
-        areaPath,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter, end: Alignment.bottomCenter,
-            colors: [DashUi.emeraldDeep.withValues(alpha: 0.15), DashUi.emeraldDeep.withValues(alpha: 0.0)],
-          ).createShader(Rect.fromLTRB(plot.left, plot.top, plot.right, plot.bottom)),
-      );
-
-      // Stroke Line
-      canvas.drawPath(
-        path,
-        Paint()..color = DashUi.emeraldDeep..strokeWidth = 3..style = PaintingStyle.stroke..strokeJoin = StrokeJoin.round..strokeCap = StrokeCap.round,
-      );
-
-      // Dots
-      for (final pt in validPts) {
-        canvas.drawCircle(pt, 5, Paint()..color = Colors.white);
-        canvas.drawCircle(pt, 3, Paint()..color = DashUi.emeraldDeep);
-      }
-    }
-
-    if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
-  }
-
-  void _paintTooltip(Canvas canvas, Size size, Rect plot, double slotW, double Function(double) yFor) {
-    final i = index!;
-    final p = data[i];
-    if (!p.hasData) return;
-
-    final avg = _avgValue(p);
-    final rows = [
-      ('Avg Value', '\$${NumberFormat('#,##0.00').format(avg)}'),
-      ('Total Rev', '\$${NumberFormat('#,##0').format(p.totalRevenue)}'),
-      ('Jobs', p.completedTotal.toString()),
-    ];
-
-    final titleTp = _layoutText('${p.month} Average', const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800));
-    final labelTps = rows.map((r) => _layoutText(r.$1, const TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w500))).toList();
-    final valueTps = rows.map((r) => _layoutText(r.$2, const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))).toList();
-
-    final labelW = labelTps.map((t) => t.width).reduce(math.max);
-    final valueW = valueTps.map((t) => t.width).reduce(math.max);
-    final tipW = math.max(titleTp.width, labelW + 16 + valueW) + 28;
-    final rowH = labelTps.first.height;
-    final tipH = 12 + titleTp.height + 6 + rows.length * rowH + (rows.length - 1) * 3 + 12;
-
-    final cx = plot.left + slotW * (i + 0.5);
-    final barTop = yFor(avg);
-
-    double tx, ty;
-    var caretAbove = false;
-    final aboveY = barTop - tipH - 16;
-    if (aboveY >= 0) {
-      ty = aboveY;
-      tx = cx - tipW / 2;
-      caretAbove = true;
-    } else {
-      ty = math.max(plot.top, math.min(barTop - 8, plot.bottom - tipH));
-      final rightX = cx + slotW * 0.3 + 12;
-      tx = rightX + tipW <= size.width ? rightX : cx - slotW * 0.3 - 12 - tipW;
-    }
-    tx = math.max(0, math.min(tx, size.width - tipW));
-
-    canvas.saveLayer(Rect.fromLTWH(tx - 24, ty - 24, tipW + 48, tipH + 60), Paint()..color = Colors.white.withValues(alpha: hover));
-    final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(10));
-    canvas.drawRRect(rrect.shift(const Offset(0, 4)), Paint()..color = Colors.black.withValues(alpha: 0.22)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-    canvas.drawRRect(rrect, Paint()..color = DashUi.ink);
-
-    if (caretAbove) {
-      final ccx = math.max(tx + 16, math.min(cx, tx + tipW - 16));
-      final caret = Path()..moveTo(ccx - 5, ty + tipH)..lineTo(ccx + 5, ty + tipH)..lineTo(ccx, ty + tipH + 5)..close();
-      canvas.drawPath(caret, Paint()..color = DashUi.ink);
-    }
-
-    var y = ty + 12;
-    titleTp.paint(canvas, Offset(tx + 14, y));
-    y += titleTp.height + 6;
-    for (var k = 0; k < rows.length; k++) {
-      labelTps[k].paint(canvas, Offset(tx + 14, y));
-      valueTps[k].paint(canvas, Offset(tx + tipW - 14 - valueTps[k].width, y));
-      y += rowH + 3;
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _AvgValuePainter old) => old.data != data || old.index != index || old.intro != intro || old.hover != hover;
-}
-
-// =============================================================================
-// STATUS DONUT + QUICK INSIGHTS PANEL
-// =============================================================================
-
-class _JobSegSlice {
-  final String name;
-  final double amount;
-  final Color color;
-
-  /// The real statuses this slice stands for (one, or several for "Other").
-  final List<String> statuses;
-  const _JobSegSlice(this.name, this.amount, this.color, this.statuses);
-}
-
-class _JobsStatusPanel extends StatefulWidget {
-  final List<_JobStatusCount>? statusCounts;
-  final bool loading;
+class _InsightsStrip extends StatelessWidget {
+  final DashGeo g;
   final List<_MonthlyJobData> monthly;
 
   /// How many of the year's completed jobs carry category data; null when the server didn't say.
   final ({int completed, int withCategories, int? withLineItems})? splitCoverage;
-
-  const _JobsStatusPanel({
-    required this.statusCounts,
-    required this.loading,
-    required this.monthly,
-    this.splitCoverage,
-  });
+  final int year;
+  const _InsightsStrip({required this.g, required this.monthly, required this.splitCoverage, required this.year});
 
   @override
-  State<_JobsStatusPanel> createState() => _JobsStatusPanelState();
-}
-
-class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerProviderStateMixin {
-  late final AnimationController _intro;
-  int? _active;
-  static const _topN = 5;
-
-  List<_JobSegSlice> get _slices {
-    final raw = widget.statusCounts;
-    if (raw == null || raw.isEmpty) return const [];
-    final sorted = [...raw]..sort((a, b) => b.count.compareTo(a.count));
-    final top = sorted.take(_topN).toList();
-    final restSum = sorted.skip(_topN).fold<int>(0, (s, c) => s + c.count);
-    final slices = <_JobSegSlice>[
-      for (var i = 0; i < top.length; i++)
-        _JobSegSlice(top[i].status, top[i].count.toDouble(), knownStatusColor(top[i].status) ?? _categoricalPalette[i % _categoricalPalette.length], [top[i].status]),
-    ];
-    if (restSum > 0) {
-      slices.add(_JobSegSlice('Other', restSum.toDouble(), DashUi.slate, [for (final c in sorted.skip(_topN)) c.status]));
-    }
-    return slices;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
-  }
-
-  @override
-  void didUpdateWidget(covariant _JobsStatusPanel old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.statusCounts, widget.statusCounts)) {
-      _active = null;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    super.dispose();
-  }
-
-  void _setActive(int? i) {
-    if (i == _active) return;
-    setState(() => _active = i);
-  }
-
-  /// Opens the list of active jobs behind a slice (all-time, same "active" rule as the chart).
-  void _open(_JobSegSlice s) {
-    showDialog(
-      context: context,
-      builder: (_) => EstimateListDialog(
-        year: DateTime.now().year,
-        periodLabel: 'All time',
-        noun: 'job',
-        heading: s.name == 'Other' ? 'Other active jobs' : '${s.name} · active jobs',
-        totalLabel: 'in jobs',
-        color: s.color,
-        icon: Icons.work_outline_rounded,
-        uri: Uri.parse('$kApiBaseUrl/api/dashboards/jobs/drill').replace(queryParameters: {'status': s.statuses}),
-        initialSort: EstimateListSort.oldest,
-      ),
-    );
-  }
-
-  int? _hit(Offset p, double side, List<_JobSegSlice> slices, double total) {
-    if (total <= 0) return null;
-    final d = p - Offset(side / 2, side / 2);
-    final r = _JobsDonutPainter.radiusFor(side);
-    final half = _JobsDonutPainter.strokeFor(side) / 2 + 4;
-    if (d.distance < r - half || d.distance > r + half) return null;
-    var ang = math.atan2(d.dy, d.dx) + math.pi / 2;
-    if (ang < 0) ang += 2 * math.pi;
-    var acc = 0.0;
-    for (var i = 0; i < slices.length; i++) {
-      if (slices[i].amount <= 0) continue;
-      acc += slices[i].amount / total * 2 * math.pi;
-      if (ang <= acc) return i;
-    }
-    return null;
-  }
-
-  Widget _center(List<_JobSegSlice> slices, double total, double side) {
-    Widget child;
-    final i = _active;
+  Widget build(BuildContext context) {
     final fmt = NumberFormat('#,##0');
-    if (total <= 0) {
-      child = const Text('No jobs\nyet', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w600));
-    } else if (i != null) {
-      final s = slices[i];
-      child = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('${(s.amount / total * 100).toStringAsFixed(1)}%', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: s.color, height: 1.05)),
-          const SizedBox(height: 2),
-          Text(s.name, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate), maxLines: 1, overflow: TextOverflow.ellipsis),
-          Text('${fmt.format(s.amount)} jobs', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted)),
-          const Padding(
-            padding: EdgeInsets.only(top: 2),
-            child: Text('Click for list', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: DashUi.sky)),
-          ),
-        ],
-      );
-    } else {
-      child = Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(fmt.format(total), style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: DashUi.ink, height: 1.05)),
-          const SizedBox(height: 2),
-          const Text('Total jobs', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate)),
-        ],
-      );
-    }
-    return SizedBox(width: side * 0.56, child: FittedBox(fit: BoxFit.scaleDown, child: child));
-  }
-
-  Widget _legend(List<_JobSegSlice> slices, double total) {
-    final fmt = NumberFormat('#,##0');
-    return Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: List.generate(slices.length, (i) {
-        final s = slices[i];
-        final isActive = _active == i;
-        final faded = _active != null && !isActive;
-        return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 5),
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            onEnter: (_) => _setActive(i),
-            onExit: (_) => _setActive(null),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => _open(s),
-              child: AnimatedOpacity(
-                duration: const Duration(milliseconds: 180),
-                opacity: faded ? 0.35 : 1.0,
-                child: Row(
-                  children: [
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 180),
-                      width: isActive ? 14 : 10,
-                      height: isActive ? 14 : 10,
-                      decoration: BoxDecoration(color: s.color, borderRadius: BorderRadius.circular(4)),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        s.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 12.5, fontWeight: isActive ? FontWeight.w800 : FontWeight.w600, color: isActive ? DashUi.ink : DashUi.slate),
-                      ),
-                    ),
-                    Text(fmt.format(s.amount), style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: s.color)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      }),
-    );
-  }
-
-  Widget _statRow(String label, String value, {Color? valueColor}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 7),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: DashUi.slate)),
-          Text(value, style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: valueColor ?? DashUi.ink)),
-        ],
-      ),
-    );
-  }
-
-  Widget _splitBar({
-    required String leftLabel,
-    required Color leftColor,
-    required double leftValue,
-    required String rightLabel,
-    required Color rightColor,
-    required double rightValue,
-  }) {
-    final total = leftValue + rightValue;
-    final leftPct = total > 0 ? leftValue / total : 0.5;
-    final leftPctText = total > 0 ? '${(leftValue / total * 100).round()}%' : '—';
-    final rightPctText = total > 0 ? '${(rightValue / total * 100).round()}%' : '—';
-    final leftFlex = (leftPct * 1000).round().clamp(1, 999);
-    final rightFlex = (1000 - leftFlex).clamp(1, 999);
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(width: 8, height: 8, decoration: BoxDecoration(color: leftColor, borderRadius: BorderRadius.circular(2))),
-                  const SizedBox(width: 5),
-                  Text(leftLabel, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(width: 4),
-                  Text(leftPctText, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: leftColor)),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(rightPctText, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: rightColor)),
-                  const SizedBox(width: 4),
-                  Text(rightLabel, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(width: 5),
-                  Container(width: 8, height: 8, decoration: BoxDecoration(color: rightColor, borderRadius: BorderRadius.circular(2))),
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 5),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: SizedBox(
-              height: 8,
-              child: Row(
-                children: [
-                  Expanded(flex: leftFlex, child: Container(color: leftColor)),
-                  Expanded(flex: rightFlex, child: Container(color: rightColor)),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _quickInsights() {
-    final active = widget.monthly.where((m) => m.hasData).toList();
+    final active = monthly.where((m) => m.hasData).toList();
+    final header = DashPanelHeader(g: g, title: 'Quick insights', note: '$year');
+    final contentH = g.strip - g.panelTop;
     if (active.isEmpty) {
-      return const Text('Not enough job history yet for insights.', style: TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600));
+      return DashPanel(
+        header: header,
+        child: SizedBox(
+          height: contentH,
+          child: const Align(
+            alignment: Alignment.centerLeft,
+            child: Text('Not enough job history yet for insights.', style: DashText.empty),
+          ),
+        ),
+      );
     }
 
     final totalCompleted = active.fold<int>(0, (s, m) => s + m.completedTotal);
@@ -1735,296 +607,236 @@ class _JobsStatusPanelState extends State<_JobsStatusPanel> with SingleTickerPro
     // jobs lack the data would be wrong (e.g. 100% residential just because nothing could be tagged commercial).
     // Install vs Service needs commission items; Residential vs Commercial reads the job's line items (and falls
     // back to commission items on an older server). Each is shown only when most completed jobs have its data.
-    final cov = widget.splitCoverage;
+    final cov = splitCoverage;
     bool covered(int? n) => cov == null || (cov.completed > 0 && (n ?? 0) / cov.completed >= 0.5);
     final installReliable = covered(cov?.withCategories);
     final comReliable = covered(cov?.withLineItems ?? cov?.withCategories);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _statRow('Busiest month', '${busiest.month} · ${NumberFormat('#,##0').format(busiest.completedTotal)} jobs', valueColor: DashUi.emeraldDeep),
-        _statRow('Avg jobs / month', avgPerMonth.toStringAsFixed(1)),
-        const SizedBox(height: 2),
-        if (cov != null && (!installReliable || !comReliable))
-          Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(8)),
-            child: Text(
-              [
-                if (!installReliable)
-                  'Install vs Service is hidden: only ${cov.withCategories} of ${cov.completed} completed jobs this year have install/service data.',
-                if (!comReliable)
-                  'Residential vs Commercial is hidden: only ${cov.withLineItems ?? cov.withCategories} of ${cov.completed} completed jobs this year have line items.',
-              ].join('\n'),
-              style: const TextStyle(fontSize: 11, color: DashUi.slate, fontWeight: FontWeight.w600, height: 1.35),
-            ),
-          ),
-        if (installReliable && totalInstall + totalService > 0)
-          _splitBar(
-            leftLabel: 'Install',
-            leftColor: DashUi.indigo,
-            leftValue: totalInstall.toDouble(),
-            rightLabel: 'Service',
-            rightColor: DashUi.sky,
-            rightValue: totalService.toDouble(),
-          ),
-        if (comReliable && totalRes + totalCom > 0)
-          _splitBar(
-            leftLabel: 'Residential',
-            leftColor: DashUi.sky,
-            leftValue: totalRes,
-            rightLabel: 'Commercial',
-            rightColor: DashUi.amber,
-            rightValue: totalCom,
-          ),
-      ],
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final slices = _slices;
-    final total = slices.fold<double>(0, (s, e) => s + e.amount);
-
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    Widget split(String label, String left, Color lc, double lv, String right, Color rc, double rv,
+        {required bool reliable, required String hidden}) {
+      final total = lv + rv;
+      if (!reliable || total <= 0) {
+        return _item(
+          label,
+          Text(reliable ? 'No data yet' : 'Not enough data', style: DashText.bigMoney.copyWith(color: DashUi.subtle)),
+          reliable ? '$label: no jobs yet' : '$label is hidden. $hidden',
+          tooltip: reliable ? null : hidden,
+        );
+      }
+      final lp = (lv / total * 100).round();
+      return _item(
+        label,
+        Text.rich(
+          TextSpan(
             children: [
-              Text('ACTIVE JOBS BY STATUS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.8)),
-              Text('All-time', style: TextStyle(fontSize: 10.5, color: DashUi.muted, fontWeight: FontWeight.w600, fontStyle: FontStyle.italic)),
+              TextSpan(text: '$lp%', style: TextStyle(color: lc == DashUi.amber ? DashUi.amberText : lc)),
+              TextSpan(text: ' / ', style: DashText.meta.copyWith(fontSize: 13)),
+              TextSpan(text: '${100 - lp}%', style: TextStyle(color: rc == DashUi.amber ? DashUi.amberText : rc)),
             ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: widget.loading
-                ? const Center(child: CircularProgressIndicator(color: DashUi.blue))
-                : slices.isEmpty
-                    ? const Center(
-                        child: Text('Status breakdown not available.', style: TextStyle(color: DashUi.muted, fontSize: 12.5, fontWeight: FontWeight.w600)),
-                      )
-                    : LayoutBuilder(
-                        builder: (context, c) {
-                          final side = math.min(c.maxHeight, c.maxWidth * 0.5);
-                          if (side <= 40) return const SizedBox.shrink();
-                          return Row(
-                            children: [
-                              SizedBox(
-                                width: side,
-                                height: side,
-                                child: MouseRegion(
-                                  cursor: _active != null ? SystemMouseCursors.click : MouseCursor.defer,
-                                  onHover: (e) => _setActive(_hit(e.localPosition, side, slices, total)),
-                                  onExit: (_) => _setActive(null),
-                                  child: GestureDetector(
-                                    behavior: HitTestBehavior.opaque,
-                                    onTapUp: (d) {
-                                      final i = _hit(d.localPosition, side, slices, total);
-                                      if (i != null) _open(slices[i]);
-                                    },
-                                    child: Stack(
-                                      alignment: Alignment.center,
-                                      children: [
-                                        AnimatedBuilder(
-                                          animation: _intro,
-                                          builder: (context, _) => CustomPaint(
-                                            size: Size(side, side),
-                                            painter: _JobsDonutPainter(slices: slices, total: total, active: _active, t: Curves.easeOutCubic.transform(_intro.value)),
-                                          ),
-                                        ),
-                                        IgnorePointer(child: _center(slices, total, side)),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(child: _legend(slices, total)),
-                            ],
-                          );
-                        },
-                      ),
-          ),
-          const SizedBox(height: 14),
-          Container(height: 1, color: DashUi.line),
-          const SizedBox(height: 12),
-          const Text('QUICK INSIGHTS', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.6)),
-          const SizedBox(height: 10),
-          _quickInsights(),
-        ],
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: DashText.bigMoney,
+        ),
+        '$label: $lp% ${left.toLowerCase()}, ${100 - lp}% ${right.toLowerCase()}',
+        tooltip: '$lp% $left, ${100 - lp}% $right',
+      );
+    }
+
+    return DashPanel(
+      header: header,
+      child: SizedBox(
+        height: contentH,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: _item(
+                'Busiest month',
+                Text('${busiest.month} · ${fmt.format(busiest.completedTotal)}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: DashText.bigMoney.copyWith(color: DashUi.emeraldText)),
+                'Busiest month: ${busiest.month}, ${fmt.format(busiest.completedTotal)} jobs',
+                tooltip: '${fmt.format(busiest.completedTotal)} jobs completed in ${busiest.month}',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _item(
+                'Jobs a month',
+                Text(avgPerMonth.toStringAsFixed(1), style: DashText.bigMoney),
+                'Average jobs a month: ${avgPerMonth.toStringAsFixed(1)}',
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: split('Install / service', 'Install', DashUi.indigo, totalInstall.toDouble(), 'Service', DashUi.sky,
+                  totalService.toDouble(),
+                  reliable: installReliable,
+                  hidden: cov == null
+                      ? ''
+                      : 'Only ${cov.withCategories} of ${cov.completed} completed jobs this year have install/service data.'),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: split('Res / commercial', 'Residential', DashUi.sky, totalRes, 'Commercial', DashUi.amber, totalCom,
+                  reliable: comReliable,
+                  hidden: cov == null
+                      ? ''
+                      : 'Only ${cov.withLineItems ?? cov.withCategories} of ${cov.completed} completed jobs this year have line items.'),
+            ),
+          ],
+        ),
       ),
     );
   }
-}
 
-class _JobsDonutPainter extends CustomPainter {
-  final List<_JobSegSlice> slices;
-  final double total;
-  final int? active;
-  final double t;
-
-  const _JobsDonutPainter({required this.slices, required this.total, required this.active, required this.t});
-
-  static double strokeFor(double side) => side * 0.16;
-  static double radiusFor(double side) => (side - strokeFor(side) - 10) / 2;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final side = math.min(size.width, size.height);
-    final center = Offset(size.width / 2, size.height / 2);
-    final stroke = strokeFor(side);
-    final rect = Rect.fromCircle(center: center, radius: radiusFor(side));
-
-    canvas.drawCircle(
-      center,
-      radiusFor(side),
-      Paint()
-        ..color = DashUi.faint
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke,
+  Widget _item(String label, Widget value, String semantics, {String? tooltip}) {
+    Widget item = Semantics(
+      container: true,
+      label: semantics,
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.label),
+            const SizedBox(height: 3),
+            value,
+          ],
+        ),
+      ),
     );
-    if (total <= 0) return;
-
-    final nonZero = slices.where((s) => s.amount > 0).length;
-    final gap = nonZero > 1 ? 0.05 : 0.0;
-    var start = -math.pi / 2;
-
-    for (var i = 0; i < slices.length; i++) {
-      final s = slices[i];
-      if (s.amount <= 0) continue;
-      final full = s.amount / total * 2 * math.pi;
-      final sweep = math.max(0.0, full - gap) * t;
-      final isActive = active == i;
-      final dim = active != null && !isActive;
-
-      canvas.drawArc(
-        rect,
-        start + gap / 2,
-        sweep,
-        false,
-        Paint()
-          ..color = s.color.withValues(alpha: dim ? 0.3 : 1.0)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = stroke + (isActive ? 6 : 0)
-          ..strokeCap = StrokeCap.butt,
-      );
-      start += full;
-    }
+    if (tooltip != null && tooltip.isNotEmpty) item = Tooltip(message: tooltip, child: item);
+    return item;
   }
-
-  @override
-  bool shouldRepaint(covariant _JobsDonutPainter old) => old.active != active || old.t != t || old.total != total || old.slices != slices;
 }
 
 // =============================================================================
-// LOADING SKELETON
+// ACTIVE JOBS BY STATUS (as of today, any year)
+// =============================================================================
+
+class _StatusPanel extends StatelessWidget {
+  final DashGeo g;
+
+  /// Biggest first.
+  final List<_JobStatusCount> statuses;
+  final int total;
+  final bool tall;
+  final int maxRows;
+  final bool fill;
+  final void Function(List<_JobStatusCount> statuses, String heading, Color color) onOpen;
+  const _StatusPanel({
+    required this.g,
+    required this.statuses,
+    required this.total,
+    required this.tall,
+    required this.maxRows,
+    required this.fill,
+    required this.onOpen,
+  });
+
+  static const labelWidth = 150.0;
+  static const amountWidth = 52.0;
+  static const detailWidth = 44.0;
+
+  /// The inner width one-line rows need (text columns, paddings, the chevron and a bar of at least 70 px).
+  static double oneLineWidth(DashGeo g) => (labelWidth + amountWidth + detailWidth) * g.k + 128;
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat('#,##0');
+    final sum = statuses.fold<int>(0, (s, c) => s + c.count);
+    // As many statuses as fit get their own row; the rest share an "Other" row that opens all of them.
+    final List<(String, int, Color, List<_JobStatusCount>)> rows;
+    if (statuses.length <= maxRows) {
+      rows = [
+        for (var i = 0; i < statuses.length; i++)
+          (statuses[i].status, statuses[i].count, _colorOf(statuses[i].status, i), [statuses[i]]),
+      ];
+    } else {
+      final top = statuses.take(maxRows - 1).toList();
+      final rest = statuses.skip(maxRows - 1).toList();
+      rows = [
+        for (var i = 0; i < top.length; i++) (top[i].status, top[i].count, _colorOf(top[i].status, i), [top[i]]),
+        ('Other (${dashCount(rest.length, 'status')})', rest.fold<int>(0, (s, c) => s + c.count), DashUi.slate, rest),
+      ];
+    }
+    final maxV = rows.fold<int>(0, (m, r) => math.max(m, r.$2));
+    final base = tall ? g.rowTall : g.rowWide;
+
+    return DashPanel(
+      fill: fill,
+      header: DashPanelHeader(
+        g: g,
+        title: 'Active jobs by status',
+        note: 'today',
+        tooltip: 'Every job from any year that is not completed, cancelled or written off, by its status.',
+        trailing: sum > 0
+            ? DashLink(
+                text: 'All ${fmt.format(total > 0 ? total : sum)}',
+                label: 'See all ${dashCount(total > 0 ? total : sum, 'active job')}',
+                onTap: () => onOpen(statuses, 'All active jobs', DashUi.sky),
+              )
+            : null,
+      ),
+      child: sum <= 0
+          ? SizedBox(height: 2 * base, child: const DashEmptyNote('Status breakdown not available.'))
+          : Align(
+              alignment: Alignment.topCenter,
+              child: DashRows(
+                count: rows.length,
+                base: base,
+                give: 22,
+                row: (i) {
+                  final (label, count, color, picked) = rows[i];
+                  final grouped = picked.length > 1;
+                  return DashBarRow(
+                    g: g,
+                    label: label,
+                    fraction: maxV > 0 ? count / maxV : 0,
+                    color: color,
+                    amount: fmt.format(count),
+                    detail: dashShare(count.toDouble(), sum.toDouble()),
+                    tall: tall,
+                    labelWidth: labelWidth,
+                    amountWidth: amountWidth,
+                    detailWidth: detailWidth,
+                    onTap: count > 0 ? () => onOpen(picked, grouped ? 'Other active jobs' : '$label · active jobs', color) : null,
+                    hint: 'Opens the list of jobs',
+                    tooltip: grouped ? [for (final s in picked) '${s.status}: ${fmt.format(s.count)}'].join('\n') : null,
+                    semanticsLabel: grouped
+                        ? '$label: ${dashCount(count, 'job')}. ${[for (final s in picked) '${s.status} ${s.count}'].join(', ')}'
+                        : '$label: ${dashCount(count, 'active job')}, ${dashShare(count.toDouble(), sum.toDouble())}',
+                  );
+                },
+              ),
+            ),
+    );
+  }
+
+  static Color _colorOf(String status, int i) => knownStatusColor(status) ?? _categoricalPalette[i % _categoricalPalette.length];
+}
+
+// =============================================================================
+// SKELETON (the same grid, with placeholders)
 // =============================================================================
 
 class _JobsSkeleton extends StatelessWidget {
   const _JobsSkeleton();
 
-  Widget _metric() => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-          decoration: DashUi.panel(radius: 12),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SkeletonBox(h: 12, w: 80),
-              SizedBox(height: 12),
-              SkeletonBox(h: 26, w: 90),
-            ],
-          ),
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
-    return SkeletonPulse(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            height: 104,
-            child: Row(children: [
-              _metric(), const SizedBox(width: 8),
-              _metric(), const SizedBox(width: 8),
-              _metric(), const SizedBox(width: 8),
-              _metric(), const SizedBox(width: 8),
-              _metric(),
-            ]),
+    final g = DashGeo.of(context);
+    return Semantics(
+      label: 'Loading jobs',
+      child: ExcludeSemantics(
+        child: SkeletonPulse(
+          child: _Grid(
+            tiles: List.generate(5, (_) => const DashSkeletonTile()),
+            chart: const DashSkeletonPanel(fill: true),
+            insights: DashSkeletonPanel(rows: 1, rowH: g.line(15) + 6),
+            statuses: (tall, maxRows, fill) => DashSkeletonPanel(rows: math.min(7, maxRows), rowH: tall ? g.rowTall : g.rowWide),
           ),
-          const SizedBox(height: 16),
-          Expanded(
-            flex: 10,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 7,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 11,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 220),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        flex: 9,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 180),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 5,
-                  child: Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: DashUi.panel(),
-                    child: const Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SkeletonBox(h: 16, w: 160),
-                        SizedBox(height: 24),
-                        Expanded(child: SkeletonBox(r: 8)),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

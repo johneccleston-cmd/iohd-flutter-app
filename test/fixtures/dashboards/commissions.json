@@ -1,0 +1,212 @@
+{
+  "history": {
+    "retainagePool": [
+      80,
+      82.1,
+      84.2,
+      86.3,
+      88.4,
+      90.5,
+      92.6,
+      94.7,
+      96.8,
+      98.9,
+      101,
+      103.1,
+      105.2,
+      107.3,
+      109.4,
+      111.5,
+      113.6
+    ]
+  },
+  "summary": {
+    "totalPayoutsYtd": 4622.4,
+    "companyRetainagePool": 57.13,
+    "commercialRetainagePool": 116.35,
+    "avgCommissionPerRecipient": 924.48,
+    "avgCommissionPerTech": 924.48,
+    "commissionRate": {
+      "pct": 4.753599341834636,
+      "payouts": 4622.4,
+      "completedRevenue": 97240,
+      "completedJobs": 58,
+      "from": "2026-10-05",
+      "to": "2026-10-18",
+      "weeks": [
+        {
+          "weekStart": "2026-10-05",
+          "payouts": 2311.2,
+          "completedRevenue": 51360,
+          "completedJobs": 31
+        },
+        {
+          "weekStart": "2026-10-12",
+          "payouts": 2311.2,
+          "completedRevenue": 45880,
+          "completedJobs": 27
+        }
+      ]
+    },
+    "salesCommission": {
+      "total": 140.25,
+      "estimates": 2,
+      "hardBid": 0,
+      "newAccount": 140.25,
+      "account": 0
+    },
+    "nextDisbursement": {
+      "date": "2027-01-01",
+      "amount": 0,
+      "techCount": 0
+    }
+  },
+  "meta": {
+    "year": 2026,
+    "goLiveDate": "2026-10-05",
+    "weeklyThreshold": 750,
+    "retainageScope": "locked balance: lifetime; strikes and penalties: selected year",
+    "averageBasis": "commission recipients: everyone on the job pool (sales-only reps left out)",
+    "averageHeadcount": 5
+  },
+  "technicians": [
+    {
+      "id": "alex.rivera",
+      "name": "Alex Rivera",
+      "jobTitle": "Lead Technician",
+      "isSales": false,
+      "onPool": true,
+      "ytdCommission": 2410,
+      "lockedBalance": 0,
+      "strikes": 0,
+      "totalPenalties": 0,
+      "weekGross": 781.74,
+      "hurdleStreak": 2,
+      "hurdleWeeksHit": 2,
+      "imageUrl": ""
+    },
+    {
+      "id": "sam.carter",
+      "name": "Sam Carter",
+      "jobTitle": "Technician",
+      "isSales": false,
+      "onPool": true,
+      "ytdCommission": 1250,
+      "lockedBalance": 116.35,
+      "strikes": 1,
+      "totalPenalties": 50,
+      "weekGross": 520,
+      "hurdleStreak": 1,
+      "hurdleWeeksHit": 1,
+      "imageUrl": ""
+    },
+    {
+      "id": "jordan.lee",
+      "name": "Jordan Lee",
+      "jobTitle": "Technician",
+      "isSales": false,
+      "onPool": true,
+      "ytdCommission": 650,
+      "lockedBalance": 0,
+      "strikes": 0,
+      "totalPenalties": 0,
+      "weekGross": 210.5,
+      "hurdleStreak": 0,
+      "hurdleWeeksHit": 0,
+      "imageUrl": ""
+    },
+    {
+      "id": "casey.morgan",
+      "name": "Casey Morgan",
+      "jobTitle": "Technician",
+      "isSales": false,
+      "onPool": true,
+      "ytdCommission": 0,
+      "lockedBalance": 0,
+      "strikes": 0,
+      "totalPenalties": 0,
+      "weekGross": 0,
+      "hurdleStreak": 0,
+      "hurdleWeeksHit": 0,
+      "imageUrl": ""
+    },
+    {
+      "id": "riley.brooks",
+      "name": "Riley Brooks",
+      "jobTitle": "Commercial Estimator",
+      "isSales": true,
+      "onPool": true,
+      "ytdCommission": 312.4,
+      "lockedBalance": 0,
+      "strikes": 0,
+      "totalPenalties": 0,
+      "weekGross": 0,
+      "hurdleStreak": 0,
+      "hurdleWeeksHit": 0,
+      "imageUrl": ""
+    }
+  ],
+  "monthlyData": [
+    {
+      "month": "Jan",
+      "payout": 0,
+      "revenue": 212300
+    },
+    {
+      "month": "Feb",
+      "payout": 0,
+      "revenue": 198440
+    },
+    {
+      "month": "Mar",
+      "payout": 0,
+      "revenue": 281950
+    },
+    {
+      "month": "Apr",
+      "payout": 0,
+      "revenue": 305120
+    },
+    {
+      "month": "May",
+      "payout": 0,
+      "revenue": 331870
+    },
+    {
+      "month": "Jun",
+      "payout": 0,
+      "revenue": 342200
+    },
+    {
+      "month": "Jul",
+      "payout": 0,
+      "revenue": 318760
+    },
+    {
+      "month": "Aug",
+      "payout": 0,
+      "revenue": 329140
+    },
+    {
+      "month": "Sep",
+      "payout": 0,
+      "revenue": 288930
+    },
+    {
+      "month": "Oct",
+      "payout": 4622.4,
+      "revenue": 61720
+    },
+    {
+      "month": "Nov",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Dec",
+      "payout": 0,
+      "revenue": 0
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

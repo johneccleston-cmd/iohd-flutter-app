@@ -1,0 +1,92 @@
+{
+  "history": {
+    "valuation": [
+      54800,
+      54823,
+      54846,
+      54869,
+      54892,
+      54915,
+      54938,
+      54961,
+      54984,
+      55007,
+      55030,
+      55053,
+      55076,
+      55099,
+      55122,
+      55145,
+      55168
+    ]
+  },
+  "totalValuation": 55199,
+  "deadStockValue": null,
+  "lowStockCount": 132,
+  "accuracyPct": null,
+  "lastCycleCount": "2026-10-16",
+  "movementTracked": false,
+  "categories": [
+    {
+      "category": "Hardware & Fasteners",
+      "activeValue": 6120,
+      "lowStockValue": 410,
+      "deadValue": 0,
+      "colorHex": "#0284C7"
+    },
+    {
+      "category": "Miscellaneous & Other",
+      "activeValue": 9875,
+      "lowStockValue": 1290,
+      "deadValue": 0,
+      "colorHex": "#D97706"
+    },
+    {
+      "category": "Operators & Electronics",
+      "activeValue": 17640,
+      "lowStockValue": 2310,
+      "deadValue": 0,
+      "colorHex": "#059669"
+    },
+    {
+      "category": "Seals & Insulation",
+      "activeValue": 3205,
+      "lowStockValue": 260,
+      "deadValue": 0,
+      "colorHex": "#7C3AED"
+    },
+    {
+      "category": "Springs & Balancing",
+      "activeValue": 10220,
+      "lowStockValue": 1745,
+      "deadValue": 0,
+      "colorHex": "#4F46E5"
+    },
+    {
+      "category": "Tracks & Struts",
+      "activeValue": 1820,
+      "lowStockValue": 304,
+      "deadValue": 0,
+      "colorHex": "#475569"
+    }
+  ],
+  "topStrikeTechs": [
+    {
+      "name": "Casey Morgan",
+      "imageUrl": "",
+      "strikeCount": 0
+    },
+    {
+      "name": "Jordan Lee",
+      "imageUrl": "",
+      "strikeCount": 2
+    },
+    {
+      "name": "Sam Carter",
+      "imageUrl": "",
+      "strikeCount": 4
+    }
+  ],
+  "monthly": [],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

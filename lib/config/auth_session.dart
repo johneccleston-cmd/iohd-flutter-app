@@ -12,6 +12,10 @@ import 'api_config.dart';
 /// in here and dashboard permissions don't apply to them.
 bool isTechnicianRole(String role) => role.toLowerCase().contains('tech');
 
+/// The recognition badges the Team screen can switch on for someone, named as the sign-in answer names them
+/// (`has_<key>`; the 5-star one is `has_5star`).
+const List<String> kBadgeKeys = ['five_star', 'no_recalls', 'top_producer', 'zero_strikes', 'team_favorite'];
+
 class AuthException implements Exception {
   final String message;
   const AuthException(this.message);
@@ -44,6 +48,7 @@ class AuthSession extends ChangeNotifier {
   String _role = '';
   bool _isAdmin = false;
   Set<String> _denied = {};
+  Set<String>? _badges; // null: this saved sign-in predates badges, so they are unknown until the next sign-in
 
   static const _storeKey = 'iohd_auth_session';
 
@@ -66,6 +71,7 @@ class AuthSession extends ChangeNotifier {
       _role = d['role']?.toString() ?? '';
       _isAdmin = d['is_admin'] == true;
       _denied = (d['denied'] is List) ? (d['denied'] as List).map((e) => e.toString()).toSet() : {};
+      _badges = (d['badges'] is List) ? (d['badges'] as List).map((e) => e.toString()).toSet() : null;
       notifyListeners();
     } catch (_) {
       // Unreadable or unavailable storage: just start signed out.
@@ -77,7 +83,7 @@ class AuthSession extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(
         _storeKey,
-        json.encode({'token': _userToken, 'name': _name, 'role': _role, 'is_admin': _isAdmin, 'denied': _denied.toList()}),
+        json.encode({'token': _userToken, 'name': _name, 'role': _role, 'is_admin': _isAdmin, 'denied': _denied.toList(), 'badges': _badges?.toList()}),
       );
     } catch (_) {}
   }
@@ -93,6 +99,13 @@ class AuthSession extends ChangeNotifier {
   String get name => _name;
   String get role => _role;
   bool get isAdmin => _isAdmin;
+
+  /// The badges this person has earned (see [kBadgeKeys]), or null when they aren't known yet: a sign-in saved
+  /// before badges were kept has to be redone once.
+  Set<String>? get badges => _badges;
+
+  /// When this sign-in ends and the sign-in screen comes back. Null when signed out.
+  DateTime? get expiresAt => isLoggedIn ? DateTime.fromMillisecondsSinceEpoch(_expiresAtMs) : null;
 
   /// Whether the signed-in user may do [action] on a resource (keys in access.dart). Admins always can;
   /// everyone else can unless the Team screen's permissions matrix switched it off.
@@ -177,18 +190,25 @@ class AuthSession extends ChangeNotifier {
     _isAdmin = body['is_admin'] == true;
     final denied = body['access_denied'];
     _denied = denied is List ? denied.map((e) => e.toString()).toSet() : {};
+    _badges = {
+      for (final k in kBadgeKeys)
+        if (body['has_$k'] == true || (k == 'five_star' && body['has_5star'] == true)) k,
+    };
     unawaited(_persist());
     notifyListeners();
   }
 
   /// Replaces a temporary PIN with one the person chose. Exactly 4 digits, because the same PIN signs them in
   /// to the Android app too and that app only takes 4.
-  Future<void> changePin(String username, String oldPin, String newPin) async {
+  ///
+  /// [temporary] is true on first sign-in (the old PIN is the one an admin issued) and false when a signed-in
+  /// person changes their own PIN from My Profile; it only changes the wording of the errors.
+  Future<void> changePin(String username, String oldPin, String newPin, {bool temporary = true}) async {
     if (!RegExp(r'^\d{4}$').hasMatch(newPin)) {
       throw const AuthException('Your PIN must be exactly 4 digits.');
     }
     if (newPin == oldPin) {
-      throw const AuthException('Choose a different PIN from the temporary one.');
+      throw AuthException(temporary ? 'Choose a different PIN from the temporary one.' : 'Choose a different PIN from your current one.');
     }
 
     late http.Response res;
@@ -220,7 +240,9 @@ class AuthSession extends ChangeNotifier {
       case 400:
         throw AuthException(body['error']?.toString() ?? 'That PIN was not accepted.');
       case 401:
-        throw const AuthException('The temporary PIN no longer works. Ask an admin to reset it again.');
+        throw AuthException(temporary
+            ? 'The temporary PIN no longer works. Ask an admin to reset it again.'
+            : "That isn't your current PIN.");
       case 429:
         throw AuthException(body['error']?.toString() ?? 'Too many attempts. Try again in 15 minutes.');
       default:
@@ -236,6 +258,7 @@ class AuthSession extends ChangeNotifier {
     _role = '';
     _isAdmin = false;
     _denied = {};
+    _badges = null;
     unawaited(_forget());
     notifyListeners();
   }

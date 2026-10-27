@@ -222,6 +222,7 @@ class _Week {
   final double hurdleCredit; // retainage held this week; counts toward the hurdle but is not paid
   final double cashPay;
   final double advanceShortfall;
+  final double advanceRecovered; // shortfall taken out of this week's other pay
   final List<_Job> jobs;
   final List<_DayItem> advances;
   final List<_DayItem> callbacks;
@@ -241,6 +242,7 @@ class _Week {
       hurdleCredit = _d(j['hurdleCredit']),
       cashPay = _d(j['cashPay']),
       advanceShortfall = _d(j['advanceShortfall']),
+      advanceRecovered = _d(j['advanceRecovered']),
       jobs = ((j['jobs'] as List?) ?? const [])
           .map((e) => _Job(Map<String, dynamic>.from(e as Map)))
           .toList(),
@@ -949,9 +951,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
   Widget _toolbar() {
     final range = _shownRange;
-    final label = range.start.year == range.end.year
-        ? '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}'
-        : '${DateFormat('MMM d, yyyy').format(range.start)} – ${DateFormat('MMM d, yyyy').format(range.end)}';
+    final label =
+        '${DateFormat('MMM d').format(range.start)} – ${DateFormat('MMM d').format(range.end)}';
     final r = _report;
     final differs =
         r != null &&
@@ -981,10 +982,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         final inner = c.maxWidth - side * 2;
         // What the controls and buttons need side by side, measured at normal text size and scaled with it.
         final k = MediaQuery.textScalerOf(context).scale(100) / 100;
-        final oneRow = inner >= 940 * k;
-        final labels =
-            inner >=
-            1180 * k; // Export PDF and Payroll history keep their words
+        final oneRow = inner >= 1100 * k;
         final allPills =
             inner >=
             1500 * k; // every range as its own pill instead of one menu
@@ -1000,7 +998,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               const SizedBox(width: 12),
               Row(
                 mainAxisSize: MainAxisSize.min,
-                children: _toolbarActions(labels: labels),
+                children: _toolbarActions(),
               ),
             ],
           );
@@ -1011,7 +1009,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             alignment: inner >= 520 ? WrapAlignment.end : WrapAlignment.start,
             crossAxisAlignment: WrapCrossAlignment.center,
             runSpacing: 8,
-            children: _toolbarActions(labels: false),
+            children: _toolbarActions(),
           );
           body = Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1072,17 +1070,17 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
   }
 
-  /// Run payroll is the one solid button; the rest are outlined so it stands out on the dark banner. Without
-  /// [labels] the secondary actions shrink to icons, named by their tooltips.
-  List<Widget> _toolbarActions({required bool labels}) {
+  /// Run payroll is the one solid button; the rest are outlined so it stands out on the dark banner. Text only,
+  /// no icons, to keep the toolbar narrow.
+  List<Widget> _toolbarActions() {
     final hasData = _report != null && _report!.techs.isNotEmpty;
     const text = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700);
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
     );
     final ghost = OutlinedButton.styleFrom(
-      minimumSize: const Size(40, 40),
-      padding: EdgeInsets.symmetric(horizontal: labels ? 14 : 0),
+      minimumSize: const Size(0, 40),
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       foregroundColor: Colors.white,
       disabledForegroundColor: Colors.white38,
       side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
@@ -1091,30 +1089,39 @@ class _PayrollScreenState extends State<PayrollScreen> {
     );
 
     Widget secondary({
-      required IconData icon,
       required String label,
       required String tip,
       required VoidCallback? onPressed,
-      Widget? busy,
+      bool busy = false,
     }) {
-      final glyph = busy ?? Icon(icon, size: 18);
       return Tooltip(
         message: tip,
-        child: labels
-            ? OutlinedButton.icon(
-                style: ghost,
-                icon: glyph,
-                label: Text(label),
-                onPressed: onPressed,
-              )
-            : OutlinedButton(style: ghost, onPressed: onPressed, child: glyph),
+        child: OutlinedButton(
+          style: ghost,
+          onPressed: onPressed,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (busy) ...[
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(label),
+            ],
+          ),
+        ),
       );
     }
 
     return [
-      FilledButton.icon(
-        icon: const Icon(Icons.payments_outlined, size: 18),
-        label: const Text('Run payroll'),
+      FilledButton(
         style: FilledButton.styleFrom(
           minimumSize: const Size(0, 40),
           padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -1133,33 +1140,29 @@ class _PayrollScreenState extends State<PayrollScreen> {
             if (mounted) setState(() => _pendingRefresh++);
           },
         ),
+        child: const Text('Run payroll'),
       ),
       const SizedBox(width: 8),
       secondary(
-        icon: Icons.picture_as_pdf_outlined,
         label: 'Export PDF',
-        tip: labels
-            ? 'Exports every technician for these dates'
-            : 'Export PDF of every technician for these dates',
-        busy: _exporting
-            ? const SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
-            : null,
+        tip: 'Exports every technician for these dates',
+        busy: _exporting,
         onPressed: hasData && !_exporting ? _exportPdf : null,
       ),
       const SizedBox(width: 8),
       secondary(
-        icon: Icons.history_rounded,
         label: 'Payroll history',
-        tip: labels ? 'Every payroll run so far' : 'Payroll history',
+        tip: 'Every payroll run so far',
         onPressed: () => showPayrollHistoryDialog(context),
       ),
+      if (AuthSession.instance.canView('hr_corrections')) ...[
+        const SizedBox(width: 8),
+        secondary(
+          label: 'Fix commissions',
+          tip: 'Fix a wrong day, callback or closed job that changes commissions',
+          onPressed: () => context.go('/hr/corrections'),
+        ),
+      ],
     ];
   }
 
@@ -1767,6 +1770,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           value: t.totalDue,
           valueColor: tone(t.totalDue, DashUi.emeraldDeep),
           index: 0,
+          verticalPadding: 9,
         ),
       ),
       tappable(
@@ -1777,6 +1781,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           value: jobNet,
           valueColor: tone(jobNet, DashUi.ink),
           index: 1,
+          verticalPadding: 9,
         ),
       ),
       tappable(
@@ -1787,6 +1792,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           value: t.retainage,
           valueColor: tone(t.retainage, DashUi.indigo),
           index: 2,
+          verticalPadding: 9,
         ),
       ),
       // Sales pay is not part of any other card, so when someone earned it the card takes the pool's slot.
@@ -1799,6 +1805,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             value: repTotal,
             valueColor: DashUi.indigo,
             index: 3,
+            verticalPadding: 9,
           ),
         )
       else
@@ -1810,6 +1817,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             value: poolTotal,
             valueColor: tone(poolTotal, DashUi.slate),
             index: 3,
+            verticalPadding: 9,
           ),
         ),
       tappable(
@@ -1820,13 +1828,14 @@ class _PayrollScreenState extends State<PayrollScreen> {
           value: advCallbacks,
           valueColor: tone(advCallbacks, DashUi.amber),
           index: 4,
+          verticalPadding: 9,
         ),
       ),
     ];
 
     // The cards are a fixed height so a row lines up; it grows with the text size so big text isn't cut off.
     final ts = MediaQuery.textScalerOf(context);
-    final height = math.max(88.0, 40 + ts.scale(17.5) + ts.scale(31));
+    final height = math.max(80.0, 31 + ts.scale(17.5) + ts.scale(31));
 
     if (wide) {
       final row = <Widget>[];
@@ -2584,7 +2593,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
       height: 1.25,
     );
     const figure = TextStyle(
-      fontSize: 14.5,
+      fontSize: 16,
       fontWeight: FontWeight.w500,
       color: DashUi.ink,
       fontFeatures: _figures,
@@ -2638,7 +2647,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               final headH = math.max(52.0, 20 + ts.scale(36));
               final rowH = math.max(
                 84.0,
-                24 + ts.scale(19.5) + ts.scale(17) + (weekly ? 11 : 0),
+                24 + ts.scale(22) + ts.scale(17) + (weekly ? 11 : 0),
               );
               final totalH = math.max(50.0, 26 + ts.scale(20));
 
@@ -2789,22 +2798,11 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  fontSize: 14.5,
+                                  fontSize: 17,
                                   fontWeight: FontWeight.w700,
                                   color: DashUi.ink,
                                 ),
                               ),
-                              if (under)
-                                const Text(
-                                  'Under hurdle, no cash pay',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12.5,
-                                    color: DashUi.amberText,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
                               if (weekly) _hurdleBar(t),
                             ],
                           ),
@@ -2830,7 +2828,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
               final bold = figure.copyWith(fontWeight: FontWeight.w800);
               final dueStyle = figure.copyWith(
-                fontSize: 15,
+                fontSize: 17,
                 fontWeight: FontWeight.w800,
               );
 
@@ -2865,7 +2863,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                         child: Text(
                           'Total',
                           style: TextStyle(
-                            fontSize: 15,
+                            fontSize: 17,
                             fontWeight: FontWeight.w800,
                             color: DashUi.ink,
                           ),
@@ -3437,8 +3435,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
   /// [showCashPay] puts the week's cash pay in the header. With a single pay week it would repeat the hero's
   /// Total Due and the last ledger row, so it is hidden.
   Widget _weekSummary(_Week w, {bool showCashPay = true}) {
-    final underHurdle = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
-
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16),
       decoration: _flat,
@@ -3562,18 +3558,23 @@ class _PayrollScreenState extends State<PayrollScreen> {
           _ledgerRow('Weekly gross', w.weeklyGross, bold: true),
           if (w.hurdleRule > 0)
             _ledgerRow(
-              underHurdle
-                  ? 'Under the ${_fmt(w.hurdleRule)} hurdle, no cash pay'
-                  : 'Weekly hurdle',
+              'Weekly hurdle',
               -w.hurdleApplied,
               color: DashUi.slate,
+            ),
+          if (w.advanceRecovered > 0)
+            _ledgerRow(
+              'Advances recovered',
+              -w.advanceRecovered,
+              color: DashUi.red,
+              note: 'Job commission did not cover advances paid in an earlier week. Taken from this week\'s other pay.',
             ),
           if (w.advanceShortfall > 0)
             _ledgerRow(
               'Advance shortfall',
               w.advanceShortfall,
               color: DashUi.red,
-              note: 'Job commission did not cover the advances. Recovered from a later payroll run.',
+              note: 'Still owed after this week\'s pay. Recovered from a later payroll run.',
             ),
           const Divider(height: 14, color: DashUi.line),
           _ledgerRow(

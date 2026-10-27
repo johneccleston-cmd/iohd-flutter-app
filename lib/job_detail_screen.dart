@@ -14,6 +14,7 @@ import 'config/auth_session.dart';
 import 'theme/app_theme.dart';
 import 'utils/job_statuses.dart';
 import 'utils/status_colors.dart';
+import 'widgets/quo_activity_panel.dart';
 import 'widgets/dashboard_kit.dart' show SkeletonPulse;
 import 'widgets/file_viewer.dart';
 
@@ -104,6 +105,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     // Our files and notes only need the job number, so ask for them now instead of after the job comes back.
     unawaited(_loadFiles());
     unawaited(_loadNotesTasks());
+    unawaited(QuoActivityPanel.prefetch(jobId: widget.jobId)); // so the Communications tab opens with its calls and texts
     try {
       final res = await http
           .get(Uri.parse('$kApiBaseUrl/api/jobs/${Uri.encodeComponent(widget.jobId)}'), headers: AuthSession.instance.headers(json: false))
@@ -270,7 +272,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         1 => _picsRows(),
         2 => _docsRows(),
         3 => [_emptyTab(Icons.straighten_rounded, 'No takeoffs yet', 'Takeoffs for this job will show here once they are built.')],
-        4 => [_emptyTab(Icons.forum_outlined, 'No communications recorded', 'Calls, texts and emails are not tracked in this app yet.')],
+        4 => [QuoActivityPanel(key: ValueKey('quo-job-${widget.jobId}'), jobId: widget.jobId)],
         _ => summaryRows,
       },
       tabs: [

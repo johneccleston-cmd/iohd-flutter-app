@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
+import 'dashboard_data.dart';
 
 /// Design tokens in one place so the header, selector and body stay consistent.
 abstract final class _DashTokens {
@@ -54,6 +57,9 @@ class DashboardLayout extends StatefulWidget {
 
   final Widget Function(BuildContext context, int selectedYear) builder;
 
+  /// Show when the figures were computed and a Refresh button (the content reports through DashboardLoading).
+  final bool showFreshness;
+
   const DashboardLayout({
     super.key,
     required this.title,
@@ -65,6 +71,7 @@ class DashboardLayout extends StatefulWidget {
     this.onYearChanged,
     this.actions = const [],
     required this.builder,
+    this.showFreshness = true,
   });
 
   @override
@@ -74,6 +81,13 @@ class DashboardLayout extends StatefulWidget {
 class _DashboardLayoutState extends State<DashboardLayout> {
   late List<int> _years;
   late int _selectedYear;
+  final _freshness = DashFreshness();
+
+  @override
+  void dispose() {
+    _freshness.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -91,14 +105,14 @@ class _DashboardLayoutState extends State<DashboardLayout> {
 
   /// Newest first, de-duplicated.
   List<int> _resolveYears() {
-    final now = DateTime.now().year;
+    final now = DashClock.now().year;
     final list = {...(widget.years ?? [now, now - 1, now - 2])}.toList()
       ..sort((a, b) => b.compareTo(a));
     return list;
   }
 
   int _pickInitial() {
-    final wanted = widget.initialYear ?? DateTime.now().year;
+    final wanted = widget.initialYear ?? DashClock.now().year;
     return _years.contains(wanted) ? wanted : _years.first;
   }
 
@@ -118,6 +132,7 @@ class _DashboardLayoutState extends State<DashboardLayout> {
             _HeaderBar(
             title: widget.title,
             subtitle: widget.subtitle,
+            freshness: widget.showFreshness ? _freshness : null,
             actions: widget.actions,
             yearSelector: widget.showYearSelector
                 ? _YearSelector(
@@ -154,7 +169,10 @@ class _DashboardLayoutState extends State<DashboardLayout> {
                           key: ValueKey(_selectedYear),
                           child: DashboardScope(
                             selectedYear: _selectedYear,
-                            child: widget.builder(context, _selectedYear),
+                            child: DashFreshnessScope(
+                              freshness: _freshness,
+                              child: widget.builder(context, _selectedYear),
+                            ),
                           ),
                         ),
                       ),
@@ -173,12 +191,14 @@ class _DashboardLayoutState extends State<DashboardLayout> {
 class _HeaderBar extends StatelessWidget {
   final String title;
   final String? subtitle;
+  final DashFreshness? freshness;
   final List<Widget> actions;
   final Widget? yearSelector;
 
   const _HeaderBar({
     required this.title,
     required this.subtitle,
+    required this.freshness,
     required this.actions,
     required this.yearSelector,
   });
@@ -187,7 +207,7 @@ class _HeaderBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final compact = MediaQuery.sizeOf(context).width < _DashTokens.compactBreakpoint;
 
-    return Container(
+    final bar = Container(
       decoration: const BoxDecoration(
         color: _DashTokens.header,
         border: Border(bottom: BorderSide(color: _DashTokens.border)),
@@ -238,6 +258,10 @@ class _HeaderBar extends StatelessWidget {
                     ),
                   ),
                 ),
+                if (freshness != null) ...[
+                  _FreshnessStatus(freshness: freshness!, compact: compact),
+                  const SizedBox(width: 8),
+                ],
                 if (actions.isNotEmpty) ...[
                   IconTheme(
                     data: const IconThemeData(color: Colors.white, size: 20),
@@ -245,12 +269,133 @@ class _HeaderBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 8),
                 ],
-                if (yearSelector != null) yearSelector!,
+                ?yearSelector,
               ],
             ),
           ),
         ),
       ),
+    );
+
+    if (freshness == null) return bar;
+    // A thin bar along the bottom edge while a refresh runs, drawn over the header so nothing below moves.
+    return Stack(
+      children: [
+        bar,
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: ListenableBuilder(
+            listenable: freshness!,
+            builder: (context, _) => freshness!.busy && freshness!.updatedAt != null
+                ? const LinearProgressIndicator(
+                    minHeight: 2,
+                    backgroundColor: Colors.transparent,
+                    color: Color(0xFF38BDF8),
+                  )
+                : const SizedBox.shrink(),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// "Updated 3 min ago" and a Refresh button. The hover text says whether that is when the server computed the
+/// figures or only when they arrived (a server that doesn't report it yet).
+class _FreshnessStatus extends StatefulWidget {
+  final DashFreshness freshness;
+  final bool compact;
+  const _FreshnessStatus({required this.freshness, required this.compact});
+
+  @override
+  State<_FreshnessStatus> createState() => _FreshnessStatusState();
+}
+
+class _FreshnessStatusState extends State<_FreshnessStatus> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    // Keeps "N min ago" honest. One rebuild of this label a minute; nothing else redraws.
+    _tick = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  static String _ago(DateTime t) {
+    final d = DashClock.now().difference(t);
+    if (d.inSeconds < 60) return 'just now';
+    if (d.inMinutes < 60) return '${d.inMinutes} min ago';
+    if (d.inHours < 24) return '${d.inHours} h ago';
+    return 'on ${dashMonthNames[t.month - 1]} ${t.day}';
+  }
+
+  static String _clock(DateTime t) {
+    final h = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    return '$h:${t.minute.toString().padLeft(2, '0')} ${t.hour < 12 ? 'AM' : 'PM'}, ${dashMonthNames[t.month - 1]} ${t.day}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: widget.freshness,
+      builder: (context, _) {
+        final f = widget.freshness;
+        final at = f.updatedAt;
+        final failed = f.refreshFailure;
+        if (at == null && !f.busy) return const SizedBox.shrink();
+
+        final String label;
+        final String tip;
+        if (failed != null) {
+          label = "Couldn't refresh";
+          tip = '${failed.message}${at == null ? '' : '\nShowing figures from ${_clock(at)}.'}';
+        } else if (f.busy) {
+          label = at == null ? 'Loading…' : 'Refreshing…';
+          tip = at == null ? 'Loading the latest figures.' : 'Showing figures from ${_clock(at)} until the new ones arrive.';
+        } else {
+          label = 'Updated ${_ago(at!)}';
+          tip = f.isComputedTime ? 'Figures computed at ${_clock(at)}.' : 'Figures loaded at ${_clock(at)}.';
+        }
+
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (!widget.compact)
+              Tooltip(
+                message: tip,
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: failed != null ? const Color(0xFFFBBF24) : _DashTokens.muted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: widget.compact ? '$label. Refresh now' : 'Refresh now',
+              iconSize: 20,
+              color: Colors.white,
+              disabledColor: _DashTokens.border,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
+              padding: EdgeInsets.zero,
+              onPressed: f.onRefresh,
+            ),
+          ],
+        );
+      },
     );
   }
 }

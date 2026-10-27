@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "year": 2026,
+  "history": {
+    "activeOpenJobs": []
+  },
+  "monthlyMetrics": [],
+  "scorecards": {
+    "completedYtd": 0,
+    "activeOpenJobs": 0,
+    "avgJobRevenue": 0,
+    "newCustomersYtd": 0,
+    "avgProfitMargin": 0
+  },
+  "monthlyVolume": [],
+  "weeklySplit": [],
+  "monthlySplit": [],
+  "statusCounts": [],
+  "pipelineStages": [],
+  "splitCoverage": {
+    "completedJobs": 0,
+    "jobsWithCategories": 0,
+    "jobsWithLineItems": 0
+  },
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

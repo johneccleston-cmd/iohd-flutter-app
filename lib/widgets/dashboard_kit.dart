@@ -11,6 +11,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'dashboard_data.dart';
+
 class DashUi {
   static const ink = Color(0xFF0F172A);
   static const slate = Color(0xFF475569);
@@ -33,6 +35,7 @@ class DashUi {
   static const subtle = Color(0xFF64748B);
   static const emeraldText = Color(0xFF047857);
   static const amberText = Color(0xFFB45309);
+  static const redText = Color(0xFFB91C1C);
 
   static BoxDecoration panel({double radius = 16}) => BoxDecoration(
     color: Colors.white,
@@ -48,6 +51,40 @@ String dashMoney(double v) {
       .toStringAsFixed(2)
       .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+\.)'), (m) => '${m[1]},');
   return '${neg ? '-' : ''}\$$s';
+}
+
+/// "Nick Smith" -> "NS", "Cher" -> "C", "" -> "?".
+String dashInitials(String name) {
+  final parts = name
+      .trim()
+      .split(RegExp(r'\s+'))
+      .where((p) => p.isNotEmpty)
+      .toList();
+  if (parts.isEmpty) return '?';
+  if (parts.length == 1) return parts.first[0].toUpperCase();
+  return (parts.first[0] + parts.last[0]).toUpperCase();
+}
+
+/// A person's photo filling its box (the left strip of the staff cards). With no photo, or one that fails to load,
+/// their initials on a soft tint. Names are never sent to an outside avatar service.
+class DashPhotoStrip extends StatelessWidget {
+  final String name;
+  final String imageUrl;
+  const DashPhotoStrip({super.key, required this.name, required this.imageUrl});
+
+  Widget _initials() => Container(
+    color: DashUi.faint,
+    alignment: Alignment.center,
+    child: Text(
+      dashInitials(name),
+      style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: DashUi.slate),
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) => imageUrl.isEmpty
+      ? _initials()
+      : Image.network(imageUrl, fit: BoxFit.cover, errorBuilder: (_, _, _) => _initials());
 }
 
 // =============================================================================
@@ -80,16 +117,7 @@ class DashAvatar extends StatelessWidget {
     this.accent,
   });
 
-  String get _initials {
-    final parts = name
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) return '?';
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return (parts.first[0] + parts.last[0]).toUpperCase();
-  }
+  String get _initials => dashInitials(name);
 
   Widget _fallback() => Container(
     decoration: accent == null
@@ -133,7 +161,8 @@ class DashAvatar extends StatelessWidget {
 
     return Container(
       decoration: BoxDecoration(
-        shape: BoxShape.circle,
+        shape: square ? BoxShape.rectangle : BoxShape.circle,
+        borderRadius: square ? BorderRadius.circular(size * 0.12 + ringWidth) : null,
         border: ringWidth > 0
             ? Border.all(color: ringColor ?? DashUi.line, width: ringWidth)
             : null,
@@ -197,13 +226,24 @@ class _HoverLiftState extends State<HoverLift> {
 //   - respects the OS reduced-motion setting
 // =============================================================================
 
+/// Height of a scorecard row that shows title, value and caption at the current text size (see AnimatedMetricCard).
+/// [verticalPadding] must match the cards' own (14 unless they set another).
+double dashTileHeight(BuildContext context, {double verticalPadding = 14}) =>
+    _AnimatedMetricCardState._neededHeight(MediaQuery.textScalerOf(context), verticalPadding);
+
 class AnimatedMetricCard extends StatefulWidget {
   final String title;
 
   /// Null shows an em dash (for metrics with no data source yet).
   final double? value;
   final String Function(double) format;
+
+  /// One plain line under the number saying what it counts and over what period. Drawn when the card is tall enough
+  /// ([dashTileHeight]); always available on hover and to screen readers.
   final String caption;
+
+  /// The full explanation shown on hover. Defaults to [caption].
+  final String? definition;
   final Color valueColor;
   final int index;
   final List<double>? trend;
@@ -211,16 +251,21 @@ class AnimatedMetricCard extends StatefulWidget {
   /// The trend line is hidden when the card's inner width is below this (it needs room beside the number).
   final double sparkMinWidth;
 
+  /// Space above and below the text; a screen with a fixed, shorter card height can tighten it.
+  final double verticalPadding;
+
   const AnimatedMetricCard({
     super.key,
     required this.title,
     required this.value,
     this.caption = '',
+    this.definition,
     required this.valueColor,
     required this.index,
     this.format = dashMoney,
     this.trend,
     this.sparkMinWidth = 250,
+    this.verticalPadding = 14,
   });
 
   @override
@@ -285,12 +330,16 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
     ),
   );
 
-  @override
-  Widget build(BuildContext context) {
-    final w = widget;
-    final v = w.value;
+  /// Height of title + value + caption at text size [s] (title and caption are 1.3 lines high, the value 1.1).
+  static double _contentHeight(TextScaler s) => s.scale(13) * 1.3 + 4 + s.scale(28) * 1.1 + 2 + s.scale(12) * 1.3 + 1;
 
-    final textColumn = Column(
+  /// The whole card: content, [verticalPadding] above and below, and the 1px border top and bottom (a Container adds
+  /// its decoration's border to its padding).
+  static double _neededHeight(TextScaler s, double verticalPadding) => verticalPadding * 2 + 2 + _contentHeight(s);
+
+  Widget _textColumn(double? v, {required bool withCaption}) {
+    final w = widget;
+    return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -298,13 +347,16 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
           w.title,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
+          // A fixed line height only when the caption is drawn (so the card's height is predictable); otherwise the
+          // font's own, exactly as before, so screens without captions are unchanged.
+          style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w600,
+            height: withCaption ? 1.3 : null,
             color: DashUi.slate,
           ),
         ),
-        const SizedBox(height: 6),
+        SizedBox(height: withCaption ? 4 : 6),
         if (v == null)
           const Text(
             '—',
@@ -324,68 +376,104 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
             curve: Curves.easeOutCubic,
             builder: (context, value, _) => _valueText(value),
           ),
+        if (withCaption) ...[
+          const SizedBox(height: 2),
+          Text(
+            w.caption,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              height: 1.3,
+              color: DashUi.subtle,
+            ),
+          ),
+        ],
       ],
     );
+  }
 
-    return FadeTransition(
-      opacity: _t,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.12),
-          end: Offset.zero,
-        ).animate(_t),
-        child: HoverLift(
-          builder: (context, hovering) => Container(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: hovering
-                    ? w.valueColor.withValues(alpha: 0.55)
-                    : DashUi.line,
-              ),
-            ),
-            child: LayoutBuilder(
-              builder: (context, c) {
-                // Skip the sparkline when the card is too narrow to fit it beside the number.
-                final showSpark = w.trend != null && c.maxWidth > w.sparkMinWidth;
-                return Row(
-                  children: [
-                    Expanded(child: textColumn),
-                    if (showSpark) ...[
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 84,
-                        height: 48,
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0, end: 1),
-                          duration: _reduceMotion
-                              ? Duration.zero
-                              : const Duration(
-                                  milliseconds: _countUpMs + _sparkDrawMs,
-                                ),
-                          builder: (context, t, _) {
-                            final progress =
-                                ((t * (_countUpMs + _sparkDrawMs) -
-                                            _countUpMs) /
-                                        _sparkDrawMs)
-                                    .clamp(0.0, 1.0);
-                            return CustomPaint(
-                              painter: _SparklinePainter(
-                                values: w.trend!,
-                                color: w.valueColor,
-                                progress: progress,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ],
-                );
-              },
-            ),
+  @override
+  Widget build(BuildContext context) {
+    final w = widget;
+    final v = w.value;
+    final scaler = MediaQuery.textScalerOf(context);
+    final hover = (w.definition ?? w.caption).trim();
+
+    Widget card = HoverLift(
+      builder: (context, hovering) => Container(
+        padding: EdgeInsets.symmetric(horizontal: 18, vertical: w.verticalPadding),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: hovering
+                ? w.valueColor.withValues(alpha: 0.55)
+                : DashUi.line,
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, c) {
+            // The caption line only appears when the card is tall enough for it; it never squeezes the number.
+            final withCaption = w.caption.isNotEmpty && c.maxHeight + 0.5 >= _contentHeight(scaler);
+            // Skip the sparkline when the card is too narrow to fit it beside the number.
+            final showSpark = w.trend != null && c.maxWidth > w.sparkMinWidth;
+            return Row(
+              children: [
+                Expanded(child: _textColumn(v, withCaption: withCaption)),
+                if (showSpark) ...[
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: 84,
+                    height: 48,
+                    child: TweenAnimationBuilder<double>(
+                      tween: Tween<double>(begin: 0, end: 1),
+                      duration: _reduceMotion
+                          ? Duration.zero
+                          : const Duration(
+                              milliseconds: _countUpMs + _sparkDrawMs,
+                            ),
+                      builder: (context, t, _) {
+                        final progress =
+                            ((t * (_countUpMs + _sparkDrawMs) -
+                                        _countUpMs) /
+                                    _sparkDrawMs)
+                                .clamp(0.0, 1.0);
+                        return CustomPaint(
+                          painter: _SparklinePainter(
+                            values: w.trend!,
+                            color: w.valueColor,
+                            progress: progress,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    if (hover.isNotEmpty) {
+      card = Tooltip(message: hover, waitDuration: const Duration(milliseconds: 400), child: card);
+    }
+
+    // Screen readers get the finished figure and its meaning in one phrase, not the count-up in progress.
+    return Semantics(
+      container: true,
+      label: '${w.title}: ${v == null ? 'no figure yet' : w.format(v)}${hover.isEmpty ? '' : '. $hover'}',
+      child: ExcludeSemantics(
+        child: FadeTransition(
+          opacity: _t,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, 0.12),
+              end: Offset.zero,
+            ).animate(_t),
+            child: card,
           ),
         ),
       ),
@@ -539,14 +627,38 @@ class SkeletonBox extends StatelessWidget {
 class DashErrorPanel extends StatelessWidget {
   final String title;
   final String message;
-  final VoidCallback onRetry;
+
+  /// Null hides the button (for problems a retry can't fix, like a missing permission).
+  final VoidCallback? onRetry;
+  final String? hint;
+  final IconData icon;
+
+  /// Failure titles can run to two lines, so they are centred; the plain panel keeps its original look.
+  final bool _centerTitle;
 
   const DashErrorPanel({
     super.key,
     required this.title,
     required this.message,
-    required this.onRetry,
-  });
+    required VoidCallback this.onRetry,
+    this.hint = 'Check your connection, then try again.',
+    this.icon = Icons.cloud_off_rounded,
+  }) : _centerTitle = false;
+
+  /// A dashboard load failure in plain words: [what] names the data ("financials"). No raw error text is shown.
+  DashErrorPanel.failure(DashLoadException failure, {super.key, required String what, required VoidCallback onRetry})
+      : title = failure.title(what),
+        message = failure.message,
+        hint = null,
+        icon = switch (failure.kind) {
+          DashFailure.noAccess => Icons.lock_outline_rounded,
+          DashFailure.signedOut => Icons.logout_rounded,
+          DashFailure.timeout => Icons.hourglass_bottom_rounded,
+          DashFailure.server || DashFailure.badData => Icons.error_outline_rounded,
+          DashFailure.offline => Icons.cloud_off_rounded,
+        },
+        onRetry = failure.canRetry ? onRetry : null,
+        _centerTitle = true;
 
   @override
   Widget build(BuildContext context) {
@@ -558,10 +670,11 @@ class DashErrorPanel extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_rounded, size: 34, color: DashUi.muted),
+            Icon(icon, size: 34, color: DashUi.muted),
             const SizedBox(height: 14),
             Text(
               title,
+              textAlign: _centerTitle ? TextAlign.center : null,
               style: const TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
@@ -576,21 +689,25 @@ class DashErrorPanel extends StatelessWidget {
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(fontSize: 13.5, color: DashUi.slate),
             ),
-            const SizedBox(height: 4),
-            const Text(
-              'Check your connection, then try again.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: DashUi.muted),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Try again'),
-              style: FilledButton.styleFrom(
-                backgroundColor: DashUi.emeraldDeep,
+            if (hint != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                hint!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13.5, color: DashUi.muted),
               ),
-            ),
+            ],
+            if (onRetry != null) ...[
+              const SizedBox(height: 20),
+              FilledButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('Try again'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: DashUi.emeraldDeep,
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -748,13 +865,12 @@ class _AutoScrollTickerState extends State<AutoScrollTicker>
 
 /// Trend line for a scorecard, from a 12-entry monthly series (January first).
 ///
-/// Only months that have happened are used (the current year stops at this month), and the line starts
-/// one month before the first non-zero value so it doesn't open with a long flat stretch.
-/// Returns null when there are fewer than two points, so the card shows no line rather than a dot.
+/// Only finished months are used (dashCompleteMonths): the month in progress is left off, because a few days of it
+/// drawn next to whole months reads as a collapse. The line starts one month before the first non-zero value so it
+/// doesn't open with a long flat stretch. Returns null when there are fewer than two points, so the card shows no
+/// line rather than a dot.
 List<double>? dashTrend(List<double> monthly, int year) {
-  final now = DateTime.now();
-  final upTo = year == now.year ? now.month : monthly.length;
-  final pts = monthly.take(upTo).toList();
+  final pts = monthly.take(dashCompleteMonths(year)).toList();
   final first = pts.indexWhere((v) => v > 0);
   final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
   return trimmed.length >= 2 ? trimmed : null;

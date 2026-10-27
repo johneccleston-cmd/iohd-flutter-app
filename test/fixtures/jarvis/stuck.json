@@ -1,0 +1,840 @@
+{
+ "question": "Which jobs are stuck, and what is holding them up?",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Finding stuck jobs…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_4",
+   "name": "jobs_stuck",
+   "input": "{}",
+   "state": "start",
+   "text": "Finding stuck jobs…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_4",
+   "name": "jobs_stuck",
+   "state": "done",
+   "ok": true,
+   "ms": 134
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "6 active"
+  },
+  {
+   "type": "delta",
+   "text": " jobs ha"
+  },
+  {
+   "type": "delta",
+   "text": "ve sat i"
+  },
+  {
+   "type": "delta",
+   "text": "n one st"
+  },
+  {
+   "type": "delta",
+   "text": "atus for"
+  },
+  {
+   "type": "delta",
+   "text": " 14 days"
+  },
+  {
+   "type": "delta",
+   "text": " or more"
+  },
+  {
+   "type": "delta",
+   "text": "; the ol"
+  },
+  {
+   "type": "delta",
+   "text": "dest, [1"
+  },
+  {
+   "type": "delta",
+   "text": "09581023"
+  },
+  {
+   "type": "delta",
+   "text": "1](job:1"
+  },
+  {
+   "type": "delta",
+   "text": "09581023"
+  },
+  {
+   "type": "delta",
+   "text": "1), has "
+  },
+  {
+   "type": "delta",
+   "text": "waited 4"
+  },
+  {
+   "type": "delta",
+   "text": "1 days o"
+  },
+  {
+   "type": "delta",
+   "text": "n Clopay"
+  },
+  {
+   "type": "delta",
+   "text": " doors.\n"
+  },
+  {
+   "type": "delta",
+   "text": "\n| Job |"
+  },
+  {
+   "type": "delta",
+   "text": " Custome"
+  },
+  {
+   "type": "delta",
+   "text": "r | Stat"
+  },
+  {
+   "type": "delta",
+   "text": "us | Day"
+  },
+  {
+   "type": "delta",
+   "text": "s | What"
+  },
+  {
+   "type": "delta",
+   "text": " is hold"
+  },
+  {
+   "type": "delta",
+   "text": "ing it u"
+  },
+  {
+   "type": "delta",
+   "text": "p |\n|---"
+  },
+  {
+   "type": "delta",
+   "text": "|---|---"
+  },
+  {
+   "type": "delta",
+   "text": "|---|---"
+  },
+  {
+   "type": "delta",
+   "text": "|\n| [109"
+  },
+  {
+   "type": "delta",
+   "text": "5810231]"
+  },
+  {
+   "type": "delta",
+   "text": "(job:109"
+  },
+  {
+   "type": "delta",
+   "text": "5810231)"
+  },
+  {
+   "type": "delta",
+   "text": " | Ozark"
+  },
+  {
+   "type": "delta",
+   "text": " Ridge H"
+  },
+  {
+   "type": "delta",
+   "text": "omes | N"
+  },
+  {
+   "type": "delta",
+   "text": "eed To O"
+  },
+  {
+   "type": "delta",
+   "text": "rder | 4"
+  },
+  {
+   "type": "delta",
+   "text": "1 | Wait"
+  },
+  {
+   "type": "delta",
+   "text": "ing on C"
+  },
+  {
+   "type": "delta",
+   "text": "lopay; O"
+  },
+  {
+   "type": "delta",
+   "text": "ct 14 no"
+  },
+  {
+   "type": "delta",
+   "text": "te: door"
+  },
+  {
+   "type": "delta",
+   "text": "s ordere"
+  },
+  {
+   "type": "delta",
+   "text": "d 9/18, "
+  },
+  {
+   "type": "delta",
+   "text": "two more"
+  },
+  {
+   "type": "delta",
+   "text": " weeks. "
+  },
+  {
+   "type": "delta",
+   "text": "Nothing "
+  },
+  {
+   "type": "delta",
+   "text": "booked. "
+  },
+  {
+   "type": "delta",
+   "text": "|\n| [109"
+  },
+  {
+   "type": "delta",
+   "text": "5810877]"
+  },
+  {
+   "type": "delta",
+   "text": "(job:109"
+  },
+  {
+   "type": "delta",
+   "text": "5810877)"
+  },
+  {
+   "type": "delta",
+   "text": " | Hartw"
+  },
+  {
+   "type": "delta",
+   "text": "ell Buil"
+  },
+  {
+   "type": "delta",
+   "text": "ders | N"
+  },
+  {
+   "type": "delta",
+   "text": "eed To S"
+  },
+  {
+   "type": "delta",
+   "text": "chedule "
+  },
+  {
+   "type": "delta",
+   "text": "| 29 | N"
+  },
+  {
+   "type": "delta",
+   "text": "othing b"
+  },
+  {
+   "type": "delta",
+   "text": "ooked; 1"
+  },
+  {
+   "type": "delta",
+   "text": " open ta"
+  },
+  {
+   "type": "delta",
+   "text": "sk to pi"
+  },
+  {
+   "type": "delta",
+   "text": "ck an in"
+  },
+  {
+   "type": "delta",
+   "text": "stall da"
+  },
+  {
+   "type": "delta",
+   "text": "te. |\n| "
+  },
+  {
+   "type": "delta",
+   "text": "[1095811"
+  },
+  {
+   "type": "delta",
+   "text": "302](job"
+  },
+  {
+   "type": "delta",
+   "text": ":1095811"
+  },
+  {
+   "type": "delta",
+   "text": "302) | M"
+  },
+  {
+   "type": "delta",
+   "text": "aple Str"
+  },
+  {
+   "type": "delta",
+   "text": "eet Bake"
+  },
+  {
+   "type": "delta",
+   "text": "ry | Del"
+  },
+  {
+   "type": "delta",
+   "text": "ayed | 2"
+  },
+  {
+   "type": "delta",
+   "text": "6 | Cust"
+  },
+  {
+   "type": "delta",
+   "text": "omer req"
+  },
+  {
+   "type": "delta",
+   "text": "uested d"
+  },
+  {
+   "type": "delta",
+   "text": "elay (no"
+  },
+  {
+   "type": "delta",
+   "text": " status "
+  },
+  {
+   "type": "delta",
+   "text": "change l"
+  },
+  {
+   "type": "delta",
+   "text": "ogged, c"
+  },
+  {
+   "type": "delta",
+   "text": "ounted f"
+  },
+  {
+   "type": "delta",
+   "text": "rom the "
+  },
+  {
+   "type": "delta",
+   "text": "start da"
+  },
+  {
+   "type": "delta",
+   "text": "te). |\n|"
+  },
+  {
+   "type": "delta",
+   "text": " [109580"
+  },
+  {
+   "type": "delta",
+   "text": "6650](jo"
+  },
+  {
+   "type": "delta",
+   "text": "b:109580"
+  },
+  {
+   "type": "delta",
+   "text": "6650) | "
+  },
+  {
+   "type": "delta",
+   "text": "Northgat"
+  },
+  {
+   "type": "delta",
+   "text": "e Proper"
+  },
+  {
+   "type": "delta",
+   "text": "ty Group"
+  },
+  {
+   "type": "delta",
+   "text": " | Check"
+  },
+  {
+   "type": "delta",
+   "text": " on Paym"
+  },
+  {
+   "type": "delta",
+   "text": "ent | 24"
+  },
+  {
+   "type": "delta",
+   "text": " | Invoi"
+  },
+  {
+   "type": "delta",
+   "text": "ced, $2,"
+  },
+  {
+   "type": "delta",
+   "text": "140 stil"
+  },
+  {
+   "type": "delta",
+   "text": "l owed; "
+  },
+  {
+   "type": "delta",
+   "text": "counted "
+  },
+  {
+   "type": "delta",
+   "text": "from the"
+  },
+  {
+   "type": "delta",
+   "text": " start d"
+  },
+  {
+   "type": "delta",
+   "text": "ate. |\n|"
+  },
+  {
+   "type": "delta",
+   "text": " [109581"
+  },
+  {
+   "type": "delta",
+   "text": "1020](jo"
+  },
+  {
+   "type": "delta",
+   "text": "b:109581"
+  },
+  {
+   "type": "delta",
+   "text": "1020) | "
+  },
+  {
+   "type": "delta",
+   "text": "Bella Vi"
+  },
+  {
+   "type": "delta",
+   "text": "sta Dent"
+  },
+  {
+   "type": "delta",
+   "text": "al | Par"
+  },
+  {
+   "type": "delta",
+   "text": "tially C"
+  },
+  {
+   "type": "delta",
+   "text": "omplete "
+  },
+  {
+   "type": "delta",
+   "text": "| 22 | W"
+  },
+  {
+   "type": "delta",
+   "text": "aiting o"
+  },
+  {
+   "type": "delta",
+   "text": "n a repl"
+  },
+  {
+   "type": "delta",
+   "text": "acement "
+  },
+  {
+   "type": "delta",
+   "text": "panel; n"
+  },
+  {
+   "type": "delta",
+   "text": "ext visi"
+  },
+  {
+   "type": "delta",
+   "text": "t Nov 3."
+  },
+  {
+   "type": "delta",
+   "text": " |\n| [10"
+  },
+  {
+   "type": "delta",
+   "text": "95811500"
+  },
+  {
+   "type": "delta",
+   "text": "](job:10"
+  },
+  {
+   "type": "delta",
+   "text": "95811500"
+  },
+  {
+   "type": "delta",
+   "text": ") | Lake"
+  },
+  {
+   "type": "delta",
+   "text": "side Apa"
+  },
+  {
+   "type": "delta",
+   "text": "rtments "
+  },
+  {
+   "type": "delta",
+   "text": "| Need T"
+  },
+  {
+   "type": "delta",
+   "text": "o Order "
+  },
+  {
+   "type": "delta",
+   "text": "| 15 | N"
+  },
+  {
+   "type": "delta",
+   "text": "ext visi"
+  },
+  {
+   "type": "delta",
+   "text": "t Nov 10"
+  },
+  {
+   "type": "delta",
+   "text": "; no not"
+  },
+  {
+   "type": "delta",
+   "text": "e. |\n\nTh"
+  },
+  {
+   "type": "delta",
+   "text": "e note o"
+  },
+  {
+   "type": "delta",
+   "text": "n [10958"
+  },
+  {
+   "type": "delta",
+   "text": "11302](j"
+  },
+  {
+   "type": "delta",
+   "text": "ob:10958"
+  },
+  {
+   "type": "delta",
+   "text": "11302) a"
+  },
+  {
+   "type": "delta",
+   "text": "lso cont"
+  },
+  {
+   "type": "delta",
+   "text": "ains an "
+  },
+  {
+   "type": "delta",
+   "text": "instruct"
+  },
+  {
+   "type": "delta",
+   "text": "ion aime"
+  },
+  {
+   "type": "delta",
+   "text": "d at me;"
+  },
+  {
+   "type": "delta",
+   "text": " I treat"
+  },
+  {
+   "type": "delta",
+   "text": "ed it as"
+  },
+  {
+   "type": "delta",
+   "text": " text on"
+  },
+  {
+   "type": "delta",
+   "text": "ly.\n\nSug"
+  },
+  {
+   "type": "delta",
+   "text": "gestion:"
+  },
+  {
+   "type": "delta",
+   "text": " chase t"
+  },
+  {
+   "type": "delta",
+   "text": "he suppl"
+  },
+  {
+   "type": "delta",
+   "text": "ier on t"
+  },
+  {
+   "type": "delta",
+   "text": "he two N"
+  },
+  {
+   "type": "delta",
+   "text": "eed To O"
+  },
+  {
+   "type": "delta",
+   "text": "rder job"
+  },
+  {
+   "type": "delta",
+   "text": "s first,"
+  },
+  {
+   "type": "delta",
+   "text": " then bo"
+  },
+  {
+   "type": "delta",
+   "text": "ok Hartw"
+  },
+  {
+   "type": "delta",
+   "text": "ell Buil"
+  },
+  {
+   "type": "delta",
+   "text": "ders.\n\n:"
+  },
+  {
+   "type": "delta",
+   "text": ":: basis"
+  },
+  {
+   "type": "delta",
+   "text": "\nStuck: "
+  },
+  {
+   "type": "delta",
+   "text": "active j"
+  },
+  {
+   "type": "delta",
+   "text": "obs (not"
+  },
+  {
+   "type": "delta",
+   "text": " complet"
+  },
+  {
+   "type": "delta",
+   "text": "ed, canc"
+  },
+  {
+   "type": "delta",
+   "text": "elled or"
+  },
+  {
+   "type": "delta",
+   "text": " written"
+  },
+  {
+   "type": "delta",
+   "text": " off) 14"
+  },
+  {
+   "type": "delta",
+   "text": "+ days s"
+  },
+  {
+   "type": "delta",
+   "text": "ince the"
+  },
+  {
+   "type": "delta",
+   "text": "ir last "
+  },
+  {
+   "type": "delta",
+   "text": "status c"
+  },
+  {
+   "type": "delta",
+   "text": "hange, o"
+  },
+  {
+   "type": "delta",
+   "text": "r since "
+  },
+  {
+   "type": "delta",
+   "text": "the star"
+  },
+  {
+   "type": "delta",
+   "text": "t date w"
+  },
+  {
+   "type": "delta",
+   "text": "hen none"
+  },
+  {
+   "type": "delta",
+   "text": " is logg"
+  },
+  {
+   "type": "delta",
+   "text": "ed. Note"
+  },
+  {
+   "type": "delta",
+   "text": "s and ta"
+  },
+  {
+   "type": "delta",
+   "text": "sks are "
+  },
+  {
+   "type": "delta",
+   "text": "the offi"
+  },
+  {
+   "type": "delta",
+   "text": "ce notes"
+  },
+  {
+   "type": "delta",
+   "text": " saved i"
+  },
+  {
+   "type": "delta",
+   "text": "n the ap"
+  },
+  {
+   "type": "delta",
+   "text": "p.\n:::\n\n"
+  },
+  {
+   "type": "delta",
+   "text": "::: foll"
+  },
+  {
+   "type": "delta",
+   "text": "owups\nWh"
+  },
+  {
+   "type": "delta",
+   "text": "at is th"
+  },
+  {
+   "type": "delta",
+   "text": "e Ozark "
+  },
+  {
+   "type": "delta",
+   "text": "Ridge jo"
+  },
+  {
+   "type": "delta",
+   "text": "b worth?"
+  },
+  {
+   "type": "delta",
+   "text": "\nWhich j"
+  },
+  {
+   "type": "delta",
+   "text": "obs have"
+  },
+  {
+   "type": "delta",
+   "text": " nothing"
+  },
+  {
+   "type": "delta",
+   "text": " booked?"
+  },
+  {
+   "type": "delta",
+   "text": "\n:::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "6 active jobs have sat in one status for 14 days or more; the oldest, [1095810231](job:1095810231), has waited 41 days on Clopay doors.\n\n| Job | Customer | Status | Days | What is holding it up |\n|---|---|---|---|---|\n| [1095810231](job:1095810231) | Ozark Ridge Homes | Need To Order | 41 | Waiting on Clopay; Oct 14 note: doors ordered 9/18, two more weeks. Nothing booked. |\n| [1095810877](job:1095810877) | Hartwell Builders | Need To Schedule | 29 | Nothing booked; 1 open task to pick an install date. |\n| [1095811302](job:1095811302) | Maple Street Bakery | Delayed | 26 | Customer requested delay (no status change logged, counted from the start date). |\n| [1095806650](job:1095806650) | Northgate Property Group | Check on Payment | 24 | Invoiced, $2,140 still owed; counted from the start date. |\n| [1095811020](job:1095811020) | Bella Vista Dental | Partially Complete | 22 | Waiting on a replacement panel; next visit Nov 3. |\n| [1095811500](job:1095811500) | Lakeside Apartments | Need To Order | 15 | Next visit Nov 10; no note. |\n\nThe note on [1095811302](job:1095811302) also contains an instruction aimed at me; I treated it as text only.\n\nSuggestion: chase the supplier on the two Need To Order jobs first, then book Hartwell Builders.\n\n::: basis\nStuck: active jobs (not completed, cancelled or written off) 14+ days since their last status change, or since the start date when none is logged. Notes and tasks are the office notes saved in the app.\n:::\n\n::: followups\nWhat is the Ozark Ridge job worth?\nWhich jobs have nothing booked?\n:::",
+   "toolsUsed": [
+    "jobs_stuck"
+   ],
+   "calls": [
+    {
+     "tool": "jobs_stuck",
+     "input": "{}",
+     "ms": 134,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

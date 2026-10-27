@@ -1,0 +1,174 @@
+{
+  "success": true,
+  "year": 2026,
+  "summary": {
+    "collected": 0,
+    "paymentCount": 0,
+    "largestPayment": 0,
+    "priorCollected": 0,
+    "outstanding": 0,
+    "outstandingJobs": 0,
+    "over90": 0,
+    "over90Jobs": 0,
+    "writeOffJobs": 0,
+    "writeOffBalance": 0
+  },
+  "writeOffMonthly": [],
+  "history": [],
+  "overdue": [],
+  "monthly": [
+    {
+      "month_num": 1,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 2,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 3,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 4,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 5,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 6,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 7,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 8,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 9,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 10,
+      "collected": 0,
+      "payment_count": 150
+    }
+  ],
+  "priorMonthly": [
+    {
+      "month_num": 1,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 2,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 3,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 4,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 5,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 6,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 7,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 8,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 9,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 10,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 11,
+      "collected": 0,
+      "payment_count": 150
+    },
+    {
+      "month_num": 12,
+      "collected": 0,
+      "payment_count": 150
+    }
+  ],
+  "methods": [],
+  "stages": [
+    {
+      "stage": "none",
+      "label": "Final Invoice Sent",
+      "amount": 0,
+      "jobCount": 0
+    },
+    {
+      "stage": "14",
+      "label": "14 Day Notice",
+      "amount": 0,
+      "jobCount": 0
+    },
+    {
+      "stage": "30",
+      "label": "30 Day Notice",
+      "amount": 0,
+      "jobCount": 0
+    },
+    {
+      "stage": "60",
+      "label": "60 Day Notice",
+      "amount": 0,
+      "jobCount": 0
+    },
+    {
+      "stage": "90",
+      "label": "90 Day Notice",
+      "amount": 0,
+      "jobCount": 0
+    },
+    {
+      "stage": "check",
+      "label": "Check on Payment",
+      "amount": 0,
+      "jobCount": 0
+    }
+  ],
+  "topOwing": [],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

@@ -1,0 +1,596 @@
+{
+ "question": "What changed in our business since yesterday?",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Looking at what changed…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_25",
+   "name": "what_changed",
+   "input": "{}",
+   "state": "start",
+   "text": "Looking at what changed…"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Cash collected",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Status changes",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "New jobs and estimates",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Money owed",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Cash collected",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Status changes",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "New jobs and estimates",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_25",
+   "label": "Money owed",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "tool",
+   "id": "toolu_25",
+   "name": "what_changed",
+   "state": "done",
+   "ok": true,
+   "ms": 3
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "Since Mo"
+  },
+  {
+   "type": "delta",
+   "text": "nday you"
+  },
+  {
+   "type": "delta",
+   "text": " collect"
+  },
+  {
+   "type": "delta",
+   "text": "ed $8,55"
+  },
+  {
+   "type": "delta",
+   "text": "5, won a"
+  },
+  {
+   "type": "delta",
+   "text": "n $11,30"
+  },
+  {
+   "type": "delta",
+   "text": "0 estima"
+  },
+  {
+   "type": "delta",
+   "text": "te and l"
+  },
+  {
+   "type": "delta",
+   "text": "ost a $7"
+  },
+  {
+   "type": "delta",
+   "text": ",900 one"
+  },
+  {
+   "type": "delta",
+   "text": ", and mo"
+  },
+  {
+   "type": "delta",
+   "text": "ney owed"
+  },
+  {
+   "type": "delta",
+   "text": " fell $2"
+  },
+  {
+   "type": "delta",
+   "text": ",625 to "
+  },
+  {
+   "type": "delta",
+   "text": "$43,371."
+  },
+  {
+   "type": "delta",
+   "text": "\n\n- **Ca"
+  },
+  {
+   "type": "delta",
+   "text": "sh:** $8"
+  },
+  {
+   "type": "delta",
+   "text": ",555 fro"
+  },
+  {
+   "type": "delta",
+   "text": "m 4 paym"
+  },
+  {
+   "type": "delta",
+   "text": "ents.\n- "
+  },
+  {
+   "type": "delta",
+   "text": "**Status"
+  },
+  {
+   "type": "delta",
+   "text": " changes"
+  },
+  {
+   "type": "delta",
+   "text": " (5):** "
+  },
+  {
+   "type": "delta",
+   "text": "[1095806"
+  },
+  {
+   "type": "delta",
+   "text": "100](job"
+  },
+  {
+   "type": "delta",
+   "text": ":1095806"
+  },
+  {
+   "type": "delta",
+   "text": "100) for"
+  },
+  {
+   "type": "delta",
+   "text": " Pinnacl"
+  },
+  {
+   "type": "delta",
+   "text": "e Church"
+  },
+  {
+   "type": "delta",
+   "text": " went to"
+  },
+  {
+   "type": "delta",
+   "text": " Paid & "
+  },
+  {
+   "type": "delta",
+   "text": "Closed, "
+  },
+  {
+   "type": "delta",
+   "text": "[1095807"
+  },
+  {
+   "type": "delta",
+   "text": "311](job"
+  },
+  {
+   "type": "delta",
+   "text": ":1095807"
+  },
+  {
+   "type": "delta",
+   "text": "311) for"
+  },
+  {
+   "type": "delta",
+   "text": " Lakesid"
+  },
+  {
+   "type": "delta",
+   "text": "e Apartm"
+  },
+  {
+   "type": "delta",
+   "text": "ents to "
+  },
+  {
+   "type": "delta",
+   "text": "Check on"
+  },
+  {
+   "type": "delta",
+   "text": " Payment"
+  },
+  {
+   "type": "delta",
+   "text": ", and [1"
+  },
+  {
+   "type": "delta",
+   "text": "09581240"
+  },
+  {
+   "type": "delta",
+   "text": "0](job:1"
+  },
+  {
+   "type": "delta",
+   "text": "09581240"
+  },
+  {
+   "type": "delta",
+   "text": "0) for C"
+  },
+  {
+   "type": "delta",
+   "text": "edar Cre"
+  },
+  {
+   "type": "delta",
+   "text": "ek HOA w"
+  },
+  {
+   "type": "delta",
+   "text": "as sched"
+  },
+  {
+   "type": "delta",
+   "text": "uled. [1"
+  },
+  {
+   "type": "delta",
+   "text": "09580910"
+  },
+  {
+   "type": "delta",
+   "text": "0](estim"
+  },
+  {
+   "type": "delta",
+   "text": "ate:1095"
+  },
+  {
+   "type": "delta",
+   "text": "809100) "
+  },
+  {
+   "type": "delta",
+   "text": "for Hart"
+  },
+  {
+   "type": "delta",
+   "text": "well Bui"
+  },
+  {
+   "type": "delta",
+   "text": "lders wa"
+  },
+  {
+   "type": "delta",
+   "text": "s won ($"
+  },
+  {
+   "type": "delta",
+   "text": "11,300) "
+  },
+  {
+   "type": "delta",
+   "text": "and [109"
+  },
+  {
+   "type": "delta",
+   "text": "5809200]"
+  },
+  {
+   "type": "delta",
+   "text": "(estimat"
+  },
+  {
+   "type": "delta",
+   "text": "e:109580"
+  },
+  {
+   "type": "delta",
+   "text": "9200) fo"
+  },
+  {
+   "type": "delta",
+   "text": "r Ozark "
+  },
+  {
+   "type": "delta",
+   "text": "Ridge Ho"
+  },
+  {
+   "type": "delta",
+   "text": "mes was "
+  },
+  {
+   "type": "delta",
+   "text": "lost on "
+  },
+  {
+   "type": "delta",
+   "text": "price ($"
+  },
+  {
+   "type": "delta",
+   "text": "7,900).\n"
+  },
+  {
+   "type": "delta",
+   "text": "- **New "
+  },
+  {
+   "type": "delta",
+   "text": "in Servi"
+  },
+  {
+   "type": "delta",
+   "text": "ce Fusio"
+  },
+  {
+   "type": "delta",
+   "text": "n:** 1 e"
+  },
+  {
+   "type": "delta",
+   "text": "stimate "
+  },
+  {
+   "type": "delta",
+   "text": "($4,850,"
+  },
+  {
+   "type": "delta",
+   "text": " Summit "
+  },
+  {
+   "type": "delta",
+   "text": "Storage "
+  },
+  {
+   "type": "delta",
+   "text": "Co) and "
+  },
+  {
+   "type": "delta",
+   "text": "1 job ($"
+  },
+  {
+   "type": "delta",
+   "text": "640, Map"
+  },
+  {
+   "type": "delta",
+   "text": "le Stree"
+  },
+  {
+   "type": "delta",
+   "text": "t Bakery"
+  },
+  {
+   "type": "delta",
+   "text": ").\n- **M"
+  },
+  {
+   "type": "delta",
+   "text": "oney owe"
+  },
+  {
+   "type": "delta",
+   "text": "d:** $43"
+  },
+  {
+   "type": "delta",
+   "text": ",371 on "
+  },
+  {
+   "type": "delta",
+   "text": "invoiced"
+  },
+  {
+   "type": "delta",
+   "text": " jobs, d"
+  },
+  {
+   "type": "delta",
+   "text": "own from"
+  },
+  {
+   "type": "delta",
+   "text": " $45,996"
+  },
+  {
+   "type": "delta",
+   "text": " in Mond"
+  },
+  {
+   "type": "delta",
+   "text": "ay's Col"
+  },
+  {
+   "type": "delta",
+   "text": "lections"
+  },
+  {
+   "type": "delta",
+   "text": " snapsho"
+  },
+  {
+   "type": "delta",
+   "text": "t.\n\n::: "
+  },
+  {
+   "type": "delta",
+   "text": "basis\nFr"
+  },
+  {
+   "type": "delta",
+   "text": "om Monda"
+  },
+  {
+   "type": "delta",
+   "text": "y, Oct 2"
+  },
+  {
+   "type": "delta",
+   "text": "6, throu"
+  },
+  {
+   "type": "delta",
+   "text": "gh today"
+  },
+  {
+   "type": "delta",
+   "text": ". Money "
+  },
+  {
+   "type": "delta",
+   "text": "owed: in"
+  },
+  {
+   "type": "delta",
+   "text": "voiced j"
+  },
+  {
+   "type": "delta",
+   "text": "obs (Fin"
+  },
+  {
+   "type": "delta",
+   "text": "al Invoi"
+  },
+  {
+   "type": "delta",
+   "text": "ce Sent "
+  },
+  {
+   "type": "delta",
+   "text": "or Check"
+  },
+  {
+   "type": "delta",
+   "text": " on Paym"
+  },
+  {
+   "type": "delta",
+   "text": "ent).\n::"
+  },
+  {
+   "type": "delta",
+   "text": ":\n\n::: f"
+  },
+  {
+   "type": "delta",
+   "text": "ollowups"
+  },
+  {
+   "type": "delta",
+   "text": "\nWhich i"
+  },
+  {
+   "type": "delta",
+   "text": "nvoices "
+  },
+  {
+   "type": "delta",
+   "text": "were pai"
+  },
+  {
+   "type": "delta",
+   "text": "d since "
+  },
+  {
+   "type": "delta",
+   "text": "Monday?\n"
+  },
+  {
+   "type": "delta",
+   "text": "Show thi"
+  },
+  {
+   "type": "delta",
+   "text": "s week's"
+  },
+  {
+   "type": "delta",
+   "text": " schedul"
+  },
+  {
+   "type": "delta",
+   "text": "e\n:::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "Since Monday you collected $8,555, won an $11,300 estimate and lost a $7,900 one, and money owed fell $2,625 to $43,371.\n\n- **Cash:** $8,555 from 4 payments.\n- **Status changes (5):** [1095806100](job:1095806100) for Pinnacle Church went to Paid & Closed, [1095807311](job:1095807311) for Lakeside Apartments to Check on Payment, and [1095812400](job:1095812400) for Cedar Creek HOA was scheduled. [1095809100](estimate:1095809100) for Hartwell Builders was won ($11,300) and [1095809200](estimate:1095809200) for Ozark Ridge Homes was lost on price ($7,900).\n- **New in Service Fusion:** 1 estimate ($4,850, Summit Storage Co) and 1 job ($640, Maple Street Bakery).\n- **Money owed:** $43,371 on invoiced jobs, down from $45,996 in Monday's Collections snapshot.\n\n::: basis\nFrom Monday, Oct 26, through today. Money owed: invoiced jobs (Final Invoice Sent or Check on Payment).\n:::\n\n::: followups\nWhich invoices were paid since Monday?\nShow this week's schedule\n:::",
+   "toolsUsed": [
+    "what_changed"
+   ],
+   "calls": [
+    {
+     "tool": "what_changed",
+     "input": "{}",
+     "ms": 3,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

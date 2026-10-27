@@ -1,0 +1,177 @@
+{
+  "summary": {
+    "metrics": {
+      "year": 2026,
+      "avgProfitYtd": 218580,
+      "avgProfitPerDay": 1126.8601694915253,
+      "callbackRatePct": 6.944444444444445,
+      "callbacks": 5,
+      "callbackJobs": 72,
+      "callbackPeriod": {
+        "from": "2026-10-05",
+        "to": "2026-10-22"
+      },
+      "jobs": 1509,
+      "techCount": 4,
+      "avgCustomerRating": null
+    },
+    "totalJobsYtd": 1509,
+    "chartData": [
+      {
+        "month": "Jan",
+        "avgProfitPerDay": 855,
+        "totalProfit": 68400,
+        "jobCount": 151,
+        "priorAvgProfitPerDay": 770,
+        "priorTotalProfit": 61560,
+        "priorJobCount": 143,
+        "partial": false
+      },
+      {
+        "month": "Feb",
+        "avgProfitPerDay": 774,
+        "totalProfit": 61920,
+        "jobCount": 128,
+        "priorAvgProfitPerDay": 697,
+        "priorTotalProfit": 55728,
+        "priorJobCount": 122,
+        "partial": false
+      },
+      {
+        "month": "Mar",
+        "avgProfitPerDay": 1179,
+        "totalProfit": 94310,
+        "jobCount": 154,
+        "priorAvgProfitPerDay": 1061,
+        "priorTotalProfit": 84879,
+        "priorJobCount": 146,
+        "partial": false
+      },
+      {
+        "month": "Apr",
+        "avgProfitPerDay": 1273,
+        "totalProfit": 101870,
+        "jobCount": 166,
+        "priorAvgProfitPerDay": 1146,
+        "priorTotalProfit": 91683,
+        "priorJobCount": 158,
+        "partial": false
+      },
+      {
+        "month": "May",
+        "avgProfitPerDay": 1353,
+        "totalProfit": 108240,
+        "jobCount": 181,
+        "priorAvgProfitPerDay": 1218,
+        "priorTotalProfit": 97416,
+        "priorJobCount": 172,
+        "partial": false
+      },
+      {
+        "month": "Jun",
+        "avgProfitPerDay": 1420,
+        "totalProfit": 113560,
+        "jobCount": 192,
+        "priorAvgProfitPerDay": 1278,
+        "priorTotalProfit": 102204,
+        "priorJobCount": 182,
+        "partial": false
+      },
+      {
+        "month": "Jul",
+        "avgProfitPerDay": 1300,
+        "totalProfit": 104020,
+        "jobCount": 175,
+        "priorAvgProfitPerDay": 1170,
+        "priorTotalProfit": 93618,
+        "priorJobCount": 166,
+        "partial": false
+      },
+      {
+        "month": "Aug",
+        "avgProfitPerDay": 1373,
+        "totalProfit": 109830,
+        "jobCount": 163,
+        "priorAvgProfitPerDay": 1236,
+        "priorTotalProfit": 98847,
+        "priorJobCount": 155,
+        "partial": false
+      },
+      {
+        "month": "Sep",
+        "avgProfitPerDay": 1168,
+        "totalProfit": 93410,
+        "jobCount": 152,
+        "priorAvgProfitPerDay": 1051,
+        "priorTotalProfit": 84069,
+        "priorJobCount": 144,
+        "partial": false
+      },
+      {
+        "month": "Oct",
+        "avgProfitPerDay": 330,
+        "totalProfit": 18760,
+        "jobCount": 47,
+        "priorAvgProfitPerDay": 211,
+        "priorTotalProfit": 16884,
+        "priorJobCount": 45,
+        "partial": true
+      }
+    ]
+  },
+  "techs": [
+    {
+      "id": "alex.rivera",
+      "name": "Alex Rivera",
+      "jobTitle": "Lead Technician",
+      "completedJobsYtd": 733,
+      "callbackJobs": 38,
+      "callbackCount": 3,
+      "jobsSinceCallback": 5,
+      "revenue": 512340.55,
+      "avatarUrl": "",
+      "revenueGenerated": "$512,340.55",
+      "totalPenalties": "$0.00"
+    },
+    {
+      "id": "sam.carter",
+      "name": "Sam Carter",
+      "jobTitle": "Technician",
+      "completedJobsYtd": 412,
+      "callbackJobs": 24,
+      "callbackCount": 1,
+      "jobsSinceCallback": 7,
+      "revenue": 388910.2,
+      "avatarUrl": "",
+      "revenueGenerated": "$388,910.20",
+      "totalPenalties": "$0.00"
+    },
+    {
+      "id": "jordan.lee",
+      "name": "Jordan Lee",
+      "jobTitle": "Technician",
+      "completedJobsYtd": 286,
+      "callbackJobs": 19,
+      "callbackCount": 1,
+      "jobsSinceCallback": 1,
+      "revenue": 301220,
+      "avatarUrl": "",
+      "revenueGenerated": "$301,220.00",
+      "totalPenalties": "$0.00"
+    },
+    {
+      "id": "casey.morgan",
+      "name": "Casey Morgan",
+      "jobTitle": "Technician",
+      "completedJobsYtd": 82,
+      "callbackJobs": 6,
+      "callbackCount": 0,
+      "jobsSinceCallback": 0,
+      "revenue": 74960.4,
+      "avatarUrl": "",
+      "revenueGenerated": "$74,960.40",
+      "totalPenalties": "$0.00"
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

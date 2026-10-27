@@ -1,0 +1,198 @@
+{
+  "revenueYtd": "$2,566,410",
+  "depositsYtd": 245000,
+  "outstandingMoney": "$359,120",
+  "grossProfitYtd": "$939,080",
+  "yearlyProjected": "$3,175,389",
+  "companyPool": "$17",
+  "commercialPool": "$250",
+  "history": {
+    "outstanding": [
+      351000,
+      351480,
+      351960,
+      352440,
+      352920,
+      353400,
+      353880,
+      354360,
+      354840,
+      355320,
+      355800,
+      356280,
+      356760,
+      357240,
+      357720,
+      358200,
+      358680
+    ],
+    "projected": [
+      3620000,
+      3621500,
+      3623000,
+      3624500,
+      3626000,
+      3627500,
+      3629000,
+      3630500,
+      3632000,
+      3633500,
+      3635000,
+      3636500,
+      3638000,
+      3639500,
+      3641000,
+      3642500,
+      3644000
+    ]
+  },
+  "highVolumeRevenue": 461954,
+  "commercialRevenue": 923908,
+  "residentialRevenue": 1052228,
+  "otherRevenue": 128320,
+  "operatingExpenses": [
+    {
+      "category": "Payroll (office)",
+      "amount": 353073
+    },
+    {
+      "category": "Vehicles & fuel",
+      "amount": 157954
+    },
+    {
+      "category": "Rent & utilities",
+      "amount": 111497
+    },
+    {
+      "category": "Insurance",
+      "amount": 102205
+    },
+    {
+      "category": "Marketing",
+      "amount": 83623
+    },
+    {
+      "category": "Software",
+      "amount": 46457
+    },
+    {
+      "category": "Tools & equipment",
+      "amount": 46457
+    },
+    {
+      "category": "Uncategorized",
+      "amount": 27874
+    }
+  ],
+  "chartData": [
+    {
+      "month": "Jan",
+      "revenue": 182400,
+      "profit": 74784,
+      "marginPct": 41,
+      "expense": 96400,
+      "netIncome": -21616,
+      "hasData": true
+    },
+    {
+      "month": "Feb",
+      "revenue": 171250,
+      "profit": 65075,
+      "marginPct": 38,
+      "expense": 88210,
+      "netIncome": -23135,
+      "hasData": true
+    },
+    {
+      "month": "Mar",
+      "revenue": 246310,
+      "profit": 98524,
+      "marginPct": 40,
+      "expense": 99870,
+      "netIncome": -1346,
+      "hasData": true
+    },
+    {
+      "month": "Apr",
+      "revenue": 268920,
+      "profit": 112946,
+      "marginPct": 42,
+      "expense": 101330,
+      "netIncome": 11616,
+      "hasData": true
+    },
+    {
+      "month": "May",
+      "revenue": 290115,
+      "profit": 113145,
+      "marginPct": 39,
+      "expense": 97650,
+      "netIncome": 15495,
+      "hasData": true
+    },
+    {
+      "month": "Jun",
+      "revenue": 301480,
+      "profit": 120592,
+      "marginPct": 40,
+      "expense": 104220,
+      "netIncome": 16372,
+      "hasData": true
+    },
+    {
+      "month": "Jul",
+      "revenue": 274660,
+      "profit": 118104,
+      "marginPct": 43,
+      "expense": 99180,
+      "netIncome": 18924,
+      "hasData": true
+    },
+    {
+      "month": "Aug",
+      "revenue": 288905,
+      "profit": 118451,
+      "marginPct": 41,
+      "expense": 102560,
+      "netIncome": 15891,
+      "hasData": true
+    },
+    {
+      "month": "Sep",
+      "revenue": 247730,
+      "profit": 99092,
+      "marginPct": 40,
+      "expense": 98340,
+      "netIncome": 752,
+      "hasData": true
+    },
+    {
+      "month": "Oct",
+      "revenue": 49640,
+      "profit": 18367,
+      "marginPct": 37,
+      "expense": 41380,
+      "netIncome": -23013,
+      "hasData": true
+    },
+    {
+      "month": "Nov",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Dec",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

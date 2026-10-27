@@ -7,40 +7,41 @@ import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'payroll_history_dialog.dart';
 import 'payroll_run_dialog.dart';
+import 'widgets/dashboard_data.dart';
+import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
+import 'widgets/dashboard_panels.dart';
 
-// =============================================================================
-// DESIGN TOKENS
-// =============================================================================
-
-class _Ui {
-  static const ink = Color(0xFF0F172A);
-  static const slate = Color(0xFF475569);
-  static const muted = Color(0xFF94A3B8);
-  static const line = Color(0xFFE2E8F0);
-  static const faint = Color(0xFFF1F5F9);
-
-  static const emerald = Color(0xFF10B981);
-  static const emeraldDeep = Color(0xFF059669);
-  static const indigo = Color(0xFF6366F1);
-  static const sky = Color(0xFF0284C7);
-  static const amber = Color(0xFFD97706);
-
-  static BoxDecoration panel({double radius = 16}) => BoxDecoration(
-    color: Colors.white,
-    borderRadius: BorderRadius.circular(radius),
-    border: Border.all(color: line),
-  );
-}
+// The Commissions dashboard. Most of it follows the selected year; the retainage pool, the payroll card and the
+// retainage release are about today, whatever year is shown.
+//   scorecards  payouts, sales commission, retainage pool, average per recipient, commission % of revenue
+//   left        everyone paid: paid this year, locked retainage, and (this year only) this pay week against the hurdle
+//   right       paid (or revenue) by month, over two strips: payroll (is last week run, run it, the run history) and
+//               the next retainage release
+// The page fits the window without scrolling and without shrinking text (see _Grid).
 
 String _money(double v) {
   final neg = v < 0;
-  final s = v
-      .abs()
-      .toStringAsFixed(2)
-      .replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+\.)'), (m) => '${m[1]},');
+  final s = v.abs().toStringAsFixed(2).replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+\.)'), (m) => '${m[1]},');
   return '${neg ? '-' : ''}\$$s';
+}
+
+/// "$781.74", "$750" (no cents when there are none).
+String _moneyShort(double v) => _money(v).replaceAll('.00', '');
+
+String _trimZero(double v) {
+  final s = v.toStringAsFixed(1);
+  return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
+}
+
+String _compactMoney(num v) {
+  final a = v.abs();
+  final sign = v < 0 ? '-' : '';
+  if (a >= 1000000) return '$sign\$${_trimZero(a / 1000000)}M';
+  if (a >= 1000) return '$sign\$${_trimZero(a / 1000)}k';
+  return '$sign\$${a.round()}';
 }
 
 // =============================================================================
@@ -66,8 +67,7 @@ class CommissionDashboardContent extends StatefulWidget {
   const CommissionDashboardContent({super.key, required this.selectedYear});
 
   @override
-  State<CommissionDashboardContent> createState() =>
-      _CommissionDashboardContentState();
+  State<CommissionDashboardContent> createState() => _CommissionDashboardContentState();
 }
 
 // =============================================================================
@@ -79,7 +79,13 @@ class _StaffCommissionProfile {
   final String name;
   final String jobTitle;
   final String imageUrl;
+
+  /// In a sales role. Kept off the hurdle meters (sales reps have no weekly hurdle).
   final bool isSales;
+
+  /// Receives pool commission, so their pay is shown and they count in the average. Everyone except sales-only reps:
+  /// an install-rate rep (sales role, on the job pool) is on it.
+  final bool onPool;
   final double commission;
   final double lockedRetainage;
   final int strikes;
@@ -98,6 +104,7 @@ class _StaffCommissionProfile {
     required this.jobTitle,
     required this.imageUrl,
     required this.isSales,
+    required this.onPool,
     required this.commission,
     required this.lockedRetainage,
     required this.strikes,
@@ -108,11 +115,7 @@ class _StaffCommissionProfile {
   });
 
   String get initials {
-    final parts = name
-        .trim()
-        .split(RegExp(r'\s+'))
-        .where((p) => p.isNotEmpty)
-        .toList();
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
@@ -125,6 +128,8 @@ class _StaffCommissionProfile {
       jobTitle: (json['jobTitle'] ?? '').toString(),
       imageUrl: (json['imageUrl'] ?? '').toString(),
       isSales: json['isSales'] == true,
+      // A server without the field: the old rule (non-sales people are the ones paid from the pool).
+      onPool: json['onPool'] is bool ? json['onPool'] == true : json['isSales'] != true,
       commission: (json['ytdCommission'] as num?)?.toDouble() ?? 0.0,
       lockedRetainage: (json['lockedBalance'] as num?)?.toDouble() ?? 0.0,
       strikes: (json['strikes'] as num?)?.toInt() ?? 0,
@@ -136,16 +141,57 @@ class _StaffCommissionProfile {
   }
 }
 
+/// Commission as a % of completed revenue, over the same finalized pay weeks since go-live (/commissions_stats
+/// summary.commissionRate). The server sends null when there is no fair comparison yet, and then there is no card.
+class _CommissionRate {
+  final double pct;
+  final double payouts;
+  final double completedRevenue;
+  final int completedJobs;
+  final String from;
+  final String to;
+
+  /// One % per finalized week, oldest first (for the trend line once there are two).
+  final List<double> weeklyPct;
+
+  const _CommissionRate({
+    required this.pct,
+    required this.payouts,
+    required this.completedRevenue,
+    required this.completedJobs,
+    required this.from,
+    required this.to,
+    required this.weeklyPct,
+  });
+
+  static _CommissionRate? fromJson(Object? json) {
+    if (json is! Map) return null;
+    final pct = (json['pct'] as num?)?.toDouble();
+    final revenue = (json['completedRevenue'] as num?)?.toDouble() ?? 0;
+    if (pct == null || !pct.isFinite || revenue <= 0) return null;
+    final weeks = json['weeks'] is List ? json['weeks'] as List : const [];
+    return _CommissionRate(
+      pct: pct,
+      payouts: (json['payouts'] as num?)?.toDouble() ?? 0,
+      completedRevenue: revenue,
+      completedJobs: (json['completedJobs'] as num?)?.toInt() ?? 0,
+      from: json['from']?.toString() ?? '',
+      to: json['to']?.toString() ?? '',
+      weeklyPct: [
+        for (final w in weeks)
+          if (w is Map && ((w['completedRevenue'] as num?) ?? 0) > 0)
+            ((w['payouts'] as num?) ?? 0) / (w['completedRevenue'] as num) * 100,
+      ],
+    );
+  }
+}
+
 class _MonthlyPayoutPoint {
   final String month;
   final double payout;
   final double revenue;
 
-  const _MonthlyPayoutPoint({
-    required this.month,
-    required this.payout,
-    required this.revenue,
-  });
+  const _MonthlyPayoutPoint({required this.month, required this.payout, required this.revenue});
 
   factory _MonthlyPayoutPoint.fromJson(Map<String, dynamic> json) {
     return _MonthlyPayoutPoint(
@@ -160,11 +206,7 @@ class _MonthlyPayoutPoint {
 // DASHBOARD STATE
 // =============================================================================
 
-class _CommissionDashboardContentState
-    extends State<CommissionDashboardContent> {
-  bool _isLoading = true;
-  String? _errorMessage;
-
+class _CommissionDashboardContentState extends State<CommissionDashboardContent> with DashboardLoading {
   List<_StaffCommissionProfile> _staff = [];
   List<_MonthlyPayoutPoint> _chartData = [];
 
@@ -173,7 +215,13 @@ class _CommissionDashboardContentState
 
   /// Daily snapshots of the pool (oldest first) for its trend line; empty until there are a couple of days.
   List<double> _retainageHistory = [];
-  double _avgPerTech = 0;
+
+  /// Paid YTD to the people on the job pool ÷ how many of them there are (both counted over the same people).
+  double _avgPerRecipient = 0;
+  int _recipientCount = 0;
+
+  /// null when there is no finalized pay week to compare: the card is left out rather than showing a misleading %.
+  _CommissionRate? _rate;
   double _weeklyHurdle = 750;
 
   /// Sales rep commission on estimates won this year (a percent of labor on each).
@@ -184,7 +232,7 @@ class _CommissionDashboardContentState
   @override
   void initState() {
     super.initState();
-    _fetchLiveCommissionData();
+    dashReload();
     payrollRunVersion.addListener(_onPayrollRun);
   }
 
@@ -194,316 +242,251 @@ class _CommissionDashboardContentState
     super.dispose();
   }
 
+  // A payroll run changes what counts as paid: reload past the server cache, keeping the figures on screen meanwhile.
   void _onPayrollRun() {
-    if (mounted) _fetchLiveCommissionData(fresh: true);
+    if (mounted) dashReload(fresh: true);
   }
 
   @override
   void didUpdateWidget(covariant CommissionDashboardContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedYear != widget.selectedYear) {
-      _fetchLiveCommissionData();
-    }
-  }
-
-  Future<void> _fetchLiveCommissionData({bool fresh = false}) async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '$kApiBaseUrl/api/commissions_stats?year=${widget.selectedYear}${fresh ? '&fresh=1' : ''}',
-            ),
-            headers: AuthSession.instance.headers(),
-          )
-          .timeout(
-            const Duration(seconds: 60),
-          ); // free-tier hosts can take ~30s+ to wake up
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> body = json.decode(response.body);
-        final summary =
-            (body['summary'] as Map<String, dynamic>?) ??
-            const <String, dynamic>{};
-        final List<dynamic> techsData = body['technicians'] ?? [];
-        final List<dynamic> chartRaw = body['monthlyData'] ?? [];
-
-        if (mounted) {
-          setState(() {
-            _totalPayouts =
-                (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
-            _retainagePool =
-                (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
-            final hist = body['history'];
-            _retainageHistory = [
-              for (final v
-                  in (hist is Map
-                      ? (hist['retainagePool'] as List<dynamic>? ?? const [])
-                      : const <dynamic>[]))
-                (v as num).toDouble(),
-            ];
-            _avgPerTech =
-                (summary['avgCommissionPerTech'] as num?)?.toDouble() ?? 0.0;
-            _weeklyHurdle =
-                ((body['meta'] as Map?)?['weeklyThreshold'] as num?)
-                    ?.toDouble() ??
-                750;
-            final sales =
-                (summary['salesCommission'] as Map<String, dynamic>?) ??
-                const <String, dynamic>{};
-            _salesCommission = (sales['total'] as num?)?.toDouble() ?? 0.0;
-            final next =
-                (summary['nextDisbursement'] as Map<String, dynamic>?) ??
-                const <String, dynamic>{};
-            _nextDisbursement = (next['amount'] as num?)?.toDouble() ?? 0.0;
-            _nextDisbursementTechs = (next['techCount'] as num?)?.toInt() ?? 0;
-
-            _staff = techsData
-                .map(
-                  (e) => _StaffCommissionProfile.fromJson(
-                    e as Map<String, dynamic>,
-                  ),
-                )
-                .toList();
-            _chartData = chartRaw
-                .map(
-                  (e) =>
-                      _MonthlyPayoutPoint.fromJson(e as Map<String, dynamic>),
-                )
-                .toList();
-
-            _isLoading = false;
-          });
-        }
-      } else {
-        throw Exception('The server returned status ${response.statusCode}.');
-      }
-    } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'The dashboard took too long to load.';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString();
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  /// Commission as a % of revenue, month by month, trimmed the same way as the payout trend.
-  List<double>? _rateTrend() {
-    if (_chartData.isEmpty) return null;
-    final now = DateTime.now();
-    final upTo = widget.selectedYear == now.year
-        ? now.month
-        : _chartData.length;
-    final pts = _chartData
-        .take(upTo)
-        .map((p) => p.revenue > 0 ? p.payout / p.revenue * 100 : 0.0)
-        .toList();
-    final first = pts.indexWhere((v) => v > 0);
-    final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
-    return trimmed.length >= 2 ? trimmed : null;
-  }
-
-  List<double> _payoutTrend() {
-    if (_chartData.isEmpty) return const [];
-    final now = DateTime.now();
-    final upTo = widget.selectedYear == now.year
-        ? now.month
-        : _chartData.length;
-    final pts = _chartData.take(upTo).map((p) => p.payout).toList();
-    final first = pts.indexWhere((v) => v > 0);
-    if (first < 0) return pts;
-    return pts.sublist(math.max(0, first - 1));
+    if (oldWidget.selectedYear != widget.selectedYear) dashReload();
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (_isLoading) return const _DashboardSkeleton();
+  Future<void> dashReload({bool fresh = false}) =>
+      dashLoad('/api/commissions_stats', query: {'year': '${widget.selectedYear}'}, fresh: fresh, apply: _apply);
 
-    if (_errorMessage != null) {
-      return _ErrorPanel(
-        message: _errorMessage!,
-        onRetry: _fetchLiveCommissionData,
-      );
+  void _apply(Map<String, dynamic> body) {
+    final summary = (body['summary'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    final List<dynamic> techsData = body['technicians'] ?? [];
+    final List<dynamic> chartRaw = body['monthlyData'] ?? [];
+
+    _totalPayouts = (summary['totalPayoutsYtd'] as num?)?.toDouble() ?? 0.0;
+    _retainagePool = (summary['commercialRetainagePool'] as num?)?.toDouble() ?? 0.0;
+    final hist = body['history'];
+    _retainageHistory = [
+      for (final v in (hist is Map ? (hist['retainagePool'] as List<dynamic>? ?? const []) : const <dynamic>[]))
+        (v as num).toDouble(),
+    ];
+    _avgPerRecipient =
+        ((summary['avgCommissionPerRecipient'] ?? summary['avgCommissionPerTech']) as num?)?.toDouble() ?? 0.0;
+    _rate = _CommissionRate.fromJson(summary['commissionRate']);
+    _weeklyHurdle = ((body['meta'] as Map?)?['weeklyThreshold'] as num?)?.toDouble() ?? 750;
+    final sales = (summary['salesCommission'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    _salesCommission = (sales['total'] as num?)?.toDouble() ?? 0.0;
+    final next = (summary['nextDisbursement'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
+    _nextDisbursement = (next['amount'] as num?)?.toDouble() ?? 0.0;
+    _nextDisbursementTechs = (next['techCount'] as num?)?.toInt() ?? 0;
+
+    _staff = techsData.map((e) => _StaffCommissionProfile.fromJson(e as Map<String, dynamic>)).toList();
+    _recipientCount =
+        ((body['meta'] as Map?)?['averageHeadcount'] as num?)?.toInt() ?? _staff.where((p) => p.onPool).length;
+    _chartData = chartRaw.map((e) => _MonthlyPayoutPoint.fromJson(e as Map<String, dynamic>)).toList();
+  }
+
+  List<double>? _payoutTrend() =>
+      _chartData.isEmpty ? null : dashTrend([for (final p in _chartData) p.payout], widget.selectedYear);
+
+  @override
+  Widget build(BuildContext context) {
+    if (dashLoading) return const _CommissionSkeleton();
+    if (dashFailure != null) {
+      return DashErrorPanel.failure(dashFailure!, what: 'commissions', onRetry: dashReload);
     }
 
-    // Effective rate uses the same monthly series as the chart so the two always agree.
-    final chartPayout = _chartData.fold<double>(0, (s, p) => s + p.payout);
-    final chartRevenue = _chartData.fold<double>(0, (s, p) => s + p.revenue);
-    final commissionRate = chartRevenue > 0
-        ? chartPayout / chartRevenue * 100
-        : 0.0;
+    final year = widget.selectedYear;
+    final rate = _rate;
+    final people = _recipientCount == 1 ? 'person' : 'people';
+    final g = DashGeo.of(context);
+    // The meters are for the CURRENT pay week, so they only show for the current year.
+    final thisWeek = year == DashClock.now().year;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 86,
-          child: Row(
-            children: [
-              Expanded(
-                child: _MetricCard(
-                  title: 'Total payouts YTD',
-                  amount: _totalPayouts,
-                  index: 0,
-                  trend: _payoutTrend(),
-                  valueColor: _Ui.emeraldDeep,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  title: 'Sales commission YTD',
-                  amount: _salesCommission,
-                  index: 1,
-                  valueColor: _Ui.amber,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  title: 'Commercial retainage pool',
-                  amount: _retainagePool,
-                  index: 2,
-                  trend: _retainageHistory.length >= 2
-                      ? _retainageHistory
-                      : null,
-                  valueColor: _Ui.indigo,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  title: 'Average commission per tech',
-                  amount: _avgPerTech,
-                  index: 3,
-                  valueColor: _Ui.ink,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MetricCard(
-                  title: 'Commission % of revenue',
-                  amount: commissionRate,
-                  index: 4,
-                  valueColor: _Ui.sky,
-                  trend: _rateTrend(),
-                  format: (v) => '${v.toStringAsFixed(1)}%',
-                ),
-              ),
-            ],
-          ),
+    // Each caption says what is counted and over what period. The % of revenue card only shows when the server
+    // has a fair comparison (finalized pay weeks with completed revenue); otherwise the other four share the row.
+    final tiles = <Widget>[
+      AnimatedMetricCard(
+        title: 'Total payouts',
+        value: _totalPayouts,
+        caption: 'Finalized runs · $year pay weeks',
+        definition:
+            'What finalized payroll runs paid out for pay weeks that start in $year (voided runs '
+            'left out, adjustments netted). The line shows it by finished month.',
+        index: 0,
+        trend: _payoutTrend(),
+        sparkMinWidth: dashSparkRoom(
+          context,
+          title: 'Total payouts',
+          value: _money(_totalPayouts),
+          caption: 'Finalized runs · $year pay weeks',
         ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Row(
+        valueColor: DashUi.emeraldDeep,
+      ),
+      AnimatedMetricCard(
+        title: 'Sales commission',
+        value: _salesCommission,
+        caption: 'Earned by sales reps · $year',
+        definition:
+            'Commission sales reps earned on won estimates, counted in the pay week it falls due, for '
+            "weeks in $year that have started. It doesn't wait for a finalized payroll run.",
+        index: 1,
+        valueColor: DashUi.amber,
+      ),
+      AnimatedMetricCard(
+        title: 'Commercial retainage pool',
+        value: _retainagePool,
+        caption: 'Locked · all-time',
+        definition:
+            'Commercial retainage still locked, from jobs settled in a finalized payroll run. Not '
+            'limited to $year. The line is one reading a day.',
+        index: 2,
+        trend: _retainageHistory.length >= 2 ? _retainageHistory : null,
+        sparkMinWidth: dashSparkRoom(
+          context,
+          title: 'Commercial retainage pool',
+          value: _money(_retainagePool),
+          caption: 'Locked · all-time',
+        ),
+        valueColor: DashUi.indigo,
+      ),
+      AnimatedMetricCard(
+        title: 'Avg commission per recipient',
+        value: _avgPerRecipient,
+        caption: 'Paid ÷ $_recipientCount on the job pool',
+        definition:
+            'What finalized payroll runs paid the $_recipientCount $people on the job pool in $year, '
+            'divided by $_recipientCount. That is the technicians and anyone else paid from the pool, '
+            'such as a sales rep with a pool cap. Sales reps paid only sales commission are in neither '
+            'number.',
+        index: 3,
+        valueColor: DashUi.ink,
+      ),
+      if (rate != null)
+        AnimatedMetricCard(
+          title: 'Commission % of revenue',
+          value: rate.pct,
+          // Short enough to fit beside four other cards at 1280px; the full rule is in the definition.
+          caption: 'Of completed revenue · ${dashDateRange(rate.from, rate.to)}',
+          definition:
+              'What finalized payroll runs paid for the pay weeks ${dashShortDate(rate.from)} to '
+              '${dashShortDate(rate.to)} (${_money(rate.payouts)}), divided by the revenue of the '
+              '${rate.completedJobs} jobs that closed in those same weeks (${_money(rate.completedRevenue)}). '
+              'Only jobs started on or after Oct 5, 2026 count, as commission is only paid on them. '
+              'A week counts once its payroll is finalized. The line is one point per week.',
+          index: 4,
+          valueColor: DashUi.sky,
+          trend: rate.weeklyPct.length >= 2 ? rate.weeklyPct : null,
+          sparkMinWidth: dashSparkRoom(
+            context,
+            title: 'Commission % of revenue',
+            value: '${rate.pct.toStringAsFixed(1)}%',
+            caption: 'Of completed revenue · ${dashDateRange(rate.from, rate.to)}',
+          ),
+          format: (v) => '${v.toStringAsFixed(1)}%',
+        ),
+    ];
+
+    return _Grid(
+      tiles: tiles,
+      people: (layout) =>
+          _PeoplePanel(g: g, staff: _staff, year: year, thisWeek: thisWeek, hurdle: _weeklyHurdle, layout: layout),
+      peopleCount: _staff.length,
+      chart: _PayoutChart(data: _chartData, year: year),
+      payroll: _PayrollRunsCard(onChanged: () => dashReload(fresh: true)),
+      release: QuarterlyPayoutCountdownCard(amount: _nextDisbursement, techCount: _nextDisbursementTechs),
+      thisWeek: thisWeek,
+    );
+  }
+}
+
+// =============================================================================
+// GRID (shared by the page and its skeleton)
+// =============================================================================
+
+/// How the people panel lays out its rows in the space the grid gives it.
+class _PeopleLayout {
+  /// Everyone's figures on one line under column headings, or each person on two lines (a narrow column).
+  final bool oneLine;
+
+  /// People that fit; the rest are a click away ("All 9").
+  final int maxRows;
+
+  /// The panel is given a height to fill (not in the one-column layout).
+  final bool fill;
+  const _PeopleLayout({required this.oneLine, required this.maxRows, required this.fill});
+}
+
+/// Lays the page out to fit the window:
+///   two columns   scorecards; people | paid by month over payroll and the retainage release   (1280x600 and up)
+///   one column    a window narrower than a desktop one: everything in one column that scrolls
+class _Grid extends StatelessWidget {
+  final List<Widget> tiles;
+  final Widget Function(_PeopleLayout layout) people;
+  final int peopleCount;
+  final Widget chart;
+  final Widget payroll;
+  final Widget release;
+  final bool thisWeek;
+
+  const _Grid({
+    required this.tiles,
+    required this.people,
+    required this.peopleCount,
+    required this.chart,
+    required this.payroll,
+    required this.release,
+    required this.thisWeek,
+  });
+
+  static const _twoColumnsFrom = 1100.0;
+
+  /// The chart panel never gets shorter than this.
+  static const _minChart = 200.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final bodyH = c.maxHeight - g.tile - dashGap;
+        final stripH = _StripGeo.height(g);
+        final Widget content;
+        if (w >= _twoColumnsFrom && bodyH - dashGap - stripH >= _minChart) {
+          final peopleInner = (w - dashGap) * 11 / 23 - 40;
+          final oneLine = peopleInner >= _PeoplePanel.oneLineWidth(g, thisWeek);
+          final rowH = oneLine ? g.rowWide : _PeoplePanel.twoLineRow(g);
+          final rowsH = bodyH - g.panelTop - (oneLine ? g.columnHead : 0);
+          final maxRows = math.max(2, (rowsH / rowH).floor());
+          content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // --- ORIGINAL LEFT COLUMN: Stacked Staff Cards ---
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
               Expanded(
-                flex: 3,
-                child: Container(
-                  padding: const EdgeInsets.all(12.0),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF0F172A).withValues(alpha: 0.03),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: _staff.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'No staff data available.',
-                            style: TextStyle(color: Colors.grey, fontSize: 14),
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            for (int i = 0; i < _staff.length; i++) ...[
-                              Expanded(
-                                child: _buildStaffCard(_staff[i], i + 1),
-                              ),
-                              if (i < _staff.length - 1)
-                                const SizedBox(height: 6),
-                            ],
-                          ],
-                        ),
-                ),
-              ),
-
-              const SizedBox(width: 16),
-
-              // --- RIGHT COLUMN: Countdown + Interactive Chart ---
-              Expanded(
-                flex: 7,
-                child: Column(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(
-                      child: Row(
+                      flex: 11,
+                      child: people(_PeopleLayout(oneLine: oneLine, maxRows: maxRows, fill: true)),
+                    ),
+                    const SizedBox(width: dashGap),
+                    Expanded(
+                      flex: 12,
+                      child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(
-                            flex: 6,
-                            child: Column(
+                          Expanded(child: chart),
+                          const SizedBox(height: dashGap),
+                          SizedBox(
+                            height: stripH,
+                            child: Row(
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                Expanded(
-                                  flex: 5,
-                                  child: _InteractivePayoutChart(
-                                    data: _chartData,
-                                    staff: _staff,
-                                    year: widget.selectedYear,
-                                  ),
-                                ),
-                                // The meters are for the CURRENT pay week, so they only show for the current year.
-                                if (widget.selectedYear ==
-                                    DateTime.now().year) ...[
-                                  const SizedBox(height: 12),
-                                  Expanded(
-                                    flex: 4,
-                                    child: _HurdleMetersCard(
-                                      staff: _staff,
-                                      hurdle: _weeklyHurdle,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            flex: 4,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                QuarterlyPayoutCountdownCard(
-                                  amount: _nextDisbursement,
-                                  techCount: _nextDisbursementTechs,
-                                ),
-                                const SizedBox(height: 12),
-                                Expanded(
-                                  child: _PayrollRunsCard(
-                                    onChanged: () =>
-                                        _fetchLiveCommissionData(fresh: true),
-                                  ),
-                                ),
+                                Expanded(flex: 6, child: payroll),
+                                const SizedBox(width: dashGap),
+                                Expanded(flex: 5, child: release),
                               ],
                             ),
                           ),
@@ -514,508 +497,388 @@ class _CommissionDashboardContentState
                 ),
               ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-
-  // --- ORIGINAL STAFF CARD UI ---
-  Widget _buildStaffCard(_StaffCommissionProfile person, int rank) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0), width: 1),
-      ),
-      clipBehavior: Clip.hardEdge,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(
-            width: 72,
-            child: Image.network(
-              person.imageUrl.isNotEmpty
-                  ? person.imageUrl
-                  : 'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(person.name)}&background=random',
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Container(
-                color: const Color(0xFFE2E8F0),
-                child: const Icon(
-                  Icons.person,
-                  color: Color(0xFF94A3B8),
-                  size: 26,
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 12.0,
-                vertical: 3.0,
-              ),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          person.name,
-                          style: const TextStyle(
-                            fontSize: 14.5,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF1E293B),
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Divider(height: 1, color: Color(0xFFE2E8F0)),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'PAID YTD',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: Color(0xFF94A3B8),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        person.isSales ? 'Sales' : _money(person.commission),
-                        style: TextStyle(
-                          fontSize: 14.5,
-                          fontWeight: FontWeight.w900,
-                          color: person.isSales
-                              ? const Color(0xFF94A3B8)
-                              : const Color(0xFF059669),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'LOCKED RETAINAGE',
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: Color(0xFF94A3B8),
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        _money(person.lockedRetainage),
-                        style: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF6366F1),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// =============================================================================
-// SCORECARD (Helper text removed)
-// =============================================================================
-
-class _MetricCard extends StatefulWidget {
-  final String title;
-  final double amount;
-  final Color valueColor;
-  final int index;
-  final List<double>? trend;
-  final String Function(double)? format;
-
-  const _MetricCard({
-    required this.title,
-    required this.amount,
-    required this.valueColor,
-    required this.index,
-    this.trend,
-    this.format,
-  });
-
-  @override
-  State<_MetricCard> createState() => _MetricCardState();
-}
-
-class _MetricCardState extends State<_MetricCard>
-    with SingleTickerProviderStateMixin {
-  static const _baseMs = 520;
-  static const _staggerMs = 110;
-  static const _countUpMs = 1100;
-  static const _sparkDrawMs = 600;
-
-  late final AnimationController _enter;
-  late final Animation<double> _t;
-  bool _hovering = false;
-  bool _reduceMotion = false;
-
-  @override
-  void initState() {
-    super.initState();
-    final totalMs = _baseMs + widget.index * _staggerMs;
-    _enter = AnimationController(
-      vsync: this,
-      duration: Duration(milliseconds: totalMs),
-    );
-    _t = CurvedAnimation(
-      parent: _enter,
-      curve: Interval(
-        widget.index * _staggerMs / totalMs,
-        1.0,
-        curve: Curves.easeOutCubic,
-      ),
-    );
-    _enter.forward();
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _reduceMotion = MediaQuery.of(context).disableAnimations;
-    if (_reduceMotion) _enter.value = 1;
-  }
-
-  @override
-  void dispose() {
-    _enter.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final w = widget;
-
-    final textColumn = Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          w.title,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: _Ui.slate,
-          ),
-        ),
-        const SizedBox(height: 6),
-        TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: 0, end: w.amount),
-          duration: _reduceMotion
-              ? Duration.zero
-              : const Duration(milliseconds: _countUpMs),
-          curve: Curves.easeOutCubic,
-          builder: (context, v, _) => FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(
-              (w.format ?? _money)(v),
-              style: TextStyle(
-                fontSize: 28,
-                fontWeight: FontWeight.w800,
-                height: 1.1,
-                color: w.valueColor,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-
-    return FadeTransition(
-      opacity: _t,
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(0, 0.12),
-          end: Offset.zero,
-        ).animate(_t),
-        child: MouseRegion(
-          onEnter: (_) => setState(() => _hovering = true),
-          onExit: (_) => setState(() => _hovering = false),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            curve: Curves.easeOut,
-            transform: Matrix4.translationValues(0, _hovering ? -2 : 0, 0),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _hovering
-                    ? w.valueColor.withValues(alpha: 0.55)
-                    : _Ui.line,
-              ),
-            ),
-            child: LayoutBuilder(
-              builder: (context, c) {
-                final showSpark = w.trend != null && c.maxWidth > 250;
-                return Row(
-                  children: [
-                    Expanded(child: textColumn),
-                    if (showSpark) ...[
-                      const SizedBox(width: 12),
-                      SizedBox(
-                        width: 84,
-                        height: 48,
-                        child: TweenAnimationBuilder<double>(
-                          tween: Tween<double>(begin: 0, end: 1),
-                          duration: _reduceMotion
-                              ? Duration.zero
-                              : const Duration(
-                                  milliseconds: _countUpMs + _sparkDrawMs,
-                                ),
-                          builder: (context, t, _) {
-                            final progress =
-                                ((t * (_countUpMs + _sparkDrawMs) -
-                                            _countUpMs) /
-                                        _sparkDrawMs)
-                                    .clamp(0.0, 1.0);
-                            return CustomPaint(
-                              painter: _SparklinePainter(
-                                values: w.trend!,
-                                color: w.valueColor,
-                                progress: progress,
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ],
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SparklinePainter extends CustomPainter {
-  final List<double> values;
-  final Color color;
-  final double progress;
-
-  const _SparklinePainter({
-    required this.values,
-    required this.color,
-    required this.progress,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const pad = 5.0;
-    final w = size.width - pad * 2;
-    final h = size.height - pad * 2;
-    final maxV = values.fold<double>(0, math.max);
-
-    if (values.length < 2 || maxV <= 0) {
-      final base = Paint()
-        ..color = _Ui.line
-        ..strokeWidth = 1.5
-        ..strokeCap = StrokeCap.round;
-      final y = size.height / 2;
-      var x = pad;
-      while (x < size.width - pad) {
-        canvas.drawLine(
-          Offset(x, y),
-          Offset(math.min(x + 4, size.width - pad), y),
-          base,
-        );
-        x += 8;
-      }
-      return;
-    }
-
-    final pts = <Offset>[
-      for (var i = 0; i < values.length; i++)
-        Offset(
-          pad + w * i / (values.length - 1),
-          pad + h * (1 - values[i] / maxV),
-        ),
-    ];
-
-    final path = Path()..moveTo(pts.first.dx, pts.first.dy);
-    for (var i = 1; i < pts.length; i++) {
-      final cx = (pts[i - 1].dx + pts[i].dx) / 2;
-      path.cubicTo(cx, pts[i - 1].dy, cx, pts[i].dy, pts[i].dx, pts[i].dy);
-    }
-
-    final metric = path.computeMetrics().first;
-    final len = metric.length;
-
-    if (progress > 0) {
-      canvas.drawPath(
-        metric.extractPath(0, len * progress),
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round,
-      );
-
-      final head = metric.getTangentForOffset(len * progress);
-      if (head != null) {
-        if (progress >= 1) {
-          canvas.drawCircle(
-            head.position,
-            6,
-            Paint()..color = color.withValues(alpha: 0.18),
           );
-        }
-        canvas.drawCircle(head.position, 3.2, Paint()..color = color);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SparklinePainter old) =>
-      old.values != values || old.color != color || old.progress != progress;
-}
-
-// =============================================================================
-// LOADING + ERROR STATES
-// =============================================================================
-
-class _DashboardSkeleton extends StatefulWidget {
-  const _DashboardSkeleton();
-
-  @override
-  State<_DashboardSkeleton> createState() => _DashboardSkeletonState();
-}
-
-class _DashboardSkeletonState extends State<_DashboardSkeleton>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulse = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1100),
-  )..repeat(reverse: true);
-
-  @override
-  void dispose() {
-    _pulse.dispose();
-    super.dispose();
-  }
-
-  Widget _box({double? h, double? w, double r = 8}) => Container(
-    height: h,
-    width: w,
-    decoration: BoxDecoration(
-      color: _Ui.line,
-      borderRadius: BorderRadius.circular(r),
-    ),
-  );
-
-  Widget _metric() => Expanded(
-    child: Container(
-      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-      decoration: _Ui.panel(radius: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          _box(h: 12, w: 120),
-          const SizedBox(height: 12),
-          _box(h: 26, w: 170),
-        ],
-      ),
-    ),
-  );
-
-  @override
-  Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: Tween<double>(
-        begin: 0.45,
-        end: 1,
-      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
-      child: Column(
-        children: [
-          SizedBox(
-            height: 104,
-            child: Row(
-              children: [
-                _metric(),
-                const SizedBox(width: 12),
-                _metric(),
-                const SizedBox(width: 12),
-                _metric(),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
+        } else {
+          content = SingleChildScrollView(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                SizedBox(height: g.tile, child: _tileRow(tiles.take(3).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip(3).toList())),
+                const SizedBox(height: dashGap),
+                people(const _PeopleLayout(oneLine: false, maxRows: 999, fill: false)),
+                const SizedBox(height: dashGap),
+                SizedBox(height: 320, child: chart),
+                const SizedBox(height: dashGap),
+                SizedBox(height: stripH, child: payroll),
+                const SizedBox(height: dashGap),
+                SizedBox(height: stripH, child: release),
+              ],
+            ),
+          );
+        }
+        return SizedBox(width: w, height: c.maxHeight, child: content);
+      },
+    );
+  }
+
+  Widget _tileRow(List<Widget> row) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < row.length; i++) ...[if (i > 0) const SizedBox(width: 12), Expanded(child: row[i])],
+    ],
+  );
+}
+
+/// The two strips under the chart: a small label line over one bold line.
+abstract final class _StripGeo {
+  static double content(DashGeo g) => g.line(12.5) + 3 + g.line(15, 1.2) + 4;
+
+  /// The +2 absorbs the half pixels text lines round up to.
+  static double height(DashGeo g) => g.panelTop + content(g) + 2;
+}
+
+// =============================================================================
+// PEOPLE (paid this year, locked retainage, this pay week against the hurdle)
+// =============================================================================
+
+/// The text scale and photo size every row of the People panel shares.
+class _RowSize {
+  final double f;
+  final double photo;
+  const _RowSize(this.f, this.photo);
+}
+
+class _PeoplePanel extends StatelessWidget {
+  final DashGeo g;
+  final List<_StaffCommissionProfile> staff;
+  final int year;
+
+  /// The current pay week's hurdle column (the current year only).
+  final bool thisWeek;
+  final double hurdle;
+  final _PeopleLayout layout;
+  const _PeoplePanel({
+    required this.g,
+    required this.staff,
+    required this.year,
+    required this.thisWeek,
+    required this.hurdle,
+    required this.layout,
+  });
+
+  // Column widths at 100% text (they grow with the text).
+  static const _avatar = 28.0;
+  static const _paidW = 86.0;
+  static const _lockedW = 74.0;
+  static const _weekAmountW = 22.0; // the check mark beside a cleared bar
+  static const _flameW = 34.0;
+  static const _barMin = 60.0;
+  static const _nameW = 112.0;
+
+  /// A two-line row: the name over the hurdle bar, whose streak flame stands 24 px tall (and the 1 px rule under it).
+  static double twoLineRow(DashGeo g) => math.max(g.listRow, g.line(13.5) + 2 + 26 + 3);
+
+  /// The inner width one-line rows need.
+  static double oneLineWidth(DashGeo g, bool thisWeek) =>
+      _avatar +
+      10 +
+      _nameW * g.k +
+      12 +
+      _paidW * g.k +
+      12 +
+      _lockedW * g.k +
+      (thisWeek ? 14 + _barMin + 8 + _weekAmountW * g.k + _flameW : 0) +
+      16;
+
+  /// On the hurdle meters: everyone but sales reps (they have no weekly hurdle).
+  bool _onHurdle(_StaffCommissionProfile p) => !p.isSales;
+
+  @override
+  Widget build(BuildContext context) {
+    final techs = staff.where(_onHurdle).toList();
+    final cleared = techs.where((p) => p.weekGross >= hurdle).length;
+    final all = staff.length <= layout.maxRows;
+    final shown = all ? staff : staff.take(math.max(1, layout.maxRows - 1)).toList();
+    final rowH = layout.oneLine ? g.rowWide : twoLineRow(g);
+
+    final header = DashPanelHeader(
+      g: g,
+      title: 'Commission by person',
+      note: '$year',
+      tooltip:
+          'Everyone eligible for commission: what finalized payroll runs paid them for pay weeks in $year, the '
+          'commercial retainage still locked for them (all-time)'
+          '${thisWeek ? ', and their gross for the current pay week against the ${_moneyShort(hurdle)} weekly hurdle' : ''}.',
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (thisWeek && techs.isNotEmpty)
+            Text(
+              '$cleared of ${techs.length} cleared',
+              style: DashText.meta.copyWith(color: DashUi.emeraldText, fontWeight: FontWeight.w700),
+            ),
+          if (!all) ...[
+            const SizedBox(width: 10),
+            DashLink(
+              text: 'All ${staff.length}',
+              label: 'See all ${dashCount(staff.length, 'person')} paid commission',
+              onTap: () => _openAll(context),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    if (staff.isEmpty) {
+      return DashPanel(
+        fill: layout.fill,
+        header: header,
+        child: SizedBox(height: 2 * rowH, child: const DashEmptyNote('No one is set up for commission yet.')),
+      );
+    }
+
+    final give = layout.fill ? 600.0 : (layout.oneLine ? 24.0 : 14.0);
+    return DashPanel(
+      fill: layout.fill,
+      header: header,
+      child: LayoutBuilder(
+        builder: (context, c) {
+          // One size for the headings and every row, so the columns line up under their labels.
+          final area = c.maxHeight.isFinite ? c.maxHeight - (layout.oneLine ? g.columnHead : 0) : double.infinity;
+          final h = area.isFinite ? (area / shown.length).clamp(rowH, rowH + give).toDouble() : rowH;
+          final size = _RowSize(_scale(h, c.maxWidth), _photo(h));
+          final rows = DashRows(count: shown.length, base: rowH, give: give, row: (i) => _row(shown[i], i, size));
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (layout.oneLine) _headings(size),
+              if (layout.fill)
                 Expanded(
-                  flex: 5,
-                  child: Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: _Ui.panel(),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        _box(h: 16, w: 110),
-                        const SizedBox(height: 16),
-                        Expanded(
-                          child: ListView(
-                            physics: const NeverScrollableScrollPhysics(),
-                            children: [
-                              for (var i = 0; i < 5; i++) ...[
-                                _box(h: 96, r: 12),
-                                const SizedBox(height: 8),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: Align(alignment: Alignment.topCenter, child: rows),
+                )
+              else
+                rows,
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _headings(_RowSize z) => ExcludeSemantics(
+    child: SizedBox(
+      height: g.columnHead,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          children: [
+            SizedBox(width: z.photo + 10),
+            if (thisWeek)
+              SizedBox(
+                width: _nameW * g.k * z.f,
+                child: const Text('Name', style: DashText.column),
+              )
+            else
+              const Expanded(child: Text('Name', style: DashText.column)),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: _paidW * g.k * z.f,
+              child: Text('Paid $year', textAlign: TextAlign.right, style: DashText.column),
+            ),
+            const SizedBox(width: 12),
+            SizedBox(
+              width: _lockedW * g.k * z.f,
+              child: const Text('Locked', textAlign: TextAlign.right, style: DashText.column),
+            ),
+            if (thisWeek) ...[
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text('This week', maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.column),
+              ),
+            ],
+          ],
+        ),
+      ),
+    ),
+  );
+
+  String _describe(_StaffCommissionProfile p) {
+    final paid = p.onPool ? 'paid ${_money(p.commission)} in $year' : 'sales commission only';
+    final week = !thisWeek || !_onHurdle(p)
+        ? ''
+        : p.weekGross >= hurdle
+        ? '. This pay week ${_money(p.weekGross)}, ${_moneyShort(p.weekGross - hurdle)} over the '
+              '${_moneyShort(hurdle)} hurdle'
+        : '. This pay week ${_money(p.weekGross)} of the ${_moneyShort(hurdle)} hurdle';
+    final streak = thisWeek && p.hurdleStreak > 0
+        ? ', ${p.hurdleStreak} ${p.hurdleStreak == 1 ? 'week' : 'weeks'} in a row at or above it'
+        : '';
+    return '${p.name}: $paid, locked retainage ${_money(p.lockedRetainage)}$week$streak';
+  }
+
+  /// How much bigger than its base size a row's content grows when the panel has height to spare (the same few people
+  /// then fill the card instead of leaving it blank). Held back by the width the one-line columns need.
+  double _scale(double rowHeight, double width) {
+    final base = layout.oneLine ? g.rowWide : twoLineRow(g);
+    var f = (1 + (rowHeight / base - 1) * 0.6).clamp(1.0, 1.3).toDouble();
+    if (layout.oneLine && width.isFinite) {
+      final fixed = 16 + 10 + 24 + _photo(rowHeight) + (thisWeek ? 14 + _barMin + 8 + _flameW : 0);
+      final scalable = (_nameW + _paidW + _lockedW + (thisWeek ? _weekAmountW : 0)) * g.k;
+      f = math.min(f, math.max(1.0, (width - fixed) / scalable));
+    }
+    return f;
+  }
+
+  /// The photo is a square as tall as the row allows (less its rule and a little air).
+  double _photo(double rowHeight) => (rowHeight - 10).clamp(_avatar, 64.0).toDouble();
+
+  Widget _row(_StaffCommissionProfile p, int index, _RowSize z) => _rowAt(p, index, z.f, z.photo);
+
+  Widget _rowAt(_StaffCommissionProfile p, int index, double f, double photo) {
+    TextStyle big(TextStyle t) => t.copyWith(fontSize: (t.fontSize ?? 13.5) * f);
+    final paidText = Text(
+      // Anyone paid from the pool shows what they were paid, a sales rep on the pool included. Only sales-only reps
+      // (no pool pay) show "Sales".
+      p.onPool ? _money(p.commission) : 'Sales',
+      textAlign: TextAlign.right,
+      maxLines: 1,
+      style: big(DashText.money).copyWith(color: p.onPool ? DashUi.emeraldText : DashUi.subtle),
+    );
+    final lockedText = Text(
+      _money(p.lockedRetainage),
+      textAlign: TextAlign.right,
+      maxLines: 1,
+      style: big(DashText.money).copyWith(color: p.lockedRetainage > 0 ? DashUi.indigo : DashUi.subtle),
+    );
+    final avatar = DashAvatar(
+      name: p.name,
+      imageUrl: p.imageUrl,
+      size: photo,
+      square: true,
+      accent: DashUi.emeraldDeep,
+    );
+    final name = Tooltip(
+      message: p.jobTitle.isEmpty ? p.name : '${p.name} · ${p.jobTitle}',
+      waitDuration: const Duration(milliseconds: 600),
+      child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: big(DashText.name)),
+    );
+    final week = thisWeek && _onHurdle(p)
+        ? _HurdleMeter(person: p, hurdle: hurdle, index: index, g: g, scale: f)
+        : null;
+
+    final Widget body;
+    if (layout.oneLine) {
+      body = Row(
+        children: [
+          avatar,
+          const SizedBox(width: 10),
+          if (thisWeek) SizedBox(width: _nameW * g.k * f, child: name) else Expanded(child: name),
+          const SizedBox(width: 12),
+          SizedBox(width: _paidW * g.k * f, child: paidText),
+          const SizedBox(width: 12),
+          SizedBox(width: _lockedW * g.k * f, child: lockedText),
+          if (thisWeek) ...[const SizedBox(width: 14), Expanded(child: week ?? const SizedBox.shrink())],
+        ],
+      );
+    } else {
+      body = Row(
+        children: [
+          avatar,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: name),
+                    const SizedBox(width: 8),
+                    paidText,
+                  ],
                 ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 7,
-                  child: Column(
+                const SizedBox(height: 2),
+                Row(
+                  children: [
+                    Expanded(
+                      child:
+                          week ?? Text(p.jobTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.meta),
+                    ),
+                    const SizedBox(width: 10),
+                    Text('Locked ', style: DashText.meta),
+                    lockedText,
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return DashPressable(
+      onTap: null,
+      label: _describe(p),
+      radius: BorderRadius.circular(8),
+      builder: (_) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          border: index == staff.length - 1 ? null : const Border(bottom: BorderSide(color: DashUi.faint)),
+        ),
+        child: body,
+      ),
+    );
+  }
+
+  void _openAll(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: DashUi.line),
+        ),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 720, maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.86),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Semantics(
+                        header: true,
+                        child: Text('Everyone paid commission · $year', style: DashText.panelTitle),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close_rounded, size: 19, color: DashUi.subtle),
+                      onPressed: () => Navigator.of(dialogContext).maybePop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
                     children: [
-                      _box(h: 104, r: 16),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: _Ui.panel(),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              _box(h: 12, w: 160),
-                              const SizedBox(height: 10),
-                              _box(h: 26, w: 120),
-                              const SizedBox(height: 20),
-                              Expanded(child: _box(r: 10)),
-                            ],
-                          ),
-                        ),
+                      _PeoplePanel(
+                        g: g,
+                        staff: staff,
+                        year: year,
+                        thisWeek: thisWeek,
+                        hurdle: hurdle,
+                        layout: const _PeopleLayout(oneLine: false, maxRows: 999, fill: false),
                       ),
                     ],
                   ),
@@ -1023,1018 +886,144 @@ class _DashboardSkeletonState extends State<_DashboardSkeleton>
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ErrorPanel extends StatelessWidget {
-  final String message;
-  final VoidCallback onRetry;
-  const _ErrorPanel({required this.message, required this.onRetry});
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        width: 420,
-        padding: const EdgeInsets.all(28),
-        decoration: _Ui.panel(),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off_rounded, size: 34, color: _Ui.muted),
-            const SizedBox(height: 14),
-            const Text(
-              "Couldn't load commissions",
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: _Ui.ink,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              message.replaceFirst('Exception: ', ''),
-              textAlign: TextAlign.center,
-              maxLines: 3,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 13.5, color: _Ui.slate),
-            ),
-            const SizedBox(height: 4),
-            const Text(
-              'Check your connection, then try again.',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 13.5, color: _Ui.muted),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh_rounded, size: 18),
-              label: const Text('Try again'),
-              style: FilledButton.styleFrom(backgroundColor: _Ui.emeraldDeep),
-            ),
-          ],
         ),
       ),
     );
   }
 }
 
-// =============================================================================
-// QUARTERLY PAYOUT COUNTDOWN CARD
-// =============================================================================
-
-class QuarterlyPayoutCountdownCard extends StatefulWidget {
-  /// Retainage that will be released on the next quarter date, and how many techs receive it.
-  final double amount;
-  final int techCount;
-
-  const QuarterlyPayoutCountdownCard({
-    super.key,
-    required this.amount,
-    required this.techCount,
+/// One person's gross for the current pay week against the weekly hurdle: the bar fills in once (rows one after
+/// another), turns green with a tick once cleared, and a flame shows the weeks in a row at or above it. Gross
+/// includes the commercial retainage held that week (it counts toward the hurdle but is not paid).
+class _HurdleMeter extends StatelessWidget {
+  final _StaffCommissionProfile person;
+  final double hurdle;
+  final int index;
+  final DashGeo g;
+  final double scale;
+  const _HurdleMeter({
+    required this.person,
+    required this.hurdle,
+    required this.index,
+    required this.g,
+    this.scale = 1,
   });
 
   @override
-  State<QuarterlyPayoutCountdownCard> createState() =>
-      _QuarterlyPayoutCountdownCardState();
-}
-
-class _QuarterlyPayoutCountdownCardState
-    extends State<QuarterlyPayoutCountdownCard> {
-  late Timer _timer;
-  late Duration _timeRemaining;
-  late String _nextQuarterName;
-
-  @override
-  void initState() {
-    super.initState();
-    _calculateRemainingTime();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) _calculateRemainingTime();
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer.cancel();
-    super.dispose();
-  }
-
-  void _calculateRemainingTime() {
-    final now = DateTime.now();
-    final year = now.year;
-
-    final q1 = DateTime(year, 4, 1);
-    final q2 = DateTime(year, 7, 1);
-    final q3 = DateTime(year, 10, 1);
-    final q4 = DateTime(year + 1, 1, 1);
-
-    DateTime target;
-    if (now.isBefore(q1)) {
-      target = q1;
-      _nextQuarterName = 'Q1 DISBURSEMENT';
-    } else if (now.isBefore(q2)) {
-      target = q2;
-      _nextQuarterName = 'Q2 DISBURSEMENT';
-    } else if (now.isBefore(q3)) {
-      target = q3;
-      _nextQuarterName = 'Q3 DISBURSEMENT';
-    } else {
-      target = q4;
-      _nextQuarterName = 'Q4 DISBURSEMENT';
-    }
-
-    setState(() {
-      _timeRemaining = target.difference(now);
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final days = _timeRemaining.inDays;
-    final hours = _timeRemaining.inHours % 24;
-    final minutes = _timeRemaining.inMinutes % 60;
-    final seconds = _timeRemaining.inSeconds % 60;
-
-    // The next release on top, the clock underneath. Sits above the paid-by-technician card.
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-        ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFF334155)),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+    final p = person;
+    final h = hurdle <= 0 ? 1.0 : hurdle;
+    final cleared = p.weekGross >= h;
+    final color = cleared ? DashUi.emeraldDeep : DashUi.amber;
+    final over = p.weekGross - h;
+    return Tooltip(
+      message: cleared
+          ? '${_money(p.weekGross)} this pay week, ${_moneyShort(over)} over the ${_moneyShort(h)} hurdle'
+          : '${_money(p.weekGross)} this pay week, ${_moneyShort(-over)} short of the ${_moneyShort(h)} hurdle',
+      waitDuration: const Duration(milliseconds: 500),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 8,
-                height: 8,
-                decoration: const BoxDecoration(
-                  color: Color(0xFF10B981),
-                  shape: BoxShape.circle,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _nextQuarterName,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF10B981),
-                  letterSpacing: 1.0,
-                ),
-              ),
-            ],
+          Expanded(
+            child: DashBar(fraction: (p.weekGross / h).clamp(0.0, 1.0), color: color, height: 10 * scale),
           ),
-          const SizedBox(height: 4),
-          Text(
-            widget.amount > 0
-                ? 'Retainage release: ${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
-                : 'Retainage release: nothing scheduled',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w700,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 10),
-          // The clock's digits change every second. Kept out of text selection: a selectable whose text keeps
-          // changing stops mouse selection from working elsewhere on the page (seen in Chrome).
-          SelectionContainer.disabled(
+          const SizedBox(width: 8),
+          SizedBox(
+            width: _PeoplePanel._weekAmountW * g.k * scale,
             child: Row(
-              children: [
-                Expanded(
-                  child: _clockUnit(days.toString().padLeft(2, '0'), 'd'),
-                ),
-                Expanded(
-                  child: _clockUnit(hours.toString().padLeft(2, '0'), 'h'),
-                ),
-                Expanded(
-                  child: _clockUnit(minutes.toString().padLeft(2, '0'), 'm'),
-                ),
-                Expanded(
-                  child: _clockUnit(
-                    seconds.toString().padLeft(2, '0'),
-                    's',
-                    isAccent: true,
-                  ),
-                ),
-              ],
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [if (cleared) Icon(Icons.check_circle_rounded, size: 14 * scale, color: color)],
             ),
+          ),
+          SizedBox(
+            width: _PeoplePanel._flameW,
+            child: p.hurdleStreak > 0
+                ? Align(
+                    alignment: Alignment.centerRight,
+                    child: _StreakFlame(streak: p.hurdleStreak, weeksHit: p.hurdleWeeksHit),
+                  )
+                : null,
           ),
         ],
       ),
     );
   }
-
-  Widget _clockUnit(String val, String unit, {bool isAccent = false}) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 6),
-      child: Container(
-        alignment: Alignment.center,
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-        decoration: BoxDecoration(
-          color: isAccent
-              ? const Color(0xFF059669).withValues(alpha: 0.2)
-              : const Color(0xFF1E293B),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color: isAccent ? const Color(0xFF059669) : const Color(0xFF334155),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.baseline,
-          textBaseline: TextBaseline.alphabetic,
-          children: [
-            Text(
-              val,
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                color: isAccent ? const Color(0xFF34D399) : Colors.white,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
-            ),
-            const SizedBox(width: 2),
-            Text(
-              unit,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF94A3B8),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
 // =============================================================================
-// INTERACTIVE PAYOUT CHART
+// PAID BY MONTH
 // =============================================================================
 
-enum _ChartMetric { payouts, revenue }
-
-extension _ChartMetricX on _ChartMetric {
-  bool get _isPayouts => this == _ChartMetric.payouts;
-
-  String get toggleLabel => _isPayouts ? 'Commissions' : 'Revenue';
-  String get caption => _isPayouts ? 'Paid by month' : 'Revenue by month';
-  String get rowLabel => _isPayouts ? 'Disbursed' : 'Revenue';
-  String get legendLabel => _isPayouts ? 'Monthly payout' : 'Monthly revenue';
-
-  Color get accent => _isPayouts ? _Ui.emerald : _Ui.sky;
-  Color get accentDeep =>
-      _isPayouts ? _Ui.emeraldDeep : const Color(0xFF075985);
-  Color get tint =>
-      _isPayouts ? const Color(0xFFECFDF5) : const Color(0xFFF0F9FF);
-  List<Color> get barColors => _isPayouts
-      ? const [Color(0xFF059669), Color(0xFF10B981)]
-      : const [Color(0xFF0369A1), Color(0xFF0284C7)];
-  List<Color> get focusColors => _isPayouts
-      ? const [Color(0xFF047857), Color(0xFF34D399)]
-      : const [Color(0xFF075985), Color(0xFF38BDF8)];
-
-  double valueOf(_MonthlyPayoutPoint p) => _isPayouts ? p.payout : p.revenue;
-
-  String format(num v) {
-    final a = v.abs();
-    if (a >= 1000000) {
-      return '\$${(v / 1000000).toStringAsFixed(1).replaceAll('.0', '')}M';
-    }
-    if (a >= 1000) {
-      return '\$${(v / 1000).toStringAsFixed(1).replaceAll('.0', '')}k';
-    }
-    return '\$${v.round()}';
-  }
-
-  String axisFormat(num v) => format(v);
-}
-
-class _AxisScale {
-  final double max;
-  final double step;
-  const _AxisScale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
-
-_AxisScale _niceScale(double maxV) {
-  if (maxV <= 0) return const _AxisScale(10000, 2500);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final double nice = norm <= 1 ? 1 : (norm <= 2 ? 2 : (norm <= 5 ? 5 : 10));
-  var step = nice * mag;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _AxisScale(top, step);
-}
-
-TextPainter _layoutText(
-  String text,
-  TextStyle style, {
-  double maxWidth = double.infinity,
-  TextAlign align = TextAlign.left,
-}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
-}
-
-class _InteractivePayoutChart extends StatefulWidget {
+class _PayoutChart extends StatelessWidget {
   final List<_MonthlyPayoutPoint> data;
-  final List<_StaffCommissionProfile> staff;
-  final int? year;
-
-  const _InteractivePayoutChart({
-    required this.data,
-    required this.staff,
-    this.year,
-  });
-
-  @override
-  State<_InteractivePayoutChart> createState() =>
-      _InteractivePayoutChartState();
-}
-
-class _InteractivePayoutChartState extends State<_InteractivePayoutChart>
-    with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-
-  _ChartMetric _metric = _ChartMetric.payouts;
-  int? _active;
-  int? _paintedIndex;
-
-  Timer? _metricCycleTimer;
-  bool _chartHovering = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    )..forward();
-    _hover = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 160),
-    );
-    _restartMetricCycleTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _InteractivePayoutChart oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.data, widget.data)) {
-      _active = null;
-      _paintedIndex = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _metricCycleTimer?.cancel();
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _restartMetricCycleTimer() {
-    _metricCycleTimer?.cancel();
-    _metricCycleTimer = Timer.periodic(
-      const Duration(seconds: 9),
-      (_) => _autoCycleMetric(),
-    );
-  }
-
-  void _autoCycleMetric() {
-    if (!mounted || _chartHovering) return;
-    _setMetric(
-      _metric == _ChartMetric.payouts
-          ? _ChartMetric.revenue
-          : _ChartMetric.payouts,
-    );
-  }
-
-  void _setActive(int? i) {
-    if (i == _active) return;
-    setState(() {
-      if (i != null) _paintedIndex = i;
-      _active = i;
-    });
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  void _setMetric(_ChartMetric m) {
-    if (m == _metric) return;
-    setState(() {
-      _metric = m;
-      _active = null;
-      _paintedIndex = null;
-    });
-    _hover.value = 0;
-    _intro.forward(from: 0);
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - _PayoutChartPainter.leftGutter;
-    if (plotW <= 0) return null;
-    final i = ((dx - _PayoutChartPainter.leftGutter) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
-  double? _pct(double prev, double cur) =>
-      prev > 0 ? (cur - prev) / prev * 100 : null;
+  final int year;
+  const _PayoutChart({required this.data, required this.year});
 
   @override
   Widget build(BuildContext context) {
-    final data = widget.data;
+    List<double> pick(double Function(_MonthlyPayoutPoint) f) => [
+      for (var i = 0; i < 12; i++) i < data.length ? f(data[i]) : 0.0,
+    ];
+    final payouts = pick((p) => p.payout);
+    final revenue = pick((p) => p.revenue);
 
-    if (data.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: _Ui.panel(),
-        child: const Center(
-          child: Text(
-            'No chart data for this year yet.',
-            style: TextStyle(
-              color: _Ui.muted,
-              fontWeight: FontWeight.w500,
-              fontSize: 14,
+    DashChartView view({
+      required String tab,
+      required String title,
+      required String what,
+      required String row,
+      required List<double> values,
+      required Color color,
+    }) {
+      final withData = values.where((v) => v > 0).toList();
+      final total = withData.fold<double>(0, (a, b) => a + b);
+      // The average of the months that have something in them, as before.
+      final avg = withData.isEmpty ? 0.0 : total / withData.length;
+      return DashChartView(
+        tab: tab,
+        title: title,
+        note: '${_compactMoney(total)} in $year',
+        series: [DashSeries(row, values, color)],
+        average: avg > 0 ? avg : null,
+        averageLabel: avg > 0 ? 'Monthly average ${_compactMoney(avg)}' : null,
+        axis: _compactMoney,
+        barLabel: _compactMoney,
+        badge: DashChangeChip.monthOverMonth(values, year, what: what),
+        tip: (i) => [
+          DashTipRow(row, _money(values[i]), color: color),
+          if (values[i] > 0 && total > 0) DashTipRow('Share of year', '${(values[i] / total * 100).round()}%'),
+          if (values[i] > 0 && avg > 0)
+            DashTipRow(
+              'Vs average',
+              '${values[i] >= avg ? '+' : '-'}${((values[i] - avg).abs() / avg * 100).round()}%',
             ),
-          ),
-        ),
+        ],
+        summary: (last) =>
+            '$title: ${[for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(values[i])}'].join(', ')}',
+        emptyText: 'Nothing recorded for $year yet.',
+        semanticsLabel: '$title, $year',
       );
     }
 
-    final withData = [
-      for (var i = 0; i < data.length; i++)
-        if (_metric.valueOf(data[i]) > 0) i,
-    ];
-    final values = withData.map((i) => _metric.valueOf(data[i])).toList();
-    final sum = values.fold<double>(0, (a, b) => a + b);
-    final avg = values.isEmpty ? 0.0 : sum / values.length;
-
-    int? peakIndex;
-    var peakValue = 0.0;
-    for (final i in withData) {
-      final v = _metric.valueOf(data[i]);
-      if (v > peakValue) {
-        peakValue = v;
-        peakIndex = i;
-      }
-    }
-
-    final maxV = data
-        .map(_metric.valueOf)
-        .fold<double>(0, (a, b) => math.max(a, b));
-    final scale = _niceScale(maxV);
-
-    double? trendPct;
-    String? trendVs;
-    if (withData.length >= 2) {
-      final last = withData.last;
-      final prev = withData[withData.length - 2];
-      trendPct = _pct(_metric.valueOf(data[prev]), _metric.valueOf(data[last]));
-      trendVs = data[prev].month;
-    }
-
-    final now = DateTime.now();
-    final int? currentMonth = widget.year == now.year ? now.month - 1 : null;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      decoration: _Ui.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Text(
-                  _metric.caption,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _Ui.slate,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              _MetricToggle(value: _metric, onChanged: _setMetric),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 10,
-            runSpacing: 4,
-            children: [
-              Text(
-                _metric.format(sum),
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  color: _Ui.ink,
-                  height: 1.1,
-                ),
-              ),
-              Text(
-                'Total for ${widget.year}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: _Ui.muted,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              if (trendPct != null) _TrendChip(pct: trendPct, vs: trendVs!),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: MouseRegion(
-                        onEnter: (_) {
-                          _chartHovering = true;
-                          _metricCycleTimer?.cancel();
-                        },
-                        onHover: (e) => _setActive(
-                          _indexFor(e.localPosition.dx, c.maxWidth),
-                        ),
-                        onExit: (_) {
-                          _setActive(null);
-                          _chartHovering = false;
-                          _restartMetricCycleTimer();
-                        },
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onTapDown: (d) => _setActive(
-                            _indexFor(d.localPosition.dx, c.maxWidth),
-                          ),
-                          onHorizontalDragStart: (d) => _setActive(
-                            _indexFor(d.localPosition.dx, c.maxWidth),
-                          ),
-                          onHorizontalDragUpdate: (d) => _setActive(
-                            _indexFor(d.localPosition.dx, c.maxWidth),
-                          ),
-                          child: AnimatedBuilder(
-                            animation: Listenable.merge([_intro, _hover]),
-                            builder: (context, _) {
-                              return CustomPaint(
-                                size: Size.infinite,
-                                painter: _PayoutChartPainter(
-                                  data: data,
-                                  metric: _metric,
-                                  scale: scale,
-                                  average: avg,
-                                  total: sum,
-                                  peakIndex: peakIndex,
-                                  currentMonth: currentMonth,
-                                  index: _paintedIndex,
-                                  intro: _intro.value,
-                                  hover: Curves.easeOutCubic.transform(
-                                    _hover.value,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    ),
-                    if (sum <= 0)
-                      IgnorePointer(
-                        child: Center(
-                          child: Padding(
-                            padding: const EdgeInsets.only(bottom: 28),
-                            child: Text(
-                              'Nothing recorded for ${widget.year} yet.',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                color: _Ui.muted,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _legendItem(
-                Container(
-                  width: 12,
-                  height: 12,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(3),
-                    gradient: LinearGradient(
-                      begin: Alignment.bottomCenter,
-                      end: Alignment.topCenter,
-                      colors: _metric.barColors,
-                    ),
-                  ),
-                ),
-                _metric.legendLabel,
-              ),
-              const SizedBox(width: 20),
-              if (avg > 0)
-                _legendItem(
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: List.generate(
-                      3,
-                      (i) => Container(
-                        width: 4,
-                        height: 2.5,
-                        margin: EdgeInsets.only(right: i == 2 ? 0 : 2),
-                        color: _metric.accent,
-                      ),
-                    ),
-                  ),
-                  'Monthly average (${_metric.format(avg)})',
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _legendItem(Widget swatch, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        swatch,
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: const TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w600,
-            color: _Ui.slate,
-          ),
+    return DashMonthChart(
+      year: year,
+      views: [
+        view(
+          tab: 'Commissions',
+          title: 'Paid by month',
+          what: 'Commission paid',
+          row: 'Disbursed',
+          values: payouts,
+          color: DashUi.emeraldDeep,
+        ),
+        view(
+          tab: 'Revenue',
+          title: 'Revenue by month',
+          what: 'Revenue',
+          row: 'Revenue',
+          values: revenue,
+          color: DashUi.sky,
         ),
       ],
-    );
-  }
-}
-
-/// Hurdle meters: each technician's gross for the current pay week against the weekly hurdle. Bars fill in one after
-/// another, the numbers count up, and a bar that has cleared the hurdle turns green, glows and gets a light sweep.
-/// Gross includes the commercial retainage held that week (it counts toward the hurdle but is not paid).
-class _HurdleMetersCard extends StatefulWidget {
-  final List<_StaffCommissionProfile> staff;
-  final double hurdle;
-  const _HurdleMetersCard({required this.staff, required this.hurdle});
-
-  @override
-  State<_HurdleMetersCard> createState() => _HurdleMetersCardState();
-}
-
-class _HurdleMetersCardState extends State<_HurdleMetersCard>
-    with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _sweep;
-  String _sig = '';
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    );
-    _sweep = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 3400),
-    );
-    _sig = _signature();
-    _intro.forward();
-    _sweep.repeat();
-  }
-
-  String _signature() => widget.staff
-      .where((p) => !p.isSales)
-      .map((p) => '${p.id}:${p.weekGross.toStringAsFixed(2)}')
-      .join('|');
-
-  @override
-  void didUpdateWidget(covariant _HurdleMetersCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final now = _signature();
-    if (now != _sig) {
-      _sig = now;
-      _intro.forward(from: 0); // new numbers: play the fill again
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    _sweep.dispose();
-    super.dispose();
-  }
-
-  static const double _rowH = 34;
-
-  @override
-  Widget build(BuildContext context) {
-    final reduce = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    if (reduce) {
-      _intro.value = 1;
-      _sweep.stop();
-    }
-    final techs = widget.staff.where((p) => !p.isSales).toList()
-      ..sort((a, b) => b.weekGross.compareTo(a.weekGross));
-    final cleared = techs.where((p) => p.weekGross >= widget.hurdle).length;
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
-      decoration: _Ui.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(
-                child: Text(
-                  'Weekly hurdle',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: _Ui.slate,
-                  ),
-                ),
-              ),
-              Text(
-                techs.isEmpty ? '' : '$cleared of ${techs.length} cleared',
-                style: const TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: _Ui.emeraldDeep,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: techs.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No technicians to show.',
-                      style: TextStyle(color: _Ui.muted, fontSize: 13),
-                    ),
-                  )
-                : LayoutBuilder(
-                    builder: (context, box) {
-                      final fit = (box.maxHeight / _rowH).floor().clamp(1, 99);
-                      final needMore = techs.length > fit;
-                      final visible = needMore
-                          ? math.max(1, fit - 1)
-                          : techs.length;
-                      return Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          for (var i = 0; i < visible; i++)
-                            SizedBox(
-                              height: _rowH,
-                              child: _meterRow(techs[i], i, techs.length),
-                            ),
-                          if (needMore)
-                            SizedBox(
-                              height: _rowH,
-                              child: Align(
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  '+${techs.length - visible} more',
-                                  style: const TextStyle(
-                                    fontSize: 12.5,
-                                    color: _Ui.muted,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                            ),
-                        ],
-                      );
-                    },
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _meterRow(_StaffCommissionProfile p, int index, int count) {
-    final hurdle = widget.hurdle <= 0 ? 1.0 : widget.hurdle;
-    final target = (p.weekGross / hurdle).clamp(0.0, 1.0);
-    final isCleared = p.weekGross >= hurdle;
-    // Rows start one after another: each gets its own slice of the intro animation.
-    final start = (index * 0.09).clamp(0.0, 0.5);
-    final curve = CurvedAnimation(
-      parent: _intro,
-      curve: Interval(
-        start,
-        math.min(1.0, start + 0.55),
-        curve: Curves.easeOutCubic,
-      ),
-    );
-
-    return AnimatedBuilder(
-      // Only the intro drives the row. The light sweep has its own builder below, so the text is not rebuilt
-      // every frame (that would keep clearing a mouse selection of the names and amounts).
-      animation: curve,
-      builder: (context, _) {
-        final t = curve.value;
-        final fill = target * t;
-        final shown = p.weekGross * t;
-        final accent = isCleared ? _Ui.emeraldDeep : _Ui.amber;
-        return Row(
-          children: [
-            SizedBox(
-              width: 116,
-              child: Text(
-                p.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: _Ui.ink,
-                ),
-              ),
-            ),
-            // A fixed slot so the bars line up whether or not someone has a streak.
-            SizedBox(
-              width: 48,
-              child: p.hurdleStreak > 0
-                  ? Align(
-                      alignment: Alignment.centerLeft,
-                      child: _StreakFlame(
-                        streak: p.hurdleStreak,
-                        weeksHit: p.hurdleWeeksHit,
-                      ),
-                    )
-                  : null,
-            ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (context, c) {
-                  final w = c.maxWidth;
-                  return SizedBox(
-                    height: 16,
-                    child: Stack(
-                      clipBehavior: Clip.none,
-                      children: [
-                        Container(
-                          decoration: BoxDecoration(
-                            color: _Ui.faint,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                        ),
-                        if (fill > 0)
-                          Container(
-                            width: math.max(10.0, w * fill),
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(8),
-                              gradient: LinearGradient(
-                                colors: isCleared
-                                    ? const [
-                                        Color(0xFF059669),
-                                        Color(0xFF34D399),
-                                      ]
-                                    : const [
-                                        Color(0xFFF59E0B),
-                                        Color(0xFFD97706),
-                                      ],
-                              ),
-                              boxShadow: isCleared && t >= 1
-                                  ? [
-                                      BoxShadow(
-                                        color: _Ui.emerald.withValues(
-                                          alpha: 0.35,
-                                        ),
-                                        blurRadius: 8,
-                                        spreadRadius: 0.5,
-                                      ),
-                                    ]
-                                  : null,
-                            ),
-                            child: isCleared && t >= 1
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(8),
-                                    child: AnimatedBuilder(
-                                      animation: _sweep,
-                                      builder: (context, _) =>
-                                          FractionallySizedBox(
-                                            alignment: Alignment(
-                                              -1.6 + 3.2 * _sweep.value,
-                                              0,
-                                            ),
-                                            widthFactor: 0.28,
-                                            child: Container(
-                                              decoration: BoxDecoration(
-                                                gradient: LinearGradient(
-                                                  colors: [
-                                                    Colors.white.withValues(
-                                                      alpha: 0,
-                                                    ),
-                                                    Colors.white.withValues(
-                                                      alpha: 0.45,
-                                                    ),
-                                                    Colors.white.withValues(
-                                                      alpha: 0,
-                                                    ),
-                                                  ],
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                    ),
-                                  )
-                                : null,
-                          ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
-            SizedBox(
-              width: 128,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (isCleared) ...[
-                    Icon(Icons.check_circle_rounded, size: 15, color: accent),
-                    const SizedBox(width: 4),
-                  ],
-                  Text(
-                    _money(shown).replaceAll('.00', ''),
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                      color: isCleared ? _Ui.emeraldDeep : _Ui.ink,
-                    ),
-                  ),
-                  Text(
-                    isCleared
-                        ? '  +${_money(math.max(0, (p.weekGross - hurdle) * t)).replaceAll('.00', '')}'
-                        : ' / ${_money(hurdle).replaceAll('.00', '')}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: isCleared ? _Ui.emeraldDeep : _Ui.muted,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        );
-      },
     );
   }
 }
@@ -2050,17 +1039,13 @@ class _StreakFlame extends StatefulWidget {
   State<_StreakFlame> createState() => _StreakFlameState();
 }
 
-class _StreakFlameState extends State<_StreakFlame>
-    with SingleTickerProviderStateMixin {
+class _StreakFlameState extends State<_StreakFlame> with SingleTickerProviderStateMixin {
   late final AnimationController _c;
 
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1400),
-    )..repeat();
+    _c = AnimationController(vsync: this, duration: const Duration(milliseconds: 1400))..repeat();
   }
 
   @override
@@ -2095,10 +1080,7 @@ class _StreakFlameState extends State<_StreakFlame>
             child: AnimatedBuilder(
               animation: _c,
               builder: (context, _) => CustomPaint(
-                painter: _FlamePainter(
-                  t: reduce ? 0.25 : _c.value,
-                  level: level,
-                ),
+                painter: _FlamePainter(t: reduce ? 0.25 : _c.value, level: level),
               ),
             ),
           ),
@@ -2108,9 +1090,7 @@ class _StreakFlameState extends State<_StreakFlame>
             style: TextStyle(
               fontSize: 14 + level.toDouble(),
               fontWeight: FontWeight.w900,
-              color: level == 2
-                  ? const Color(0xFFDC2626)
-                  : const Color(0xFFEA580C),
+              color: level == 2 ? const Color(0xFFDC2626) : const Color(0xFFEA580C),
               height: 1,
             ),
           ),
@@ -2182,10 +1162,7 @@ class _FlamePainter extends CustomPainter {
         ..shader = LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [
-            const Color(0xFFFDE68A),
-            level == 2 ? Colors.white : const Color(0xFFFEF3C7),
-          ],
+          colors: [const Color(0xFFFDE68A), level == 2 ? Colors.white : const Color(0xFFFEF3C7)],
         ).createShader(Rect.fromLTWH(0, 0, w, h)),
     );
     canvas.restore();
@@ -2194,25 +1171,25 @@ class _FlamePainter extends CustomPainter {
     // A few embers drifting up and fading.
     for (var i = 0; i < 3; i++) {
       final p = (t + i / 3) % 1.0;
-      final x =
-          w * (0.35 + 0.3 * ((i * 0.37 + 0.13) % 1.0)) +
-          math.sin((t + i) * tau) * 1.5;
+      final x = w * (0.35 + 0.3 * ((i * 0.37 + 0.13) % 1.0)) + math.sin((t + i) * tau) * 1.5;
       final y = h * (0.55 - 0.7 * p);
       canvas.drawCircle(
         Offset(x, y),
         1.1 + 0.4 * level,
-        Paint()
-          ..color = const Color(0xFFFBBF24).withValues(alpha: (1 - p) * 0.9),
+        Paint()..color = const Color(0xFFFBBF24).withValues(alpha: (1 - p) * 0.9),
       );
     }
   }
 
   @override
-  bool shouldRepaint(covariant _FlamePainter old) =>
-      old.t != t || old.level != level;
+  bool shouldRepaint(covariant _FlamePainter old) => old.t != t || old.level != level;
 }
 
-/// Payroll status: is the last completed pay week run yet, a button to run it, and the recent runs.
+// =============================================================================
+// PAYROLL
+// =============================================================================
+
+/// Payroll status: is the last completed pay week run yet, a button to run it, and the run history.
 /// Commission totals on this page only count once a run is finalized, so this is where that happens.
 class _PayrollRunsCard extends StatefulWidget {
   /// Called after a run is finalized or voided, so the dashboard numbers can reload.
@@ -2249,24 +1226,11 @@ class _PayrollRunsCardState extends State<_PayrollRunsCard> {
 
   static String _ymd(DateTime d) =>
       '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-  static const _months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
+
   static String _short(String ymd) {
     final p = ymd.split('-');
     if (p.length != 3) return ymd;
-    return '${_months[(int.tryParse(p[1]) ?? 1) - 1]} ${int.tryParse(p[2]) ?? 0}';
+    return '${dashMonthNames[((int.tryParse(p[1]) ?? 1) - 1).clamp(0, 11)]} ${int.tryParse(p[2]) ?? 0}';
   }
 
   /// First pay week (commissions go live on this Monday, 2026-10-05).
@@ -2274,16 +1238,14 @@ class _PayrollRunsCardState extends State<_PayrollRunsCard> {
 
   /// Monday of the most recent pay week that is over, or the first pay week if none is over yet.
   DateTime get _lastWeek {
-    final now = DateTime.now();
+    final now = DashClock.now();
     final today = DateTime(now.year, now.month, now.day);
-    final last = today.subtract(
-      Duration(days: today.weekday - DateTime.monday + 7),
-    );
+    final last = today.subtract(Duration(days: today.weekday - DateTime.monday + 7));
     return last.isBefore(_firstWeek) ? _firstWeek : last;
   }
 
   bool get _weekIsOver {
-    final now = DateTime.now();
+    final now = DashClock.now();
     final today = DateTime(now.year, now.month, now.day);
     return _lastWeek.add(const Duration(days: 7)).compareTo(today) <= 0;
   }
@@ -2301,37 +1263,33 @@ class _PayrollRunsCardState extends State<_PayrollRunsCard> {
     });
     try {
       final res = await http
-          .get(
-            Uri.parse('$kApiBaseUrl/api/payroll/runs?limit=40'),
-            headers: AuthSession.instance.headers(),
-          )
+          .get(Uri.parse('$kApiBaseUrl/api/payroll/runs?limit=40'), headers: AuthSession.instance.headers())
           .timeout(const Duration(seconds: 30));
       if (res.statusCode == 401) {
         AuthSession.instance.logout();
-        throw Exception('Your session expired. Please sign in again.');
+        throw Exception('Your session ended. Sign in again to keep going.');
       }
       if (res.statusCode != 200) {
-        throw Exception('The server returned status ${res.statusCode}.');
+        throw Exception("Couldn't load the payroll runs (error ${res.statusCode}).");
       }
       final body = json.decode(res.body) as Map<String, dynamic>;
       if (!mounted) return;
       setState(() {
-        _runs = [
-          for (final r in (body['runs'] as List? ?? const []))
-            _RunRow(Map<String, dynamic>.from(r as Map)),
-        ];
+        _runs = [for (final r in (body['runs'] as List? ?? const [])) _RunRow(Map<String, dynamic>.from(r as Map))];
         _loading = false;
       });
     } on TimeoutException {
       if (!mounted) return;
       setState(() {
-        _error = 'Took too long to load.';
+        _error = 'Loading the payroll runs took too long.';
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
+        _error = e is FormatException
+            ? "Couldn't read the payroll runs."
+            : e.toString().replaceFirst('Exception: ', '');
         _loading = false;
       });
     }
@@ -2350,223 +1308,310 @@ class _PayrollRunsCardState extends State<_PayrollRunsCard> {
 
   @override
   Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
     final week = _lastWeek;
     final weekKey = _ymd(week);
     final weekEnd = _ymd(week.add(const Duration(days: 6)));
-    final lastRuns = _runs
-        .where((r) => r.weekStart == weekKey && !r.voided)
-        .toList();
+    final lastRuns = _runs.where((r) => r.weekStart == weekKey && !r.voided).toList();
     final paidLastWeek = lastRuns.fold<double>(0, (s, r) => s + r.paid);
     final done = lastRuns.isNotEmpty;
     final open = !_weekIsOver; // the first pay week is still running
+    final latest = _runs.where((r) => !r.voided).firstOrNull;
 
-    return Container(
-      padding: const EdgeInsets.fromLTRB(18, 16, 18, 12),
-      decoration: _Ui.panel(),
-      child: Column(
+    final header = DashPanelHeader(
+      g: g,
+      title: 'Payroll',
+      tooltip: 'Commission on this page counts once a pay week has a finalized payroll run.',
+      trailing: DashLink(
+        text: 'Run history',
+        label: 'Open the payroll run history',
+        onTap: () => showPayrollHistoryDialog(context),
+      ),
+    );
+
+    final Widget status;
+    final Widget? action;
+    if (_loading && _runs.isEmpty) {
+      status = Align(
+        alignment: Alignment.centerLeft,
+        child: Text("Checking last week's payroll…", style: DashText.meta.copyWith(fontSize: 13)),
+      );
+      action = null;
+    } else if (_error != null && _runs.isEmpty) {
+      status = Align(
+        alignment: Alignment.centerLeft,
+        child: Text(_error!, maxLines: 2, overflow: TextOverflow.ellipsis, style: DashText.meta.copyWith(fontSize: 13)),
+      );
+      action = OutlinedButton(onPressed: _load, child: const Text('Try again'));
+    } else {
+      status = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Payroll',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: _Ui.slate,
+          Text(
+            'Pay week ${_short(weekKey)} – ${_short(weekEnd)}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: DashText.meta.copyWith(fontSize: 12.5),
+          ),
+          const SizedBox(height: 3),
+          Tooltip(
+            message: latest == null
+                ? 'No payroll has been finalized yet.'
+                : 'Latest run: ${_short(latest.weekStart)} – ${_short(latest.weekEnd)}, ${_money(latest.paid)}'
+                      '${latest.by.isEmpty ? '' : ', run by ${latest.by}'}.',
+            child: Text(
+              done ? 'Paid ${_money(paidLastWeek)}' : (open ? 'Week in progress' : 'Not run yet'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 15,
+                height: 1.2,
+                fontWeight: FontWeight.w800,
+                color: done ? DashUi.emeraldText : (open ? DashUi.slate : DashUi.amberText),
+              ),
             ),
           ),
-          const SizedBox(height: 10),
-          if (_loading && _runs.isEmpty)
-            const Expanded(
-              child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-            )
-          else if (_error != null && _runs.isEmpty)
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      _error!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: _Ui.muted, fontSize: 13),
-                    ),
-                    const SizedBox(height: 8),
-                    OutlinedButton(
-                      onPressed: _load,
-                      child: const Text('Try again'),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          else ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: done
-                    ? const Color(0xFFECFDF5)
-                    : (open ? _Ui.faint : const Color(0xFFFFFBEB)),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: done
-                      ? const Color(0xFFA7F3D0)
-                      : (open ? _Ui.line : const Color(0xFFFDE68A)),
-                ),
-              ),
+        ],
+      );
+      action = FilledButton.icon(
+        onPressed: _openRunDialog,
+        icon: const Icon(Icons.payments_outlined, size: 17),
+        label: Text(done ? 'Review / adjust' : (open ? 'Preview payroll' : 'Run payroll')),
+        style: FilledButton.styleFrom(
+          backgroundColor: DashUi.ink,
+          minimumSize: const Size(0, 36),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+      );
+    }
+
+    return DashPanel(
+      header: header,
+      child: SizedBox(
+        height: _StripGeo.content(g),
+        child: Row(
+          children: [
+            Expanded(child: status),
+            if (action != null) ...[const SizedBox(width: 12), action],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// NEXT RETAINAGE RELEASE (a countdown to the next quarter date)
+// =============================================================================
+
+class QuarterlyPayoutCountdownCard extends StatefulWidget {
+  /// Retainage that will be released on the next quarter date, and how many techs receive it.
+  final double amount;
+  final int techCount;
+
+  const QuarterlyPayoutCountdownCard({super.key, required this.amount, required this.techCount});
+
+  @override
+  State<QuarterlyPayoutCountdownCard> createState() => _QuarterlyPayoutCountdownCardState();
+}
+
+class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownCard> {
+  late Timer _timer;
+  late Duration _timeRemaining;
+  late DateTime _previous;
+  late DateTime _target;
+
+  @override
+  void initState() {
+    super.initState();
+    _calculateRemainingTime();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(_calculateRemainingTime);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer.cancel();
+    super.dispose();
+  }
+
+  /// Releases happen on Apr 1, Jul 1 and Oct 1. There is no January 1 release.
+  void _calculateRemainingTime() {
+    final now = DashClock.now();
+    final dates = [
+      for (final y in [now.year - 1, now.year, now.year + 1])
+        for (final m in [4, 7, 10]) DateTime(y, m, 1),
+    ];
+    final next = dates.indexWhere((d) => d.isAfter(now));
+    _target = dates[next];
+    _previous = dates[next - 1];
+    _timeRemaining = _target.difference(now);
+  }
+
+  /// How far through the stretch between the last quarter date and the next one we are, 0 to 1.
+  double get _progress {
+    final total = _target.difference(_previous).inSeconds;
+    if (total <= 0) return 0;
+    return (1 - _timeRemaining.inSeconds / total).clamp(0.0, 1.0);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    final days = _timeRemaining.inDays;
+    final hours = _timeRemaining.inHours % 24;
+    final minutes = _timeRemaining.inMinutes % 60;
+    final seconds = _timeRemaining.inSeconds % 60;
+    final what = widget.amount > 0
+        ? '${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
+        : 'nothing scheduled';
+    final date = '${dashMonthNames[_target.month - 1]} ${_target.day}';
+    // Inside the last day the clock warms to amber: the release is about to happen.
+    final accent = days == 0 ? DashUi.amber : DashUi.indigo;
+    final calm = MediaQuery.disableAnimationsOf(context);
+
+    return DashPanel(
+      header: DashPanelHeader(
+        g: g,
+        title: 'Retainage release',
+        note: date,
+        tooltip: 'Locked retainage is released at the start of each quarter. Next: $date, $what.',
+      ),
+      // The clock's digits change every second. Kept out of text selection: a selectable whose text keeps changing
+      // stops mouse selection from working elsewhere on the page (seen in Chrome).
+      child: SelectionContainer.disabled(
+        child: Semantics(
+          label: 'Next retainage release $date, $what, in $days days and $hours hours',
+          child: ExcludeSemantics(
+            child: SizedBox(
+              height: _StripGeo.content(g),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'Pay week ${_short(weekKey)} – ${_short(weekEnd)}',
-                    style: const TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600,
-                      color: _Ui.slate,
+                  Expanded(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Flexible(
+                          flex: 2,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  widget.amount > 0 ? _money(widget.amount) : 'Nothing scheduled',
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: widget.amount > 0 ? 17 : 13,
+                                    height: 1.15,
+                                    fontWeight: FontWeight.w800,
+                                    color: widget.amount > 0 ? DashUi.ink : DashUi.subtle,
+                                    fontFeatures: DashText.tabular,
+                                  ),
+                                ),
+                                if (widget.amount > 0)
+                                  Text(
+                                    'to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}',
+                                    maxLines: 1,
+                                    style: DashText.meta.copyWith(fontSize: 11.5, height: 1.2, color: DashUi.subtle),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          flex: 3,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _ClockChip(value: days, unit: 'd', color: accent, pad: false),
+                                const SizedBox(width: 4),
+                                _ClockChip(value: hours, unit: 'h', color: accent),
+                                const SizedBox(width: 4),
+                                _ClockChip(value: minutes, unit: 'm', color: accent),
+                                const SizedBox(width: 4),
+                                _ClockChip(value: seconds, unit: 's', color: accent, live: !calm),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                   const SizedBox(height: 4),
-                  Text(
-                    done
-                        ? 'Paid ${_money(paidLastWeek)}'
-                        : (open ? 'Week in progress' : 'Not run yet'),
-                    style: TextStyle(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                      color: done
-                          ? _Ui.emeraldDeep
-                          : (open ? _Ui.slate : _Ui.amber),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _openRunDialog,
-                      icon: const Icon(Icons.payments_outlined, size: 18),
-                      label: Text(
-                        done
-                            ? 'Review / adjust'
-                            : (open ? 'Preview payroll' : 'Run payroll'),
-                      ),
-                      style: FilledButton.styleFrom(
-                        backgroundColor: _Ui.ink,
-                        minimumSize: const Size(0, 40),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                    ),
-                  ),
+                  _QuarterBar(progress: _progress, color: accent, animate: !calm),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            const Text(
-              'Recent runs',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-                color: _Ui.slate,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Expanded(
-              child: _runs.isEmpty
-                  ? const Align(
-                      alignment: Alignment.topLeft,
-                      child: Padding(
-                        padding: EdgeInsets.only(top: 6),
-                        child: Text(
-                          'No payroll has been finalized yet.',
-                          style: TextStyle(color: _Ui.muted, fontSize: 13),
-                        ),
-                      ),
-                    )
-                  : LayoutBuilder(
-                      builder: (context, box) {
-                        const rowH = 34.0;
-                        final fit = (box.maxHeight / rowH).floor().clamp(1, 99);
-                        final shown = math.min(_runs.length, fit);
-                        return Column(
-                          children: [
-                            for (var i = 0; i < shown; i++)
-                              SizedBox(height: rowH, child: _runLine(_runs[i])),
-                          ],
-                        );
-                      },
-                    ),
-            ),
-          ],
-        ],
+          ),
+        ),
       ),
-    );
-  }
-
-  Widget _runLine(_RunRow r) {
-    final muted = r.voided;
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            '${_short(r.weekStart)} – ${_short(r.weekEnd)}'
-            '${r.type == 'adjustment' ? '  ·  adjustment' : ''}'
-            '${r.voided ? '  ·  voided' : ''}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: muted ? _Ui.muted : _Ui.ink,
-              decoration: muted ? TextDecoration.lineThrough : null,
-            ),
-          ),
-        ),
-        Text(
-          _money(r.paid),
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w800,
-            color: muted ? _Ui.muted : _Ui.ink,
-          ),
-        ),
-      ],
     );
   }
 }
 
-class _TrendChip extends StatelessWidget {
-  final double pct;
-  final String vs;
-  const _TrendChip({required this.pct, required this.vs});
+/// One unit of the countdown: a tinted tile with the digits big and the unit small. The seconds tile glows.
+class _ClockChip extends StatelessWidget {
+  final int value;
+  final String unit;
+  final Color color;
+  final bool pad;
+  final bool live;
+  const _ClockChip({required this.value, required this.unit, required this.color, this.pad = true, this.live = false});
 
   @override
   Widget build(BuildContext context) {
-    final up = pct >= 0;
-    final fg = up ? const Color(0xFF047857) : const Color(0xFFB91C1C);
-    final bg = up ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    final digits = pad ? value.toString().padLeft(2, '0') : '$value';
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 400),
+      constraints: const BoxConstraints(minWidth: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(20),
+        color: color.withValues(alpha: 0.09),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: live ? 0.45 : 0.18)),
+        boxShadow: live ? [BoxShadow(color: color.withValues(alpha: 0.22), blurRadius: 6)] : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
         children: [
-          Icon(
-            up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-            size: 14,
-            color: fg,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            transitionBuilder: (child, anim) => FadeTransition(
+              opacity: anim,
+              child: SlideTransition(
+                position: Tween(begin: const Offset(0, -0.35), end: Offset.zero).animate(anim),
+                child: child,
+              ),
+            ),
+            child: Text(
+              digits,
+              key: ValueKey(digits),
+              style: TextStyle(
+                fontSize: 17,
+                height: 1.15,
+                fontWeight: FontWeight.w800,
+                color: color,
+                fontFeatures: DashText.tabular,
+              ),
+            ),
           ),
           const SizedBox(width: 2),
           Text(
-            '${pct.abs().toStringAsFixed(1)}% vs $vs',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: fg,
-            ),
+            unit,
+            style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.w700, color: color.withValues(alpha: 0.7)),
           ),
         ],
       ),
@@ -2574,408 +1619,90 @@ class _TrendChip extends StatelessWidget {
   }
 }
 
-class _MetricToggle extends StatelessWidget {
-  final _ChartMetric value;
-  final ValueChanged<_ChartMetric> onChanged;
-  const _MetricToggle({required this.value, required this.onChanged});
+/// A thin track from the last quarter date to the next, filled to today, with a glowing head.
+class _QuarterBar extends StatelessWidget {
+  final double progress;
+  final Color color;
+  final bool animate;
+  const _QuarterBar({required this.progress, required this.color, required this.animate});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: _Ui.faint,
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: _ChartMetric.values.map((m) {
-          final selected = m == value;
-          return GestureDetector(
-            onTap: () => onChanged(m),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: selected ? Colors.white : Colors.transparent,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: selected ? _Ui.line : Colors.transparent,
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: progress),
+      duration: animate ? const Duration(milliseconds: 1200) : Duration.zero,
+      curve: Curves.easeOutCubic,
+      builder: (context, t, _) => SizedBox(
+        height: 6,
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final w = c.maxWidth * t;
+            return Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(3)),
+                  ),
                 ),
-              ),
-              child: Text(
-                m.toggleLabel,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-                  color: selected ? m.accentDeep : _Ui.slate,
+                Container(
+                  width: w,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(3),
+                    gradient: LinearGradient(colors: [color.withValues(alpha: 0.35), color]),
+                  ),
                 ),
-              ),
-            ),
-          );
-        }).toList(),
+                Positioned(
+                  left: math.max(0, w - 5),
+                  top: -2,
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white,
+                      border: Border.all(color: color, width: 2),
+                      boxShadow: [BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6)],
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }
 }
 
-class _TipRow {
-  final String label;
-  final String value;
-  final Color valueColor;
-  const _TipRow(this.label, this.value, this.valueColor);
-}
+// =============================================================================
+// SKELETON (the same grid, with placeholders)
+// =============================================================================
 
-class _PayoutChartPainter extends CustomPainter {
-  static const double leftGutter = 52;
-  static const double bottomGutter = 32;
-  static const double topPad = 6;
-
-  final List<_MonthlyPayoutPoint> data;
-  final _ChartMetric metric;
-  final _AxisScale scale;
-  final double average;
-  final double total;
-  final int? peakIndex;
-  final int? currentMonth;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _PayoutChartPainter({
-    required this.data,
-    required this.metric,
-    required this.scale,
-    required this.average,
-    required this.total,
-    required this.peakIndex,
-    required this.currentMonth,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
+class _CommissionSkeleton extends StatelessWidget {
+  const _CommissionSkeleton();
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(
-      leftGutter,
-      topPad,
-      size.width,
-      size.height - bottomGutter,
-    );
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
-
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
-
-    double yFor(double v) =>
-        plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
-
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(
-        Rect.fromLTWH(
-          plot.left + index! * slotW + 2,
-          plot.top,
-          slotW - 4,
-          plot.height,
-        ),
-        const Radius.circular(10),
-      );
-      canvas.drawRRect(
-        r,
-        Paint()..color = metric.tint.withValues(alpha: hover),
-      );
-    }
-
-    final ticks = scale.ticks;
-    for (var i = 0; i <= ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(
-        Offset(plot.left, y),
-        Offset(plot.right, y),
-        Paint()
-          ..color = i == 0 ? _Ui.line : _Ui.faint
-          ..strokeWidth = 1,
-      );
-      final tp = _layoutText(
-        metric.axisFormat(v),
-        const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: _Ui.muted,
-        ),
-      );
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    final stagger = 0.4 / n;
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final v = metric.valueOf(p);
-      final isFocus = focusing && index == i;
-      final isCurrent = currentMonth == i;
-      final dim = (focusing && !isFocus) ? 1 - 0.5 * hover : 1.0;
-
-      final cx = plot.left + slotW * (i + 0.5);
-      final baseW = math.min(slotW * 0.58, 36.0);
-      final barW = baseW + (isFocus ? 4 * hover : 0);
-
-      final localT = Curves.easeOutCubic.transform(
-        ((intro - i * stagger) / 0.6).clamp(0.0, 1.0),
-      );
-      final fullH = (v / scale.max).clamp(0.0, 1.0) * plot.height;
-
-      final emphasized = isFocus || isCurrent;
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(
-          fontSize: 13,
-          fontWeight: emphasized ? FontWeight.w800 : FontWeight.w600,
-          color: emphasized
-              ? _Ui.ink
-              : (v > 0 ? _Ui.slate : const Color(0xFFCBD5E1)),
-        ),
-        maxWidth: slotW,
-        align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 8));
-
-      // A short underline marks the current month.
-      if (isCurrent) {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromCenter(
-              center: Offset(cx, plot.bottom + 8 + labelTp.height + 4),
-              width: 14,
-              height: 3,
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return Semantics(
+      label: 'Loading commissions',
+      child: ExcludeSemantics(
+        child: SkeletonPulse(
+          child: _Grid(
+            tiles: List.generate(5, (_) => const DashSkeletonTile()),
+            people: (layout) => DashSkeletonPanel(
+              rows: math.min(5, layout.maxRows),
+              rowH: layout.oneLine ? g.rowWide : _PeoplePanel.twoLineRow(g),
             ),
-            const Radius.circular(2),
+            peopleCount: 5,
+            chart: const DashSkeletonPanel(fill: true),
+            payroll: DashSkeletonPanel(rows: 1, rowH: _StripGeo.content(g) - 16),
+            release: DashSkeletonPanel(rows: 1, rowH: _StripGeo.content(g) - 16),
+            thisWeek: true,
           ),
-          Paint()..color = metric.accent,
-        );
-      }
-
-      if (v <= 0) {
-        final stub = RRect.fromRectAndRadius(
-          Rect.fromCenter(
-            center: Offset(cx, plot.bottom - 1.5),
-            width: baseW * 0.6,
-            height: 3,
-          ),
-          const Radius.circular(2),
-        );
-        canvas.drawRRect(stub, Paint()..color = _Ui.line);
-        continue;
-      }
-
-      final h = math.max(3.0, fullH * localT);
-      final rect = Rect.fromLTWH(cx - barW / 2, plot.bottom - h, barW, h);
-      final topR = Radius.circular(math.min(8, barW / 2));
-      final rrect = RRect.fromRectAndCorners(
-        rect,
-        topLeft: topR,
-        topRight: topR,
-        bottomLeft: const Radius.circular(2),
-        bottomRight: const Radius.circular(2),
-      );
-
-      if (isFocus) {
-        canvas.drawRRect(
-          rrect,
-          Paint()
-            ..color = metric.accent.withValues(alpha: 0.35 * hover)
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-        );
-      }
-
-      final colors = isFocus ? metric.focusColors : metric.barColors;
-      canvas.drawRRect(
-        rrect,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: colors.map((c) => c.withValues(alpha: dim)).toList(),
-          ).createShader(rect),
-      );
-
-      // Label the tallest bar so the best month reads without hovering.
-      if (peakIndex == i && !isFocus && localT >= 1) {
-        final tp = _layoutText(
-          metric.format(v),
-          TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w800,
-            color: metric.accentDeep.withValues(alpha: dim),
-          ),
-        );
-        final ly = rect.top - tp.height - 4;
-        if (ly >= 0) tp.paint(canvas, Offset(cx - tp.width / 2, ly));
-      }
-    }
-
-    if (average > 0 && average <= scale.max) {
-      final y = yFor(average);
-      final paint = Paint()
-        ..color = metric.accent.withValues(alpha: 0.9 * intro)
-        ..strokeWidth = 1.3
-        ..strokeCap = StrokeCap.round;
-      var x = plot.left;
-      while (x < plot.right) {
-        canvas.drawLine(
-          Offset(x, y),
-          Offset(math.min(x + 5, plot.right), y),
-          paint,
-        );
-        x += 9;
-      }
-
-      final avgTp = _layoutText(
-        'avg ${metric.format(average)}',
-        TextStyle(
-          fontSize: 10.5,
-          fontWeight: FontWeight.w700,
-          color: metric.accentDeep.withValues(alpha: intro),
         ),
-      );
-      avgTp.paint(
-        canvas,
-        Offset(plot.right - avgTp.width - 4, y - avgTp.height - 3),
-      );
-    }
-
-    if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
-  }
-
-  void _paintTooltip(
-    Canvas canvas,
-    Size size,
-    Rect plot,
-    double slotW,
-    double Function(double) yFor,
-  ) {
-    final i = index!;
-    final p = data[i];
-    final v = metric.valueOf(p);
-
-    final rows = <_TipRow>[
-      _TipRow(metric.rowLabel, metric.format(v), Colors.white),
-    ];
-    if (v > 0 && total > 0) {
-      rows.add(
-        _TipRow(
-          'Share of year',
-          '${(v / total * 100).toStringAsFixed(0)}%',
-          Colors.white,
-        ),
-      );
-    }
-    if (v > 0 && average > 0) {
-      final d = (v - average) / average * 100;
-      rows.add(
-        _TipRow(
-          'Vs average',
-          '${d >= 0 ? '+' : '-'}${d.abs().toStringAsFixed(0)}%',
-          d >= 0 ? const Color(0xFF34D399) : const Color(0xFFF87171),
-        ),
-      );
-    }
-
-    final titleTp = _layoutText(
-      p.month,
-      const TextStyle(
-        color: Colors.white,
-        fontSize: 13.5,
-        fontWeight: FontWeight.w800,
       ),
     );
-    final labelTps = rows
-        .map(
-          (r) => _layoutText(
-            r.label,
-            const TextStyle(
-              color: Color(0xFF94A3B8),
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        )
-        .toList();
-    final valueTps = rows
-        .map(
-          (r) => _layoutText(
-            r.value,
-            TextStyle(
-              color: r.valueColor,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        )
-        .toList();
-
-    var contentW = titleTp.width;
-    for (var k = 0; k < rows.length; k++) {
-      contentW = math.max(contentW, labelTps[k].width + 16 + valueTps[k].width);
-    }
-    final rowH = labelTps.first.height;
-    final tipW = contentW + 28;
-    final tipH =
-        10 +
-        titleTp.height +
-        6 +
-        rows.length * rowH +
-        (rows.length - 1) * 4 +
-        12;
-
-    final cx = plot.left + slotW * (i + 0.5);
-    final barTop = yFor(v);
-
-    double tx = cx - tipW / 2;
-    double ty = barTop - tipH - 12;
-    if (ty < 0) ty = barTop + 12;
-    tx = math.max(0, math.min(tx, size.width - tipW));
-
-    canvas.saveLayer(
-      Rect.fromLTWH(tx - 24, ty - 24, tipW + 48, tipH + 60),
-      Paint()..color = Colors.white.withValues(alpha: hover),
-    );
-
-    final rrect = RRect.fromRectAndRadius(
-      Rect.fromLTWH(tx, ty, tipW, tipH),
-      const Radius.circular(10),
-    );
-    canvas.drawRRect(
-      rrect.shift(const Offset(0, 4)),
-      Paint()
-        ..color = Colors.black.withValues(alpha: 0.22)
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-    );
-    canvas.drawRRect(rrect, Paint()..color = _Ui.ink);
-
-    var y = ty + 10;
-    titleTp.paint(canvas, Offset(tx + 14, y));
-    y += titleTp.height + 6;
-    for (var k = 0; k < rows.length; k++) {
-      labelTps[k].paint(canvas, Offset(tx + 14, y));
-      valueTps[k].paint(canvas, Offset(tx + tipW - 14 - valueTps[k].width, y));
-      y += rowH + 4;
-    }
-
-    canvas.restore();
   }
-
-  @override
-  bool shouldRepaint(covariant _PayoutChartPainter old) =>
-      old.data != data ||
-      old.metric != metric ||
-      old.intro != intro ||
-      old.index != index ||
-      old.hover != hover ||
-      old.average != average ||
-      old.total != total ||
-      old.peakIndex != peakIndex ||
-      old.currentMonth != currentMonth;
 }

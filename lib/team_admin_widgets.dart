@@ -23,18 +23,6 @@ IconData _groupIcon(int group) => switch (group) {
   _ => Icons.person_rounded,
 };
 
-/// "5 yrs 7 mo", "1 yr", "7 mo": how long since [d].
-String _tenure(DateTime d) {
-  final now = DateTime.now();
-  var months = (now.year - d.year) * 12 + now.month - d.month;
-  if (now.day < d.day) months--;
-  if (months <= 0) return 'New this month';
-  final y = months ~/ 12, m = months % 12;
-  final yrs = y == 0 ? '' : '$y ${y == 1 ? 'yr' : 'yrs'}';
-  final mos = m == 0 ? '' : '$m mo';
-  return [yrs, mos].where((s) => s.isNotEmpty).join(' ');
-}
-
 /// Short versions of what is wrong with someone's setup, for the overview list.
 List<String> _setupProblems(_Emp u) => [
   if (u.active && u.unmatched) 'No Service Fusion work matched in 90 days',

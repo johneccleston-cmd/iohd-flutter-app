@@ -1,0 +1,102 @@
+{
+  "success": true,
+  "year": 2026,
+  "summary": {
+    "wonValue": 0,
+    "wonCount": 0,
+    "winRate": 0,
+    "largestDeal": 0,
+    "sentCount": 0,
+    "priorWonValue": 0
+  },
+  "doorTypes": [],
+  "monthly": [],
+  "priorMonthly": [
+    {
+      "month_num": 1,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 2,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 3,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 4,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 5,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 6,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 7,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 8,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 9,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 10,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 11,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 12,
+      "won_value": 0,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    }
+  ],
+  "people": [],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

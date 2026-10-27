@@ -1,0 +1,81 @@
+{
+  "success": true,
+  "year": 2026,
+  "scorecards": {
+    "openValue": 0,
+    "openCount": 0,
+    "openPriorYears": {
+      "count": 0,
+      "value": 0,
+      "before": "2026-01-01"
+    },
+    "lostValue": 0,
+    "winRate": 0,
+    "sentYtd": 0
+  },
+  "stalePipeline": [],
+  "staleSummary": {
+    "totalCount": 0,
+    "totalValue": 0,
+    "oldestDays": 0,
+    "avgDays": 0
+  },
+  "agingBuckets": [
+    {
+      "bucket": "0-7 days",
+      "count": 0,
+      "value": 0,
+      "stale": false
+    },
+    {
+      "bucket": "8-14 days",
+      "count": 0,
+      "value": 0,
+      "stale": false
+    },
+    {
+      "bucket": "15-30 days",
+      "count": 0,
+      "value": 0,
+      "stale": false
+    },
+    {
+      "bucket": "31+ days",
+      "count": 0,
+      "value": 0,
+      "stale": true
+    }
+  ],
+  "history": {
+    "openValue": []
+  },
+  "monthlyValue": [],
+  "lostReasons": [
+    {
+      "reason": "Other",
+      "lost_value": 0,
+      "count": 0
+    },
+    {
+      "reason": "Price",
+      "lost_value": 0,
+      "count": 0
+    },
+    {
+      "reason": "Competitor",
+      "lost_value": 0,
+      "count": 0
+    },
+    {
+      "reason": "Unresponsive",
+      "lost_value": 0,
+      "count": 0
+    },
+    {
+      "reason": "Timing",
+      "lost_value": 0,
+      "count": 0
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

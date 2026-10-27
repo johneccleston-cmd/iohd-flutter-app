@@ -2136,10 +2136,6 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                   ],
                 ),
               ),
-            Padding(
-              padding: EdgeInsets.fromLTRB(pad, 18, right, 0),
-              child: _Reveal(key: ValueKey('facts-${e.id}'), delayMs: 140, child: _metaStrip(e)),
-            ),
             _scorecard(e, right: right),
             _sectionRule(),
           ],
@@ -2169,55 +2165,6 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         ],
       ),
     );
-  }
-
-  /// The plain facts about this person, each one a full phrase so it reads without a label: how long they've been
-  /// here, how much they've been on jobs lately, and (for techs) their inventory strikes.
-  Widget _metaStrip(_Emp e) {
-    Widget item(IconData icon, String strong, String rest, {Color? tone}) => Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 17, color: tone ?? DashUi.slate),
-        const SizedBox(width: 7),
-        Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(
-                text: strong,
-                style: TextStyle(fontWeight: FontWeight.w800, color: tone ?? DashUi.ink),
-              ),
-              TextSpan(text: rest),
-            ],
-          ),
-          style: const TextStyle(
-            fontSize: 13.5,
-            color: DashUi.slate,
-            fontWeight: FontWeight.w500,
-            fontFeatures: _figures,
-          ),
-        ),
-      ],
-    );
-
-    final joined = DateTime.tryParse(_s(_value('hire_date')));
-    final year = _value('year_joined');
-    final strikesShown = (_glances[e.id]?.stats ?? const <_Stat>[]).any((s) => s.label == 'Inventory strikes');
-    final strikes = _d(e.raw['inventory_strikes']).round();
-    final items = <Widget>[
-      if (joined != null)
-        item(Icons.event_available_rounded, _tenure(joined), ' with IOHD, since ${DateFormat.yMMMd().format(joined)}')
-      else if (year != null)
-        item(Icons.event_available_rounded, 'Since $year', ' with IOHD'),
-      if (e.isField && !strikesShown)
-        item(
-          Icons.inventory_2_outlined,
-          strikes == 0 ? 'No' : '$strikes',
-          ' inventory ${strikes == 1 ? 'strike' : 'strikes'}',
-          tone: strikes == 0 ? _T.goodFg : _T.amberFg,
-        ),
-    ];
-    if (items.isEmpty) return const SizedBox.shrink();
-    return Wrap(spacing: 26, runSpacing: 10, children: items);
   }
 
   /// This year's numbers, as scorecard tiles: skeletons while they load, a retry line if they can't, and nothing at

@@ -1,0 +1,273 @@
+{
+  "success": true,
+  "year": 2026,
+  "summary": {
+    "wonValue": 740378,
+    "wonCount": 110,
+    "winRate": 85.9375,
+    "largestDeal": 38608,
+    "sentCount": 326,
+    "priorWonValue": 2101290
+  },
+  "doorTypes": [
+    {
+      "type": "Modern Steel",
+      "sentCount": 34,
+      "wonCount": 13,
+      "lostCount": 0,
+      "winRate": 0,
+      "revenue": 41824
+    },
+    {
+      "type": "Gallery Steel",
+      "sentCount": 40,
+      "wonCount": 11,
+      "lostCount": 1,
+      "winRate": 0,
+      "revenue": 13621
+    },
+    {
+      "type": "Classic Steel",
+      "sentCount": 52,
+      "wonCount": 10,
+      "lostCount": 3,
+      "winRate": 0,
+      "revenue": 16761
+    },
+    {
+      "type": "Bridgeport Steel",
+      "sentCount": 25,
+      "wonCount": 9,
+      "lostCount": 0,
+      "winRate": 0,
+      "revenue": 27451
+    },
+    {
+      "type": "Canyon Ridge",
+      "sentCount": 16,
+      "wonCount": 6,
+      "lostCount": 0,
+      "winRate": 0,
+      "revenue": 86724
+    },
+    {
+      "type": "Unspecified",
+      "sentCount": 45,
+      "wonCount": 25,
+      "lostCount": 5,
+      "winRate": 0,
+      "revenue": 55466
+    }
+  ],
+  "monthly": [
+    {
+      "month_num": 1,
+      "won_value": 31520,
+      "won_count": 4,
+      "closed_count": 5,
+      "sent_count": 22
+    },
+    {
+      "month_num": 2,
+      "won_value": 84674,
+      "won_count": 12,
+      "closed_count": 14,
+      "sent_count": 31
+    },
+    {
+      "month_num": 3,
+      "won_value": 77961,
+      "won_count": 11,
+      "closed_count": 13,
+      "sent_count": 33
+    },
+    {
+      "month_num": 4,
+      "won_value": 87599,
+      "won_count": 13,
+      "closed_count": 14,
+      "sent_count": 36
+    },
+    {
+      "month_num": 5,
+      "won_value": 79919,
+      "won_count": 12,
+      "closed_count": 15,
+      "sent_count": 34
+    },
+    {
+      "month_num": 6,
+      "won_value": 38780,
+      "won_count": 6,
+      "closed_count": 7,
+      "sent_count": 25
+    },
+    {
+      "month_num": 7,
+      "won_value": 121130,
+      "won_count": 15,
+      "closed_count": 17,
+      "sent_count": 40
+    },
+    {
+      "month_num": 8,
+      "won_value": 53342,
+      "won_count": 9,
+      "closed_count": 10,
+      "sent_count": 30
+    },
+    {
+      "month_num": 9,
+      "won_value": 140044,
+      "won_count": 22,
+      "closed_count": 25,
+      "sent_count": 52
+    },
+    {
+      "month_num": 10,
+      "won_value": 25409,
+      "won_count": 6,
+      "closed_count": 8,
+      "sent_count": 23
+    }
+  ],
+  "priorMonthly": [
+    {
+      "month_num": 1,
+      "won_value": 100000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 2,
+      "won_value": 160000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 3,
+      "won_value": 220000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 4,
+      "won_value": 280000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 5,
+      "won_value": 340000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 6,
+      "won_value": 100000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 7,
+      "won_value": 160000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 8,
+      "won_value": 220000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 9,
+      "won_value": 280000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 10,
+      "won_value": 340000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 11,
+      "won_value": 100000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    },
+    {
+      "month_num": 12,
+      "won_value": 160000,
+      "won_count": 25,
+      "closed_count": 27,
+      "sent_count": 31
+    }
+  ],
+  "people": [
+    {
+      "name": "Taylor Reed",
+      "role": "Residential Sales",
+      "imageUrl": "",
+      "wonValue": 703107,
+      "wonCount": 107,
+      "sentCount": 298,
+      "lostCount": 18,
+      "largestDeal": 38608,
+      "winRate": 85.6,
+      "monthlyWon": [
+        31520,
+        84674,
+        77961,
+        87599,
+        79919,
+        38780,
+        87263,
+        53342,
+        137118,
+        24931,
+        0,
+        0
+      ]
+    },
+    {
+      "name": "Riley Brooks",
+      "role": "Commercial Sales",
+      "imageUrl": "",
+      "wonValue": 37271,
+      "wonCount": 3,
+      "sentCount": 28,
+      "lostCount": 0,
+      "largestDeal": 33867,
+      "winRate": 100,
+      "monthlyWon": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        33867,
+        0,
+        2926,
+        478,
+        0,
+        0
+      ]
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

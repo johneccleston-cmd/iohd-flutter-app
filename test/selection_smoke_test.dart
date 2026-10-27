@@ -87,7 +87,8 @@ void main() {
     tester.view.devicePixelRatio = 1.0;
     tester.view.physicalSize = const Size(1500, 800);
     addTearDown(tester.view.reset);
-    expect(await _drag(tester, find.text('Total payouts YTD').first), contains('Total payouts'));
+    // The card was "Total payouts YTD"; it is "Total payouts" now that its caption names the period.
+    expect(await _drag(tester, find.text('Total payouts').first), contains('Total payouts'));
   });
   testWidgets('hurdle meter name', variant: TargetPlatformVariant.only(TargetPlatform.windows), (tester) async {
     tester.view.devicePixelRatio = 1.0;

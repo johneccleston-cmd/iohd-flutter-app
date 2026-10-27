@@ -1,0 +1,97 @@
+{
+  "history": {
+    "retainagePool": []
+  },
+  "summary": {
+    "totalPayoutsYtd": 0,
+    "companyRetainagePool": 0,
+    "commercialRetainagePool": 0,
+    "avgCommissionPerRecipient": 0,
+    "avgCommissionPerTech": 0,
+    "commissionRate": null,
+    "salesCommission": {
+      "total": 0,
+      "estimates": 0,
+      "hardBid": 0,
+      "newAccount": 0,
+      "account": 0
+    },
+    "nextDisbursement": {
+      "date": "2027-01-01",
+      "amount": 0,
+      "techCount": 0
+    }
+  },
+  "meta": {
+    "year": 2026,
+    "goLiveDate": "2026-10-05",
+    "weeklyThreshold": 750,
+    "retainageScope": "locked balance: lifetime; strikes and penalties: selected year",
+    "averageBasis": "commission recipients: everyone on the job pool (sales-only reps left out)",
+    "averageHeadcount": 0
+  },
+  "technicians": [],
+  "monthlyData": [
+    {
+      "month": "Jan",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Feb",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Mar",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Apr",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "May",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Jun",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Jul",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Aug",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Sep",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Oct",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Nov",
+      "payout": 0,
+      "revenue": 0
+    },
+    {
+      "month": "Dec",
+      "payout": 0,
+      "revenue": 0
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

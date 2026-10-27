@@ -1,0 +1,124 @@
+{
+  "summary": {
+    "metrics": {
+      "year": 2026,
+      "avgProfitYtd": 0,
+      "avgProfitPerDay": 0,
+      "callbackRatePct": null,
+      "callbacks": 0,
+      "callbackJobs": 0,
+      "callbackPeriod": {
+        "from": "2026-10-05",
+        "to": "2026-10-22"
+      },
+      "jobs": 0,
+      "techCount": 4,
+      "avgCustomerRating": null
+    },
+    "totalJobsYtd": 0,
+    "chartData": [
+      {
+        "month": "Jan",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 770,
+        "priorTotalProfit": 61560,
+        "priorJobCount": 143,
+        "partial": false
+      },
+      {
+        "month": "Feb",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 697,
+        "priorTotalProfit": 55728,
+        "priorJobCount": 122,
+        "partial": false
+      },
+      {
+        "month": "Mar",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1061,
+        "priorTotalProfit": 84879,
+        "priorJobCount": 146,
+        "partial": false
+      },
+      {
+        "month": "Apr",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1146,
+        "priorTotalProfit": 91683,
+        "priorJobCount": 158,
+        "partial": false
+      },
+      {
+        "month": "May",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1218,
+        "priorTotalProfit": 97416,
+        "priorJobCount": 172,
+        "partial": false
+      },
+      {
+        "month": "Jun",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1278,
+        "priorTotalProfit": 102204,
+        "priorJobCount": 182,
+        "partial": false
+      },
+      {
+        "month": "Jul",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1170,
+        "priorTotalProfit": 93618,
+        "priorJobCount": 166,
+        "partial": false
+      },
+      {
+        "month": "Aug",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1236,
+        "priorTotalProfit": 98847,
+        "priorJobCount": 155,
+        "partial": false
+      },
+      {
+        "month": "Sep",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 1051,
+        "priorTotalProfit": 84069,
+        "priorJobCount": 144,
+        "partial": false
+      },
+      {
+        "month": "Oct",
+        "avgProfitPerDay": 0,
+        "totalProfit": 0,
+        "jobCount": 0,
+        "priorAvgProfitPerDay": 211,
+        "priorTotalProfit": 16884,
+        "priorJobCount": 45,
+        "partial": true
+      }
+    ]
+  },
+  "techs": [],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

@@ -1,0 +1,15 @@
+{
+  "history": {
+    "valuation": []
+  },
+  "totalValuation": 0,
+  "deadStockValue": null,
+  "lowStockCount": 0,
+  "accuracyPct": null,
+  "lastCycleCount": null,
+  "movementTracked": false,
+  "categories": [],
+  "topStrikeTechs": [],
+  "monthly": [],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

@@ -1,0 +1,260 @@
+{
+  "success": true,
+  "year": 2026,
+  "history": {
+    "activeOpenJobs": [
+      228,
+      230,
+      233,
+      235,
+      238,
+      230,
+      233,
+      235,
+      238,
+      240,
+      233,
+      235,
+      238,
+      240,
+      243,
+      235,
+      238
+    ]
+  },
+  "monthlyMetrics": [
+    {
+      "month_num": 1,
+      "profit_margin": 36,
+      "new_customers": 30
+    },
+    {
+      "month_num": 2,
+      "profit_margin": 38.5,
+      "new_customers": 36
+    },
+    {
+      "month_num": 3,
+      "profit_margin": 41,
+      "new_customers": 42
+    },
+    {
+      "month_num": 4,
+      "profit_margin": 43.5,
+      "new_customers": 48
+    },
+    {
+      "month_num": 5,
+      "profit_margin": 36,
+      "new_customers": 54
+    },
+    {
+      "month_num": 6,
+      "profit_margin": 38.5,
+      "new_customers": 30
+    },
+    {
+      "month_num": 7,
+      "profit_margin": 41,
+      "new_customers": 36
+    },
+    {
+      "month_num": 8,
+      "profit_margin": 43.5,
+      "new_customers": 42
+    },
+    {
+      "month_num": 9,
+      "profit_margin": 36,
+      "new_customers": 48
+    },
+    {
+      "month_num": 10,
+      "profit_margin": 38.5,
+      "new_customers": 54
+    }
+  ],
+  "scorecards": {
+    "completedYtd": 1506,
+    "activeOpenJobs": 239,
+    "avgJobRevenue": 1597,
+    "newCustomersYtd": 412,
+    "avgProfitMargin": 38.2
+  },
+  "monthlyVolume": [
+    {
+      "month_num": 1,
+      "completed_count": 159,
+      "install_count": 104,
+      "service_count": 42
+    },
+    {
+      "month_num": 2,
+      "completed_count": 131,
+      "install_count": 75,
+      "service_count": 41
+    },
+    {
+      "month_num": 3,
+      "completed_count": 159,
+      "install_count": 102,
+      "service_count": 38
+    },
+    {
+      "month_num": 4,
+      "completed_count": 168,
+      "install_count": 122,
+      "service_count": 35
+    },
+    {
+      "month_num": 5,
+      "completed_count": 183,
+      "install_count": 127,
+      "service_count": 34
+    },
+    {
+      "month_num": 6,
+      "completed_count": 196,
+      "install_count": 137,
+      "service_count": 37
+    },
+    {
+      "month_num": 7,
+      "completed_count": 178,
+      "install_count": 114,
+      "service_count": 38
+    },
+    {
+      "month_num": 8,
+      "completed_count": 167,
+      "install_count": 107,
+      "service_count": 45
+    },
+    {
+      "month_num": 9,
+      "completed_count": 157,
+      "install_count": 108,
+      "service_count": 39
+    },
+    {
+      "month_num": 10,
+      "completed_count": 8,
+      "install_count": 4,
+      "service_count": 0
+    }
+  ],
+  "weeklySplit": [],
+  "monthlySplit": [
+    {
+      "month_num": 1,
+      "commercial_rev": 40000,
+      "residential_rev": 150000
+    },
+    {
+      "month_num": 2,
+      "commercial_rev": 85000,
+      "residential_rev": 180000
+    },
+    {
+      "month_num": 3,
+      "commercial_rev": 130000,
+      "residential_rev": 210000
+    },
+    {
+      "month_num": 4,
+      "commercial_rev": 175000,
+      "residential_rev": 150000
+    },
+    {
+      "month_num": 5,
+      "commercial_rev": 40000,
+      "residential_rev": 180000
+    },
+    {
+      "month_num": 6,
+      "commercial_rev": 85000,
+      "residential_rev": 210000
+    },
+    {
+      "month_num": 7,
+      "commercial_rev": 130000,
+      "residential_rev": 150000
+    },
+    {
+      "month_num": 8,
+      "commercial_rev": 175000,
+      "residential_rev": 180000
+    },
+    {
+      "month_num": 9,
+      "commercial_rev": 40000,
+      "residential_rev": 210000
+    },
+    {
+      "month_num": 10,
+      "commercial_rev": 4200,
+      "residential_rev": 8600
+    }
+  ],
+  "statusCounts": [
+    {
+      "status": "Need To Schedule",
+      "count": 130
+    },
+    {
+      "status": "Scheduled - Full Day",
+      "count": 33
+    },
+    {
+      "status": "Complete",
+      "count": 21
+    },
+    {
+      "status": "Need Deposit",
+      "count": 13
+    },
+    {
+      "status": "Delayed",
+      "count": 12
+    },
+    {
+      "status": "Partially Complete",
+      "count": 11
+    },
+    {
+      "status": "Need To Sell",
+      "count": 9
+    },
+    {
+      "status": "Manage Project",
+      "count": 5
+    },
+    {
+      "status": "Appointment",
+      "count": 1
+    },
+    {
+      "status": "14 Day Notice",
+      "count": 1
+    },
+    {
+      "status": "Check on Payment",
+      "count": 1
+    },
+    {
+      "status": "Need To Order",
+      "count": 1
+    },
+    {
+      "status": "Part Ordered",
+      "count": 1
+    }
+  ],
+  "pipelineStages": [],
+  "splitCoverage": {
+    "completedJobs": 1506,
+    "jobsWithCategories": 1349,
+    "jobsWithLineItems": 1446
+  },
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

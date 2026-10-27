@@ -1,0 +1,727 @@
+{
+ "question": "Which customers owe us the most money, especially overdue balances?",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Checking what is owed… Finding the oldest unpaid jobs…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_10",
+   "name": "outstanding_balances",
+   "input": "{\"group_by\":\"customer\"}",
+   "state": "start",
+   "text": "Checking what is owed…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_11",
+   "name": "oldest_unpaid_jobs",
+   "input": "{\"min_days\":60,\"order_by\":\"balance\"}",
+   "state": "start",
+   "text": "Finding the oldest unpaid jobs…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_11",
+   "name": "oldest_unpaid_jobs",
+   "state": "done",
+   "ok": true,
+   "ms": 1
+  },
+  {
+   "type": "tool",
+   "id": "toolu_10",
+   "name": "outstanding_balances",
+   "state": "done",
+   "ok": true,
+   "ms": 1
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "[Northga"
+  },
+  {
+   "type": "delta",
+   "text": "te Prope"
+  },
+  {
+   "type": "delta",
+   "text": "rty Grou"
+  },
+  {
+   "type": "delta",
+   "text": "p](custo"
+  },
+  {
+   "type": "delta",
+   "text": "mer:Nort"
+  },
+  {
+   "type": "delta",
+   "text": "hgate Pr"
+  },
+  {
+   "type": "delta",
+   "text": "operty G"
+  },
+  {
+   "type": "delta",
+   "text": "roup) ow"
+  },
+  {
+   "type": "delta",
+   "text": "es the m"
+  },
+  {
+   "type": "delta",
+   "text": "ost: $18"
+  },
+  {
+   "type": "delta",
+   "text": ",240 on "
+  },
+  {
+   "type": "delta",
+   "text": "3 invoic"
+  },
+  {
+   "type": "delta",
+   "text": "es, $9,8"
+  },
+  {
+   "type": "delta",
+   "text": "60 of it"
+  },
+  {
+   "type": "delta",
+   "text": " over 90"
+  },
+  {
+   "type": "delta",
+   "text": " days. I"
+  },
+  {
+   "type": "delta",
+   "text": "n all, c"
+  },
+  {
+   "type": "delta",
+   "text": "ustomers"
+  },
+  {
+   "type": "delta",
+   "text": " owe $43"
+  },
+  {
+   "type": "delta",
+   "text": ",371 on "
+  },
+  {
+   "type": "delta",
+   "text": "8 invoic"
+  },
+  {
+   "type": "delta",
+   "text": "ed jobs,"
+  },
+  {
+   "type": "delta",
+   "text": " $17,090"
+  },
+  {
+   "type": "delta",
+   "text": " of it o"
+  },
+  {
+   "type": "delta",
+   "text": "ver 60 d"
+  },
+  {
+   "type": "delta",
+   "text": "ays.\n\n| "
+  },
+  {
+   "type": "delta",
+   "text": "Customer"
+  },
+  {
+   "type": "delta",
+   "text": " | Owed "
+  },
+  {
+   "type": "delta",
+   "text": "| Over 6"
+  },
+  {
+   "type": "delta",
+   "text": "0 days |"
+  },
+  {
+   "type": "delta",
+   "text": " Oldest "
+  },
+  {
+   "type": "delta",
+   "text": "|\n|---|-"
+  },
+  {
+   "type": "delta",
+   "text": "--|---|-"
+  },
+  {
+   "type": "delta",
+   "text": "--|\n| [N"
+  },
+  {
+   "type": "delta",
+   "text": "orthgate"
+  },
+  {
+   "type": "delta",
+   "text": " Propert"
+  },
+  {
+   "type": "delta",
+   "text": "y Group]"
+  },
+  {
+   "type": "delta",
+   "text": "(custome"
+  },
+  {
+   "type": "delta",
+   "text": "r:Northg"
+  },
+  {
+   "type": "delta",
+   "text": "ate Prop"
+  },
+  {
+   "type": "delta",
+   "text": "erty Gro"
+  },
+  {
+   "type": "delta",
+   "text": "up) | $1"
+  },
+  {
+   "type": "delta",
+   "text": "8,240 | "
+  },
+  {
+   "type": "delta",
+   "text": "$9,860 |"
+  },
+  {
+   "type": "delta",
+   "text": " 96 days"
+  },
+  {
+   "type": "delta",
+   "text": " |\n| [Ri"
+  },
+  {
+   "type": "delta",
+   "text": "verside "
+  },
+  {
+   "type": "delta",
+   "text": "Logistic"
+  },
+  {
+   "type": "delta",
+   "text": "s](custo"
+  },
+  {
+   "type": "delta",
+   "text": "mer:Rive"
+  },
+  {
+   "type": "delta",
+   "text": "rside Lo"
+  },
+  {
+   "type": "delta",
+   "text": "gistics)"
+  },
+  {
+   "type": "delta",
+   "text": " | $12,9"
+  },
+  {
+   "type": "delta",
+   "text": "00 | $0 "
+  },
+  {
+   "type": "delta",
+   "text": "| 25 day"
+  },
+  {
+   "type": "delta",
+   "text": "s |\n| [C"
+  },
+  {
+   "type": "delta",
+   "text": "edar Cre"
+  },
+  {
+   "type": "delta",
+   "text": "ek HOA]("
+  },
+  {
+   "type": "delta",
+   "text": "customer"
+  },
+  {
+   "type": "delta",
+   "text": ":Cedar C"
+  },
+  {
+   "type": "delta",
+   "text": "reek HOA"
+  },
+  {
+   "type": "delta",
+   "text": ") | $4,4"
+  },
+  {
+   "type": "delta",
+   "text": "80 | $4,"
+  },
+  {
+   "type": "delta",
+   "text": "480 | 74"
+  },
+  {
+   "type": "delta",
+   "text": " days |\n"
+  },
+  {
+   "type": "delta",
+   "text": "| [Lakes"
+  },
+  {
+   "type": "delta",
+   "text": "ide Apar"
+  },
+  {
+   "type": "delta",
+   "text": "tments]("
+  },
+  {
+   "type": "delta",
+   "text": "customer"
+  },
+  {
+   "type": "delta",
+   "text": ":Lakesid"
+  },
+  {
+   "type": "delta",
+   "text": "e Apartm"
+  },
+  {
+   "type": "delta",
+   "text": "ents) | "
+  },
+  {
+   "type": "delta",
+   "text": "$3,615 |"
+  },
+  {
+   "type": "delta",
+   "text": " $0 | 7 "
+  },
+  {
+   "type": "delta",
+   "text": "days |\n|"
+  },
+  {
+   "type": "delta",
+   "text": " [Summit"
+  },
+  {
+   "type": "delta",
+   "text": " Storage"
+  },
+  {
+   "type": "delta",
+   "text": " Co](cus"
+  },
+  {
+   "type": "delta",
+   "text": "tomer:Su"
+  },
+  {
+   "type": "delta",
+   "text": "mmit Sto"
+  },
+  {
+   "type": "delta",
+   "text": "rage Co)"
+  },
+  {
+   "type": "delta",
+   "text": " | $2,75"
+  },
+  {
+   "type": "delta",
+   "text": "0 | $2,7"
+  },
+  {
+   "type": "delta",
+   "text": "50 | 119"
+  },
+  {
+   "type": "delta",
+   "text": " days |\n"
+  },
+  {
+   "type": "delta",
+   "text": "| [Maple"
+  },
+  {
+   "type": "delta",
+   "text": " Street "
+  },
+  {
+   "type": "delta",
+   "text": "Bakery]("
+  },
+  {
+   "type": "delta",
+   "text": "customer"
+  },
+  {
+   "type": "delta",
+   "text": ":Maple S"
+  },
+  {
+   "type": "delta",
+   "text": "treet Ba"
+  },
+  {
+   "type": "delta",
+   "text": "kery) | "
+  },
+  {
+   "type": "delta",
+   "text": "$1,386 |"
+  },
+  {
+   "type": "delta",
+   "text": " $0 | 28"
+  },
+  {
+   "type": "delta",
+   "text": " days |\n"
+  },
+  {
+   "type": "delta",
+   "text": "\n- Over "
+  },
+  {
+   "type": "delta",
+   "text": "60 days:"
+  },
+  {
+   "type": "delta",
+   "text": " [109580"
+  },
+  {
+   "type": "delta",
+   "text": "2214](jo"
+  },
+  {
+   "type": "delta",
+   "text": "b:109580"
+  },
+  {
+   "type": "delta",
+   "text": "2214) (N"
+  },
+  {
+   "type": "delta",
+   "text": "orthgate"
+  },
+  {
+   "type": "delta",
+   "text": ", $9,860"
+  },
+  {
+   "type": "delta",
+   "text": ", 96 day"
+  },
+  {
+   "type": "delta",
+   "text": "s, 90 Da"
+  },
+  {
+   "type": "delta",
+   "text": "y Notice"
+  },
+  {
+   "type": "delta",
+   "text": "), [1095"
+  },
+  {
+   "type": "delta",
+   "text": "804410]("
+  },
+  {
+   "type": "delta",
+   "text": "job:1095"
+  },
+  {
+   "type": "delta",
+   "text": "804410) "
+  },
+  {
+   "type": "delta",
+   "text": "(Cedar C"
+  },
+  {
+   "type": "delta",
+   "text": "reek, $4"
+  },
+  {
+   "type": "delta",
+   "text": ",480, 74"
+  },
+  {
+   "type": "delta",
+   "text": " days, 6"
+  },
+  {
+   "type": "delta",
+   "text": "0 Day No"
+  },
+  {
+   "type": "delta",
+   "text": "tice) an"
+  },
+  {
+   "type": "delta",
+   "text": "d [10958"
+  },
+  {
+   "type": "delta",
+   "text": "01777](j"
+  },
+  {
+   "type": "delta",
+   "text": "ob:10958"
+  },
+  {
+   "type": "delta",
+   "text": "01777) ("
+  },
+  {
+   "type": "delta",
+   "text": "Summit, "
+  },
+  {
+   "type": "delta",
+   "text": "$2,750, "
+  },
+  {
+   "type": "delta",
+   "text": "119 days"
+  },
+  {
+   "type": "delta",
+   "text": ", 90 Day"
+  },
+  {
+   "type": "delta",
+   "text": " Notice)"
+  },
+  {
+   "type": "delta",
+   "text": ".\n\nSugge"
+  },
+  {
+   "type": "delta",
+   "text": "stion: c"
+  },
+  {
+   "type": "delta",
+   "text": "all Nort"
+  },
+  {
+   "type": "delta",
+   "text": "hgate fi"
+  },
+  {
+   "type": "delta",
+   "text": "rst; Sum"
+  },
+  {
+   "type": "delta",
+   "text": "mit's ba"
+  },
+  {
+   "type": "delta",
+   "text": "lance is"
+  },
+  {
+   "type": "delta",
+   "text": " the old"
+  },
+  {
+   "type": "delta",
+   "text": "est.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": basis\n"
+  },
+  {
+   "type": "delta",
+   "text": "Owed: in"
+  },
+  {
+   "type": "delta",
+   "text": "voiced j"
+  },
+  {
+   "type": "delta",
+   "text": "obs (Fin"
+  },
+  {
+   "type": "delta",
+   "text": "al Invoi"
+  },
+  {
+   "type": "delta",
+   "text": "ce Sent "
+  },
+  {
+   "type": "delta",
+   "text": "or Check"
+  },
+  {
+   "type": "delta",
+   "text": " on Paym"
+  },
+  {
+   "type": "delta",
+   "text": "ent) as "
+  },
+  {
+   "type": "delta",
+   "text": "of today"
+  },
+  {
+   "type": "delta",
+   "text": ". Days c"
+  },
+  {
+   "type": "delta",
+   "text": "ounted f"
+  },
+  {
+   "type": "delta",
+   "text": "rom the "
+  },
+  {
+   "type": "delta",
+   "text": "job end "
+  },
+  {
+   "type": "delta",
+   "text": "date.\n::"
+  },
+  {
+   "type": "delta",
+   "text": ":\n\n::: f"
+  },
+  {
+   "type": "delta",
+   "text": "ollowups"
+  },
+  {
+   "type": "delta",
+   "text": "\nWhich o"
+  },
+  {
+   "type": "delta",
+   "text": "f these "
+  },
+  {
+   "type": "delta",
+   "text": "are on a"
+  },
+  {
+   "type": "delta",
+   "text": " 90 Day "
+  },
+  {
+   "type": "delta",
+   "text": "Notice?\n"
+  },
+  {
+   "type": "delta",
+   "text": "How fast"
+  },
+  {
+   "type": "delta",
+   "text": " does No"
+  },
+  {
+   "type": "delta",
+   "text": "rthgate "
+  },
+  {
+   "type": "delta",
+   "text": "usually "
+  },
+  {
+   "type": "delta",
+   "text": "pay?\n:::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "[Northgate Property Group](customer:Northgate Property Group) owes the most: $18,240 on 3 invoices, $9,860 of it over 90 days. In all, customers owe $43,371 on 8 invoiced jobs, $17,090 of it over 60 days.\n\n| Customer | Owed | Over 60 days | Oldest |\n|---|---|---|---|\n| [Northgate Property Group](customer:Northgate Property Group) | $18,240 | $9,860 | 96 days |\n| [Riverside Logistics](customer:Riverside Logistics) | $12,900 | $0 | 25 days |\n| [Cedar Creek HOA](customer:Cedar Creek HOA) | $4,480 | $4,480 | 74 days |\n| [Lakeside Apartments](customer:Lakeside Apartments) | $3,615 | $0 | 7 days |\n| [Summit Storage Co](customer:Summit Storage Co) | $2,750 | $2,750 | 119 days |\n| [Maple Street Bakery](customer:Maple Street Bakery) | $1,386 | $0 | 28 days |\n\n- Over 60 days: [1095802214](job:1095802214) (Northgate, $9,860, 96 days, 90 Day Notice), [1095804410](job:1095804410) (Cedar Creek, $4,480, 74 days, 60 Day Notice) and [1095801777](job:1095801777) (Summit, $2,750, 119 days, 90 Day Notice).\n\nSuggestion: call Northgate first; Summit's balance is the oldest.\n\n::: basis\nOwed: invoiced jobs (Final Invoice Sent or Check on Payment) as of today. Days counted from the job end date.\n:::\n\n::: followups\nWhich of these are on a 90 Day Notice?\nHow fast does Northgate usually pay?\n:::",
+   "toolsUsed": [
+    "outstanding_balances",
+    "oldest_unpaid_jobs"
+   ],
+   "calls": [
+    {
+     "tool": "outstanding_balances",
+     "input": "{\"group_by\":\"customer\"}",
+     "ms": 1,
+     "ok": true
+    },
+    {
+     "tool": "oldest_unpaid_jobs",
+     "input": "{\"min_days\":60,\"order_by\":\"balance\"}",
+     "ms": 1,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

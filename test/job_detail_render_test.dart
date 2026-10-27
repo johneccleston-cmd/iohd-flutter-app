@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:iohd_desktop/widgets/quo_activity_panel.dart';
 import 'package:iohd_desktop/job_detail_screen.dart';
 
 Future<void> _loadFont(String family, List<String> paths) async {
@@ -287,7 +288,8 @@ void main() {
 
       await t.tap(find.text('Communications'));
       await t.pumpAndSettle();
-      expect(find.text('No communications recorded'), findsOneWidget);
+      expect(find.byType(QuoActivityPanel), findsOneWidget); // the Quo calls-and-texts panel replaced the "not tracked" placeholder
+      expect(find.text('No communications recorded'), findsNothing);
       await t.tap(find.text('Activity'));
       await t.pumpAndSettle();
       expect(find.textContaining('Created  →  Scheduled', findRichText: true), findsOneWidget);
@@ -600,7 +602,8 @@ void main() {
       expect(tab, lessThan(t.getTopLeft(find.text('Job Info')).dx), reason: 'left column = Details card');
       await t.tap(find.text('Communications'));
       await t.pumpAndSettle();
-      expect(find.text('No communications recorded'), findsOneWidget);
+      expect(find.byType(QuoActivityPanel), findsOneWidget); // the Quo calls-and-texts panel replaced the old "not tracked" placeholder
+      expect(find.text('No communications recorded'), findsNothing);
       expect(find.text('Primary Contact'), findsNothing); // the Details card swapped to that tab
       expect(find.text('Arrival Time Window'), findsOneWidget); // Job Info is untouched
     }, () => _mock());

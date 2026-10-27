@@ -1,0 +1,1082 @@
+{
+ "question": "Give me today's priorities and tell me why each one matters.",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Pulling together today's priorities…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_1",
+   "name": "daily_briefing",
+   "input": "{}",
+   "state": "start",
+   "text": "Pulling together today's priorities…"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Today's schedule",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Next 7 days",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Stuck jobs",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Money owed",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Oldest balances",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Quiet estimates",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Office tasks",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Low stock",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Materials for booked jobs",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Changes since Oct 26",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Next 7 days",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Money owed",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Oldest balances",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Quiet estimates",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Low stock",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Materials for booked jobs",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Stuck jobs",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Office tasks",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Changes since Oct 26",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_1",
+   "label": "Today's schedule",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "tool",
+   "id": "toolu_1",
+   "name": "daily_briefing",
+   "state": "done",
+   "ok": true,
+   "ms": 134
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "Five thi"
+  },
+  {
+   "type": "delta",
+   "text": "ngs need"
+  },
+  {
+   "type": "delta",
+   "text": " attenti"
+  },
+  {
+   "type": "delta",
+   "text": "on today"
+  },
+  {
+   "type": "delta",
+   "text": ": a door"
+  },
+  {
+   "type": "delta",
+   "text": " shortag"
+  },
+  {
+   "type": "delta",
+   "text": "e for th"
+  },
+  {
+   "type": "delta",
+   "text": "is week'"
+  },
+  {
+   "type": "delta",
+   "text": "s instal"
+  },
+  {
+   "type": "delta",
+   "text": "ls, two "
+  },
+  {
+   "type": "delta",
+   "text": "overdue "
+  },
+  {
+   "type": "delta",
+   "text": "balances"
+  },
+  {
+   "type": "delta",
+   "text": ", a quie"
+  },
+  {
+   "type": "delta",
+   "text": "t $52,40"
+  },
+  {
+   "type": "delta",
+   "text": "0 estima"
+  },
+  {
+   "type": "delta",
+   "text": "te and t"
+  },
+  {
+   "type": "delta",
+   "text": "wo jobs "
+  },
+  {
+   "type": "delta",
+   "text": "that are"
+  },
+  {
+   "type": "delta",
+   "text": " not mov"
+  },
+  {
+   "type": "delta",
+   "text": "ing.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": priori"
+  },
+  {
+   "type": "delta",
+   "text": "ties\nhig"
+  },
+  {
+   "type": "delta",
+   "text": "h | Orde"
+  },
+  {
+   "type": "delta",
+   "text": "r Clopay"
+  },
+  {
+   "type": "delta",
+   "text": " Classic"
+  },
+  {
+   "type": "delta",
+   "text": " Steel 1"
+  },
+  {
+   "type": "delta",
+   "text": "6x7 Whit"
+  },
+  {
+   "type": "delta",
+   "text": "e doors "
+  },
+  {
+   "type": "delta",
+   "text": "([Invent"
+  },
+  {
+   "type": "delta",
+   "text": "ory](pag"
+  },
+  {
+   "type": "delta",
+   "text": "e:invent"
+  },
+  {
+   "type": "delta",
+   "text": "ory)) | "
+  },
+  {
+   "type": "delta",
+   "text": "Jobs boo"
+  },
+  {
+   "type": "delta",
+   "text": "ked in t"
+  },
+  {
+   "type": "delta",
+   "text": "he next "
+  },
+  {
+   "type": "delta",
+   "text": "7 days n"
+  },
+  {
+   "type": "delta",
+   "text": "eed 5 an"
+  },
+  {
+   "type": "delta",
+   "text": "d only 2"
+  },
+  {
+   "type": "delta",
+   "text": " are on "
+  },
+  {
+   "type": "delta",
+   "text": "hand, sh"
+  },
+  {
+   "type": "delta",
+   "text": "ort 3; t"
+  },
+  {
+   "type": "delta",
+   "text": "he first"
+  },
+  {
+   "type": "delta",
+   "text": " visit i"
+  },
+  {
+   "type": "delta",
+   "text": "s today."
+  },
+  {
+   "type": "delta",
+   "text": " | Order"
+  },
+  {
+   "type": "delta",
+   "text": " 3 today"
+  },
+  {
+   "type": "delta",
+   "text": ", or mov"
+  },
+  {
+   "type": "delta",
+   "text": "e one of"
+  },
+  {
+   "type": "delta",
+   "text": " this we"
+  },
+  {
+   "type": "delta",
+   "text": "ek's ins"
+  },
+  {
+   "type": "delta",
+   "text": "talls.\nh"
+  },
+  {
+   "type": "delta",
+   "text": "igh | Co"
+  },
+  {
+   "type": "delta",
+   "text": "llect $9"
+  },
+  {
+   "type": "delta",
+   "text": ",860 fro"
+  },
+  {
+   "type": "delta",
+   "text": "m [North"
+  },
+  {
+   "type": "delta",
+   "text": "gate Pro"
+  },
+  {
+   "type": "delta",
+   "text": "perty Gr"
+  },
+  {
+   "type": "delta",
+   "text": "oup](cus"
+  },
+  {
+   "type": "delta",
+   "text": "tomer:No"
+  },
+  {
+   "type": "delta",
+   "text": "rthgate "
+  },
+  {
+   "type": "delta",
+   "text": "Property"
+  },
+  {
+   "type": "delta",
+   "text": " Group) "
+  },
+  {
+   "type": "delta",
+   "text": "| The bi"
+  },
+  {
+   "type": "delta",
+   "text": "ggest of"
+  },
+  {
+   "type": "delta",
+   "text": " 3 invoi"
+  },
+  {
+   "type": "delta",
+   "text": "ces over"
+  },
+  {
+   "type": "delta",
+   "text": " 60 days"
+  },
+  {
+   "type": "delta",
+   "text": " ($17,09"
+  },
+  {
+   "type": "delta",
+   "text": "0 in all"
+  },
+  {
+   "type": "delta",
+   "text": "): 96 da"
+  },
+  {
+   "type": "delta",
+   "text": "ys old, "
+  },
+  {
+   "type": "delta",
+   "text": "on a 90 "
+  },
+  {
+   "type": "delta",
+   "text": "Day Noti"
+  },
+  {
+   "type": "delta",
+   "text": "ce ([109"
+  },
+  {
+   "type": "delta",
+   "text": "5802214]"
+  },
+  {
+   "type": "delta",
+   "text": "(job:109"
+  },
+  {
+   "type": "delta",
+   "text": "5802214)"
+  },
+  {
+   "type": "delta",
+   "text": "). | Cal"
+  },
+  {
+   "type": "delta",
+   "text": "l their "
+  },
+  {
+   "type": "delta",
+   "text": "accounts"
+  },
+  {
+   "type": "delta",
+   "text": " payable"
+  },
+  {
+   "type": "delta",
+   "text": "; the 90"
+  },
+  {
+   "type": "delta",
+   "text": "-day let"
+  },
+  {
+   "type": "delta",
+   "text": "ter task"
+  },
+  {
+   "type": "delta",
+   "text": " is stil"
+  },
+  {
+   "type": "delta",
+   "text": "l open.\n"
+  },
+  {
+   "type": "delta",
+   "text": "medium |"
+  },
+  {
+   "type": "delta",
+   "text": " Follow "
+  },
+  {
+   "type": "delta",
+   "text": "up on [1"
+  },
+  {
+   "type": "delta",
+   "text": "09580993"
+  },
+  {
+   "type": "delta",
+   "text": "1](estim"
+  },
+  {
+   "type": "delta",
+   "text": "ate:1095"
+  },
+  {
+   "type": "delta",
+   "text": "809931) "
+  },
+  {
+   "type": "delta",
+   "text": "for [Riv"
+  },
+  {
+   "type": "delta",
+   "text": "erside L"
+  },
+  {
+   "type": "delta",
+   "text": "ogistics"
+  },
+  {
+   "type": "delta",
+   "text": "](custom"
+  },
+  {
+   "type": "delta",
+   "text": "er:River"
+  },
+  {
+   "type": "delta",
+   "text": "side Log"
+  },
+  {
+   "type": "delta",
+   "text": "istics) "
+  },
+  {
+   "type": "delta",
+   "text": "| $52,40"
+  },
+  {
+   "type": "delta",
+   "text": "0 with n"
+  },
+  {
+   "type": "delta",
+   "text": "o status"
+  },
+  {
+   "type": "delta",
+   "text": " change "
+  },
+  {
+   "type": "delta",
+   "text": "for 22 d"
+  },
+  {
+   "type": "delta",
+   "text": "ays, the"
+  },
+  {
+   "type": "delta",
+   "text": " larger "
+  },
+  {
+   "type": "delta",
+   "text": "of 2 qui"
+  },
+  {
+   "type": "delta",
+   "text": "et estim"
+  },
+  {
+   "type": "delta",
+   "text": "ates wor"
+  },
+  {
+   "type": "delta",
+   "text": "th $71,1"
+  },
+  {
+   "type": "delta",
+   "text": "50. | As"
+  },
+  {
+   "type": "delta",
+   "text": "k Morgan"
+  },
+  {
+   "type": "delta",
+   "text": " Hayes t"
+  },
+  {
+   "type": "delta",
+   "text": "o call t"
+  },
+  {
+   "type": "delta",
+   "text": "his week"
+  },
+  {
+   "type": "delta",
+   "text": ".\nmedium"
+  },
+  {
+   "type": "delta",
+   "text": " | Get ["
+  },
+  {
+   "type": "delta",
+   "text": "10958102"
+  },
+  {
+   "type": "delta",
+   "text": "31](job:"
+  },
+  {
+   "type": "delta",
+   "text": "10958102"
+  },
+  {
+   "type": "delta",
+   "text": "31) for "
+  },
+  {
+   "type": "delta",
+   "text": "Ozark Ri"
+  },
+  {
+   "type": "delta",
+   "text": "dge Home"
+  },
+  {
+   "type": "delta",
+   "text": "s moving"
+  },
+  {
+   "type": "delta",
+   "text": " | In Ne"
+  },
+  {
+   "type": "delta",
+   "text": "ed To Or"
+  },
+  {
+   "type": "delta",
+   "text": "der for "
+  },
+  {
+   "type": "delta",
+   "text": "41 days "
+  },
+  {
+   "type": "delta",
+   "text": "($8,450)"
+  },
+  {
+   "type": "delta",
+   "text": " with no"
+  },
+  {
+   "type": "delta",
+   "text": " visit b"
+  },
+  {
+   "type": "delta",
+   "text": "ooked; t"
+  },
+  {
+   "type": "delta",
+   "text": "he Oct 1"
+  },
+  {
+   "type": "delta",
+   "text": "4 note s"
+  },
+  {
+   "type": "delta",
+   "text": "ays Clop"
+  },
+  {
+   "type": "delta",
+   "text": "ay needs"
+  },
+  {
+   "type": "delta",
+   "text": " two mor"
+  },
+  {
+   "type": "delta",
+   "text": "e weeks."
+  },
+  {
+   "type": "delta",
+   "text": " | Ask C"
+  },
+  {
+   "type": "delta",
+   "text": "lopay fo"
+  },
+  {
+   "type": "delta",
+   "text": "r a deli"
+  },
+  {
+   "type": "delta",
+   "text": "very dat"
+  },
+  {
+   "type": "delta",
+   "text": "e.\nlow |"
+  },
+  {
+   "type": "delta",
+   "text": " Book [1"
+  },
+  {
+   "type": "delta",
+   "text": "09581087"
+  },
+  {
+   "type": "delta",
+   "text": "7](job:1"
+  },
+  {
+   "type": "delta",
+   "text": "09581087"
+  },
+  {
+   "type": "delta",
+   "text": "7) for H"
+  },
+  {
+   "type": "delta",
+   "text": "artwell "
+  },
+  {
+   "type": "delta",
+   "text": "Builders"
+  },
+  {
+   "type": "delta",
+   "text": " | Need "
+  },
+  {
+   "type": "delta",
+   "text": "To Sched"
+  },
+  {
+   "type": "delta",
+   "text": "ule for "
+  },
+  {
+   "type": "delta",
+   "text": "29 days,"
+  },
+  {
+   "type": "delta",
+   "text": " with an"
+  },
+  {
+   "type": "delta",
+   "text": " open ta"
+  },
+  {
+   "type": "delta",
+   "text": "sk to pi"
+  },
+  {
+   "type": "delta",
+   "text": "ck an in"
+  },
+  {
+   "type": "delta",
+   "text": "stall da"
+  },
+  {
+   "type": "delta",
+   "text": "te. | Ca"
+  },
+  {
+   "type": "delta",
+   "text": "ll Hartw"
+  },
+  {
+   "type": "delta",
+   "text": "ell Buil"
+  },
+  {
+   "type": "delta",
+   "text": "ders to "
+  },
+  {
+   "type": "delta",
+   "text": "set a da"
+  },
+  {
+   "type": "delta",
+   "text": "te.\n:::\n"
+  },
+  {
+   "type": "delta",
+   "text": "\nSince M"
+  },
+  {
+   "type": "delta",
+   "text": "onday: $"
+  },
+  {
+   "type": "delta",
+   "text": "8,555 co"
+  },
+  {
+   "type": "delta",
+   "text": "llected,"
+  },
+  {
+   "type": "delta",
+   "text": " 5 statu"
+  },
+  {
+   "type": "delta",
+   "text": "s change"
+  },
+  {
+   "type": "delta",
+   "text": "s, and m"
+  },
+  {
+   "type": "delta",
+   "text": "oney owe"
+  },
+  {
+   "type": "delta",
+   "text": "d is dow"
+  },
+  {
+   "type": "delta",
+   "text": "n $2,625"
+  },
+  {
+   "type": "delta",
+   "text": " to $43,"
+  },
+  {
+   "type": "delta",
+   "text": "371.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": basis\n"
+  },
+  {
+   "type": "delta",
+   "text": "Money ow"
+  },
+  {
+   "type": "delta",
+   "text": "ed: invo"
+  },
+  {
+   "type": "delta",
+   "text": "iced job"
+  },
+  {
+   "type": "delta",
+   "text": "s (Final"
+  },
+  {
+   "type": "delta",
+   "text": " Invoice"
+  },
+  {
+   "type": "delta",
+   "text": " Sent or"
+  },
+  {
+   "type": "delta",
+   "text": " Check o"
+  },
+  {
+   "type": "delta",
+   "text": "n Paymen"
+  },
+  {
+   "type": "delta",
+   "text": "t) as of"
+  },
+  {
+   "type": "delta",
+   "text": " today; "
+  },
+  {
+   "type": "delta",
+   "text": "days cou"
+  },
+  {
+   "type": "delta",
+   "text": "nted fro"
+  },
+  {
+   "type": "delta",
+   "text": "m the jo"
+  },
+  {
+   "type": "delta",
+   "text": "b end da"
+  },
+  {
+   "type": "delta",
+   "text": "te.\nStuc"
+  },
+  {
+   "type": "delta",
+   "text": "k: activ"
+  },
+  {
+   "type": "delta",
+   "text": "e jobs 1"
+  },
+  {
+   "type": "delta",
+   "text": "4+ days "
+  },
+  {
+   "type": "delta",
+   "text": "in one s"
+  },
+  {
+   "type": "delta",
+   "text": "tatus. Q"
+  },
+  {
+   "type": "delta",
+   "text": "uiet est"
+  },
+  {
+   "type": "delta",
+   "text": "imates: "
+  },
+  {
+   "type": "delta",
+   "text": "open, da"
+  },
+  {
+   "type": "delta",
+   "text": "ted in t"
+  },
+  {
+   "type": "delta",
+   "text": "he last "
+  },
+  {
+   "type": "delta",
+   "text": "120 days"
+  },
+  {
+   "type": "delta",
+   "text": ", $1,000"
+  },
+  {
+   "type": "delta",
+   "text": "+, no ch"
+  },
+  {
+   "type": "delta",
+   "text": "ange for"
+  },
+  {
+   "type": "delta",
+   "text": " 14+ day"
+  },
+  {
+   "type": "delta",
+   "text": "s.\n:::\n\n"
+  },
+  {
+   "type": "delta",
+   "text": "::: foll"
+  },
+  {
+   "type": "delta",
+   "text": "owups\nWh"
+  },
+  {
+   "type": "delta",
+   "text": "ich othe"
+  },
+  {
+   "type": "delta",
+   "text": "r jobs a"
+  },
+  {
+   "type": "delta",
+   "text": "re stuck"
+  },
+  {
+   "type": "delta",
+   "text": "?\nShow e"
+  },
+  {
+   "type": "delta",
+   "text": "very bal"
+  },
+  {
+   "type": "delta",
+   "text": "ance ove"
+  },
+  {
+   "type": "delta",
+   "text": "r 60 day"
+  },
+  {
+   "type": "delta",
+   "text": "s\nWhat c"
+  },
+  {
+   "type": "delta",
+   "text": "hanged s"
+  },
+  {
+   "type": "delta",
+   "text": "ince Mon"
+  },
+  {
+   "type": "delta",
+   "text": "day?\n:::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "Five things need attention today: a door shortage for this week's installs, two overdue balances, a quiet $52,400 estimate and two jobs that are not moving.\n\n::: priorities\nhigh | Order Clopay Classic Steel 16x7 White doors ([Inventory](page:inventory)) | Jobs booked in the next 7 days need 5 and only 2 are on hand, short 3; the first visit is today. | Order 3 today, or move one of this week's installs.\nhigh | Collect $9,860 from [Northgate Property Group](customer:Northgate Property Group) | The biggest of 3 invoices over 60 days ($17,090 in all): 96 days old, on a 90 Day Notice ([1095802214](job:1095802214)). | Call their accounts payable; the 90-day letter task is still open.\nmedium | Follow up on [1095809931](estimate:1095809931) for [Riverside Logistics](customer:Riverside Logistics) | $52,400 with no status change for 22 days, the larger of 2 quiet estimates worth $71,150. | Ask Morgan Hayes to call this week.\nmedium | Get [1095810231](job:1095810231) for Ozark Ridge Homes moving | In Need To Order for 41 days ($8,450) with no visit booked; the Oct 14 note says Clopay needs two more weeks. | Ask Clopay for a delivery date.\nlow | Book [1095810877](job:1095810877) for Hartwell Builders | Need To Schedule for 29 days, with an open task to pick an install date. | Call Hartwell Builders to set a date.\n:::\n\nSince Monday: $8,555 collected, 5 status changes, and money owed is down $2,625 to $43,371.\n\n::: basis\nMoney owed: invoiced jobs (Final Invoice Sent or Check on Payment) as of today; days counted from the job end date.\nStuck: active jobs 14+ days in one status. Quiet estimates: open, dated in the last 120 days, $1,000+, no change for 14+ days.\n:::\n\n::: followups\nWhich other jobs are stuck?\nShow every balance over 60 days\nWhat changed since Monday?\n:::",
+   "toolsUsed": [
+    "daily_briefing"
+   ],
+   "calls": [
+    {
+     "tool": "daily_briefing",
+     "input": "{}",
+     "ms": 134,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

@@ -1,0 +1,129 @@
+{
+  "revenueYtd": "$0",
+  "depositsYtd": 0,
+  "outstandingMoney": "$0",
+  "grossProfitYtd": "$0",
+  "yearlyProjected": "$0",
+  "companyPool": "$0",
+  "commercialPool": "$0",
+  "history": {
+    "outstanding": [],
+    "projected": []
+  },
+  "highVolumeRevenue": 0,
+  "commercialRevenue": 0,
+  "residentialRevenue": 0,
+  "otherRevenue": 0,
+  "operatingExpenses": [],
+  "chartData": [
+    {
+      "month": "Jan",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Feb",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Mar",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Apr",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "May",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Jun",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Jul",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Aug",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Sep",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Oct",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Nov",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    },
+    {
+      "month": "Dec",
+      "revenue": 0,
+      "profit": 0,
+      "marginPct": 0,
+      "expense": 0,
+      "netIncome": 0,
+      "hasData": false
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

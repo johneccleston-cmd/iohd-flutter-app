@@ -43,4 +43,6 @@ const List<String> kEstimateStatuses = [
   'Estimate Won',
   'Lost',
   'Lost - Competitor',
+  'Lost - Price',
+  'Lost - Unresponsive',
 ];

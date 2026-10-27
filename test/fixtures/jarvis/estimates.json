@@ -1,0 +1,544 @@
+{
+ "question": "Which estimates need follow-up first?",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Searching estimates…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_7",
+   "name": "search_estimates",
+   "input": "{\"state\":\"open\",\"from\":\"2026-06-29\",\"no_change_days\":7,\"order_by\":\"value\"}",
+   "state": "start",
+   "text": "Searching estimates…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_7",
+   "name": "search_estimates",
+   "state": "done",
+   "ok": true,
+   "ms": 3
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "Start wi"
+  },
+  {
+   "type": "delta",
+   "text": "th [1095"
+  },
+  {
+   "type": "delta",
+   "text": "809931]("
+  },
+  {
+   "type": "delta",
+   "text": "estimate"
+  },
+  {
+   "type": "delta",
+   "text": ":1095809"
+  },
+  {
+   "type": "delta",
+   "text": "931) for"
+  },
+  {
+   "type": "delta",
+   "text": " [Rivers"
+  },
+  {
+   "type": "delta",
+   "text": "ide Logi"
+  },
+  {
+   "type": "delta",
+   "text": "stics](c"
+  },
+  {
+   "type": "delta",
+   "text": "ustomer:"
+  },
+  {
+   "type": "delta",
+   "text": "Riversid"
+  },
+  {
+   "type": "delta",
+   "text": "e Logist"
+  },
+  {
+   "type": "delta",
+   "text": "ics): $5"
+  },
+  {
+   "type": "delta",
+   "text": "2,400 wi"
+  },
+  {
+   "type": "delta",
+   "text": "th no st"
+  },
+  {
+   "type": "delta",
+   "text": "atus cha"
+  },
+  {
+   "type": "delta",
+   "text": "nge in 2"
+  },
+  {
+   "type": "delta",
+   "text": "2 days. "
+  },
+  {
+   "type": "delta",
+   "text": "4 open e"
+  },
+  {
+   "type": "delta",
+   "text": "stimates"
+  },
+  {
+   "type": "delta",
+   "text": " worth $"
+  },
+  {
+   "type": "delta",
+   "text": "81,700 h"
+  },
+  {
+   "type": "delta",
+   "text": "ave been"
+  },
+  {
+   "type": "delta",
+   "text": " quiet f"
+  },
+  {
+   "type": "delta",
+   "text": "or a wee"
+  },
+  {
+   "type": "delta",
+   "text": "k or mor"
+  },
+  {
+   "type": "delta",
+   "text": "e.\n\n1. *"
+  },
+  {
+   "type": "delta",
+   "text": "*[109580"
+  },
+  {
+   "type": "delta",
+   "text": "9931](es"
+  },
+  {
+   "type": "delta",
+   "text": "timate:1"
+  },
+  {
+   "type": "delta",
+   "text": "09580993"
+  },
+  {
+   "type": "delta",
+   "text": "1)** Riv"
+  },
+  {
+   "type": "delta",
+   "text": "erside L"
+  },
+  {
+   "type": "delta",
+   "text": "ogistics"
+  },
+  {
+   "type": "delta",
+   "text": ", $52,40"
+  },
+  {
+   "type": "delta",
+   "text": "0, Morga"
+  },
+  {
+   "type": "delta",
+   "text": "n Hayes,"
+  },
+  {
+   "type": "delta",
+   "text": " quiet 2"
+  },
+  {
+   "type": "delta",
+   "text": "2 days.\n"
+  },
+  {
+   "type": "delta",
+   "text": "2. **[10"
+  },
+  {
+   "type": "delta",
+   "text": "95810102"
+  },
+  {
+   "type": "delta",
+   "text": "](estima"
+  },
+  {
+   "type": "delta",
+   "text": "te:10958"
+  },
+  {
+   "type": "delta",
+   "text": "10102)**"
+  },
+  {
+   "type": "delta",
+   "text": " Pinnacl"
+  },
+  {
+   "type": "delta",
+   "text": "e Church"
+  },
+  {
+   "type": "delta",
+   "text": ", $18,75"
+  },
+  {
+   "type": "delta",
+   "text": "0, Taylo"
+  },
+  {
+   "type": "delta",
+   "text": "r Brooks"
+  },
+  {
+   "type": "delta",
+   "text": ", in Fol"
+  },
+  {
+   "type": "delta",
+   "text": "low Up s"
+  },
+  {
+   "type": "delta",
+   "text": "ince Sep"
+  },
+  {
+   "type": "delta",
+   "text": " 30 (27 "
+  },
+  {
+   "type": "delta",
+   "text": "days).\n3"
+  },
+  {
+   "type": "delta",
+   "text": ". **[109"
+  },
+  {
+   "type": "delta",
+   "text": "5810455]"
+  },
+  {
+   "type": "delta",
+   "text": "(estimat"
+  },
+  {
+   "type": "delta",
+   "text": "e:109581"
+  },
+  {
+   "type": "delta",
+   "text": "0455)** "
+  },
+  {
+   "type": "delta",
+   "text": "Lakeside"
+  },
+  {
+   "type": "delta",
+   "text": " Apartme"
+  },
+  {
+   "type": "delta",
+   "text": "nts, $9,"
+  },
+  {
+   "type": "delta",
+   "text": "800, Mor"
+  },
+  {
+   "type": "delta",
+   "text": "gan Haye"
+  },
+  {
+   "type": "delta",
+   "text": "s, 11 da"
+  },
+  {
+   "type": "delta",
+   "text": "ys since"
+  },
+  {
+   "type": "delta",
+   "text": " it went"
+  },
+  {
+   "type": "delta",
+   "text": " out.\n4."
+  },
+  {
+   "type": "delta",
+   "text": " **[1095"
+  },
+  {
+   "type": "delta",
+   "text": "810701]("
+  },
+  {
+   "type": "delta",
+   "text": "estimate"
+  },
+  {
+   "type": "delta",
+   "text": ":1095810"
+  },
+  {
+   "type": "delta",
+   "text": "701)** S"
+  },
+  {
+   "type": "delta",
+   "text": "ummit St"
+  },
+  {
+   "type": "delta",
+   "text": "orage Co"
+  },
+  {
+   "type": "delta",
+   "text": ", $750, "
+  },
+  {
+   "type": "delta",
+   "text": "Morgan H"
+  },
+  {
+   "type": "delta",
+   "text": "ayes, qu"
+  },
+  {
+   "type": "delta",
+   "text": "iet 26 d"
+  },
+  {
+   "type": "delta",
+   "text": "ays.\n\nSu"
+  },
+  {
+   "type": "delta",
+   "text": "ggestion"
+  },
+  {
+   "type": "delta",
+   "text": ": Pinnac"
+  },
+  {
+   "type": "delta",
+   "text": "le Churc"
+  },
+  {
+   "type": "delta",
+   "text": "h has wa"
+  },
+  {
+   "type": "delta",
+   "text": "ited lon"
+  },
+  {
+   "type": "delta",
+   "text": "gest of "
+  },
+  {
+   "type": "delta",
+   "text": "the larg"
+  },
+  {
+   "type": "delta",
+   "text": "e ones, "
+  },
+  {
+   "type": "delta",
+   "text": "so a cal"
+  },
+  {
+   "type": "delta",
+   "text": "l this w"
+  },
+  {
+   "type": "delta",
+   "text": "eek coul"
+  },
+  {
+   "type": "delta",
+   "text": "d settle"
+  },
+  {
+   "type": "delta",
+   "text": " it.\n\n::"
+  },
+  {
+   "type": "delta",
+   "text": ": basis\n"
+  },
+  {
+   "type": "delta",
+   "text": "Open est"
+  },
+  {
+   "type": "delta",
+   "text": "imates ("
+  },
+  {
+   "type": "delta",
+   "text": "Estimate"
+  },
+  {
+   "type": "delta",
+   "text": " Provide"
+  },
+  {
+   "type": "delta",
+   "text": "d or Fol"
+  },
+  {
+   "type": "delta",
+   "text": "low Up) "
+  },
+  {
+   "type": "delta",
+   "text": "dated si"
+  },
+  {
+   "type": "delta",
+   "text": "nce Jun "
+  },
+  {
+   "type": "delta",
+   "text": "29, with"
+  },
+  {
+   "type": "delta",
+   "text": " no stat"
+  },
+  {
+   "type": "delta",
+   "text": "us chang"
+  },
+  {
+   "type": "delta",
+   "text": "e for 7+"
+  },
+  {
+   "type": "delta",
+   "text": " days, l"
+  },
+  {
+   "type": "delta",
+   "text": "argest f"
+  },
+  {
+   "type": "delta",
+   "text": "irst.\n::"
+  },
+  {
+   "type": "delta",
+   "text": ":\n\n::: f"
+  },
+  {
+   "type": "delta",
+   "text": "ollowups"
+  },
+  {
+   "type": "delta",
+   "text": "\nWhich e"
+  },
+  {
+   "type": "delta",
+   "text": "stimates"
+  },
+  {
+   "type": "delta",
+   "text": " did we "
+  },
+  {
+   "type": "delta",
+   "text": "win this"
+  },
+  {
+   "type": "delta",
+   "text": " month?\n"
+  },
+  {
+   "type": "delta",
+   "text": "Show qui"
+  },
+  {
+   "type": "delta",
+   "text": "et estim"
+  },
+  {
+   "type": "delta",
+   "text": "ates by "
+  },
+  {
+   "type": "delta",
+   "text": "salesper"
+  },
+  {
+   "type": "delta",
+   "text": "son\n:::"
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "Start with [1095809931](estimate:1095809931) for [Riverside Logistics](customer:Riverside Logistics): $52,400 with no status change in 22 days. 4 open estimates worth $81,700 have been quiet for a week or more.\n\n1. **[1095809931](estimate:1095809931)** Riverside Logistics, $52,400, Morgan Hayes, quiet 22 days.\n2. **[1095810102](estimate:1095810102)** Pinnacle Church, $18,750, Taylor Brooks, in Follow Up since Sep 30 (27 days).\n3. **[1095810455](estimate:1095810455)** Lakeside Apartments, $9,800, Morgan Hayes, 11 days since it went out.\n4. **[1095810701](estimate:1095810701)** Summit Storage Co, $750, Morgan Hayes, quiet 26 days.\n\nSuggestion: Pinnacle Church has waited longest of the large ones, so a call this week could settle it.\n\n::: basis\nOpen estimates (Estimate Provided or Follow Up) dated since Jun 29, with no status change for 7+ days, largest first.\n:::\n\n::: followups\nWhich estimates did we win this month?\nShow quiet estimates by salesperson\n:::",
+   "toolsUsed": [
+    "search_estimates"
+   ],
+   "calls": [
+    {
+     "tool": "search_estimates",
+     "input": "{\"state\":\"open\",\"from\":\"2026-06-29\",\"no_change_days\":7,\"order_by\":\"value\"}",
+     "ms": 3,
+     "ok": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

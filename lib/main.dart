@@ -11,11 +11,13 @@ import 'product_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
 import 'jobs_screen.dart';
+import 'profile_screen.dart';
 import 'projects_screen.dart';
 import 'job_detail_screen.dart';
 import 'payroll_screen.dart'; 
 import 'estimates_screen.dart'; 
 import 'calendar_screen.dart';
+import 'customer_detail_screen.dart';
 import 'customers_screen.dart';
 import 'reports_screen.dart';
 import 'commission_dashboard_screen.dart';
@@ -36,6 +38,8 @@ import 'team_admin_screen.dart';
 import 'login_screen.dart';
 import 'widgets/page_selection.dart';
 import 'commission_corrections_screen.dart';
+import 'site_checks_screen.dart';
+import 'takeoffs_screen.dart';
 import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
 
@@ -87,9 +91,17 @@ final GoRouter _router = GoRouter(
           GoRoute(path: '/payments', builder: (context, state) => const PaymentsScreen()),
           GoRoute(path: '/invoices', builder: (context, state) => const InvoicesScreen()),
           GoRoute(path: '/documents', builder: (context, state) => const DocumentsScreen()),
+          GoRoute(path: '/site-checks', builder: (context, state) => const SiteChecksScreen()),
+          GoRoute(path: '/takeoffs', builder: (context, state) => const TakeoffsScreen()),
         ]),
         StatefulShellBranch(routes: [
-          GoRoute(path: '/customers', builder: (context, state) => const CustomersScreen()),
+          // ?q= comes from the nav bar search and the job page's customer link.
+          GoRoute(
+            path: '/customers',
+            builder: (context, state) => CustomersScreen(initialQuery: state.uri.queryParameters['q']),
+            // One customer's own page (/customers/<id>).
+            routes: [customerDetailRoute()],
+          ),
         ]),
         StatefulShellBranch(routes: [
           GoRoute(path: '/projects', builder: (context, state) => const ProjectsScreen()),
@@ -193,6 +205,11 @@ final GoRouter _router = GoRouter(
               GoRoute(path: 'collections', builder: (context, state) => const CollectionsDashboardScreen()),
             ],
           ),
+        ]),
+
+        // MY PROFILE BRANCH (Index 9): opened from the account menu, so it belongs to no top-bar module.
+        StatefulShellBranch(routes: [
+          GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
         ]),
       ],
     ),

@@ -1,15 +1,19 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart' hide TextDirection;
 import 'config/api_config.dart';
-import 'config/auth_session.dart';
+import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
-import 'widgets/app_dialog.dart';
+import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
 import 'widgets/dashboard_layout.dart';
+
+// The Sales dashboard: the sales team's estimates (by the Service Fusion opportunity owner), dated in the selected
+// year by estimate date.
+//   scorecards  won revenue, win rate, deals won, largest deal won
+//   left        each person's figures (every one opens the estimates behind it) over won revenue by month
+//   right       door styles by win rate or won revenue; each opens the estimates with that style
+// The page fits the window without scrolling and without shrinking text (see _Grid).
 
 class SalesDashboardScreen extends StatelessWidget {
   const SalesDashboardScreen({super.key});
@@ -35,7 +39,6 @@ class SalesDashboardContent extends StatefulWidget {
 // HELPERS
 // =============================================================================
 
-const _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 final _whole = NumberFormat('#,##0');
 
 String _money(num v) => '${v < 0 ? '-' : ''}\$${_whole.format(v.abs())}';
@@ -55,35 +58,6 @@ String _compactMoney(num v) {
 
 double _d(dynamic v) => v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
 int _i(dynamic v) => v == null ? 0 : (v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0);
-
-TextPainter _layoutText(String text, TextStyle style, {double maxWidth = double.infinity, TextAlign align = TextAlign.left}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
-}
-
-class _Scale {
-  final double max;
-  final double step;
-  const _Scale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
-
-_Scale _niceScale(double maxV) {
-  if (maxV <= 0) return const _Scale(10000, 2500);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final nice = norm <= 1 ? 1.0 : (norm <= 2 ? 2.0 : (norm <= 5 ? 5.0 : 10.0));
-  final step = nice * mag;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _Scale(top, step);
-}
 
 // =============================================================================
 // MODELS
@@ -147,10 +121,7 @@ class _Person {
 // SCREEN STATE
 // =============================================================================
 
-class _SalesDashboardContentState extends State<SalesDashboardContent> {
-  bool _isLoading = true;
-  String? _errorMessage;
-
+class _SalesDashboardContentState extends State<SalesDashboardContent> with DashboardLoading {
   double _wonValue = 0;
   int _wonCount = 0;
   double _winRate = 0;
@@ -166,34 +137,24 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> {
   @override
   void initState() {
     super.initState();
-    _fetch();
+    dashReload();
   }
 
   @override
   void didUpdateWidget(covariant SalesDashboardContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedYear != widget.selectedYear) _fetch();
+    if (oldWidget.selectedYear != widget.selectedYear) dashReload();
   }
 
-  Future<void> _fetch() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
+  @override
+  Future<void> dashReload({bool fresh = false}) => dashLoad(
+        '/api/dashboards/sales',
+        query: {'year': '${widget.selectedYear}'},
+        fresh: fresh,
+        apply: _apply,
+      );
 
-    try {
-      final response = await http
-          .get(
-            Uri.parse('$kApiBaseUrl/api/dashboards/sales?year=${widget.selectedYear}'),
-            headers: AuthSession.instance.headers(),
-          )
-          .timeout(const Duration(seconds: 60)); // free-tier hosts can take ~30s+ to wake up
-
-      if (response.statusCode != 200) {
-        throw Exception('The server returned status ${response.statusCode}.');
-      }
-
-      final body = json.decode(response.body) as Map<String, dynamic>;
+  void _apply(Map<String, dynamic> body) {
       final s = (body['summary'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
 
       List<_Month> parseMonths(dynamic raw) {
@@ -211,653 +172,707 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> {
           .map((e) => _Person.fromJson(e as Map<String, dynamic>))
           .toList();
 
-      if (!mounted) return;
-      setState(() {
-        _wonValue = _d(s['wonValue']);
-        _wonCount = _i(s['wonCount']);
-        _winRate = _d(s['winRate']);
-        _largestDeal = _d(s['largestDeal']);
-        _priorWonValue = _d(s['priorWonValue']);
-        _months = months;
-        _priorMonths = prior;
-        _people = people;
-        _doors = ((body['doorTypes'] as List<dynamic>?) ?? const [])
-            .map((e) => _DoorType.fromJson(e as Map<String, dynamic>))
-            .toList();
-        _isLoading = false;
-      });
-    } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'The dashboard took too long to load.';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString();
-          _isLoading = false;
-        });
-      }
-    }
+      _wonValue = _d(s['wonValue']);
+      _wonCount = _i(s['wonCount']);
+      _winRate = _d(s['winRate']);
+      _largestDeal = _d(s['largestDeal']);
+      _priorWonValue = _d(s['priorWonValue']);
+      _months = months;
+      _priorMonths = prior;
+      _people = people;
+      _doors = ((body['doorTypes'] as List<dynamic>?) ?? const [])
+          .map((e) => _DoorType.fromJson(e as Map<String, dynamic>))
+          .toList();
   }
 
-  List<double> _wonTrend() => _trendOf([for (final m in _months) m.wonValue], widget.selectedYear);
+  List<double>? _wonTrend() => dashTrend([for (final m in _months) m.wonValue], widget.selectedYear);
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const _SalesSkeleton();
-    if (_errorMessage != null) {
-      return DashErrorPanel(title: "Couldn't load sales", message: _errorMessage!, onRetry: _fetch);
+    if (dashLoading) return const _SalesSkeleton();
+    if (dashFailure != null) {
+      return DashErrorPanel.failure(dashFailure!, what: 'sales', onRetry: dashReload);
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          height: 86,
-          child: Row(
-            children: [
-              Expanded(
-                child: AnimatedMetricCard(
-                  title: 'Won revenue',
-                  value: _wonValue,
-                  format: _money,
-                  valueColor: DashUi.sky,
-                  index: 0,
-                  trend: _wonTrend(),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: AnimatedMetricCard(
-                  title: 'Win rate',
-                  value: _winRate,
-                  format: (v) => '${v.toStringAsFixed(1)}%',
-                  valueColor: DashUi.emeraldDeep,
-                  index: 1,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: AnimatedMetricCard(
-                  title: 'Deals won',
-                  value: _wonCount.toDouble(),
-                  format: (v) => _whole.format(v.round()),
-                  valueColor: DashUi.ink,
-                  index: 2,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: AnimatedMetricCard(
-                  title: 'Largest deal won',
-                  value: _largestDeal,
-                  format: _money,
-                  valueColor: DashUi.blue,
-                  index: 3,
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: Row(
+    final year = widget.selectedYear;
+    final period = dashPeriodLabel(year);
+    final g = DashGeo.of(context);
+    // Only the sales team's estimates count here (the people below), dated by the estimate date.
+    final team = _people.isEmpty ? 'the sales team' : _people.map((p) => p.name.split(' ').first).join(' + ');
+    final wonCaption = 'Sales team estimates won · $period';
+
+    final tiles = <Widget>[
+      AnimatedMetricCard(
+        title: 'Won revenue',
+        value: _wonValue,
+        format: _money,
+        caption: wonCaption,
+        definition: 'Value of won estimates owned by $team, dated $period (by estimate date). The line '
+            'shows it by finished month.',
+        valueColor: DashUi.sky,
+        index: 0,
+        trend: _wonTrend(),
+        sparkMinWidth: dashSparkRoom(context, title: 'Won revenue', value: _money(_wonValue), caption: wonCaption),
+      ),
+      AnimatedMetricCard(
+        title: 'Win rate',
+        value: _winRate,
+        format: (v) => '${v.toStringAsFixed(1)}%',
+        caption: 'Won ÷ (won + lost) · sales team',
+        definition: 'Of the estimates owned by $team and dated $period that have been decided, the share '
+            "that were won. Open estimates aren't counted. The Estimates dashboard's win rate covers "
+            'every estimate, so it can differ.',
+        valueColor: DashUi.emeraldDeep,
+        index: 1,
+      ),
+      AnimatedMetricCard(
+        title: 'Deals won',
+        value: _wonCount.toDouble(),
+        format: (v) => _whole.format(v.round()),
+        caption: 'Estimates won · $period',
+        definition: 'Number of estimates owned by $team, dated $period, that were won.',
+        valueColor: DashUi.ink,
+        index: 2,
+      ),
+      AnimatedMetricCard(
+        title: 'Largest deal won',
+        value: _largestDeal,
+        format: _money,
+        caption: 'Single biggest won estimate · $period',
+        definition: 'The highest-value estimate owned by $team, dated $period, that was won.',
+        valueColor: DashUi.blue,
+        index: 3,
+      ),
+    ];
+
+    return _Grid(
+      tiles: tiles,
+      people: _people.length,
+      team: (oneLine, fill) => _TeamPanel(g: g, people: _people, year: year, oneLine: oneLine, fill: fill),
+      chart: _WonChart(months: _months, prior: _priorMonths, people: _people, year: year, total: _wonValue, priorTotal: _priorWonValue),
+      doors: (maxRows, fill) => _DoorPanel(g: g, doors: _doors, year: year, maxRows: maxRows, fill: fill),
+    );
+  }
+}
+
+// =============================================================================
+// GRID (shared by the page and its skeleton)
+// =============================================================================
+
+/// Lays the page out to fit the window:
+///   two columns   scorecards; the sales team over won revenue by month | door styles   (1280x600 and up)
+///   one column    a window narrower than a desktop one: everything in one column that scrolls
+class _Grid extends StatelessWidget {
+  final List<Widget> tiles;
+  final int people;
+
+  /// `oneLine`: each person's figures in columns on one row (or under the name, a narrow column). `fill`: the panel
+  /// is given a height to fill.
+  final Widget Function(bool oneLine, bool fill) team;
+  final Widget chart;
+
+  /// `maxRows`: door styles that fit (the rest are a click away).
+  final Widget Function(int maxRows, bool fill) doors;
+
+  const _Grid({required this.tiles, required this.people, required this.team, required this.chart, required this.doors});
+
+  static const _twoColumnsFrom = 1000.0;
+  static const _minChart = 190.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final bodyH = c.maxHeight - g.tile - dashGap;
+        final leftInner = (w - dashGap) * 13 / 23 - 40;
+        final oneLine = leftInner >= _TeamPanel.oneLineWidth(g);
+        final teamH = _TeamPanel.height(g, people, oneLine);
+        final doorRows = ((bodyH - g.panelTop - _DoorPanel.subtitleH(g)) / g.rowWide).floor();
+        final Widget content;
+        if (w >= _twoColumnsFrom && bodyH - teamH - dashGap >= _minChart && doorRows >= 3) {
+          content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (var i = 0; i < _people.length; i++) ...[
-                Expanded(
-                  flex: 3,
-                  child: _SalesPersonCard(
-                    person: _people[i],
-                    rank: i + 1,
-                    year: widget.selectedYear,
-                    index: i,
-                    teamWon: _people.fold<double>(0, (a, b) => a + b.wonValue),
-                  ),
-                ),
-                const SizedBox(width: 16),
-              ],
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
               Expanded(
-                flex: 6,
-                child: Column(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(flex: 11, child: _DoorTypePanel(doors: _doors, year: widget.selectedYear)),
-                    const SizedBox(height: 16),
                     Expanded(
-                      flex: 9,
-                      child: _MonthlyWonChart(
-                        data: _months,
-                        prior: _priorMonths,
-                        year: widget.selectedYear,
-                        total: _wonValue,
-                        priorTotal: _priorWonValue,
+                      flex: 13,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: teamH, child: team(oneLine, true)),
+                          const SizedBox(height: dashGap),
+                          Expanded(child: chart),
+                        ],
                       ),
                     ),
+                    const SizedBox(width: dashGap),
+                    Expanded(flex: 10, child: doors(doorRows, true)),
                   ],
                 ),
               ),
             ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-// =============================================================================
-// PERSON CARD (tall card, same structure as the KPI screen's employee cards)
-// =============================================================================
-
-/// Monthly series trimmed to what's happened so far, starting just before the first non-zero month.
-List<double> _trendOf(List<double> monthly, int year) {
-  final now = DateTime.now();
-  final upTo = year == now.year ? now.month : monthly.length;
-  final pts = monthly.take(upTo).toList();
-  final first = pts.indexWhere((v) => v > 0);
-  if (first < 0) return pts;
-  return pts.sublist(math.max(0, first - 1));
-}
-
-class _SalesPersonCard extends StatelessWidget {
-  static const _gold = Color(0xFFF59E0B);
-
-  final _Person person;
-  final int rank;
-  final int year;
-  final int index;
-  final double teamWon;
-  const _SalesPersonCard({
-    required this.person,
-    required this.rank,
-    required this.year,
-    required this.index,
-    required this.teamWon,
-  });
-
-  double get _share => teamWon > 0 ? (person.wonValue / teamWon).clamp(0.0, 1.0) : 0;
-  Color get _accent => rank == 1 ? _gold : DashUi.sky;
-
-  @override
-  Widget build(BuildContext context) {
-    final p = person;
-    final leader = rank == 1 && p.wonValue > 0;
-
-    return HoverLift(
-      lift: 4,
-      builder: (context, hovering) => Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: leader ? _gold : (hovering ? DashUi.sky.withValues(alpha: 0.55) : DashUi.line),
-            width: leader ? 2 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: (leader ? _gold : Colors.black).withValues(alpha: hovering ? 0.16 : 0.04),
-              blurRadius: hovering ? 24 : 10,
-              offset: Offset(0, hovering ? 10 : 3),
-            ),
-          ],
-        ),
-        clipBehavior: Clip.antiAlias,
-        // Tall windows: big photo, then name, then stats. Short windows: a slim avatar header instead
-        // of the photo, so the stats keep their full size instead of being squeezed or scrolled.
-        child: LayoutBuilder(
-          builder: (context, c) {
-            // Rough natural height of the stats, used only to choose a layout; they size to content.
-            const statsEst = 332.0;
-
-            if (c.maxHeight >= 590) {
-              // Lots of height: centered avatar and name, any spare space becomes breathing room.
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(child: _roomyHeader(leader)),
-                  _stats(),
-                ],
-              );
-            }
-
-            // Otherwise: avatar on the left, name/role/rank on the right. The avatar takes whatever
-            // height the stats leave over (56..150), and the stats shrink only if they still don't fit.
-            final avatar = (c.maxHeight - statsEst - 32).clamp(56.0, 150.0).toDouble();
-            // Anything still left over is spread between the stat blocks instead of sitting at the bottom.
-            final extra = ((c.maxHeight - (math.max(avatar, 80.0) + 24) - statsEst) / 3).clamp(0.0, 22.0).toDouble();
-            return Column(
+          );
+        } else {
+          content = SingleChildScrollView(
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _stripHeader(leader, avatar),
-                Expanded(
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.topCenter,
-                    child: SizedBox(width: c.maxWidth, child: _stats(extra: extra)),
-                  ),
-                ),
+                SizedBox(height: g.tile, child: _tileRow(tiles.take(2).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip(2).toList())),
+                const SizedBox(height: dashGap),
+                team(false, false),
+                const SizedBox(height: dashGap),
+                SizedBox(height: 320, child: chart),
+                const SizedBox(height: dashGap),
+                doors(10, false),
               ],
-            );
-          },
-        ),
+            ),
+          );
+        }
+        return SizedBox(width: w, height: c.maxHeight, child: content);
+      },
+    );
+  }
+
+  Widget _tileRow(List<Widget> row) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < row.length; i++) ...[
+        if (i > 0) const SizedBox(width: 12),
+        Expanded(child: row[i]),
+      ],
+    ],
+  );
+}
+
+// =============================================================================
+// THE SALES TEAM (every figure opens the estimates behind it)
+// =============================================================================
+
+class _TeamPanel extends StatelessWidget {
+  final DashGeo g;
+  final List<_Person> people;
+  final int year;
+  final bool oneLine;
+  final bool fill;
+  const _TeamPanel({required this.g, required this.people, required this.year, required this.oneLine, required this.fill});
+
+  // Column widths at 100% text (they grow with the text).
+  static const _avatar = 40.0;
+  static const _nameMin = 128.0;
+  static const _cols = <_Drill, double>{
+    _Drill.won: 92,
+    _Drill.sent: 62,
+    _Drill.largest: 70,
+    _Drill.lost: 44,
+    _Drill.closed: 84,
+  };
+
+  static double oneLineWidth(DashGeo g) =>
+      _avatar + 10 + (_nameMin + _cols.values.fold<double>(0, (a, b) => a + b)) * g.k + _cols.length * 8 + 16;
+
+  /// A person on one line: a name over a role, figures over their detail. On two: the name and won revenue, then
+  /// a line of the other figures.
+  static double rowH(DashGeo g, bool oneLine) =>
+      oneLine ? math.max(g.listRow, 48.0) : math.max(g.listRow, g.line(13.5) + 2 + g.line(12.5) + 2 + 6);
+
+  /// The panel has no separate title row: its heading row carries the title (and, on one line, the column names).
+  static double headRow(DashGeo g) => math.max(g.columnHead, g.line(15)) + 4;
+  static double height(DashGeo g, int people, bool oneLine) =>
+      DashGeo.padV + headRow(g) + math.max(people, 1) * rowH(g, oneLine) + 2;
+
+  @override
+  Widget build(BuildContext context) {
+    final teamWon = people.fold<double>(0, (a, b) => a + b.wonValue);
+    final rows = people.isEmpty
+        ? [SizedBox(height: rowH(g, oneLine), child: const DashEmptyNote('No sales team estimates yet.'))]
+        : [
+            for (var i = 0; i < people.length; i++)
+              SizedBox(height: rowH(g, oneLine), child: _row(context, people[i], teamWon, last: i == people.length - 1)),
+          ];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 12),
+      decoration: DashUi.panel(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _headings(people.isNotEmpty && oneLine),
+          ...rows,
+        ],
       ),
     );
   }
-  /// Thin bar showing this rep's share of the team's won revenue.
-  Widget _shareBar() => SizedBox(
-        width: 190,
-        child: Column(
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _share,
-                minHeight: 6,
-                backgroundColor: DashUi.faint,
-                valueColor: AlwaysStoppedAnimation(_accent),
+
+  /// The title, and over a one-line table the column names, on one row.
+  Widget _headings(bool columns) {
+    Widget h(String text, double width) =>
+        SizedBox(width: width * g.k, child: Text(text, textAlign: TextAlign.right, maxLines: 1, style: DashText.column));
+    return SizedBox(
+      height: headRow(g),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Tooltip(
+              message: "Each person's estimates dated in $year. Click a figure to see the estimates behind it.",
+              child: Semantics(
+                header: true,
+                label: 'Sales team, $year',
+                child: ExcludeSemantics(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        const TextSpan(text: 'Sales team', style: DashText.panelTitle),
+                        TextSpan(text: ' · $year', style: DashText.panelNote),
+                      ],
+                    ),
+                    maxLines: 1,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 4),
-            Text(
-              '${(_share * 100).round()}% of team won revenue',
-              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate),
-            ),
-          ],
-        ),
-      );
-
-  Widget _rankPill(bool leader, {bool short = false}) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: leader ? const Color(0xFFFEF3C7) : DashUi.faint,
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (leader) ...[const Icon(Icons.emoji_events_rounded, size: 14, color: _gold), const SizedBox(width: 4)],
-            Text(
-              short ? '#$rank' : 'Rank #$rank',
-              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: leader ? const Color(0xFFD97706) : DashUi.slate),
-            ),
-          ],
-        ),
-      );
-
-  /// Centered circular avatar, name and role (used when there is plenty of height).
-  Widget _roomyHeader(bool leader) {
-    return LayoutBuilder(builder: (context, c) => _roomyHeaderBody(leader, c.maxHeight));
-  }
-
-  Widget _roomyHeaderBody(bool leader, double height) {
-    final p = person;
-    // Avatar grows with the spare height (72..170 including its ring) so tall windows don't leave a small icon in a void.
-    // Matches the side-by-side layout (about 150) where the two meet, then keeps growing with the space.
-    final spare = height - 100 - 34; // 34 = share bar
-    final avatar = (spare * (1 - ((height - 258) / 1000).clamp(0.0, 0.25))).clamp(72.0, 230.0) - 6; // minus the ring
-    return Stack(
-      children: [
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(22, 14, 22, 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DashAvatar(
-                  name: p.name,
-                  imageUrl: p.imageUrl,
-                  size: avatar,
-                  ringColor: leader ? _gold : DashUi.line,
-                  ringWidth: leader ? 3 : 1.5,
-                  accent: _accent,
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  p.name,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF1A1C1E)),
-                ),
-                Text(
-                  p.role,
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: DashUi.slate),
-                ),
-                const SizedBox(height: 10),
-                _shareBar(),
-              ],
-            ),
           ),
-        ),
-        Positioned(top: 14, right: 14, child: _rankPill(leader)),
-      ],
+          if (columns)
+            ExcludeSemantics(
+              child: Padding(
+                padding: EdgeInsets.only(top: math.max(0, g.line(15) - g.line(12)), right: 8),
+                child: Row(
+                  children: [
+                    for (final e in _cols.entries) ...[
+                      const SizedBox(width: 8),
+                      h(switch (e.key) {
+                        _Drill.won => 'Won',
+                        _Drill.sent => 'Sent',
+                        _Drill.largest => 'Largest',
+                        _Drill.lost => 'Lost',
+                        _Drill.closed => 'Win rate',
+                      }, e.value),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
-  /// Avatar on the left, name, role and rank on the right (used when there isn't height for a centered header).
-  Widget _stripHeader(bool leader, double avatar) {
-    final p = person;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
-      child: Row(
+  int _closed(_Person p) => p.wonCount + p.lostCount;
+
+  /// One figure as a button that opens its estimates: the value, and a quieter line under it.
+  Widget _figure(BuildContext context, _Person p, _Drill d, {required String value, String? detail, Color? color, double? width}) {
+    final label = switch (d) {
+      _Drill.won => '${p.name}: ${_money(p.wonValue)} won on ${p.wonCount} deals',
+      _Drill.sent => '${p.name}: ${p.sentCount} estimates sent',
+      _Drill.largest => '${p.name}: largest deal ${_money(p.largestDeal)}',
+      _Drill.lost => '${p.name}: ${p.lostCount} estimates lost',
+      _Drill.closed => _closed(p) == 0
+          ? '${p.name}: no closed estimates yet'
+          : '${p.name}: win rate ${p.winRate.toStringAsFixed(1)}%, ${p.wonCount} won of ${_closed(p)} closed',
+    };
+    final cell = DashPressable(
+      onTap: () => showDialog<void>(context: context, builder: (_) => _personListDialog(person: p, year: year, drill: d)),
+      label: label,
+      hint: 'Opens the ${d.what}',
+      radius: BorderRadius.circular(6),
+      builder: (hover) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        decoration: BoxDecoration(
+          color: hover ? d.color.withValues(alpha: 0.08) : Colors.transparent,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: oneLine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(
+              value,
+              maxLines: 1,
+              style: DashText.money.copyWith(
+                color: color ?? DashUi.ink,
+                decoration: hover ? TextDecoration.underline : null,
+              ),
+            ),
+            if (detail != null) Text(detail, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.meta),
+          ],
+        ),
+      ),
+    );
+    return width == null ? cell : SizedBox(width: width * g.k, child: cell);
+  }
+
+  Widget _row(BuildContext context, _Person p, double teamWon, {required bool last}) {
+    final share = teamWon > 0 ? '${(p.wonValue / teamWon * 100).round()}% of team' : null;
+    final closed = _closed(p);
+    final avatar = DashAvatar(name: p.name, imageUrl: p.imageUrl, size: _avatar, square: true, accent: DashUi.sky);
+    final name = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.name),
+        if (p.role.isNotEmpty) Text(p.role, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.meta),
+      ],
+    );
+    final won = _figure(context, p, _Drill.won, value: _money(p.wonValue), detail: share, color: DashUi.sky, width: oneLine ? _cols[_Drill.won] : null);
+    final winRate = closed == 0 ? '—' : '${p.winRate.toStringAsFixed(1)}%';
+
+    final Widget body;
+    if (oneLine) {
+      body = Row(
         children: [
-          DashAvatar(
-            name: p.name,
-            imageUrl: p.imageUrl,
-            size: avatar - (leader ? 6 : 3), // the ring is drawn outside the image
-            ringColor: leader ? _gold : DashUi.line,
-            ringWidth: leader ? 3 : 1.5,
-            accent: _accent,
-          ),
-          const SizedBox(width: 16),
+          avatar,
+          const SizedBox(width: 10),
+          Expanded(child: name),
+          const SizedBox(width: 8),
+          won,
+          const SizedBox(width: 8),
+          _figure(context, p, _Drill.sent, value: _whole.format(p.sentCount), detail: '${_whole.format(p.wonCount)} won',
+              width: _cols[_Drill.sent]),
+          const SizedBox(width: 8),
+          _figure(context, p, _Drill.largest, value: _compactMoney(p.largestDeal), color: DashUi.blue, width: _cols[_Drill.largest]),
+          const SizedBox(width: 8),
+          _figure(context, p, _Drill.lost, value: _whole.format(p.lostCount), color: p.lostCount > 0 ? DashUi.redText : DashUi.ink,
+              width: _cols[_Drill.lost]),
+          const SizedBox(width: 8),
+          _figure(context, p, _Drill.closed, value: winRate, color: DashUi.emeraldText,
+              detail: closed == 0 ? 'none closed' : '${p.wonCount} of $closed', width: _cols[_Drill.closed]),
+        ],
+      );
+    } else {
+      // Two lines: the name and won revenue, then the other figures as small buttons (the role and the share of the
+      // team are on hover and for screen readers).
+      body = Row(
+        children: [
+          avatar,
+          const SizedBox(width: 10),
           Expanded(
             child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  p.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 21, fontWeight: FontWeight.bold, color: Color(0xFF1A1C1E)),
-                ),
-                Text(
-                  p.role,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: DashUi.slate),
-                ),
-                const SizedBox(height: 8),
                 Row(
                   children: [
-                    _rankPill(leader),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          '${(_share * 100).round()}% of team',
-                          maxLines: 1,
-                          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate),
-                        ),
+                    Expanded(
+                      child: Tooltip(
+                        message: p.role.isEmpty ? p.name : '${p.name} · ${p.role}',
+                        child: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.name),
                       ),
                     ),
+                    _figure(context, p, _Drill.won, value: _money(p.wonValue), color: DashUi.sky),
+                  ],
+                ),
+                const SizedBox(height: 2),
+                Wrap(
+                  spacing: 4,
+                  children: [
+                    if (share != null) _chip(context, p, _Drill.won, share),
+                    _chip(context, p, _Drill.sent, '${_whole.format(p.sentCount)} sent'),
+                    _chip(context, p, _Drill.largest, '${_compactMoney(p.largestDeal)} largest'),
+                    _chip(context, p, _Drill.lost, '${_whole.format(p.lostCount)} lost'),
+                    _chip(context, p, _Drill.closed, closed == 0 ? 'no closed' : '$winRate win · ${p.wonCount} of $closed'),
                   ],
                 ),
               ],
             ),
           ),
         ],
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(border: last ? null : const Border(bottom: BorderSide(color: DashUi.faint))),
+      child: body,
+    );
+  }
+
+  /// A figure on the second line of a narrow row, as a small button.
+  Widget _chip(BuildContext context, _Person p, _Drill d, String text) => DashPressable(
+    onTap: () => showDialog<void>(context: context, builder: (_) => _personListDialog(person: p, year: year, drill: d)),
+    label: '${p.name}: $text',
+    hint: 'Opens the ${d.what}',
+    radius: BorderRadius.circular(6),
+    builder: (hover) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: hover ? d.color.withValues(alpha: 0.1) : DashUi.faint,
+        borderRadius: BorderRadius.circular(6),
       ),
-    );
-  }
-  /// The metrics: won revenue, four tiles and the win-rate ring. Designed for a fixed height.
-  /// [extra] is spare height to spread across the gaps between the blocks.
-  Widget _stats({double extra = 0}) {
-    final p = person;
-    final closed = p.wonCount + p.lostCount;
-
-    return Builder(
-      builder: (context) => Padding(
-        padding: const EdgeInsets.fromLTRB(22, 4, 22, 16),
-        child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _tap(
-                context,
-                _Drill.won,
-                (h) => _hoverShell(
-                  h,
-                  DashUi.sky,
-                  SizedBox(
-                    height: 86,
-                    child: AnimatedMetricCard(
-                      title: 'Won revenue',
-                      value: p.wonValue,
-                      format: _money,
-                      valueColor: DashUi.sky,
-                      index: index,
-                      trend: _trendOf(p.monthlyWon, year),
-                    ),
-                  ),
-                ),
-              ),
-              SizedBox(height: 8 + extra),
-              Row(
-                children: [
-                  Expanded(child: _tile(context, _Drill.won, 'DEALS WON', _whole.format(p.wonCount), DashUi.ink)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _tile(context, _Drill.sent, 'ESTIMATES SENT', _whole.format(p.sentCount), DashUi.ink)),
-                ],
-              ),
-              SizedBox(height: 8 + extra),
-              Row(
-                children: [
-                  Expanded(child: _tile(context, _Drill.largest, 'LARGEST DEAL', _compactMoney(p.largestDeal), DashUi.blue)),
-                  const SizedBox(width: 10),
-                  Expanded(child: _tile(context, _Drill.lost, 'LOST', _whole.format(p.lostCount), DashUi.red)),
-                ],
-              ),
-              SizedBox(height: 12 + extra),
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0, end: 1),
-                duration: const Duration(milliseconds: 1100),
-                curve: Curves.easeOutCubic,
-                builder: (context, t, _) => _tap(
-                  context,
-                  _Drill.closed,
-                  (h) => _hoverShell(
-                    h,
-                    DashUi.emeraldDeep,
-                    Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: DashUi.emeraldDeep.withValues(alpha: h ? 0.15 : 0.08),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: DashUi.emeraldDeep.withValues(alpha: h ? 0.8 : 0.25),
-                      width: h ? 1.5 : 1,
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                        width: 58,
-                        height: 58,
-                        child: CustomPaint(
-                          painter: _RingPainter(progress: (p.winRate / 100).clamp(0.0, 1.0) * t, color: DashUi.emeraldDeep),
-                          child: const Center(child: Icon(Icons.trending_up_rounded, size: 20, color: DashUi.emeraldDeep)),
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              'WIN RATE',
-                              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: DashUi.slate, letterSpacing: 0.8),
-                            ),
-                            Text(
-                              closed == 0 ? '—' : '${(p.winRate * t).toStringAsFixed(1)}%',
-                              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: DashUi.emeraldDeep, height: 1.1),
-                            ),
-                            Text(
-                              closed == 0 ? 'No closed estimates yet' : '${p.wonCount} won of $closed closed',
-                              style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-    );
-  }
-
-  /// Makes any piece of the card open the list of estimates behind its number.
-  /// [builder] receives whether the cursor is over it, so the piece can show a hover state.
-  Widget _tap(BuildContext context, _Drill drill, Widget Function(bool hovering) builder) => _DrillTap(
-        drill: drill,
-        onTap: () => showDialog(
-          context: context,
-          builder: (_) => _personListDialog(person: person, year: year, drill: drill),
-        ),
-        builder: builder,
-      );
-
-  /// Adds the "opens something" arrow in the corner while hovered.
-  Widget _hoverShell(bool hovering, Color color, Widget child) => Stack(
-        fit: StackFit.passthrough,
-        children: [
-          child,
-          Positioned(
-            top: 8,
-            right: 10,
-            child: IgnorePointer(
-              child: AnimatedOpacity(
-                opacity: hovering ? 1 : 0,
-                duration: const Duration(milliseconds: 150),
-                child: Icon(Icons.arrow_outward_rounded, size: 16, color: color),
-              ),
-            ),
-          ),
-        ],
-      );
-
-  Widget _tile(BuildContext context, _Drill drill, String label, String value, Color color) => _tap(
-        context,
-        drill,
-        (h) => _hoverShell(
-          h,
-          color,
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 14),
-            decoration: BoxDecoration(
-              color: h ? color.withValues(alpha: 0.09) : const Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: h ? color.withValues(alpha: 0.7) : Colors.transparent, width: 1.5),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.bold,
-                      color: h ? color : DashUi.muted,
-                      letterSpacing: 0.6,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 3),
-                FittedBox(
-                  fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    value,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w800,
-                      color: color,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
+      child: Text(text, maxLines: 1, style: DashText.meta.copyWith(fontSize: 12.5, color: DashUi.slate)),
+    ),
+  );
 }
 
-/// Click target with a pointer cursor, a tooltip and a hover flag for its child.
-class _DrillTap extends StatefulWidget {
-  final _Drill drill;
-  final VoidCallback onTap;
-  final Widget Function(bool hovering) builder;
-  const _DrillTap({required this.drill, required this.onTap, required this.builder});
+// =============================================================================
+// WON REVENUE BY MONTH (the team against last year; or one person)
+// =============================================================================
 
-  @override
-  State<_DrillTap> createState() => _DrillTapState();
-}
+class _WonChart extends StatelessWidget {
+  final List<_Month> months;
+  final List<double> prior;
+  final List<_Person> people;
+  final int year;
+  final double total;
 
-class _DrillTapState extends State<_DrillTap> {
-  bool _hovering = false;
+  /// The same dates a year earlier (all of the year before, for a past year).
+  final double priorTotal;
+  const _WonChart({
+    required this.months,
+    required this.prior,
+    required this.people,
+    required this.year,
+    required this.total,
+    required this.priorTotal,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: 'See the ${widget.drill.what}',
-      waitDuration: const Duration(milliseconds: 500),
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hovering = true),
-        onExit: (_) => setState(() => _hovering = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: widget.onTap,
-          child: widget.builder(_hovering),
+    final won = [for (var i = 0; i < 12; i++) i < months.length ? months[i].wonValue : 0.0];
+    final priorMonths = [for (var i = 0; i < 12; i++) i < prior.length ? prior[i] : 0.0];
+    final thisYear = year == DashClock.now().year;
+    String list(List<double> v, int last) => [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(v[i])}'].join(', ');
+
+    Widget? vsPrior;
+    if (priorTotal > 0 && total > 0) {
+      final pct = (total - priorTotal) / priorTotal * 100;
+      vsPrior = DashChangeChip(
+        pct: pct,
+        text: '${pct.abs().round()}% vs ${year - 1}${thisYear ? ' to date' : ''}',
+        tooltip: thisYear
+            ? '${_money(total)} won so far in $year, against ${_money(priorTotal)} over the same dates in ${year - 1}.'
+            : '${_money(total)} won in $year, against ${_money(priorTotal)} in ${year - 1}.',
+        semanticsLabel: '${pct >= 0 ? 'Up' : 'Down'} ${pct.abs().round()}% on ${thisYear ? 'the same dates in ' : ''}${year - 1}',
+      );
+    }
+
+    return DashMonthChart(
+      year: year,
+      views: [
+        DashChartView(
+          tab: 'Team',
+          title: 'Won revenue',
+          note: '${_compactMoney(total)} in $year',
+          series: [DashSeries('$year', won, DashUi.sky)],
+          prior: priorMonths,
+          priorLabel: '${year - 1}',
+          axis: _compactMoney,
+          barLabel: _compactMoney,
+          badge: vsPrior,
+          tip: (i) {
+            final m = i < months.length ? months[i] : null;
+            return [
+              DashTipRow('Won', _money(won[i]), color: DashUi.sky),
+              if (m != null) DashTipRow('Deals', '${m.wonCount} · ${m.winRate.toStringAsFixed(0)}% win'),
+              DashTipRow('${year - 1}', _money(priorMonths[i])),
+            ];
+          },
+          summary: (last) => 'Won revenue by month: ${list(won, last)}',
+          emptyText: 'No won estimates for $year yet.',
+          semanticsLabel: 'Won revenue by month, $year, with the same month of ${year - 1} for comparison',
+        ),
+        for (final p in people)
+          DashChartView(
+            tab: p.name.split(' ').first,
+            title: p.name,
+            note: '${_compactMoney(p.wonValue)} won in $year',
+            series: [
+              DashSeries(p.name.split(' ').first, [for (var i = 0; i < 12; i++) i < p.monthlyWon.length ? p.monthlyWon[i] : 0.0], DashUi.sky),
+            ],
+            axis: _compactMoney,
+            barLabel: _compactMoney,
+            tip: (i) => [DashTipRow('Won', _money(i < p.monthlyWon.length ? p.monthlyWon[i] : 0), color: DashUi.sky)],
+            summary: (last) => '${p.name} won by month: ${list([for (var i = 0; i < 12; i++) i < p.monthlyWon.length ? p.monthlyWon[i] : 0.0], last)}',
+            emptyText: '${p.name} has no won estimates in $year yet.',
+            semanticsLabel: 'Won revenue by month for ${p.name}, $year',
+          ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// DOOR STYLES (win rate, or won revenue in door lines; each opens its estimates)
+// =============================================================================
+
+class _DoorPanel extends StatefulWidget {
+  final DashGeo g;
+  final List<_DoorType> doors;
+  final int year;
+  final int maxRows;
+  final bool fill;
+  const _DoorPanel({required this.g, required this.doors, required this.year, required this.maxRows, required this.fill});
+
+  static double subtitleH(DashGeo g) => g.line(12.5) + 6;
+
+  @override
+  State<_DoorPanel> createState() => _DoorPanelState();
+}
+
+class _DoorPanelState extends State<_DoorPanel> {
+  _DoorView _view = _DoorView.winRate;
+
+  @override
+  Widget build(BuildContext context) => _panel(context, widget.maxRows, widget.fill);
+
+  /// The panel; in the "all styles" list ([inDialog]) without the view toggle, showing the view picked here.
+  Widget _panel(BuildContext context, int maxRows, bool fill, {bool inDialog = false}) {
+    final w = widget;
+    final g = w.g;
+    final rate = _view == _DoorView.winRate;
+    final slices = _doorSlices(w.doors, _view, 10);
+    final all = slices.length <= maxRows;
+    final shown = all ? slices : slices.take(math.max(1, maxRows - 1)).toList();
+    final totalRevenue = slices.fold<double>(0, (s, d) => s + d.revenue);
+    final maxRevenue = slices.fold<double>(0, (m, d) => math.max(m, d.revenue));
+
+    final header = DashPanelHeader(
+      g: g,
+      title: 'Door styles',
+      note: '${w.year}',
+      tooltip: rate
+          ? 'The top Clopay styles on the sales team\'s estimates in ${w.year}, most deals won first, with the share of '
+              'closed estimates that were won. An estimate counts once per style it contains.'
+          : 'The top Clopay styles by won revenue in ${w.year}: the door lines\' own totals on won estimates, not the '
+              'whole estimate.',
+      trailing: w.doors.isEmpty || inDialog
+          ? null
+          : DashSegmented<_DoorView>(
+              value: _view,
+              label: 'Door styles view',
+              options: const [(_DoorView.winRate, 'Win rate'), (_DoorView.revenue, 'Revenue')],
+              onChanged: (v) => setState(() => _view = v),
+            ),
+    );
+    if (slices.isEmpty) {
+      return DashPanel(
+        fill: fill,
+        header: header,
+        child: SizedBox(height: 2 * g.rowWide, child: DashEmptyNote('No door styles on won or lost estimates in ${w.year}.')),
+      );
+    }
+
+    final subtitle = SizedBox(
+      height: _DoorPanel.subtitleH(g),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              rate ? 'Top ${slices.length} Clopay styles · most deals won first' : 'Top ${slices.length} Clopay styles · door lines on won estimates',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: DashText.legend,
+            ),
+          ),
+          if (!all)
+            DashLink(
+              text: 'All ${slices.length}',
+              label: 'See all ${slices.length} door styles',
+              onTap: () => _openAll(context),
+            ),
+        ],
+      ),
+    );
+
+    final rows = DashRows(
+      count: shown.length,
+      base: g.rowWide,
+      give: 16,
+      row: (i) {
+        final s = shown[i];
+        final winRate = s.closed == 0 ? '—' : '${s.winRate.toStringAsFixed(0)}%';
+        return DashBarRow(
+          g: g,
+          label: s.label,
+          fraction: rate ? s.winRate / 100 : (maxRevenue > 0 ? s.revenue / maxRevenue : 0),
+          color: s.color,
+          amount: rate ? winRate : _compactMoney(s.revenue),
+          detail: rate ? '${s.won}/${s.closed}' : dashShare(s.revenue, totalRevenue),
+          tall: false,
+          labelWidth: 132,
+          amountWidth: 56,
+          detailWidth: 48,
+          onTap: () => showDialog<void>(
+            context: context,
+            builder: (_) => _doorListDialog(doorType: s.label, year: w.year, color: s.color, revenueView: !rate),
+          ),
+          hint: 'Opens the estimates with this style',
+          semanticsLabel: rate
+              ? '${s.label}: ${s.closed == 0 ? 'no closed estimates' : '$winRate win rate, ${s.won} won of ${s.closed} closed'}, '
+                  '${s.sent} sent'
+              : '${s.label}: ${_money(s.revenue)} won in door lines, ${dashShare(s.revenue, totalRevenue)} of the top styles',
+        );
+      },
+    );
+
+    return DashPanel(
+      fill: fill,
+      header: header,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          subtitle,
+          if (fill) Expanded(child: Align(alignment: Alignment.topCenter, child: rows)) else rows,
+        ],
+      ),
+    );
+  }
+
+  void _openAll(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        insetPadding: const EdgeInsets.all(24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: DashUi.line)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 640, maxHeight: MediaQuery.sizeOf(dialogContext).height * 0.86),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
+            child: SingleChildScrollView(child: _panel(dialogContext, 99, false, inDialog: true)),
+          ),
         ),
       ),
     );
   }
 }
 
-class _RingPainter extends CustomPainter {
-  final double progress;
-  final Color color;
-  const _RingPainter({required this.progress, required this.color});
+// =============================================================================
+// SKELETON (the same grid, with placeholders)
+// =============================================================================
+
+class _SalesSkeleton extends StatelessWidget {
+  const _SalesSkeleton();
 
   @override
-  void paint(Canvas canvas, Size size) {
-    const stroke = 6.0;
-    final rect = Rect.fromLTWH(stroke / 2, stroke / 2, size.width - stroke, size.height - stroke);
-    canvas.drawArc(
-      rect,
-      0,
-      math.pi * 2,
-      false,
-      Paint()
-        ..color = color.withValues(alpha: 0.15)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = stroke,
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return Semantics(
+      label: 'Loading sales',
+      child: ExcludeSemantics(
+        child: SkeletonPulse(
+          child: _Grid(
+            tiles: List.generate(4, (_) => const DashSkeletonTile()),
+            people: 2,
+            team: (oneLine, fill) => DashSkeletonPanel(rows: 2, rowH: _TeamPanel.rowH(g, oneLine) - 8),
+            chart: const DashSkeletonPanel(fill: true),
+            doors: (maxRows, fill) => DashSkeletonPanel(rows: math.min(6, maxRows), rowH: g.rowWide),
+          ),
+        ),
+      ),
     );
-    if (progress > 0) {
-      canvas.drawArc(
-        rect,
-        -math.pi / 2,
-        math.pi * 2 * progress,
-        false,
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = stroke
-          ..strokeCap = StrokeCap.round,
-      );
-    }
   }
-
-  @override
-  bool shouldRepaint(covariant _RingPainter old) => old.progress != progress || old.color != color;
 }
 
 // =============================================================================
@@ -1033,978 +1048,4 @@ List<_DoorSlice> _doorSlices(List<_DoorType> allDoors, _DoorView view, int limit
     });
 
   return all.take(limit).toList();
-}
-class _DoorTypePanel extends StatefulWidget {
-  final List<_DoorType> doors;
-  final int year;
-  const _DoorTypePanel({required this.doors, required this.year});
-
-  @override
-  State<_DoorTypePanel> createState() => _DoorTypePanelState();
-}
-
-class _DoorTypePanelState extends State<_DoorTypePanel> with SingleTickerProviderStateMixin {
-  static const _cycle = Duration(seconds: 8);
-
-  late final AnimationController _intro;
-  Timer? _timer;
-  _DoorView _view = _DoorView.winRate;
-  int? _hover;
-  bool _panelHover = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..forward();
-    _restartTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _DoorTypePanel old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.doors, widget.doors)) {
-      _hover = null;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _intro.dispose();
-    super.dispose();
-  }
-
-  void _openDoor(_DoorSlice s) {
-    showDialog(
-      context: context,
-      builder: (_) => _doorListDialog(
-        doorType: s.label,
-        year: widget.year,
-        color: s.color,
-        revenueView: _view == _DoorView.revenue,
-      ),
-    );
-  }
-
-  void _restartTimer() {
-    _timer?.cancel();
-    _timer = Timer.periodic(_cycle, (_) {
-      if (!mounted || _panelHover) return;
-      _setView(_view == _DoorView.winRate ? _DoorView.revenue : _DoorView.winRate);
-    });
-  }
-
-  void _setView(_DoorView v) {
-    if (v == _view) return;
-    setState(() {
-      _view = v;
-      _hover = null;
-    });
-    _intro.forward(from: 0);
-    _restartTimer();
-  }
-
-  int? _hitTest(Offset p, double size, List<_DoorSlice> slices, double total) {
-    final c = Offset(size / 2, size / 2);
-    final d = p - c;
-    final outer = size / 2 - 6;
-    final dist = d.distance;
-    if (dist < outer * 0.6 - 2 || dist > outer + 8) return null;
-    var angle = math.atan2(d.dy, d.dx) + math.pi / 2;
-    if (angle < 0) angle += math.pi * 2;
-    var acc = 0.0;
-    for (var i = 0; i < slices.length; i++) {
-      acc += slices[i].sizeFor(_view) / total * math.pi * 2;
-      if (angle <= acc) return slices[i].sizeFor(_view) > 0 ? i : null;
-    }
-    return null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isRate = _view == _DoorView.winRate;
-
-    return MouseRegion(
-      onEnter: (_) => _panelHover = true,
-      onExit: (_) => _panelHover = false,
-      child: Container(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 14),
-        decoration: DashUi.panel(),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              spacing: 12,
-              runSpacing: 8,
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      isRate ? 'Win rate by door type' : 'Revenue by door type',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      isRate
-                          ? 'Top 10 Clopay styles · ${widget.year} · sized by deals won'
-                          : 'Top 10 Clopay styles · door lines on won estimates · ${widget.year}',
-                      style: const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w500),
-                    ),
-                  ],
-                ),
-                SizedBox(
-                  width: 230,
-                  child: AppSegmented<_DoorView>(
-                    value: _view,
-                    options: const [(_DoorView.winRate, 'Win rate'), (_DoorView.revenue, 'Revenue YTD')],
-                    onChanged: _setView,
-                    activeColor: DashUi.sky,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Expanded(child: LayoutBuilder(builder: (context, c) => _body(c))),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _body(BoxConstraints c) {
-    final slices = _doorSlices(widget.doors, _view, 10);
-    final total = slices.fold<double>(0, (s, x) => s + x.sizeFor(_view));
-
-    if (widget.doors.isEmpty || total <= 0) {
-      return Center(
-        child: Text(
-          'No door styles found on ${widget.year} estimates yet.',
-          style: const TextStyle(fontSize: 14, color: DashUi.muted, fontWeight: FontWeight.w500),
-        ),
-      );
-    }
-
-    final size = math.min(c.maxHeight, c.maxWidth * 0.42).toDouble();
-    final hovered = (_hover != null && _hover! < slices.length) ? slices[_hover!] : null;
-
-    return Row(
-      children: [
-        SizedBox(
-          width: size,
-          height: size,
-          child: MouseRegion(
-            cursor: _hover != null ? SystemMouseCursors.click : MouseCursor.defer,
-            onHover: (e) {
-              final i = _hitTest(e.localPosition, size, slices, total);
-              if (i != _hover) setState(() => _hover = i);
-            },
-            onExit: (_) {
-              if (_hover != null) setState(() => _hover = null);
-            },
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTapUp: (d) {
-                final i = _hitTest(d.localPosition, size, slices, total);
-                if (i != null) _openDoor(slices[i]);
-              },
-              child: Stack(
-              children: [
-                AnimatedBuilder(
-                  animation: _intro,
-                  builder: (context, _) => CustomPaint(
-                    size: Size.square(size),
-                    painter: _DonutPainter(
-                      slices: slices,
-                      view: _view,
-                      total: total,
-                      hover: _hover,
-                      intro: Curves.easeOutCubic.transform(_intro.value),
-                    ),
-                  ),
-                ),
-                IgnorePointer(child: Center(child: _center(slices, hovered, size))),
-              ],
-            ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 24),
-        Expanded(child: _legend(slices, total)),
-      ],
-    );
-  }
-
-  Widget _center(List<_DoorSlice> slices, _DoorSlice? hovered, double size) {
-    final isRate = _view == _DoorView.winRate;
-    final won = slices.fold(0, (s, x) => s + x.won);
-    final lost = slices.fold(0, (s, x) => s + x.lost);
-    final overallRate = won + lost > 0 ? won / (won + lost) * 100 : 0.0;
-    final revenue = slices.fold(0.0, (s, x) => s + x.revenue);
-
-    final String top;
-    final String big;
-    final String bottom;
-    if (hovered != null) {
-      top = hovered.label;
-      if (isRate) {
-        big = hovered.closed == 0 ? '—' : '${hovered.winRate.toStringAsFixed(0)}%';
-        bottom = '${hovered.won}/${hovered.closed} won';
-      } else {
-        big = _compactMoney(hovered.revenue);
-        bottom = '${hovered.won} ${hovered.won == 1 ? 'estimate' : 'estimates'} won';
-      }
-    } else if (isRate) {
-      top = slices.length >= 10 ? 'TOP 10' : 'ALL DOORS';
-      big = '${overallRate.toStringAsFixed(0)}%';
-      bottom = '$won/${won + lost} won';
-    } else {
-      top = 'DOOR REVENUE';
-      big = _compactMoney(revenue);
-      bottom = 'won in ${widget.year}';
-    }
-
-    // The hole is about 60% of the donut; keep the text well inside it and shrink to fit.
-    return SizedBox(
-      width: size * 0.5,
-      height: size * 0.5,
-      child: FittedBox(
-        fit: BoxFit.scaleDown,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 110),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // On a small donut the caption would cross the ring, so only show it when hovering.
-              if (size >= 150 || hovered != null)
-                Text(
-                  top,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: DashUi.muted, letterSpacing: 0.6),
-                ),
-              Text(
-                big,
-                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.15),
-              ),
-              Text(
-                bottom,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.slate),
-              ),
-              if (hovered != null)
-                const Padding(
-                  padding: EdgeInsets.only(top: 2),
-                  child: Text('Click for list', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: DashUi.sky)),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  static const _rowH = 27.0;
-  static const _rowHMin = 21.0;
-
-  /// One column when everything fits; otherwise two columns, with rows tightened (down to [_rowHMin])
-  /// so all of the top 10 are visible without scrolling.
-  Widget _legend(List<_DoorSlice> slices, double total) {
-    return LayoutBuilder(builder: (context, box) {
-      final n = slices.length;
-      final single = n * _rowH <= box.maxHeight;
-      final half = (n / 2).ceil();
-      final tightH = box.maxHeight / half;
-
-      if (!single && box.maxWidth >= 340 && tightH >= _rowHMin) {
-        final rowH = math.min(_rowH, tightH);
-        final colW = (box.maxWidth - 12) / 2;
-        Widget col(int from, int to) => Expanded(
-              child: Column(
-                children: [
-                  for (var i = from; i < to; i++)
-                    _legendRow(slices[i], i, total, compact: true, rowH: rowH, showCount: colW >= 215),
-                ],
-              ),
-            );
-        // Centered against the donut so the two line up.
-        return Align(
-          alignment: Alignment.centerLeft,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [col(0, half), const SizedBox(width: 12), col(half, n)],
-          ),
-        );
-      }
-
-      return ListView.builder(
-        physics: const ClampingScrollPhysics(),
-        itemCount: n,
-        itemBuilder: (context, i) => _legendRow(slices[i], i, total, compact: false, rowH: _rowH),
-      );
-    });
-  }
-  Widget _legendRow(_DoorSlice s, int i, double total, {required bool compact, required double rowH, bool showCount = true}) {
-    final isRate = _view == _DoorView.winRate;
-    final active = _hover == i;
-    final dim = _hover != null && !active;
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = i),
-      onExit: (_) => setState(() => _hover = null),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _openDoor(s),
-        child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 150),
-        opacity: dim ? 0.45 : 1,
-        child: Container(
-          height: rowH,
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          decoration: BoxDecoration(
-            color: active ? DashUi.faint : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            children: [
-              Container(width: 10, height: 10, decoration: BoxDecoration(color: s.color, borderRadius: BorderRadius.circular(3))),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  s.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12.5, fontWeight: active ? FontWeight.w800 : FontWeight.w600, color: DashUi.ink),
-                ),
-              ),
-              if (isRate) ...[
-                if (showCount) ...[
-                  Text('${s.won}/${s.closed}', style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600)),
-                  const SizedBox(width: 8),
-                ],
-                SizedBox(
-                  width: 38,
-                  child: Text(
-                    s.closed == 0 ? '—' : '${s.winRate.toStringAsFixed(0)}%',
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.emeraldDeep),
-                  ),
-                ),
-                if (!compact) ...[
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    width: 46,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: LinearProgressIndicator(
-                        value: (s.winRate / 100).clamp(0.0, 1.0),
-                        minHeight: 5,
-                        backgroundColor: DashUi.line,
-                        valueColor: const AlwaysStoppedAnimation(DashUi.emeraldDeep),
-                      ),
-                    ),
-                  ),
-                ],
-              ] else ...[
-                if (!compact) ...[
-                  Text(
-                    total > 0 ? '${(s.revenue / total * 100).toStringAsFixed(0)}%' : '',
-                    style: const TextStyle(fontSize: 11.5, color: DashUi.muted, fontWeight: FontWeight.w600),
-                  ),
-                  const SizedBox(width: 10),
-                ],
-                SizedBox(
-                  width: 52,
-                  child: Text(
-                    _compactMoney(s.revenue),
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: DashUi.sky),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DonutPainter extends CustomPainter {
-  final List<_DoorSlice> slices;
-  final _DoorView view;
-  final double total;
-  final int? hover;
-  final double intro;
-
-  const _DonutPainter({
-    required this.slices,
-    required this.view,
-    required this.total,
-    required this.hover,
-    required this.intro,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final center = Offset(size.width / 2, size.height / 2);
-    final outer = size.width / 2 - 6;
-    final stroke = outer * 0.4;
-    final base = outer - stroke / 2;
-    final gap = slices.where((s) => s.sizeFor(view) > 0).length > 1 ? 0.03 : 0.0;
-    final limit = -math.pi / 2 + intro * math.pi * 2;
-
-    var start = -math.pi / 2;
-    for (var i = 0; i < slices.length; i++) {
-      final v = slices[i].sizeFor(view);
-      if (v <= 0) continue;
-      final full = v / total * math.pi * 2;
-      final a0 = start + gap / 2;
-      final a1 = math.min(start + full - gap / 2, limit);
-      start += full;
-      if (a1 <= a0) continue;
-
-      final active = hover == i;
-      final dim = hover != null && !active;
-      canvas.drawArc(
-        Rect.fromCircle(center: center, radius: base + (active ? 3 : 0)),
-        a0,
-        a1 - a0,
-        false,
-        Paint()
-          ..color = slices[i].color.withValues(alpha: dim ? 0.35 : 1)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = stroke + (active ? 6 : 0),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _DonutPainter old) =>
-      old.slices != slices || old.view != view || old.hover != hover || old.intro != intro || old.total != total;
-}
-
-// =============================================================================
-// MONTHLY WON CHART
-// =============================================================================
-
-class _MonthlyWonChart extends StatefulWidget {
-  final List<_Month> data;
-  final List<double> prior;
-  final int year;
-  final double total;
-
-  /// Won value for the same stretch of the previous year (to today's date), for the comparison chip.
-  final double priorTotal;
-  const _MonthlyWonChart({
-    required this.data,
-    required this.prior,
-    required this.year,
-    required this.total,
-    required this.priorTotal,
-  });
-
-  @override
-  State<_MonthlyWonChart> createState() => _MonthlyWonChartState();
-}
-
-class _MonthlyWonChartState extends State<_MonthlyWonChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-  int? _index;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
-  }
-
-  @override
-  void didUpdateWidget(covariant _MonthlyWonChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _index = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _setActive(int? i) {
-    if (i == _index) return;
-    setState(() => _index = i);
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  int? _indexFor(double dx, double width) {
-    final plotW = width - _WonChartPainter.leftGutter;
-    if (plotW <= 0) return null;
-    final i = ((dx - _WonChartPainter.leftGutter) / (plotW / 12)).floor();
-    return (i < 0 || i >= 12) ? null : i;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final w = widget;
-    final maxV = [...w.data.map((m) => m.wonValue), ...w.prior].fold<double>(0, math.max);
-    final scale = _niceScale(maxV);
-    final now = DateTime.now();
-    final currentMonth = w.year == now.year ? now.month - 1 : null;
-
-    return LayoutBuilder(builder: (context, box) {
-    final compact = box.maxHeight < 230;
-    return Container(
-      padding: EdgeInsets.fromLTRB(20, compact ? 12 : 18, 20, compact ? 10 : 14),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (compact) _compactHeader() else Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 8,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Won revenue by month', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        _compactMoney(w.total),
-                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1),
-                      ),
-                      const SizedBox(width: 10),
-                      Text('Total for ${w.year}', style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                      if (w.priorTotal > 0) ...[
-                        const SizedBox(width: 10),
-                        _vsPriorChip((w.total - w.priorTotal) / w.priorTotal * 100, w.year - 1),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _legend(
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(3),
-                        gradient: const LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          colors: [Color(0xFF0369A1), Color(0xFF0284C7)],
-                        ),
-                      ),
-                    ),
-                    '${w.year}',
-                  ),
-                  const SizedBox(width: 16),
-                  _legend(
-                    Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: List.generate(
-                        3,
-                        (i) => Container(width: 4, height: 2.5, margin: EdgeInsets.only(right: i == 2 ? 0 : 2), color: DashUi.amber),
-                      ),
-                    ),
-                    '${w.year - 1}',
-                  ),
-                ],
-              ),
-            ],
-          ),
-          SizedBox(height: compact ? 6 : 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) => MouseRegion(
-                onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                onExit: (_) => _setActive(null),
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                  onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([_intro, _hover]),
-                    builder: (context, _) => CustomPaint(
-                      size: Size.infinite,
-                      painter: _WonChartPainter(
-                        data: w.data,
-                        prior: w.prior,
-                        year: w.year,
-                        scale: scale,
-                        currentMonth: currentMonth,
-                        index: _index,
-                        intro: _intro.value,
-                        hover: Curves.easeOutCubic.transform(_hover.value),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-    });
-  }
-
-  /// One-line header for short panels: title, total, comparison and legend side by side.
-  Widget _compactHeader() {
-    final w = widget;
-    return Row(
-      children: [
-        const Text('Won revenue by month', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.slate)),
-        const SizedBox(width: 10),
-        Text(_compactMoney(w.total), style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: DashUi.ink)),
-        if (w.priorTotal > 0) ...[
-          const SizedBox(width: 8),
-          _vsPriorChip((w.total - w.priorTotal) / w.priorTotal * 100, w.year - 1),
-        ],
-        const Spacer(),
-        _legend(Container(width: 10, height: 10, decoration: BoxDecoration(color: DashUi.sky, borderRadius: BorderRadius.circular(3))), '${w.year}'),
-        const SizedBox(width: 12),
-        _legend(Container(width: 12, height: 2.5, color: DashUi.amber), '${w.year - 1}'),
-      ],
-    );
-  }
-
-  Widget _vsPriorChip(double pct, int priorYear) {
-    final up = pct >= 0;
-    final color = up ? DashUi.emeraldDeep : DashUi.red;
-    return Tooltip(
-      message: 'Compared with the same period of $priorYear',
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
-        child: Text(
-          '${up ? '▲' : '▼'} ${pct.abs().toStringAsFixed(0)}% vs $priorYear',
-          style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: color),
-        ),
-      ),
-    );
-  }
-
-  Widget _legend(Widget swatch, String label) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          swatch,
-          const SizedBox(width: 6),
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate)),
-        ],
-      );
-}
-
-class _WonChartPainter extends CustomPainter {
-  static const double leftGutter = 46;
-  static const double bottomGutter = 26;
-  static const double topPad = 6;
-
-  final List<_Month> data;
-  final List<double> prior;
-  final int year;
-  final _Scale scale;
-  final int? currentMonth;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _WonChartPainter({
-    required this.data,
-    required this.prior,
-    required this.year,
-    required this.scale,
-    required this.currentMonth,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final plotW = size.width - leftGutter;
-    final plotH = size.height - bottomGutter - topPad;
-    if (plotW <= 0 || plotH <= 0) return;
-    final slot = plotW / 12;
-
-    double yFor(double v) => topPad + plotH * (1 - (v / scale.max).clamp(0.0, 1.0));
-    double xFor(int i) => leftGutter + slot * (i + 0.5);
-
-    // Grid + y labels
-    final grid = Paint()
-      ..color = DashUi.line
-      ..strokeWidth = 1;
-    for (var t = 0; t <= scale.ticks; t++) {
-      final y = yFor(t * scale.step);
-      canvas.drawLine(Offset(leftGutter, y), Offset(size.width, y), grid);
-      final tp = _layoutText(
-        _compactMoney(t * scale.step),
-        const TextStyle(fontSize: 11, color: DashUi.muted, fontWeight: FontWeight.w500),
-        maxWidth: leftGutter - 8,
-        align: TextAlign.right,
-      );
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    // Bars
-    final barW = math.min(slot * 0.52, 38.0);
-    for (var i = 0; i < 12; i++) {
-      final local = Curves.easeOutCubic.transform(((intro - i * 0.04) / 0.52).clamp(0.0, 1.0));
-      final v = data[i].wonValue * local;
-      final focused = index == i;
-      final dimmed = index != null && !focused;
-
-      // Month label
-      final isNow = currentMonth == i;
-      final label = _layoutText(
-        _monthNames[i],
-        TextStyle(
-          fontSize: 11.5,
-          color: focused || isNow ? DashUi.ink : DashUi.muted,
-          fontWeight: focused || isNow ? FontWeight.w800 : FontWeight.w500,
-        ),
-      );
-      label.paint(canvas, Offset(xFor(i) - label.width / 2, size.height - bottomGutter + 8));
-
-      if (v <= 0) continue;
-      final top = yFor(v);
-      final rect = RRect.fromRectAndCorners(
-        Rect.fromLTRB(xFor(i) - barW / 2, top, xFor(i) + barW / 2, topPad + plotH),
-        topLeft: const Radius.circular(5),
-        topRight: const Radius.circular(5),
-      );
-      final colors = focused ? const [Color(0xFF075985), Color(0xFF38BDF8)] : const [Color(0xFF0369A1), Color(0xFF0284C7)];
-      canvas.drawRRect(
-        rect,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.bottomCenter,
-            end: Alignment.topCenter,
-            colors: [for (final c in colors) c.withValues(alpha: dimmed ? 0.4 : 1)],
-          ).createShader(rect.outerRect),
-      );
-    }
-
-    // Prior-year line (dashed)
-    if (prior.any((v) => v > 0)) {
-      final path = Path();
-      for (var i = 0; i < 12; i++) {
-        final p = Offset(xFor(i), yFor(prior[i]));
-        i == 0 ? path.moveTo(p.dx, p.dy) : path.lineTo(p.dx, p.dy);
-      }
-      final line = Paint()
-        ..color = DashUi.amber.withValues(alpha: 0.85 * intro)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.8
-        ..strokeCap = StrokeCap.round;
-      for (final m in path.computeMetrics()) {
-        var d = 0.0;
-        while (d < m.length) {
-          canvas.drawPath(m.extractPath(d, math.min(d + 5, m.length)), line);
-          d += 9;
-        }
-      }
-      for (var i = 0; i < 12; i++) {
-        canvas.drawCircle(Offset(xFor(i), yFor(prior[i])), index == i ? 3.6 : 2.4, Paint()..color = DashUi.amber.withValues(alpha: intro));
-      }
-    }
-
-    if (index != null && hover > 0) _paintTooltip(canvas, size, xFor(index!), plotH);
-  }
-
-  void _paintTooltip(Canvas canvas, Size size, double cx, double plotH) {
-    final i = index!;
-    final m = data[i];
-
-    final head = _layoutText('${_monthNames[i]} $year', const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: DashUi.ink));
-    final rows = <(String, String, Color)>[
-      ('Won', _money(m.wonValue), DashUi.sky),
-      ('Deals', '${m.wonCount} · ${m.winRate.toStringAsFixed(0)}% win', DashUi.slate),
-      ('${year - 1}', _money(prior[i]), DashUi.amber),
-    ];
-    final labels = [for (final r in rows) _layoutText(r.$1, const TextStyle(fontSize: 12, color: DashUi.muted, fontWeight: FontWeight.w600))];
-    final values = [
-      for (final r in rows) _layoutText(r.$2, TextStyle(fontSize: 12, color: r.$3, fontWeight: FontWeight.w800)),
-    ];
-
-    final labelW = labels.map((t) => t.width).reduce(math.max);
-    final valueW = values.map((t) => t.width).reduce(math.max);
-    final w = math.max(head.width, labelW + 14 + valueW) + 24;
-    final h = 12 + head.height + 6 + rows.length * 17 + 8;
-
-    final barTop = math.min(
-      data[i].wonValue <= 0 ? plotH : topPad + plotH * (1 - (data[i].wonValue / scale.max).clamp(0.0, 1.0)),
-      plotH,
-    );
-    final x = (cx - w / 2).clamp(leftGutter, math.max(leftGutter, size.width - w)).toDouble();
-    final y = (barTop - h - 10).clamp(0.0, math.max(0.0, size.height - bottomGutter - h)).toDouble();
-
-    final box = RRect.fromRectAndRadius(Rect.fromLTWH(x, y, w, h), const Radius.circular(10));
-    canvas.save();
-    canvas.drawRRect(box.shift(const Offset(0, 3)), Paint()
-      ..color = const Color(0x1A0F172A).withValues(alpha: 0.1 * hover)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-    canvas.drawRRect(box, Paint()..color = Colors.white.withValues(alpha: hover));
-    canvas.drawRRect(
-      box,
-      Paint()
-        ..color = DashUi.line.withValues(alpha: hover)
-        ..style = PaintingStyle.stroke,
-    );
-    canvas.restore();
-
-    if (hover < 0.6) return;
-    head.paint(canvas, Offset(x + 12, y + 10));
-    var ry = y + 10 + head.height + 6;
-    for (var r = 0; r < rows.length; r++) {
-      labels[r].paint(canvas, Offset(x + 12, ry));
-      values[r].paint(canvas, Offset(x + w - 12 - values[r].width, ry));
-      ry += 17;
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _WonChartPainter old) =>
-      old.data != data ||
-      old.prior != prior ||
-      old.index != index ||
-      old.intro != intro ||
-      old.hover != hover ||
-      old.scale.max != scale.max;
-}
-
-// =============================================================================
-// LOADING SKELETON
-// =============================================================================
-
-class _SalesSkeleton extends StatelessWidget {
-  const _SalesSkeleton();
-
-  Widget _metric() => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-          decoration: DashUi.panel(radius: 12),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [SkeletonBox(h: 12, w: 120), SizedBox(height: 12), SkeletonBox(h: 26, w: 170)],
-          ),
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    return SkeletonPulse(
-      child: Column(
-        children: [
-          SizedBox(
-            height: 86,
-            child: Row(children: [_metric(), const SizedBox(width: 12), _metric(), const SizedBox(width: 12), _metric(), const SizedBox(width: 12), _metric()]),
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < 2; i++) ...[
-                  Expanded(
-                    flex: 3,
-                    child: Container(
-                      decoration: DashUi.panel(radius: 18),
-                      clipBehavior: Clip.antiAlias,
-                      child: const Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 4, child: SkeletonBox(r: 0)),
-                          Expanded(
-                            flex: 7,
-                            child: Padding(
-                              padding: EdgeInsets.all(22),
-                              child: SingleChildScrollView(
-                                physics: NeverScrollableScrollPhysics(),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    SkeletonBox(h: 20, w: 150),
-                                    SizedBox(height: 10),
-                                    SkeletonBox(h: 14, w: 100),
-                                    SizedBox(height: 24),
-                                    SkeletonBox(h: 86, r: 12),
-                                    SizedBox(height: 10),
-                                    SkeletonBox(h: 56, r: 12),
-                                    SizedBox(height: 10),
-                                    SkeletonBox(h: 56, r: 12),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 16),
-                ],
-                Expanded(
-                  flex: 6,
-                  child: Column(
-                    children: [
-                      for (final flex in const [11, 9]) ...[
-                        Expanded(
-                          flex: flex,
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.all(20),
-                            decoration: DashUi.panel(),
-                            child: const Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                SkeletonBox(h: 12, w: 160),
-                                SizedBox(height: 14),
-                                Expanded(child: SkeletonBox(r: 10)),
-                              ],
-                            ),
-                          ),
-                        ),
-                        if (flex == 11) const SizedBox(height: 16),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }

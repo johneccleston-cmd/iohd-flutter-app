@@ -440,6 +440,16 @@ class _ReceivablesKpis {
 
   /// Cash collected per calendar month, January first (12 entries). Empty until the backend sends it.
   final List<double> collectedMonthly;
+
+  /// New leads and the ones booked as jobs, per calendar month (12 entries each). Empty until the backend sends
+  /// `leadToBooked: {leads: [...], booked: [...]}`; nothing records leads yet.
+  final List<double> leadsMonthly;
+  final List<double> bookedMonthly;
+
+  /// Incoming Quo calls to this person, and how many nobody answered, per calendar month (12 entries each). Empty
+  /// when the backend can't match them to a Quo user (or is an older build).
+  final List<double> missedMonthly;
+  final List<double> callsMonthly;
   const _ReceivablesKpis({
     required this.outstanding,
     required this.over90,
@@ -453,12 +463,60 @@ class _ReceivablesKpis {
     this.satisfaction,
     this.mentions = const [],
     this.collectedMonthly = const [],
+    this.leadsMonthly = const [],
+    this.bookedMonthly = const [],
+    this.missedMonthly = const [],
+    this.callsMonthly = const [],
   });
+
+  /// The same figures with the Collections dashboard's numbers swapped in (outstanding, over 90, cash, aging stages),
+  /// so this page can never disagree with that screen.
+  _ReceivablesKpis withCollections(Map body) {
+    double d(dynamic v) => _num(v) ?? 0;
+    final sum = body['summary'] is Map ? body['summary'] as Map : const {};
+    final stages = body['stages'] is List ? body['stages'] as List : const [];
+    final monthly = List<double>.filled(12, 0);
+    for (final e in (body['monthly'] is List ? body['monthly'] as List : const [])) {
+      final m = int.tryParse(_str(e is Map ? e['month_num'] : null)) ?? 0;
+      if (m >= 1 && m <= 12) monthly[m - 1] = d((e as Map)['collected']);
+    }
+    final rows = [
+      for (final r in stages)
+        if (r is Map) _AgingRow(_str(r['label']), d(r['amount']), int.tryParse(_str(r['jobCount'])) ?? 0),
+    ];
+    final out = _num(sum['outstanding']) ?? rows.fold<double>(0, (t, a) => t + a.amount);
+    final cash = d(sum['collected']);
+    return _ReceivablesKpis(
+      outstanding: out,
+      over90: _num(sum['over90']) ?? over90,
+      collected: cash,
+      collectionRatePct: cash + out > 0 ? (cash / (cash + out) * 1000).round() / 10 : null,
+      aging: rows.isEmpty ? aging : rows,
+      tracksCallAnswer: tracksCallAnswer,
+      tracksMissedCall: tracksMissedCall,
+      tracksLeadToBooked: tracksLeadToBooked,
+      tracksCustomerResponse: tracksCustomerResponse,
+      satisfaction: satisfaction,
+      mentions: mentions,
+      collectedMonthly: monthly,
+      leadsMonthly: leadsMonthly,
+      bookedMonthly: bookedMonthly,
+      missedMonthly: missedMonthly,
+      callsMonthly: callsMonthly,
+    );
+  }
 
   factory _ReceivablesKpis.fromJson(Map<String, dynamic> j) {
     final tr = j['tracking'] is Map ? j['tracking'] as Map : const {};
     final rows = j['aging'] is List ? j['aging'] as List : const [];
+    final ltb = j['leadToBooked'] is Map ? j['leadToBooked'] as Map : const {};
+    List<double> series(dynamic v) => [for (final x in (v is List ? v : const [])) _num(x) ?? 0];
+    final mc = j['missedCalls'] is Map ? j['missedCalls'] as Map : const {};
     return _ReceivablesKpis(
+      missedMonthly: series(mc['missed']),
+      callsMonthly: series(mc['total']),
+      leadsMonthly: series(ltb['leads']),
+      bookedMonthly: series(ltb['booked']),
       outstanding: _num(j['outstanding']) ?? 0,
       over90: _num(j['over90']) ?? 0,
       collected: _num(j['collected']) ?? 0,
@@ -515,13 +573,20 @@ class _OpenPos {
 
   /// Order date of the oldest open PO.
   final DateTime? oldest;
-  const _OpenPos({required this.count, required this.value, required this.overdue, required this.oldest});
+
+  /// Open POs grouped by days since ordered: (label, count, value).
+  final List<(String, int, double)> aging;
+  const _OpenPos({required this.count, required this.value, required this.overdue, required this.oldest, this.aging = const []});
 
   factory _OpenPos.fromJson(Map j) => _OpenPos(
         count: int.tryParse(_str(j['count'])) ?? 0,
         value: _num(j['value']) ?? 0,
         overdue: int.tryParse(_str(j['overdue'])) ?? 0,
         oldest: DateTime.tryParse(_str(j['oldest'])),
+        aging: [
+          for (final a in (j['aging'] is List ? j['aging'] as List : const []))
+            if (a is Map) (_str(a['label']), int.tryParse(_str(a['count'])) ?? 0, _num(a['value']) ?? 0),
+        ],
       );
 }
 
@@ -542,6 +607,34 @@ class _WarehouseKpis {
 
   /// Null until the backend sends it.
   final _OpenPos? openPos;
+
+  /// This person's own callback strikes this year (warehouse staff install too). Null until the backend sends it.
+  final int? callbackStrikes;
+
+  /// Jobs this person completed this year (warehouse staff install too). Null until the backend sends it.
+  final int? jobsCompleted;
+
+  /// Jobs completed and cycle count zones finished per month (January first); empty until the backend sends them.
+  final List<double> jobsMonthly;
+  final List<double> cycleMonthly;
+
+  /// Daily snapshots, oldest first, of low stock items and the techs' inventory strikes. They fill in as days pass.
+  final List<double> lowStockHistory;
+  final List<double> strikesHistory;
+
+  /// Share of this year's counted items whose count matched the system quantity (0-100). Null until a count with
+  /// quantities has been recorded.
+  final double? accuracyPct;
+  final int accuracyCounted;
+
+  /// Weekly accuracy, oldest first: (week start 'YYYY-MM-DD', percent, items counted).
+  final List<(String, double, int)> accuracyTrend;
+
+  /// The items furthest off this year: (name, system quantity, counted quantity).
+  final List<(String, int, int)> topMisses;
+
+  /// Each zone's last scheduled weeks: zone, then (period start, Complete / Missed / Pending).
+  final List<(String, List<(String, String)>)> cycleHistory;
   final bool tracksPickAccuracy;
   final bool tracksReceiving;
   final bool tracksOrderFill;
@@ -556,6 +649,17 @@ class _WarehouseKpis {
     required this.stockValue,
     required this.itemCount,
     this.openPos,
+    this.callbackStrikes,
+    this.jobsCompleted,
+    this.jobsMonthly = const [],
+    this.cycleMonthly = const [],
+    this.lowStockHistory = const [],
+    this.strikesHistory = const [],
+    this.accuracyPct,
+    this.accuracyCounted = 0,
+    this.accuracyTrend = const [],
+    this.topMisses = const [],
+    this.cycleHistory = const [],
     required this.tracksPickAccuracy,
     required this.tracksReceiving,
     required this.tracksOrderFill,
@@ -563,6 +667,8 @@ class _WarehouseKpis {
 
   factory _WarehouseKpis.fromJson(Map<String, dynamic> j) {
     final tr = j['tracking'] is Map ? j['tracking'] as Map : const {};
+    final hist = j['history'] is Map ? j['history'] as Map : const {};
+    List<double> numList(dynamic v) => [for (final x in (v is List ? v : const [])) _num(x) ?? 0];
     int n(dynamic v) => int.tryParse(_str(v)) ?? 0;
     return _WarehouseKpis(
       strikes: n(j['strikes']),
@@ -575,6 +681,30 @@ class _WarehouseKpis {
       stockValue: _num(j['stockValue']) ?? 0,
       itemCount: n(j['itemCount']),
       openPos: j['openPos'] is Map ? _OpenPos.fromJson(j['openPos'] as Map) : null,
+      callbackStrikes: int.tryParse(_str(j['callbackStrikes'])),
+      jobsCompleted: int.tryParse(_str(j['jobsCompleted'])),
+      jobsMonthly: numList(j['jobsMonthly']),
+      cycleMonthly: numList(j['cycleMonthly']),
+      lowStockHistory: numList(hist['lowStock']),
+      strikesHistory: numList(hist['teamStrikes']),
+      accuracyPct: j['inventoryAccuracy'] is Map ? _num((j['inventoryAccuracy'] as Map)['pct']) : null,
+      accuracyCounted: j['inventoryAccuracy'] is Map ? int.tryParse(_str((j['inventoryAccuracy'] as Map)['counted'])) ?? 0 : 0,
+      accuracyTrend: [
+        for (final t in (j['accuracyTrend'] is List ? j['accuracyTrend'] as List : const []))
+          if (t is Map && _num(t['pct']) != null) (_str(t['week']), _num(t['pct'])!, int.tryParse(_str(t['counted'])) ?? 0),
+      ],
+      topMisses: [
+        for (final m in (j['topMisses'] is List ? j['topMisses'] as List : const []))
+          if (m is Map) (_str(m['name']), int.tryParse(_str(m['systemQty'])) ?? 0, int.tryParse(_str(m['countedQty'])) ?? 0),
+      ],
+      cycleHistory: [
+        for (final z in (j['cycleHistory'] is List ? j['cycleHistory'] as List : const []))
+          if (z is Map)
+            (
+              _str(z['zone']),
+              [for (final k in (z['weeks'] is List ? z['weeks'] as List : const [])) if (k is Map) (_str(k['periodStart']), _str(k['status']))],
+            ),
+      ],
       tracksPickAccuracy: _flag(tr, 'pickAccuracy'),
       tracksReceiving: _flag(tr, 'receivingTime'),
       tracksOrderFill: _flag(tr, 'orderFillRate'),
@@ -595,7 +725,8 @@ class _KpiBundle {
   const _KpiBundle(this.sales, this.tech, this.supervisor, this.office, this.warehouse, this.morale);
 }
 
-/// From /api/tech_stats: this year's callbacks and completed jobs for one tech, plus the team's callback rate.
+/// From /api/tech_stats: this year's callbacks and the completed jobs they are counted against for one tech, plus the
+/// team's callback rate. Same rule as the Technicians dashboard: jobs are those completed since callback tracking began.
 class _TechStats {
   final int callbacks;
   final int completedJobs;
@@ -706,10 +837,29 @@ Future<_EmployeeDetails> _loadDetailsLegacy(String username) async {
     found.tech = k?.tech;
     found.supervisor = k?.supervisor;
     found.office = k?.office;
+    if (found.office != null) {
+      final c = await _loadCollections();
+      if (c != null) found.office = found.office!.withCollections(c);
+    }
     found.warehouse = k?.warehouse;
     found.morale = k?.morale;
   }
   return found;
+}
+
+/// The Collections dashboard's own response for [year]. Best effort: null if it can't be loaded or the account has no
+/// access to that dashboard, and the page keeps the numbers from the KPI request.
+Future<Map?> _loadCollections() async {
+  try {
+    final res = await http
+        .get(Uri.parse('$kApiBaseUrl/api/dashboards/collections?year=${DateTime.now().year}'), headers: AuthSession.instance.headers())
+        .timeout(const Duration(seconds: 40));
+    if (res.statusCode != 200) return null;
+    final body = json.decode(res.body);
+    return body is Map && body['summary'] is Map && body['stages'] is List ? body : null;
+  } catch (_) {
+    return null;
+  }
 }
 
 /// Role KPIs (GET /api/employees/:id/kpis). Null if it can't be loaded, e.g. the backend isn't updated yet.
@@ -779,6 +929,10 @@ Future<_EmployeeDetails> _loadDetails(String username, {required bool likelyTech
   details.tech = k.tech;
   details.supervisor = k.supervisor;
   details.office = k.office;
+  if (details.office != null) {
+    final c = await _loadCollections();
+    if (c != null) details.office = details.office!.withCollections(c);
+  }
   details.warehouse = k.warehouse;
   details.morale = k.morale;
   details.techStats = techStatsF != null ? await techStatsF : (details.isTech ? await _loadTechStats(username) : null);
@@ -805,11 +959,11 @@ Future<_TechStats?> _loadTechStats(String username) async {
     for (final t in techs) {
       if (t is! Map) continue;
       teamCallbacks += n(t['callbackCount']);
-      teamJobs += n(t['completedJobsYtd']);
+      teamJobs += n(t['callbackJobs'] ?? t['completedJobsYtd']);
     }
     for (final t in techs) {
       if (t is Map && _str(t['id']).toLowerCase() == username.toLowerCase()) {
-        mine = _TechStats(n(t['callbackCount']), n(t['completedJobsYtd']), teamCallbacks, teamJobs, t['jobsSinceCallback'] == null ? null : n(t['jobsSinceCallback']));
+        mine = _TechStats(n(t['callbackCount']), n(t['callbackJobs'] ?? t['completedJobsYtd']), teamCallbacks, teamJobs, t['jobsSinceCallback'] == null ? null : n(t['jobsSinceCallback']));
       }
     }
     return mine;
@@ -1197,8 +1351,12 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
         final salesLayout = _details?.isTech == false && _details?.sales != null;
         // Residential reps have no Bidding / Estimate mix row, so they fit sooner.
         final residentialSales = salesLayout && (_details?.sales?.residential ?? false);
-        final needed = _details?.isTech == true ? 560.0 : (salesLayout ? (residentialSales ? 560.0 : 580.0) : (_details?.supervisor != null ? 545.0 : 450.0));
-        if (wide && (techLayout || salesLayout) && c.maxHeight >= needed) {
+        // The warehouse page (accuracy trend, chart, Open POs and zones) fits one screen from about 610 tall; its two
+        // stretchy cards take the spare height.
+        final warehouseLayout = _details?.isTech == false && _details?.sales == null && _details?.warehouse != null && c.maxWidth >= 1100;
+        final officeLayout = _details?.isTech == false && _details?.sales == null && _details?.warehouse == null && _details?.office != null && c.maxWidth >= 1092; // the receivables row stacks below 760 wide (332 goes to the left column)
+        final needed = officeLayout ? 565.0 : warehouseLayout ? 610.0 : _details?.isTech == true ? 560.0 : (salesLayout ? (residentialSales ? 560.0 : 580.0) : (_details?.supervisor != null ? 545.0 : 450.0));
+        if (wide && (techLayout || salesLayout || warehouseLayout || officeLayout) && c.maxHeight >= needed) {
           return SizedBox(
             height: c.maxHeight,
             child: Row(
@@ -1206,7 +1364,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               children: [
                 SizedBox(width: 320, child: leftColumn(fill: true)),
                 const SizedBox(width: 12),
-                Expanded(child: _moreGroups(fill: true, chart: c.maxHeight >= 640 || salesLayout)),
+                Expanded(child: _moreGroups(fill: true, chart: c.maxHeight >= 640 || salesLayout || warehouseLayout || officeLayout)),
               ],
             ),
           );
@@ -1251,14 +1409,60 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     if (!d.isTech) {
       final sales = d.sales;
       if (sales == null && d.warehouse != null) {
-        // Warehouse: the person's own inventory strikes, in the same spot as on Zac's page.
-        return SizedBox(
-          height: 48,
-          child: _MiniStatCard(
-            title: 'Inventory strikes',
-            value: '${d.inventoryStrikes}',
-            color: d.inventoryStrikes == 0 ? DashUi.emerald : (d.inventoryStrikes == 1 ? DashUi.amber : DashUi.red),
-          ),
+        // Warehouse: the peer rating like the techs' (no source records it yet, so it is empty until one does), then
+        // inventory and callback strikes as the same two side-by-side cards the techs have (they install too).
+        final peer = _sample ? const _Rating(4.2, 6) : null;
+        final callbacks = d.warehouse?.callbackStrikes;
+        Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
+        Widget card(String title, double? value, Color color, int index) => SizedBox(
+              height: 88,
+              child: AnimatedMetricCard(title: title, value: value, valueColor: color, index: index, format: (v) => '${v.round()}'),
+            );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _RatingCard(
+              title: 'Peer Rating',
+              subtitle: peer == null ? 'Rated by fellow techs' : 'Rated by ${peer.count} fellow ${peer.count == 1 ? 'tech' : 'techs'}',
+              rating: peer,
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: card('Inv. strikes', d.inventoryStrikes.toDouble(), strikeColor(d.inventoryStrikes), 0)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Tooltip(
+                    message: 'See the callbacks behind these strikes',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => showDialog<void>(
+                          context: context,
+                          builder: (_) => _CallbackStrikesDialog(employeeId: widget.employeeId, name: _data?.entry.user.name ?? 'Callback strikes'),
+                        ),
+                        child: AbsorbPointer(
+                          child: card('Callback strikes', callbacks?.toDouble(), callbacks == null ? DashUi.muted : strikeColor(callbacks), 1),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        );
+      }
+      final office = d.office;
+      if (sales == null && office != null) {
+        // Office: two measures nothing records yet, so each card shows "—" until a source exists.
+        Widget card(String title) => SizedBox(height: 56, child: _MiniStatCard(title: title, value: '—', color: DashUi.muted));
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [card('Customer response time'), const SizedBox(height: 8), card('Scheduling errors')],
         );
       }
       if (sales == null) return null;
@@ -1493,9 +1697,9 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             teamPerDay: _teamPerDayOf(tech),
           );
     final off = d.office;
-    final officeCard = off == null ? null : _receivablesCard(off);
+    final officeCard = off == null ? null : _receivablesCard(off, fill: fill);
     final wh = d.warehouse;
-    final warehouseCard = wh == null ? null : _warehouseRow(wh);
+    final warehouseCard = wh == null ? null : _warehouseRow(wh, fill: fill);
 
     final smaller = <Widget>[
       if (strikes.isNotEmpty)
@@ -1504,11 +1708,13 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
 
     final wideCards = <Widget>[
       if (wh != null) _warehouseScorecards(wh),
+      if (off != null) _receivablesScorecards(off),
       if (sales != null) _salesScorecards(sales),
       if (sales != null) fill && techCard == null ? Expanded(child: _salesCard(sales, expand: true, showChart: chart)) : _salesCard(sales, showChart: true),
       if (techCard != null) fill ? Expanded(child: techCard) : techCard,
-      if (officeCard != null) _withFeedback(officeCard, off!),
-      ?warehouseCard,
+      // The customer feedback card runs down the right side, beside the missed-calls graph and the receivables row.
+      if (officeCard != null) fill ? Expanded(child: _withFeedback(_missedAndReceivables(off!, officeCard, fill: true), off, fill: true)) : _withFeedback(_missedAndReceivables(off!, officeCard, fill: false), off),
+      if (warehouseCard != null) fill ? Expanded(child: warehouseCard) : warehouseCard,
     ];
 
     if (wideCards.isEmpty && smaller.isEmpty && commercial.isEmpty) {
@@ -1615,86 +1821,225 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     );
   }
 
-  /// Company-wide receivables for the AR owner: headline figures, the aging stages beside cash collected by month.
-  Widget _receivablesCard(_ReceivablesKpis off) {
+  /// Missed calls per month so far this year as a line across the top of the receivables row. It takes the height it is
+  /// given (see [_missedAndReceivables]), so it is compact: tight padding, and the average line is explained in the
+  /// header instead of a legend row.
+  Widget _missedCallsCard(_ReceivablesKpis off) {
     final now = DateTime.now().month;
-    final monthly = [for (var m = 0; m < now; m++) m < off.collectedMonthly.length ? off.collectedMonthly[m] : 0.0];
-    final hasMonthly = off.collectedMonthly.isNotEmpty;
-    final thisMonth = hasMonthly ? monthly.last : null;
-    final lastMonth = hasMonthly && monthly.length > 1 ? monthly[monthly.length - 2] : null;
-    final aging = _InfoGroup(title: 'AR aging', rows: [
-      for (final a in off.aging) _InfoRow('${a.label} (${a.jobs} jobs)', _wholeMoney(a.amount)),
-    ]);
-    final chart = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _InfoGroup(title: 'Cash collected by month', rows: []),
-        SizedBox(
-          height: 210,
-          child: _MonthlyChart(
+    final calls = off.callsMonthly;
+    // A month with no calls at all is a gap, not a zero.
+    final series = <double?>[
+      for (var m = 0; m < now; m++) m < calls.length && m < off.missedMonthly.length && calls[m] > 0 ? off.missedMonthly[m] : null,
+    ];
+    final totalMissed = off.missedMonthly.fold<double>(0, (t, v) => t + v);
+    final totalCalls = calls.fold<double>(0, (t, v) => t + v);
+    final matched = off.missedMonthly.length >= 12 && calls.length >= 12;
+    final chart = !matched
+        ? const Center(
+            child: Text('Missed calls appear once this person is matched to a Quo line', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, color: _muted)),
+          )
+        : _MonthlyChart(
             expand: true,
-            values: monthly,
-            color: DashUi.emerald,
-            tipFormat: (i) => dashMoney(monthly[i]),
-            emptyText: 'No payments in ${DateTime.now().year} yet',
-          ),
-        ),
-      ],
-    );
+            showLegend: false,
+            line: true,
+            values: series,
+            color: DashUi.red,
+            // Rounded up to a multiple of 4 so the four gridlines are whole numbers (the shared rounding jumps 52 to 100).
+            maxValue: math.max(4, ((series.whereType<double>().fold<double>(0, math.max) * 1.1) / 4).ceil() * 4).toDouble(),
+            axisFormat: (v) => '${v.round()}',
+            tipFormat: (i) {
+              final missed = off.missedMonthly[i].round();
+              final total = calls[i].round();
+              return '$missed missed of $total calls (${_fmtNum(total == 0 ? 0 : missed / total * 100)}%)';
+            },
+            emptyText: 'No missed calls in ${DateTime.now().year}',
+          );
     return _DetailCard(
-      title: 'Receivables and collections',
+      title: 'Missed calls (Mon-Fri, 8-5)',
+      icon: Icons.phone_missed_rounded,
+      trailing: totalCalls > 0 ? '${_fmtNum(totalMissed)} of ${_fmtNum(totalCalls)} missed, ${DateTime.now().year}  ·  dashed line: monthly average' : null,
+      padding: 14,
+      headerGap: 6,
+      expand: true,
+      action: matched
+          ? Semantics(
+              button: true,
+              label: 'View the list of missed calls',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: () => showDialog<void>(
+                  context: context,
+                  builder: (_) => _MissedCallsDialog(employeeId: widget.employeeId, name: (_data?.entry.user.name ?? '').trim().isEmpty ? 'Missed calls' : _data!.entry.user.name.trim()),
+                ),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.list_alt_rounded, size: 16, color: DashUi.blue),
+                      SizedBox(width: 4),
+                      Text('View list', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.blue)),
+                    ],
+                  ),
+                ),
+              ),
+            )
+          : null,
+      child: chart,
+    );
+  }
+
+  /// The missed-calls card over the receivables row. With [fill] the pair shares the height it is given: the receivables
+  /// row keeps what its six bars need (304) and takes 60% when there is more, the chart gets the rest. Otherwise the
+  /// chart is a fixed 240 and the row sizes itself.
+  Widget _missedAndReceivables(_ReceivablesKpis off, Widget receivables, {required bool fill}) {
+    final missed = _missedCallsCard(off);
+    if (!fill) {
+      return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [SizedBox(height: 240, child: missed), const SizedBox(height: 16), receivables]);
+    }
+    return LayoutBuilder(builder: (context, c) {
+      final usable = c.maxHeight - 16;
+      final rows = math.max(304.0, usable * 0.6);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [Expanded(child: missed), const SizedBox(height: 16), SizedBox(height: rows, child: receivables)],
+      );
+    });
+  }
+
+  /// Company-wide receivables for the AR owner: headline figures, the aging stages beside cash collected by month.
+  Widget _receivablesCard(_ReceivablesKpis off, {bool fill = false}) {
+    final aging = _DetailCard(
+      title: 'Unpaid invoices by stage',
       icon: Icons.account_balance_wallet_rounded,
-      trailing: 'Company-wide, ${DateTime.now().year} year to date',
+      padding: 18,
+      headerGap: 10,
+      expand: fill,
+      child: _AgingBars(rows: off.aging, spread: fill),
+    );
+    final now = DateTime.now().month;
+    // Share of each month's leads that were booked; a month with no leads has no point.
+    final rate = <double?>[
+      for (var m = 0; m < now; m++)
+        m < off.leadsMonthly.length && off.leadsMonthly[m] > 0
+            ? (m < off.bookedMonthly.length ? off.bookedMonthly[m] : 0) / off.leadsMonthly[m] * 100
+            : null,
+    ];
+    final totalLeads = off.leadsMonthly.fold<double>(0, (t, v) => t + v);
+    final totalBooked = off.bookedMonthly.fold<double>(0, (t, v) => t + v);
+    final chart = _DetailCard(
+      title: 'Lead to booked job',
+      icon: Icons.trending_up_rounded,
+      padding: 18,
+      headerGap: 10,
+      trailing: totalLeads > 0 ? '${_fmtNum(totalBooked / totalLeads * 100)}% booked, ${DateTime.now().year}' : null,
+      expand: true,
+      child: _MonthlyChart(
+        expand: true,
+        line: true,
+        values: rate,
+        color: DashUi.emerald,
+        maxValue: 100,
+        axisFormat: (v) => '${v.round()}%',
+        tipFormat: (i) {
+          final l = i < off.leadsMonthly.length ? off.leadsMonthly[i].round() : 0;
+          final b = i < off.bookedMonthly.length ? off.bookedMonthly[i].round() : 0;
+          return '${_fmtNum(rate[i] ?? 0)}%  ($b of $l leads)';
+        },
+        emptyText: 'No leads recorded in ${DateTime.now().year} yet',
+      ),
+    );
+    return LayoutBuilder(builder: (context, c) {
+      if (c.maxWidth < 600) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [aging, const SizedBox(height: 16), SizedBox(height: 300, child: chart)]);
+      }
+      final row = Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [Expanded(flex: 5, child: aging), const SizedBox(width: 16), Expanded(flex: 4, child: chart)],
+      );
+      return fill ? row : IntrinsicHeight(child: row);
+    });
+  }
+
+  /// The warehouse page under the scorecards, in two columns: the accuracy trend over Open POs on the left, the cycling
+  /// chart over the cycle count zones on the right. When the page has spare height ([fill]) the accuracy and zones
+  /// cards stretch into it, so both columns end together. Narrow widths stack everything.
+  Widget _warehouseRow(_WarehouseKpis w, {required bool fill}) {
+    const gap = SizedBox(height: 16);
+    final po = w.openPos == null ? null : _openPosCard(w.openPos!);
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 760) {
+          final cards = [_accuracyTrendCard(w), _warehouseChartCard(w), ?po, if (w.zones.isNotEmpty) _warehouseCard(w)];
+          return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [for (var i = 0; i < cards.length; i++) ...[if (i > 0) gap, cards[i]]]);
+        }
+        final left = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (fill) Expanded(child: _accuracyTrendCard(w, expand: true)) else _accuracyTrendCard(w),
+            if (po != null) ...[gap, po],
+          ],
+        );
+        final right = Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (fill) Expanded(child: _warehouseChartCard(w, expand: true)) else _warehouseChartCard(w),
+            if (w.zones.isNotEmpty) ...[gap, _warehouseCard(w)],
+          ],
+        );
+        return Row(
+          crossAxisAlignment: fill ? CrossAxisAlignment.stretch : CrossAxisAlignment.start,
+          children: [Expanded(child: left), const SizedBox(width: 16), Expanded(child: right)],
+        );
+      },
+    );
+  }
+
+  /// Inventory accuracy: this year's figure and the weekly trend as a line against the 95% target. [expand] stretches
+  /// the chart to the height the card is given; otherwise it is a fixed 160.
+  Widget _accuracyTrendCard(_WarehouseKpis w, {bool expand = false}) {
+    final acc = w.accuracyPct;
+    final color = acc == null ? DashUi.muted : (acc >= 95 ? DashUi.emerald : (acc >= 90 ? DashUi.amber : DashUi.red));
+    final chart = w.accuracyTrend.length < 2
+        ? const Center(child: Text('The trend appears after two weeks of counts', style: TextStyle(fontSize: 13, color: _muted)))
+        : _AccuracyTrendChart(points: w.accuracyTrend);
+    return _DetailCard(
+      title: 'Inventory accuracy',
+      icon: Icons.fact_check_rounded,
+      expand: expand,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _FigureRow([
-            _BigStat('OUTSTANDING', _wholeMoney(off.outstanding), DashUi.ink,
-                sub: '${off.aging.fold<int>(0, (t, a) => t + a.jobs)} invoiced jobs'),
-            _BigStat('OVER 90 DAYS', _wholeMoney(off.over90), off.over90 > 0 ? DashUi.red : DashUi.emerald,
-                sub: '90 Day Notice stage'),
-            _BigStat('COLLECTION RATE', off.collectionRatePct == null ? '—' : '${_fmtNum(off.collectionRatePct!)}%',
-                DashUi.emeraldDeep,
-                sub: '${_wholeMoney(off.collected)} collected'),
-            if (thisMonth != null)
-              _BigStat('THIS MONTH', _wholeMoney(thisMonth), DashUi.ink,
-                  sub: lastMonth == null ? 'Cash collected' : 'Cash in, ${_wholeMoney(lastMonth)} last month'),
-          ], breakpoint: 520, gap: 14),
-          const SizedBox(height: 16),
-          if (hasMonthly)
-            LayoutBuilder(
-              builder: (context, c) => c.maxWidth < 560
-                  ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [aging, const SizedBox(height: 16), chart])
-                  : Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [Expanded(flex: 5, child: aging), const SizedBox(width: 24), Expanded(flex: 6, child: chart)],
-                    ),
-            )
-          else
-            aging,
-          const SizedBox(height: 16),
-          _UntrackedNote([
-            if (!off.tracksCallAnswer) 'Call answer rate',
-            if (!off.tracksMissedCall) 'Missed-call response time',
-            if (!off.tracksLeadToBooked) 'Lead-to-booked-job rate',
-            if (!off.tracksCustomerResponse) 'Customer response time',
-          ]),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(acc == null ? '—' : '${_fmtNum(acc)}%', style: TextStyle(fontSize: 34, fontWeight: FontWeight.w900, color: color, height: 1)),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  acc == null ? 'Starts with the next cycle count' : 'of ${w.accuracyCounted} items counted this year matched the system',
+                  style: const TextStyle(fontSize: 12.5, color: _slate),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (expand) Expanded(child: chart) else SizedBox(height: 160, child: chart),
         ],
       ),
     );
   }
 
-  /// Open POs beside the cycle count zones (stacked on narrow widths). Either card is left out when it has nothing to show.
-  Widget _warehouseRow(_WarehouseKpis w) {
-    final po = w.openPos == null ? null : _openPosCard(w.openPos!);
-    final zones = w.zones.isEmpty ? null : _warehouseCard(w);
-    if (po == null || zones == null) return po ?? zones ?? const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, c) {
-        if (c.maxWidth < 760) return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [po, const SizedBox(height: 16), zones]);
-        return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: po), const SizedBox(width: 16), Expanded(child: zones)]);
-      },
-    );
+  /// Stock gaps and cycle count history in one card, stepping through the tabs every 8 seconds. [expand] stretches the
+  /// chart into the height the card is given; otherwise it is a fixed 156.
+  Widget _warehouseChartCard(_WarehouseKpis w, {bool expand = false}) {
+    const tabs = ['Stock gaps', 'Cycle history'];
+    final view = _view.clamp(0, tabs.length - 1);
+    final content = switch (view) {
+      0 => _MissesChart(misses: w.topMisses),
+      _ => _CycleHistoryGrid(history: w.cycleHistory),
+    };
+    return _chartCard(tabs: tabs, view: view, content: content, expand: expand, height: 156);
   }
 
   /// Purchase orders ordered but not yet received: how many, what they add up to, and how many are past due.
@@ -1713,7 +2058,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
   }
 
   /// The warehouse page's cycle count zones, stacked vertically with each zone's current count.
-  Widget _warehouseCard(_WarehouseKpis w) {
+  Widget _warehouseCard(_WarehouseKpis w, {bool expand = false}) {
     Widget zoneTile(_ZoneCount z) {
       final color = z.complete ? DashUi.emerald : (z.overdue ? DashUi.red : DashUi.amber);
       final label = z.complete ? 'Complete' : (z.overdue ? 'Overdue' : z.status);
@@ -1722,22 +2067,19 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
           ? '${z.completedAt == null ? '' : '${_shortDay(z.completedAt!.toIso8601String())} · '}${z.counted} items'
           : (z.counted > 0 ? '${z.counted} items so far' : 'Nothing counted yet');
       return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
+            SizedBox(width: 56, child: Text(z.zone, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink))),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(z.zone, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _ink)),
-                  const SizedBox(height: 2),
-                  Text(
-                    [if (week != null) 'Week of ${_monthLetters[week.month - 1]} ${week.day}', detail].join(' · '),
-                    style: const TextStyle(fontSize: 13, color: _slate),
-                  ),
-                ],
+              child: Text(
+                [if (week != null) 'Week of ${_monthLetters[week.month - 1]} ${week.day}', detail].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12.5, color: _slate),
               ),
             ),
+            const SizedBox(width: 8),
             Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
             const SizedBox(width: 6),
             Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
@@ -1749,6 +2091,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     return _DetailCard(
       title: 'Cycle count zones',
       icon: Icons.warehouse_rounded,
+      expand: expand,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1761,13 +2104,20 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
     );
   }
 
-  /// The receivables card with the customer feedback card in a column on its right (stacked below on narrow widths).
-  Widget _withFeedback(Widget card, _ReceivablesKpis off) {
+  /// The office page's body ([card]: the missed-calls graph over the receivables row) with the customer feedback card in a
+  /// column on its right that runs the full height (stacked below on narrow widths).
+  Widget _withFeedback(Widget card, _ReceivablesKpis off, {bool fill = false}) {
     final feedback = _MentionsCard(mentions: off.mentions, satisfaction: off.satisfaction);
     return LayoutBuilder(
       builder: (context, c) {
         if (c.maxWidth < 760) {
           return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [card, const SizedBox(height: 16), SizedBox(height: 240, child: feedback)]);
+        }
+        if (fill) {
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [Expanded(child: card), const SizedBox(width: 16), SizedBox(width: 240, child: feedback)],
+          );
         }
         // The feedback card is laid over a gap the row leaves for it, so it takes the receivables card's height
         // (a LayoutBuilder inside it rules out IntrinsicHeight) but never drops below what the quote needs.
@@ -1788,17 +2138,36 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
   }
 
   /// Along the top of the warehouse page: the techs' inventory strikes added up, the person's own, and low stock.
+  static String _whole(double v) => '${v.round()}';
+
   Widget _warehouseScorecards(_WarehouseKpis w) {
     Color strikeColor(int n) => n == 0 ? DashUi.emerald : (n == 1 ? DashUi.amber : DashUi.red);
     final last = w.lastCycleCount;
-    final items = <(String, double?, Color, String)>[
-      ('Team inventory strikes', w.teamInventoryStrikes?.toDouble(), w.teamInventoryStrikes == null ? DashUi.muted : strikeColor(w.teamInventoryStrikes!), ''),
-      ('Low stock items', w.lowStockCount.toDouble(), w.lowStockCount == 0 ? DashUi.emerald : DashUi.ink, ''),
+    // Monthly series leave out the current month (still filling in, it would show a false dive); snapshots are daily.
+    final doneMonths = DateTime.now().month - 1;
+    List<double>? monthly(List<double> v) {
+      final done = v.take(doneMonths).toList();
+      return done.any((x) => x > 0) ? dashTrend(done, 0) : null;
+    }
+    List<double>? daily(List<double> v) => v.length >= 2 ? v : null;
+    final items = <(String, double?, Color, String, String Function(double), List<double>?)>[
+      ('Jobs completed', w.jobsCompleted?.toDouble(), w.jobsCompleted == null ? DashUi.muted : DashUi.indigo, '', _whole, monthly(w.jobsMonthly)),
+      (
+        'Team inv. strikes',
+        w.teamInventoryStrikes?.toDouble(),
+        w.teamInventoryStrikes == null ? DashUi.muted : strikeColor(w.teamInventoryStrikes!),
+        '',
+        _whole,
+        daily(w.strikesHistory),
+      ),
+      ('Low stock items', w.lowStockCount.toDouble(), w.lowStockCount == 0 ? DashUi.emerald : DashUi.ink, '', _whole, daily(w.lowStockHistory)),
       (
         'Cycle counts done',
         w.cycleDone.toDouble(),
         DashUi.ink,
         last == null ? 'None completed yet' : '${w.itemsCounted} items · last ${_shortDay(last.toIso8601String())}',
+        _whole,
+        monthly(w.cycleMonthly),
       ),
     ];
     Widget card(int i) => SizedBox(
@@ -1809,13 +2178,86 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
             valueColor: items[i].$3,
             caption: items[i].$4,
             index: i,
-            format: (v) => '${v.round()}',
+            format: items[i].$5,
+            trend: items[i].$6,
+            sparkMinWidth: 200,
           ),
         );
     return LayoutBuilder(
       builder: (context, c) {
         if (c.maxWidth < 480) {
           return Column(children: [for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(height: 8), card(i)]]);
+        }
+        return Row(children: [for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(width: 8), Expanded(child: card(i))]]);
+      },
+    );
+  }
+
+  /// The share of this year's incoming calls (Mon-Fri, 8-5, the same calls as the missed-calls graph) that were answered,
+  /// with the monthly rates as the sparkline. No figure when the backend can't match the person to Quo lines or no
+  /// call has come in yet, and the card says so instead of showing a made-up 0%.
+  (String, double?, Color, String, String Function(double), List<double>?) _callAnswerItem(_ReceivablesKpis off) {
+    String pct(double v) => '${_fmtNum(v)}%';
+    final calls = off.callsMonthly;
+    final matched = calls.length >= 12 && off.missedMonthly.length >= 12;
+    final total = calls.fold<double>(0, (t, v) => t + v);
+    if (!matched || total <= 0) {
+      return ('Call answer rate', null, DashUi.muted, matched ? 'No calls this year yet' : 'Not tracked yet', pct, null);
+    }
+    final missed = off.missedMonthly.fold<double>(0, (t, v) => t + v);
+    final rate = (total - missed) / total * 100;
+    // 80% and up is good, under 60% is a problem; there is no target set yet, so these are the page's own cut-offs.
+    final color = rate >= 80 ? DashUi.emerald : (rate >= 60 ? DashUi.amber : DashUi.red);
+    return (
+      'Call answer rate',
+      (rate * 10).round() / 10,
+      color,
+      '${_fmtNum(total - missed)} of ${_fmtNum(total)} calls answered',
+      pct,
+      [for (var m = 0; m < calls.length; m++) if (calls[m] > 0) (calls[m] - off.missedMonthly[m]) / calls[m] * 100],
+    );
+  }
+
+  /// Along the top of the office page, the same scorecards as the other KPI pages: what is owed, what is 90+ days old,
+  /// how much of the billed money has come in, and the call answer rate.
+  Widget _receivablesScorecards(_ReceivablesKpis off) {
+    final jobs = off.aging.fold<int>(0, (t, a) => t + a.jobs);
+    final items = <(String, double?, Color, String, String Function(double), List<double>?)>[
+      ('Outstanding', off.outstanding, DashUi.ink, '$jobs invoiced ${jobs == 1 ? 'job' : 'jobs'}', _wholeMoney, null),
+      ('Over 90 days', off.over90, off.over90 > 0 ? DashUi.red : DashUi.emerald, '90 Day Notice stage', _wholeMoney, null),
+      (
+        'Collection rate',
+        off.collectionRatePct,
+        DashUi.emeraldDeep,
+        '${_wholeMoney(off.collected)} collected',
+        (v) => '${_fmtNum(v)}%',
+        null,
+      ),
+      _callAnswerItem(off),
+    ];
+    Widget card(int i) => SizedBox(
+          height: 88,
+          child: AnimatedMetricCard(
+            title: items[i].$1,
+            value: items[i].$2,
+            valueColor: items[i].$3,
+            caption: items[i].$4,
+            index: i,
+            format: items[i].$5,
+            trend: items[i].$6,
+            sparkMinWidth: 200,
+          ),
+        );
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 560) {
+          return Column(
+            children: [
+              Row(children: [Expanded(child: card(0)), const SizedBox(width: 8), Expanded(child: card(1))]),
+              const SizedBox(height: 8),
+              Row(children: [Expanded(child: card(2)), const SizedBox(width: 8), Expanded(child: card(3))]),
+            ],
+          );
         }
         return Row(children: [for (var i = 0; i < items.length; i++) ...[if (i > 0) const SizedBox(width: 8), Expanded(child: card(i))]]);
       },
@@ -1894,7 +2336,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
   }
 
   /// The chart panel around a sales chart: the tab strip and the content, paused for the cycle while hovered.
-  Widget _chartCard({required List<String> tabs, required int view, required Widget content, required bool expand, String? title}) {
+  Widget _chartCard({required List<String> tabs, required int view, required Widget content, required bool expand, String? title, double height = 252}) {
     _chartTabs = tabs.length;
     _chartShown = view;
     return MouseRegion(
@@ -1931,7 +2373,7 @@ class _EmployeeKpiBodyState extends State<_EmployeeKpiBody> {
               ),
               const SizedBox(height: 8),
             ],
-            if (expand) Expanded(child: content) else SizedBox(height: 252, child: content),
+            if (expand) Expanded(child: content) else SizedBox(height: height, child: content),
           ],
         ),
       ),
@@ -1996,6 +2438,9 @@ class _DetailCard extends StatelessWidget {
   final String? title;
   final IconData? icon;
   final String? trailing;
+
+  /// A button at the end of the header row, after [trailing].
+  final Widget? action;
   final double padding;
 
   /// Fill the height the parent gives (the child is then centred in what the header leaves).
@@ -2008,6 +2453,7 @@ class _DetailCard extends StatelessWidget {
     this.title,
     this.icon,
     this.trailing,
+    this.action,
     this.headerGap = 16,
     this.padding = 22,
     this.expand = false,
@@ -2038,12 +2484,19 @@ class _DetailCard extends StatelessWidget {
                     color: _ink,
                   ),
                 ),
-                const Spacer(),
-                if (trailing != null)
-                  Text(
-                    trailing!,
-                    style: const TextStyle(fontSize: 12.5, color: _muted),
+                if (trailing == null)
+                  const Spacer()
+                else
+                  Expanded(
+                    child: Text(
+                      trailing!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: const TextStyle(fontSize: 12.5, color: _muted),
+                    ),
                   ),
+                if (action != null) ...[const SizedBox(width: 6), action!],
               ],
             ),
             SizedBox(height: headerGap),
@@ -3212,8 +3665,12 @@ class _MonthlyChart extends StatefulWidget {
 
   /// Fix the top of the axis (100 for a percentage) instead of rounding up from the biggest value.
   final double? maxValue;
+
+  /// Show the "Average" key above the chart (a caller short of height can explain the dashed line in its own header).
+  final bool showLegend;
   const _MonthlyChart({
     this.maxValue,
+    this.showLegend = true,
     required this.values,
     required this.color,
     required this.tipFormat,
@@ -3307,7 +3764,7 @@ class _MonthlyChartState extends State<_MonthlyChart> with TickerProviderStateMi
     ].join('; ');
 
     final legend = <Widget>[
-      if (avg > 0)
+      if (avg > 0 && w.showLegend)
         _legend(
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -3445,8 +3902,9 @@ class _ChartPainter extends CustomPainter {
       final cx = plot.left + slot * (i + 0.5);
       final focus = focusing && index == i;
       final has = values[i] != null;
+      // A narrow plot (a half-width card) has no room for "Feb" without wrapping, so it gets the month's first letter.
       final tp = _text(
-        _monthLetters[i],
+        slot < 28 ? _monthLetters[i][0] : _monthLetters[i],
         TextStyle(
           fontSize: 12.5,
           fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
@@ -3455,7 +3913,7 @@ class _ChartPainter extends CustomPainter {
         maxWidth: slot,
       );
       tp.paint(canvas, Offset(cx - tp.width / 2, plot.bottom + 8));
-      if (i == n - 1 && has) {
+      if (i == n - 1 && has && slot >= 34) {
         final so = _text('so far', const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: DashUi.muted), maxWidth: slot);
         so.paint(canvas, Offset(cx - so.width / 2, plot.bottom + 8 + tp.height));
       }
@@ -3667,26 +4125,79 @@ class _ChartPainter extends CustomPainter {
       old.average != average;
 }
 
-/// One muted line listing KPIs that have no data source yet.
-class _UntrackedNote extends StatelessWidget {
-  final List<String> items;
-  const _UntrackedNote(this.items);
+/// The AR aging stages as horizontal bars, each sized against the largest stage and coloured from green (just invoiced)
+/// through amber to red (90 days and a payment check), with the dollar amount and job count beside it.
+class _AgingBars extends StatelessWidget {
+  final List<_AgingRow> rows;
+
+  /// Spread the bars over the height the parent gives instead of stacking them at the top.
+  final bool spread;
+  const _AgingBars({required this.rows, this.spread = false});
+
+  static const _colors = [DashUi.emerald, DashUi.sky, DashUi.amber, Color(0xFFF97316), DashUi.red, DashUi.indigo];
 
   @override
   Widget build(BuildContext context) {
-    if (items.isEmpty) return const SizedBox.shrink();
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final max = rows.fold<double>(0, (m, r) => r.amount > m ? r.amount : m);
+    final total = rows.fold<double>(0, (t, r) => t + r.amount);
+    return Column(
+      mainAxisAlignment: spread ? MainAxisAlignment.spaceEvenly : MainAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Padding(padding: EdgeInsets.only(top: 1), child: Icon(Icons.info_outline_rounded, size: 15, color: _muted)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Not tracked yet: ${items.join(' · ')}',
-            style: const TextStyle(fontSize: 12.5, color: _muted),
+        for (var i = 0; i < rows.length; i++)
+          Padding(
+            padding: EdgeInsets.only(top: i == 0 || spread ? 0 : 14),
+            child: _bar(rows[i], _colors[i % _colors.length], max, total, i),
           ),
-        ),
       ],
+    );
+  }
+
+  Widget _bar(_AgingRow r, Color color, double max, double total, int i) {
+    final frac = max > 0 ? r.amount / max : 0.0;
+    final share = total > 0 ? (r.amount / total * 100).round() : 0;
+    return Semantics(
+      label: '${r.label}: ${_wholeMoney(r.amount)}, ${r.jobs} jobs, $share% of outstanding',
+      child: ExcludeSemantics(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Expanded(child: Text(r.label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _ink))),
+                Text('${r.jobs} ${r.jobs == 1 ? 'job' : 'jobs'}  ·  $share%', style: const TextStyle(fontSize: 12, color: _muted)),
+                const SizedBox(width: 14),
+                Text(_wholeMoney(r.amount), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: _ink)),
+              ],
+            ),
+            const SizedBox(height: 6),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: Container(
+                height: 12,
+                color: DashUi.faint,
+                alignment: Alignment.centerLeft,
+                child: TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: frac),
+                  duration: Duration(milliseconds: 500 + i * 90),
+                  curve: Curves.easeOutCubic,
+                  builder: (context, v, _) => FractionallySizedBox(
+                    widthFactor: v.clamp(0.0, 1.0),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(colors: [color.withValues(alpha: 0.65), color]),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -4383,6 +4894,348 @@ String _prettyDate(String iso) {
   final m = int.tryParse(p[1]) ?? 0;
   if (m < 1 || m > 12) return iso;
   return '${_monthLetters[m - 1]} ${int.tryParse(p[2]) ?? p[2]}, ${p[0]}';
+}
+
+/// One missed call from `/employees/:id/missed_calls`.
+class _MissedCall {
+  final DateTime? at; // Chicago wall-clock time, as the server sends it
+  final String phone; // 10 digits
+  final String? name;
+  final String? nameFrom; // 'Quo contact' or 'Customer'
+  final String line;
+  final String status;
+  final int seconds;
+  const _MissedCall(this.at, this.phone, this.name, this.nameFrom, this.line, this.status, this.seconds);
+
+  String get prettyPhone => phone.length == 10 ? '${phone.substring(0, 3)}-${phone.substring(3, 6)}-${phone.substring(6)}' : phone;
+}
+
+/// The calls behind the Missed calls graph, newest first, so they can be checked against Quo. The caller's name is the
+/// Quo contact's when there is one, otherwise the customer with that phone number.
+class _MissedCallsDialog extends StatefulWidget {
+  final String employeeId;
+  final String name;
+  const _MissedCallsDialog({required this.employeeId, required this.name});
+
+  @override
+  State<_MissedCallsDialog> createState() => _MissedCallsDialogState();
+}
+
+class _MissedCallsDialogState extends State<_MissedCallsDialog> {
+  List<_MissedCall>? _items;
+  String? _error;
+  bool _loading = true;
+
+  // The Quo history import (`/api/quo/backfill`): the server's status, polled every 5 seconds while it runs.
+  Map<String, dynamic>? _job;
+  bool _starting = false;
+  String? _jobError;
+  Timer? _poll;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+    _loadJob();
+  }
+
+  @override
+  void dispose() {
+    _poll?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadJob() async {
+    try {
+      final res = await http.get(Uri.parse('$kApiBaseUrl/api/quo/backfill'), headers: AuthSession.instance.headers()).timeout(const Duration(seconds: 20));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout(); // sends the app back to the sign-in screen
+        return;
+      }
+      if (res.statusCode != 200) return;
+      final body = json.decode(res.body);
+      if (!mounted || body is! Map) return;
+      final wasRunning = _job?['running'] == true;
+      setState(() => _job = Map<String, dynamic>.from(body));
+      _poll?.cancel();
+      if (_job?['running'] == true) {
+        _poll = Timer.periodic(const Duration(seconds: 5), (_) => _loadJob());
+      } else if (wasRunning) {
+        _load(); // the import just finished: show the calls it added
+      }
+    } catch (_) {
+      // The status is a convenience; the list above works without it.
+    }
+  }
+
+  Future<void> _startImport() async {
+    setState(() {
+      _starting = true;
+      _jobError = null;
+    });
+    try {
+      final res = await http.post(Uri.parse('$kApiBaseUrl/api/quo/backfill'), headers: AuthSession.instance.headers(), body: '{}').timeout(const Duration(seconds: 30));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout();
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      if (res.statusCode == 503) throw Exception('Quo is not set up on the server.');
+      // 202 started; 409 one is already running (its status shows below either way).
+      if (res.statusCode != 202 && res.statusCode != 409) throw Exception('Server error (${res.statusCode})');
+      await _loadJob();
+    } on TimeoutException {
+      _jobError = 'The request timed out.';
+    } catch (e) {
+      _jobError = e.toString().replaceFirst('Exception: ', '');
+    } finally {
+      if (mounted) setState(() => _starting = false);
+    }
+  }
+
+  /// The import control under the list: what the last import did, and a button to run it.
+  Widget _importFooter() {
+    final job = _job;
+    final running = job?['running'] == true;
+    int n(dynamic v) => int.tryParse(_str(v)) ?? 0;
+    final perLine = job?['perLine'] is Map ? (job!['perLine'] as Map) : const {};
+    String status;
+    if (running) {
+      status = 'Importing from Quo: ${n(job!['calls'])} calls and ${n(job['messages'])} texts so far. This can take a while.';
+    } else if (job?['finishedAt'] != null) {
+      final errors = n(job!['errors']);
+      status = 'Last import brought in ${n(job['calls'])} calls and ${n(job['messages'])} texts${errors > 0 ? ' ($errors errors${_str(job['lastError']).isEmpty ? '' : ': ${_str(job['lastError'])}'})' : ''}.';
+    } else {
+      status = 'Calls missing? Import the call history from Quo again.';
+    }
+    final disabled = _starting || running;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(24, 10, 24, 14),
+      decoration: const BoxDecoration(border: Border(top: BorderSide(color: _line))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Expanded(child: Text(status, style: const TextStyle(fontSize: 12.5, color: _slate))),
+              const SizedBox(width: 12),
+              Semantics(
+                button: true,
+                enabled: !disabled,
+                label: 'Import call history from Quo',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: disabled ? null : _startImport,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                    decoration: BoxDecoration(border: Border.all(color: disabled ? _line : DashUi.blue), borderRadius: BorderRadius.circular(8)),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (running || _starting)
+                          const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.blue))
+                        else
+                          const Icon(Icons.sync_rounded, size: 16, color: DashUi.blue),
+                        const SizedBox(width: 6),
+                        Text(running ? 'Importing' : 'Import from Quo', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: disabled ? _muted : DashUi.blue)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_jobError != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(_jobError!, style: const TextStyle(fontSize: 12.5, color: DashUi.red))),
+          if (perLine.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Wrap(
+                spacing: 16,
+                runSpacing: 2,
+                children: [
+                  for (final e in perLine.entries)
+                    if (e.value is Map)
+                      Text(
+                        '${_str((e.value as Map)['name']).isEmpty ? e.key : _str((e.value as Map)['name'])}: ${n((e.value as Map)['calls'])} calls, ${n((e.value as Map)['messages'])} texts',
+                        style: const TextStyle(fontSize: 11.5, color: _muted),
+                      ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final res = await http
+          .get(
+            Uri.parse('$kApiBaseUrl/api/employees/${Uri.encodeComponent(widget.employeeId)}/missed_calls?year=${DateTime.now().year}'),
+            headers: AuthSession.instance.headers(),
+          )
+          .timeout(const Duration(seconds: 40));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout(); // sends the app back to the sign-in screen
+        throw Exception('Your session expired. Please sign in again.');
+      }
+      if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
+      final body = json.decode(res.body);
+      final list = body is Map && body['items'] is List ? body['items'] as List : const [];
+      final items = [
+        for (final e in list)
+          if (e is Map)
+            _MissedCall(
+              DateTime.tryParse(_str(e['at'])),
+              _str(e['phone']),
+              _str(e['name']).isEmpty ? null : _str(e['name']),
+              _str(e['nameFrom']).isEmpty ? null : _str(e['nameFrom']),
+              _str(e['line']),
+              _str(e['status']),
+              int.tryParse(_str(e['seconds'])) ?? 0,
+            ),
+      ];
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _loading = false;
+      });
+    } on TimeoutException {
+      _fail('The request timed out.');
+    } catch (e) {
+      _fail(e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  void _fail(String m) {
+    if (!mounted) return;
+    setState(() {
+      _error = m;
+      _loading = false;
+    });
+  }
+
+  static const _days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+  /// "Mon Oct 26 · 11:15 AM"
+  static String _when(DateTime? d) {
+    if (d == null) return '—';
+    final h = d.hour % 12 == 0 ? 12 : d.hour % 12;
+    return '${_days[d.weekday - 1]} ${_monthLetters[d.month - 1]} ${d.day} · $h:${d.minute.toString().padLeft(2, '0')} ${d.hour < 12 ? 'AM' : 'PM'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const head = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: _muted, letterSpacing: 0.6);
+    Widget body;
+    if (_loading) {
+      body = const Padding(padding: EdgeInsets.all(48), child: Center(child: CircularProgressIndicator(color: Color(0xFFCC0007))));
+    } else if (_error != null) {
+      body = Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off_rounded, color: DashUi.muted),
+            const SizedBox(height: 8),
+            Text("Couldn't load the missed calls. $_error", textAlign: TextAlign.center, style: const TextStyle(fontSize: 13.5, color: _slate)),
+            const SizedBox(height: 8),
+            TextButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded, size: 18), label: const Text('Try again')),
+          ],
+        ),
+      );
+    } else if (_items!.isEmpty) {
+      body = const Padding(
+        padding: EdgeInsets.all(40),
+        child: Center(child: Text('No missed calls this year.', style: TextStyle(fontSize: 14, color: _slate))),
+      );
+    } else {
+      body = Flexible(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 4, 24, 6),
+              child: Row(
+                children: [
+                  Expanded(flex: 4, child: Text('WHEN', style: head)),
+                  Expanded(flex: 5, child: Text('CALLER', style: head)),
+                  Expanded(flex: 3, child: Text('LINE', style: head)),
+                  Expanded(flex: 2, child: Text('RANG', style: head, textAlign: TextAlign.right)),
+                ],
+              ),
+            ),
+            for (final c in _items!)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: _line))),
+                child: Row(
+                  children: [
+                    Expanded(flex: 4, child: Text(_when(c.at), style: const TextStyle(fontSize: 13.5, color: _ink))),
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(c.name ?? 'Unknown caller', maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c.name == null ? _muted : _ink)),
+                          Text('${c.prettyPhone}${c.nameFrom == null ? '' : ' · ${c.nameFrom}'}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: _muted)),
+                        ],
+                      ),
+                    ),
+                    Expanded(flex: 3, child: Text(c.line, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: _slate))),
+                    Expanded(flex: 2, child: Text(c.seconds > 0 ? '${c.seconds}s' : '—', textAlign: TextAlign.right, style: const TextStyle(fontSize: 13.5, color: _slate))),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    final n = _items?.length;
+    return Dialog(
+      backgroundColor: Colors.white,
+      insetPadding: const EdgeInsets.all(24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 640),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 12, 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.phone_missed_rounded, size: 20, color: DashUi.red),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('${widget.name} · Missed calls', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800, color: _ink)),
+                        Text(
+                          '${n == null ? '' : '$n ${n == 1 ? 'call' : 'calls'} · '}Mon-Fri, 8-5, ${DateTime.now().year}. Names come from Quo contacts, then customers.',
+                          style: const TextStyle(fontSize: 12.5, color: _muted),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(onPressed: () => Navigator.of(context).pop(), icon: const Icon(Icons.close_rounded, size: 20, color: _slate), tooltip: 'Close'),
+                ],
+              ),
+            ),
+            body,
+            _importFooter(),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 /// The estimates behind "Late to send": customer, date created, date provided and the days between.
@@ -6279,4 +7132,269 @@ class _HeartbeatPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _HeartbeatPainter old) => old.progress != progress || old.color != color || old.live != live;
+}
+
+
+/// Weekly inventory accuracy as a line with a dashed 95% target. The last point is labelled; hover shows any week.
+class _AccuracyTrendChart extends StatefulWidget {
+  final List<(String, double, int)> points; // week start, percent, items counted
+  const _AccuracyTrendChart({required this.points});
+
+  @override
+  State<_AccuracyTrendChart> createState() => _AccuracyTrendChartState();
+}
+
+class _AccuracyTrendChartState extends State<_AccuracyTrendChart> {
+  int? _hover;
+
+  @override
+  Widget build(BuildContext context) {
+    final pts = widget.points;
+    return LayoutBuilder(
+      builder: (context, c) => MouseRegion(
+        onHover: (e) {
+          final plotW = c.maxWidth - _TrendPainter.left - _TrendPainter.right;
+          if (plotW <= 0) return;
+          final i = (((e.localPosition.dx - _TrendPainter.left) / plotW) * (pts.length - 1)).round();
+          final next = i >= 0 && i < pts.length ? i : null;
+          if (next != _hover) setState(() => _hover = next);
+        },
+        onExit: (_) => setState(() => _hover = null),
+        child: TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0, end: 1),
+          duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 900),
+          curve: Curves.easeOutCubic,
+          builder: (context, t, _) => CustomPaint(size: Size(c.maxWidth, c.maxHeight), painter: _TrendPainter(points: pts, hover: _hover, progress: t, fontFamily: Theme.of(context).textTheme.bodyMedium?.fontFamily)),
+        ),
+      ),
+    );
+  }
+}
+
+class _TrendPainter extends CustomPainter {
+  static const left = 34.0, right = 12.0, top = 10.0, bottom = 20.0;
+  static const target = 95.0;
+  final List<(String, double, int)> points;
+  final int? hover;
+  final double progress;
+  final String? fontFamily;
+  const _TrendPainter({required this.points, required this.hover, required this.progress, this.fontFamily});
+
+  void _text(Canvas canvas, String t, Offset at, {Color color = _muted, double size = 11, FontWeight weight = FontWeight.w500, bool rightAlign = false, bool centre = false}) {
+    final tp = TextPainter(text: TextSpan(text: t, style: TextStyle(fontSize: size, color: color, fontWeight: weight, fontFamily: fontFamily)), textDirection: TextDirection.ltr)..layout();
+    final dx = rightAlign ? -tp.width : (centre ? -tp.width / 2 : 0.0);
+    tp.paint(canvas, at + Offset(dx, -tp.height / 2));
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final minV = points.map((p) => p.$2).reduce(math.min);
+    final lo = (math.min(minV, target) / 5).floor() * 5.0 - 5;
+    final plot = Rect.fromLTRB(left, top, size.width - right, size.height - bottom);
+    double y(double v) => plot.bottom - (v - lo) / (100 - lo) * plot.height;
+    double x(int i) => plot.left + (points.length == 1 ? 0.5 : i / (points.length - 1)) * plot.width;
+
+    final grid = Paint()
+      ..color = DashUi.line
+      ..strokeWidth = 1;
+    for (final v in [lo, 100.0]) {
+      canvas.drawLine(Offset(plot.left, y(v)), Offset(plot.right, y(v)), grid);
+      _text(canvas, '${v.round()}%', Offset(plot.left - 6, y(v)), rightAlign: true);
+    }
+    // Dashed target line.
+    final dash = Paint()
+      ..color = DashUi.emerald.withValues(alpha: 0.7)
+      ..strokeWidth = 1.2;
+    for (var dx = plot.left; dx < plot.right; dx += 8) {
+      canvas.drawLine(Offset(dx, y(target)), Offset(math.min(dx + 4, plot.right), y(target)), dash);
+    }
+    _text(canvas, '95% target', Offset(plot.left + 4, y(target) - 8), color: DashUi.emerald, size: 10.5, weight: FontWeight.w700);
+
+    final path = Path();
+    for (var i = 0; i < points.length; i++) {
+      final o = Offset(x(i), y(points[i].$2));
+      i == 0 ? path.moveTo(o.dx, o.dy) : path.lineTo(o.dx, o.dy);
+    }
+    final metric = path.computeMetrics().first;
+    final shown = metric.extractPath(0, metric.length * progress);
+    final fill = Path.from(shown);
+    final endX = metric.getTangentForOffset(metric.length * progress)?.position.dx ?? plot.left;
+    fill.lineTo(endX, plot.bottom);
+    fill.lineTo(plot.left, plot.bottom);
+    fill.close();
+    canvas.drawPath(fill, Paint()..color = DashUi.blue.withValues(alpha: 0.08));
+    canvas.drawPath(
+      shown,
+      Paint()
+        ..color = DashUi.blue
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.4
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    for (var i = 0; i < points.length; i++) {
+      if (i / math.max(1, points.length - 1) > progress) break;
+      final o = Offset(x(i), y(points[i].$2));
+      final on = i == hover || i == points.length - 1;
+      canvas.drawCircle(o, on ? 4.5 : 3, Paint()..color = Colors.white);
+      canvas.drawCircle(
+        o,
+        on ? 4.5 : 3,
+        Paint()
+          ..color = DashUi.blue
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2,
+      );
+    }
+    // Month-day labels under the first, middle and last week.
+    for (final i in {0, points.length ~/ 2, points.length - 1}) {
+      final d = DateTime.tryParse(points[i].$1);
+      if (d != null) _text(canvas, '${_monthLetters[d.month - 1]} ${d.day}', Offset(x(i), size.height - 6), centre: true, size: 10.5);
+    }
+    final h = hover ?? points.length - 1;
+    final hp = points[h];
+    final label = hover == null ? '${_fmtNum(hp.$2)}%' : '${_fmtNum(hp.$2)}% · ${hp.$3} items';
+    final o = Offset(x(h), y(hp.$2));
+    final tp = TextPainter(
+      text: TextSpan(text: label, style: TextStyle(fontSize: 11.5, color: Colors.white, fontWeight: FontWeight.w700, fontFamily: fontFamily)),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final box = Rect.fromCenter(center: Offset(o.dx.clamp(tp.width / 2 + 8, size.width - tp.width / 2 - 8), o.dy - 18), width: tp.width + 14, height: 22);
+    canvas.drawRRect(RRect.fromRectAndRadius(box, const Radius.circular(6)), Paint()..color = DashUi.ink);
+    tp.paint(canvas, box.center - Offset(tp.width / 2, tp.height / 2));
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrendPainter old) => old.hover != hover || old.progress != progress || !listEquals(old.points, points);
+}
+
+/// Shared empty message inside a chart tab.
+class _ChartEmpty extends StatelessWidget {
+  final String text;
+  const _ChartEmpty(this.text);
+
+  @override
+  Widget build(BuildContext context) => Center(child: Text(text, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, color: _muted)));
+}
+
+/// Items whose shelf count differed most from the system this year. The bar runs left from the centre line when
+/// stock was missing (often material taken without being checked out) and right when there was extra.
+class _MissesChart extends StatelessWidget {
+  final List<(String, int, int)> misses; // name, system qty, counted qty
+  const _MissesChart({required this.misses});
+
+  @override
+  Widget build(BuildContext context) {
+    if (misses.isEmpty) return const _ChartEmpty('No stock gaps recorded yet');
+    final most = misses.map((m) => (m.$3 - m.$2).abs()).reduce(math.max);
+    final anim = MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 700);
+    return Column(
+      children: [
+        for (final m in misses.take(6))
+          Expanded(
+            child: Builder(builder: (context) {
+              final diff = m.$3 - m.$2;
+              final color = diff < 0 ? DashUi.red : DashUi.amber;
+              return Row(
+                children: [
+                  Expanded(flex: 5, child: Text(m.$1, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, color: _ink))),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 5,
+                    child: LayoutBuilder(
+                      builder: (context, c) {
+                        final half = c.maxWidth / 2;
+                        return TweenAnimationBuilder<double>(
+                          tween: Tween(begin: 0, end: diff.abs() / most),
+                          duration: anim,
+                          curve: Curves.easeOutCubic,
+                          builder: (context, f, _) {
+                            final w = math.max(4.0, half * f);
+                            return Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                Container(width: 1, height: 16, color: _muted),
+                                Positioned(
+                                  left: diff < 0 ? half - w : half,
+                                  child: Container(width: w, height: 10, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(5))),
+                                ),
+                              ],
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      '${diff < 0 ? '−' : '+'}${diff.abs()}',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color),
+                    ),
+                  ),
+                ],
+              );
+            }),
+          ),
+      ],
+    );
+  }
+}
+
+/// Each zone's last scheduled weeks as a row of cells: done, missed or still open. The icon repeats the colour.
+class _CycleHistoryGrid extends StatelessWidget {
+  final List<(String, List<(String, String)>)> history;
+  const _CycleHistoryGrid({required this.history});
+
+  @override
+  Widget build(BuildContext context) {
+    if (history.isEmpty) return const _ChartEmpty('No cycle counts scheduled yet');
+    return Column(
+      children: [
+        for (final z in history)
+          Expanded(
+            child: Row(
+              children: [
+                SizedBox(width: 54, child: Text(z.$1, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: _ink))),
+                for (final k in z.$2)
+                  Expanded(
+                    child: Builder(
+                      builder: (context) {
+                        final done = k.$2 == 'Complete';
+                        final missed = k.$2 == 'Missed';
+                        final untracked = k.$2 == 'Untracked';
+                        final color = done ? DashUi.emerald : (missed ? DashUi.red : (untracked ? DashUi.muted : DashUi.amber));
+                        final d = DateTime.tryParse(k.$1);
+                        return Tooltip(
+                          message: '${d == null ? k.$1 : '${_monthLetters[d.month - 1]} ${d.day}'} · ${untracked ? 'Before counts were recorded' : k.$2}',
+                          child: Container(
+                            margin: const EdgeInsets.all(3),
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.14),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: color.withValues(alpha: 0.5)),
+                            ),
+                            child: Center(
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(done ? Icons.check_rounded : (missed ? Icons.close_rounded : (untracked ? Icons.remove_rounded : Icons.schedule_rounded)), size: 14, color: color),
+                                  const SizedBox(width: 3),
+                                  Text(d == null ? '' : _monthLetters[d.month - 1], style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: color)),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
 }

@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show SemanticsService;
 import 'package:go_router/go_router.dart';
 
 import '../utils/status_colors.dart';
@@ -15,10 +16,13 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../config/auth_session.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_kit.dart';
+
+part 'assistant_workspace.dart';
 
 // --- Design tokens (same palette as the top bar) -------------------------------
 const Color _brandRed = AppTheme.brandRed;
@@ -50,15 +54,6 @@ class _Suggestion {
   final String question;
   const _Suggestion(this.icon, this.title, this.question);
 }
-
-const List<_Suggestion> _suggestions = [
-  _Suggestion(Icons.request_quote_outlined, 'Unpaid jobs', 'Which jobs from the last 30 days are not paid in full?'),
-  _Suggestion(Icons.groups_outlined, 'Top customers', 'Who are our top 10 customers by revenue this year?'),
-  _Suggestion(Icons.show_chart_rounded, 'Monthly trend', 'Show completed revenue and profit by month this year.'),
-  _Suggestion(Icons.inventory_2_outlined, 'Low stock', 'Which inventory items are low on stock?'),
-  _Suggestion(Icons.handshake_outlined, 'Open estimates', 'What is our open estimate pipeline and win rate this year?'),
-  _Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?'),
-];
 
 // What the person sees under an answer, instead of internal tool names.
 const Map<String, String> _toolLabels = {
@@ -103,28 +98,82 @@ const Map<String, String> _toolLabels = {
   'cycle_count_status': 'Cycle counts',
   'balance_history': 'Balance history',
   'run_sql': 'Custom query',
+  'search_drive': 'Google Drive',
+  'read_drive_file': 'Google Drive',
+  'daily_briefing': 'Daily briefing',
+  'compare_periods': 'Period comparison',
+  'upcoming_materials': 'Materials for upcoming jobs',
+  'what_changed': 'What changed',
 };
 
-/// One line for "How I got this": what was looked up and with which filters, from the tool name and its JSON input.
-String? _describeCall(String tool, String inputJson) {
-  if (tool == 'describe_data') return null; // housekeeping, nothing to show
+const List<String> _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/// What a lookup looked at, in words, from its JSON input: "by customer · Sep 1 – Sep 30, 2026 · quiet 7+ days".
+/// Ranges arrive with an exclusive end ("to" is the day after), so the last day shown is the one before it.
+String _callParams(String tool, String inputJson) {
   var input = <String, dynamic>{};
   try {
     final d = json.decode(inputJson);
     if (d is Map<String, dynamic>) input = d;
   } catch (_) {}
-  final label = _toolLabels[tool] ?? tool.replaceAll('_', ' ');
   if (tool == 'run_sql') {
     final purpose = (input['purpose'] ?? '').toString().trim();
     final sql = (input['sql'] ?? '').toString().replaceAll(RegExp(r'\s+'), ' ').trim();
     final shown = sql.length > 220 ? '${sql.substring(0, 220)}…' : sql;
-    return purpose.isEmpty ? '$label: $shown' : '$label: $purpose ($shown)';
+    return purpose.isEmpty ? shown : '$purpose ($shown)';
   }
-  final params = [
-    for (final e in input.entries)
-      if (e.key != 'limit' && e.value != null && e.value.toString().trim().isNotEmpty) '${e.key.replaceAll('_', ' ')} ${e.value}',
-  ];
-  return params.isEmpty ? label : '$label: ${params.join(', ')}';
+  DateTime? day(Object? v) => v is String && RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(v) ? DateTime.tryParse(v) : null;
+  String fmt(DateTime d, {bool year = false}) => '${_monthNames[d.month - 1]} ${d.day}${year ? ', ${d.year}' : ''}';
+  String? range(Object? fromV, Object? toV) {
+    final from = day(fromV);
+    final last = day(toV)?.subtract(const Duration(days: 1));
+    if (from != null && last != null) {
+      if (!last.isAfter(from)) return fmt(from, year: true);
+      return from.year == last.year
+          ? '${fmt(from)} – ${fmt(last, year: true)}'
+          : '${fmt(from, year: true)} – ${fmt(last, year: true)}';
+    }
+    if (from != null) return 'from ${fmt(from, year: true)}';
+    if (last != null) return 'through ${fmt(last, year: true)}';
+    return null;
+  }
+
+  final words = <String>[];
+  final period = range(input['from'], input['to']);
+  if (period != null) words.add(period);
+  final earlier = range(input['prev_from'], input['prev_to']);
+  if (earlier != null) words.add('vs $earlier');
+  const handled = {'from', 'to', 'prev_from', 'prev_to', 'limit', 'purpose'};
+  for (final e in input.entries) {
+    final v = e.value;
+    if (handled.contains(e.key) || v == null || v == false || v.toString().trim().isEmpty) continue;
+    final text = v is List ? v.join(' or ') : v.toString();
+    words.add(switch (e.key) {
+      'group_by' => 'by ${text.replaceAll('_', ' ')}',
+      'order_by' => 'sorted by ${text.replaceAll('_', ' ')}',
+      'any_of' => 'matching $text',
+      'min_days' => '$text+ days',
+      'no_change_days' => 'quiet $text+ days',
+      'days' => 'next $text days',
+      'min_value' => '\$$text+',
+      'since' => day(v) != null ? 'since ${fmt(day(v)!, year: true)}' : 'since $text',
+      'job_id' => 'job $text',
+      'year' => text,
+      'query' => 'matching “$text”',
+      'customer' => 'for $text',
+      _ when v == true => e.key.replaceAll('_', ' '),
+      _ => '${e.key.replaceAll('_', ' ')} $text',
+    });
+  }
+  return words.join(' · ');
+}
+
+/// One line for "How I got this": what was looked up and with which filters, from the tool name and its JSON input.
+String? _describeCall(String tool, String inputJson) {
+  if (tool == 'describe_data') return null; // housekeeping, nothing to show
+  final label = _toolLabels[tool] ?? tool.replaceAll('_', ' ');
+  final params = _callParams(tool, inputJson);
+  return params.isEmpty ? label : '$label: $params';
 }
 
 enum AssistantRole { user, assistant }
@@ -153,8 +202,80 @@ class AssistantMessage {
   /// conversation does not replay.
   bool fresh = true;
 
-  AssistantMessage(this.role, this.text, [this.sources = const [], this.calls = const []]);
+  /// Google Drive links that the server's Drive lookups returned for this answer: the only web links it may open.
+  final List<String> links;
+
+  /// Each lookup behind an answer, with how it went and how long it took ("How I got this"). Empty for answers saved
+  /// before this was kept, which fall back to [calls].
+  List<AssistantLookup> lookups = const [];
+
+  /// When the answer came back: the figures in it are as of then, which matters once a chat is a few hours old.
+  DateTime? at;
+
+  AssistantMessage(this.role, this.text, [this.sources = const [], this.calls = const [], this.links = const []]);
 }
+
+/// One lookup behind an answer: a line in the live checklist while Jarvis works, then a line under "How I got this".
+class AssistantLookup {
+  AssistantLookup({
+    required this.tool,
+    this.id = '',
+    this.detail = '',
+    this.text,
+    this.running = false,
+    this.ok = true,
+    this.partial = false,
+    this.ms,
+    List<AssistantStep>? steps,
+  }) : steps = steps ?? [];
+
+  final String id; // the server's id for it while the question runs
+  final String tool;
+  final String detail; // what it looked at, in words ("by customer, Oct 1 – Oct 27")
+  final String? text; // the server's words while it runs ("Checking what is owed…")
+  bool running;
+  bool ok;
+  bool partial; // it answered, but a part of it could not be read
+  int? ms;
+  final List<AssistantStep> steps; // the parts of a composite lookup (the briefing's sections)
+
+  String get label => _toolLabels[tool] ?? tool.replaceAll('_', ' ');
+
+  Map<String, dynamic> toJson() => {
+    'tool': tool,
+    'detail': detail,
+    'ok': ok,
+    if (partial) 'partial': true,
+    'ms': ?ms,
+    if (steps.isNotEmpty)
+      'steps': [
+        for (final s in steps) {'label': s.label, 'ok': s.ok},
+      ],
+  };
+
+  static AssistantLookup fromJson(Map m) => AssistantLookup(
+    tool: '${m['tool'] ?? ''}',
+    detail: '${m['detail'] ?? ''}',
+    ok: m['ok'] != false,
+    partial: m['partial'] == true,
+    ms: (m['ms'] as num?)?.toInt(),
+    steps: [
+      for (final s in (m['steps'] as List? ?? const []))
+        if (s is Map) AssistantStep('${s['label'] ?? ''}', running: false, ok: s['ok'] != false),
+    ],
+  );
+}
+
+/// One part of a composite lookup ("Stuck jobs" within the daily briefing).
+class AssistantStep {
+  AssistantStep(this.label, {this.running = true, this.ok = true});
+  final String label;
+  bool running;
+  bool ok;
+}
+
+/// Why the last question failed, so the note can say what to do next.
+enum AssistantErrorKind { timeout, busy, offline, session, access, setup, server }
 
 /// The conversation lives here. It survives closing the panel and, via SharedPreferences, an app restart.
 /// Sign-out, "New conversation" or a different user signing in wipes it.
@@ -239,13 +360,52 @@ class AssistantChat extends ChangeNotifier {
     chatChanges++;
     stopped = false;
     error = null;
+    errorKind = null;
     _save();
     notifyListeners();
+  }
+
+  /// Puts a failed question back in the box: drops it from the thread (it has no answer) and returns its text.
+  String? takeBackFailedQuestion() {
+    if (busy || messages.isEmpty || messages.last.role != AssistantRole.user) return null;
+    final q = messages.removeLast().text;
+    error = null;
+    errorKind = null;
+    stopped = false;
+    _save();
+    notifyListeners();
+    return q;
   }
 
   bool busy = false;
   String? status; // what the server says it is doing right now ("Checking what is owed…"), while busy
   http.Client? _client;
+
+  /// The lookups of the question in flight, as the server reports them starting and finishing: the live checklist.
+  final List<AssistantLookup> live = [];
+
+  /// Whether the page the panel was opened from goes with each question ("this job", "here"). The chip by the message
+  /// box shows it and switches it off.
+  bool usePage = true;
+
+  /// What kind of failure [error] is, so the note can offer the right next step.
+  AssistantErrorKind? errorKind;
+
+  /// The newest daily briefing answered today, if any: the welcome screen offers to open it again.
+  ({int chat, DateTime at})? get lastBriefing {
+    final today = now();
+    ({int chat, DateTime at})? best;
+    for (var c = 0; c < chats.length; c++) {
+      final ms = chats[c].messages;
+      for (var i = 1; i < ms.length; i++) {
+        final at = ms[i].at;
+        if (ms[i].role != AssistantRole.assistant || at == null || ms[i - 1].text != _briefingQuestion) continue;
+        final sameDay = at.year == today.year && at.month == today.month && at.day == today.day;
+        if (sameDay && (best == null || at.isAfter(best.at))) best = (chat: c, at: at);
+      }
+    }
+    return best;
+  }
 
   /// The answer as written so far. Text that arrives (a stream, or a whole answer from a server that does not stream) goes
   /// into [_streamPending] and is written out to [streamText] at a steady pace, so it reads like typing even when the
@@ -259,6 +419,12 @@ class AssistantChat extends ChangeNotifier {
 
   /// Whether an answer from a server that does not stream is also written out gradually. Tests switch this off.
   static bool animateAnswers = true;
+
+  /// The clock behind the greeting ("Good morning"). Tests pin it so the welcome screen looks the same at any hour.
+  static DateTime Function() now = DateTime.now;
+
+  /// Opens a Google Drive link from an answer in the browser. Tests replace it.
+  static Future<bool> Function(Uri uri) openLink = (uri) => launchUrl(uri, mode: LaunchMode.externalApplication);
 
   void _streamReset() {
     _typeTimer?.cancel();
@@ -356,11 +522,18 @@ class AssistantChat extends ChangeNotifier {
           if (text.isEmpty) continue;
           convo.messages.add(
             AssistantMessage(
-              role,
-              text,
-              [for (final x in (m['sources'] as List? ?? const [])) x.toString()],
-              [for (final x in (m['calls'] as List? ?? const [])) x.toString()],
-            )..fresh = false,
+                role,
+                text,
+                [for (final x in (m['sources'] as List? ?? const [])) x.toString()],
+                [for (final x in (m['calls'] as List? ?? const [])) x.toString()],
+                [for (final x in (m['links'] as List? ?? const [])) x.toString()],
+              )
+              ..fresh = false
+              ..lookups = [
+                for (final l in (m['lookups'] as List? ?? const []))
+                  if (l is Map) AssistantLookup.fromJson(l),
+              ]
+              ..at = DateTime.tryParse('${m['at'] ?? ''}'),
           );
         }
         while (convo.messages.isNotEmpty && convo.messages.first.role != AssistantRole.user) {
@@ -417,7 +590,15 @@ class AssistantChat extends ChangeNotifier {
                 'messages': [
                   for (final m
                       in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
-                    {'role': m.role.name, 'text': m.text, 'sources': m.sources, 'calls': m.calls},
+                    {
+                      'role': m.role.name,
+                      'text': m.text,
+                      'sources': m.sources,
+                      'calls': m.calls,
+                      'links': m.links,
+                      if (m.lookups.isNotEmpty) 'lookups': [for (final l in m.lookups) l.toJson()],
+                      if (m.at != null) 'at': m.at!.toIso8601String(),
+                    },
                 ],
               },
           ],
@@ -459,6 +640,9 @@ class AssistantChat extends ChangeNotifier {
     stopped = false;
     busy = false;
     error = null;
+    errorKind = null;
+    live.clear();
+    usePage = true;
     _save();
     notifyListeners();
   }
@@ -501,6 +685,53 @@ class AssistantChat extends ChangeNotifier {
     ];
   }
 
+  /// A lookup started or finished (`{"type":"tool","id":..,"name":..,"state":"start"|"done",...}`).
+  void _onToolEvent(Map<String, dynamic> e) {
+    final id = '${e['id'] ?? ''}';
+    final name = '${e['name'] ?? ''}';
+    if (e['state'] == 'start') {
+      live.add(
+        AssistantLookup(
+          id: id,
+          tool: name,
+          detail: _callParams(name, '${e['input'] ?? '{}'}'),
+          text: e['text']?.toString(),
+          running: true,
+        ),
+      );
+    } else {
+      final l = live.lastWhere(
+        (x) => x.id == id,
+        orElse: () => AssistantLookup(tool: name, id: id),
+      );
+      if (!live.contains(l)) live.add(l);
+      l
+        ..running = false
+        ..ok = e['ok'] != false
+        ..partial = e['partial'] == true
+        ..ms = (e['ms'] as num?)?.toInt();
+      for (final s in l.steps) {
+        s.running = false; // a part that never reported back is not still running once its lookup is done
+      }
+    }
+    notifyListeners();
+  }
+
+  /// A part of a composite lookup started or finished (`{"type":"step","parent":..,"label":..,"state":..,"ok":..}`).
+  void _onStepEvent(Map<String, dynamic> e) {
+    final parent = live.where((x) => x.id == '${e['parent'] ?? ''}').lastOrNull;
+    final label = '${e['label'] ?? ''}'.trim();
+    if (parent == null || label.isEmpty) return;
+    final step = parent.steps.where((s) => s.label == label).firstOrNull ?? (AssistantStep(label)..running = true);
+    if (!parent.steps.contains(step)) parent.steps.add(step);
+    if (e['state'] == 'done') {
+      step
+        ..running = false
+        ..ok = e['ok'] != false;
+    }
+    notifyListeners();
+  }
+
   /// Sends the question and returns the status code and JSON body. Asks the server for progress events and shows them
   /// as they arrive; a server that does not stream (older build, or an error before the answer starts) replies with
   /// plain JSON, which is handled the same way.
@@ -510,7 +741,13 @@ class AssistantChat extends ChangeNotifier {
     try {
       final req = http.Request('POST', Uri.parse('$kApiBaseUrl/api/assistant'))
         ..headers.addAll(AuthSession.instance.headers())
-        ..body = json.encode({'messages': _payload(), 'stream': true, if (pageContext.isNotEmpty) 'context': pageContext});
+        ..body = json.encode({
+          'messages': _payload(),
+          'stream': true,
+          // The answer blocks this build draws; the server turns them into plain markdown for builds that do not say so.
+          'formats': const ['priorities', 'compare', 'basis'],
+          if (usePage && pageContext.isNotEmpty) 'context': pageContext,
+        });
       final started = DateTime.now();
       // Debug runs only: when each piece of the stream reaches the app, so "it all appears at once" can be told apart from
       // "it arrives piece by piece but is not drawn" in the console.
@@ -547,6 +784,10 @@ class AssistantChat extends ChangeNotifier {
         } else if (type == 'reset') {
           _streamReset(); // that turn was a lookup, not the answer
           notifyListeners();
+        } else if (type == 'tool') {
+          _onToolEvent(event);
+        } else if (type == 'step') {
+          _onStepEvent(event);
         } else if (type == 'done' || type == 'error') {
           result = ((event['status'] as num?)?.toInt() ?? 200, event); // the server closes the stream right after this
         }
@@ -558,13 +799,37 @@ class AssistantChat extends ChangeNotifier {
     }
   }
 
+  /// The lookups behind an answer: the live checklist when the server streamed one (it has the parts of composite
+  /// lookups), else what the reply's `calls` say (a server that does not stream, or an older one without timings).
+  List<AssistantLookup> _finishedLookups(Map<String, dynamic> body) {
+    if (live.isNotEmpty) {
+      return [
+        for (final l in live)
+          if (l.tool != 'describe_data') l..running = false,
+      ];
+    }
+    return [
+      for (final c in (body['calls'] as List? ?? const []))
+        if (c is Map && c['tool'] != 'describe_data')
+          AssistantLookup(
+            tool: '${c['tool'] ?? ''}',
+            detail: _callParams('${c['tool'] ?? ''}', '${c['input'] ?? '{}'}'),
+            ok: c['ok'] != false,
+            partial: c['partial'] == true,
+            ms: (c['ms'] as num?)?.toInt(),
+          ),
+    ].take(14).toList();
+  }
+
   Future<void> _ask() async {
     final gen = ++_gen;
     busy = true;
     busySince = DateTime.now();
     stopped = false;
     error = null;
+    errorKind = null;
     status = null;
+    live.clear();
     lastAnswerStreamed = false;
     _streamReset();
     notifyListeners();
@@ -599,30 +864,49 @@ class AssistantChat extends ChangeNotifier {
           lastAnswerStreamed = streamText.isNotEmpty;
           messages.add(
             AssistantMessage(
-              AssistantRole.assistant,
-              answer.isEmpty ? "I couldn't put together an answer. Try rephrasing." : answer,
-              tools,
-              calls.take(14).toList(),
-            )..fresh = !lastAnswerStreamed,
+                AssistantRole.assistant,
+                answer.isEmpty ? "I couldn't put together an answer. Try rephrasing." : answer,
+                tools,
+                calls.take(14).toList(),
+                [
+                  for (final l in (body['links'] as List? ?? const []))
+                    if (l is String) l,
+                ],
+              )
+              ..fresh = !lastAnswerStreamed
+              ..lookups = _finishedLookups(body)
+              ..at = now(),
           );
           _save();
         case 401:
           // Set the message first: logout() wipes the chat (and its error) through the auth listener, and an error
           // set afterwards would linger and greet the next person who signs in.
           error = 'Your session expired. Please sign in again.';
+          errorKind = AssistantErrorKind.session;
           AuthSession.instance.logout(); // sends the app back to the sign-in screen
         case 403:
           error = 'Your account does not have access to the assistant.';
+          errorKind = AssistantErrorKind.access;
         case 503:
           error = 'The assistant is not set up on the server yet.';
+          errorKind = AssistantErrorKind.setup;
         default:
           error = (body['error'] ?? 'Server error ($code).').toString();
+          errorKind = code == 504
+              ? AssistantErrorKind.timeout
+              : (code == 429 ? AssistantErrorKind.busy : AssistantErrorKind.server);
       }
     } on TimeoutException {
       _client?.close();
-      if (gen == _gen) error = 'That took too long. The server may be waking up, so try again in a moment.';
+      if (gen == _gen) {
+        error = 'That took too long. The server may be waking up, so try again in a moment.';
+        errorKind = AssistantErrorKind.timeout;
+      }
     } catch (_) {
-      if (gen == _gen) error = "Couldn't reach the server. Check your connection and try again.";
+      if (gen == _gen) {
+        error = "Couldn't reach the server. Check your connection and try again.";
+        errorKind = AssistantErrorKind.offline;
+      }
     } finally {
       if (gen == _gen) {
         _streamReset();
@@ -669,6 +953,7 @@ String _pageLabel(Uri uri) {
   if (seg.length >= 2 && (seg[0] == 'jobs' || seg[0] == 'estimates')) {
     return '${seg[0] == 'jobs' ? 'Job' : 'Estimate'} ${seg[1]} detail page';
   }
+  if (seg.length >= 2 && seg[0] == 'customers') return 'Customer ${seg[1]} detail page'; // Jarvis looks it up by that number
   if (seg.length >= 3 && seg[0] == 'hr' && seg[1] == 'kpis') return 'One employee\'s KPI page';
   const names = {
     '/dashboards/financial': 'Financial dashboard',
@@ -691,73 +976,6 @@ String _pageLabel(Uri uri) {
     '/hr/corrections': 'Commission corrections',
   };
   return names[uri.path] ?? (seg.isEmpty ? '' : '${seg.join(' / ')} page');
-}
-
-/// Welcome-screen suggestions: a few for the page you are on, then the general ones to fill six.
-List<_Suggestion> _suggestionsFor(String path) {
-  const pages = <String, List<_Suggestion>>{
-    '/dashboards/collections': [
-      _Suggestion(Icons.warning_amber_rounded, 'Over 90 days', 'Which customers have balances over 90 days, and how much?'),
-      _Suggestion(Icons.trending_up_rounded, 'Balance trend', 'How has our outstanding balance changed over the last 30 days?'),
-    ],
-    '/dashboards/financial': [
-      _Suggestion(Icons.show_chart_rounded, 'Profit by month', 'Show completed revenue and profit by month this year.'),
-      _Suggestion(
-        Icons.pie_chart_outline_rounded,
-        'Revenue mix',
-        'What is our revenue mix between residential and commercial this year?',
-      ),
-    ],
-    '/dashboards/jobs': [
-      _Suggestion(Icons.hourglass_bottom_rounded, 'Stuck jobs', 'Which active jobs have been in the same status the longest?'),
-      _Suggestion(Icons.list_alt_rounded, 'Open by status', 'How many open jobs are in each status right now?'),
-    ],
-    '/dashboards/estimates': [
-      _Suggestion(Icons.handshake_outlined, 'Win rate', 'What is our estimate win rate by month this year?'),
-      _Suggestion(Icons.hourglass_empty_rounded, 'No follow-up', 'Which open estimates have not changed status in over 14 days?'),
-    ],
-    '/dashboards/sales': [
-      _Suggestion(Icons.leaderboard_outlined, 'By salesperson', 'How are the salespeople doing on estimates this year?'),
-      _Suggestion(Icons.door_front_door_outlined, 'Door types', 'Which door styles do we win the most revenue on this year?'),
-    ],
-    '/dashboards/technicians': [
-      _Suggestion(Icons.engineering_outlined, 'Tech activity', 'How many days and visits did each technician work this month?'),
-      _Suggestion(Icons.undo_rounded, 'Callbacks', 'How many callbacks have we had this month and who were they on?'),
-    ],
-    '/dashboards/commissions': [
-      _Suggestion(Icons.payments_outlined, 'This week\'s pay', 'What does payroll look like for this week?'),
-      _Suggestion(Icons.savings_outlined, 'Pool balance', 'What is in the retainage and company pool right now?'),
-    ],
-    '/dashboards/inventory': [
-      _Suggestion(Icons.inventory_2_outlined, 'Low stock', 'Which inventory items are low on stock?'),
-      _Suggestion(Icons.fact_check_outlined, 'Cycle counts', 'Where are we on this month\'s cycle counts?'),
-    ],
-    '/customers': [
-      _Suggestion(Icons.person_search_outlined, 'Lapsed customers', 'Which good customers have not had a job in the last year?'),
-      _Suggestion(Icons.groups_outlined, 'Top customers', 'Who are our top 10 customers by revenue this year?'),
-    ],
-    '/calendar': [_Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?')],
-    '/hr/kpis': [
-      _Suggestion(Icons.star_outline_rounded, 'Reviews', 'How are our Google reviews doing, and which techs are mentioned most?'),
-    ],
-  };
-  final seg = path.split('/').where((s) => s.isNotEmpty).toList();
-  final here = (seg.length >= 2 && seg[0] == 'jobs')
-      ? const [
-          _Suggestion(
-            Icons.summarize_outlined,
-            'Summarize this job',
-            'Summarize this job: status, what is owed, payments, and any notes or tasks.',
-          ),
-          _Suggestion(Icons.history_rounded, 'Status history', 'Show the status history of this job.'),
-        ]
-      : (pages[path] ?? const <_Suggestion>[]);
-  final out = [...here];
-  for (final s in _suggestions) {
-    if (out.length >= 6) break;
-    if (!out.any((o) => o.title == s.title)) out.add(s);
-  }
-  return out;
 }
 
 // =============================================================================
@@ -811,11 +1029,64 @@ class _Chart extends _Block {
   _Chart(this.kind, this.title, this.format, this.series, this.points);
 }
 
+/// One `::: priorities` line: "level | what | why it matters | suggested next step".
+class _Priority {
+  final String level; // high | medium | low
+  final String title;
+  final String why;
+  final String next;
+  const _Priority(this.level, this.title, this.why, this.next);
+}
+
+class _Priorities extends _Block {
+  final List<_Priority> items;
+  _Priorities(this.items);
+}
+
+/// One `::: compare` row: "measure | current | previous | change | good|bad|neutral".
+class _CompareRow {
+  final String measure;
+  final String current;
+  final String previous;
+  final String change;
+  final String tone; // good | bad | neutral: whether the change is good news for the business
+  const _CompareRow(this.measure, this.current, this.previous, this.change, this.tone);
+}
+
+class _Compare extends _Block {
+  final String title;
+  final List<String> periods; // [current, previous] column names
+  final List<_CompareRow> rows;
+  _Compare(this.title, this.periods, this.rows);
+}
+
 class _Parsed {
   final List<_Block> blocks;
   final List<String> followUps;
   final String plain;
-  _Parsed(this.blocks, this.followUps, this.plain);
+  final List<String> basis; // the "dates and definitions" footnote
+  _Parsed(this.blocks, this.followUps, this.plain, [this.basis = const []]);
+}
+
+/// Splits "a | [b | c](customer:x) | d" on the pipes that are not inside a link's [text] or (target).
+List<String> _splitFields(String line) {
+  final out = <String>[];
+  final buf = StringBuffer();
+  var square = 0, round = 0;
+  for (final ch in line.split('')) {
+    if (ch == '[') square++;
+    if (ch == ']' && square > 0) square--;
+    if (ch == '(' && square == 0) round++;
+    if (ch == ')' && round > 0) round--;
+    if (ch == '|' && square == 0 && round == 0) {
+      out.add(buf.toString().trim());
+      buf.clear();
+    } else {
+      buf.write(ch);
+    }
+  }
+  out.add(buf.toString().trim());
+  return out;
 }
 
 final RegExp _bulletRe = RegExp(r'^\s*[-*•]\s+');
@@ -824,11 +1095,16 @@ final RegExp _headingRe = RegExp(r'^\s{0,3}#{1,6}\s+(.*)$');
 final RegExp _ruleRe = RegExp(r'^\s{0,3}([-*_])(\s*\1){2,}\s*$');
 final RegExp _fenceRe = RegExp(r'^\s{0,3}(```|~~~)');
 final RegExp _dashCellRe = RegExp(r'^:?-{2,}:?$');
-final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups|chart)\b.*$', caseSensitive: false);
+final RegExp _directiveRe = RegExp(r'^\s*:::\s*(stats|followups|chart|priorities|compare|basis)\b.*$', caseSensitive: false);
 
 /// Plain text of a line: **bold**, *italic*, `code` and [links](url) lose their markers. Used where the text is
 /// shown without rich formatting (table cells, figures, chart labels, copied text).
-String _stripMd(String s) => s.replaceAllMapped(_inlineRe, (m) => m.group(1) ?? m.group(2) ?? m.group(3) ?? m.group(4) ?? '');
+String _stripMd(String s) => s.replaceAllMapped(
+  _inlineRe,
+  (m) => m.group(1) != null
+      ? _stripMd(m.group(1)!)
+      : (m.group(3) != null ? _stripMd(m.group(3)!) : (m.group(2) ?? m.group(4) ?? '')),
+);
 
 /// Reads the body of a `::: chart` block:
 ///   type: line | bar | hbar      title: ...      format: money | count | percent      series: Revenue | Profit
@@ -932,6 +1208,12 @@ String? _streamHolding(String text) {
       return 'Drawing the chart…';
     case 'stats':
       return 'Adding the key figures…';
+    case 'priorities':
+      return 'Ranking the priorities…';
+    case 'compare':
+      return 'Lining up the comparison…';
+    case 'basis':
+      return 'Noting the dates and definitions…';
     default:
       break;
   }
@@ -956,12 +1238,14 @@ List<String> _cells(String l) {
 }
 
 /// Understands the slice of markdown the assistant uses (**bold**, bullets, numbered lists, ## headings,
-/// pipe tables) plus two directive blocks: `::: stats` ("value | label" lines) and `::: followups`.
+/// pipe tables) plus the directive blocks: `::: stats` ("value | label" lines), `::: chart`, `::: priorities`,
+/// `::: compare`, `::: basis` (the dates-and-definitions footnote) and `::: followups`.
 _Parsed _parse(String text) {
   final lines = text.split('\n');
   final blocks = <_Block>[];
   final followUps = <String>[];
   final plain = <String>[];
+  final basis = <String>[];
   _Para? prevPara; // the previous plain line, when nothing but a line break separates it from this one
   var i = 0;
   while (i < lines.length) {
@@ -974,19 +1258,81 @@ _Parsed _parse(String text) {
       final body = <String>[];
       final opened = i;
       i++;
-      while (i < lines.length && lines[i].trim() != ':::') {
+      // A block ends at its ":::", or where the next block starts if the model forgot to close it.
+      while (i < lines.length && lines[i].trim() != ':::' && !_directiveRe.hasMatch(lines[i].trimRight())) {
         if (lines[i].trim().isNotEmpty) body.add(lines[i].trim());
         i++;
       }
-      if (i >= lines.length && kind != 'followups') {
+      if (i >= lines.length && kind != 'followups' && kind != 'basis') {
         // The model never closed a stats/chart block. Drop just the opening line and read the rest as normal text, instead
-        // of swallowing the whole remainder of the answer into a block that then shows nothing. (Follow-ups are always
-        // last, so an unclosed one still reads to the end.)
+        // of swallowing the whole remainder of the answer into a block that then shows nothing. (Follow-ups and the
+        // footnote come last, so an unclosed one still reads to the end.)
         i = opened + 1;
         continue;
       }
-      i++; // closing :::
-      if (kind == 'chart') {
+      if (i < lines.length && lines[i].trim() == ':::') i++; // closing :::
+      if (kind == 'priorities') {
+        final items = <_Priority>[];
+        for (final b in body) {
+          final f = _splitFields(b.replaceFirst(_bulletRe, '').replaceFirst(_numberedRe, ''));
+          final level = f.first.toLowerCase();
+          final rest = const {'high', 'medium', 'low'}.contains(level) ? f.sublist(1) : f;
+          if (rest.isEmpty || rest.first.isEmpty) continue;
+          items.add(
+            _Priority(
+              rest.length == f.length ? 'medium' : level,
+              rest.first,
+              rest.length > 1 ? rest[1] : '',
+              rest.length > 2 ? rest.sublist(2).join(' · ') : '',
+            ),
+          );
+        }
+        if (items.isNotEmpty) {
+          blocks.add(_Priorities(items.take(7).toList()));
+          // Copied text: a numbered list with the reason and the suggested step on each line.
+          for (var n = 0; n < items.length && n < 7; n++) {
+            final p = items[n];
+            plain.add(
+              '${n + 1}. [${p.level}] ${_stripMd(p.title)}${p.why.isEmpty ? '' : ' — ${_stripMd(p.why)}'}'
+              '${p.next.isEmpty ? '' : ' Suggested: ${_stripMd(p.next)}'}',
+            );
+          }
+        }
+      } else if (kind == 'compare') {
+        var title = '';
+        var periods = <String>[];
+        final rows = <_CompareRow>[];
+        for (final b in body) {
+          final kv = RegExp(r'^(title|periods)\s*:\s*(.*)$', caseSensitive: false).firstMatch(b);
+          if (kv != null) {
+            if (kv.group(1)!.toLowerCase() == 'title') {
+              title = _stripMd(kv.group(2)!.trim());
+            } else {
+              periods = [for (final p in kv.group(2)!.split('|')) _stripMd(p.trim())];
+            }
+            continue;
+          }
+          final f = _splitFields(b.replaceFirst(_bulletRe, ''));
+          if (f.length < 4 || f.first.isEmpty) continue;
+          final tone = f.length > 4 ? f[4].toLowerCase() : 'neutral';
+          rows.add(_CompareRow(f[0], f[1], f[2], f[3], const {'good', 'bad'}.contains(tone) ? tone : 'neutral'));
+        }
+        if (rows.isNotEmpty) {
+          blocks.add(_Compare(title, periods, rows.take(12).toList()));
+          plain.add('${title.isEmpty ? 'Comparison' : title}${periods.length >= 2 ? ' (${periods[0]} vs ${periods[1]})' : ''}');
+          for (final r in rows.take(12)) {
+            plain.add('- ${_stripMd(r.measure)}: ${_stripMd(r.current)} vs ${_stripMd(r.previous)} (${_stripMd(r.change)})');
+          }
+        }
+      } else if (kind == 'basis') {
+        for (final b in body) {
+          final t = b.replaceFirst(_bulletRe, '').trim();
+          if (t.isNotEmpty) basis.add(t);
+        }
+        for (final t in basis) {
+          plain.add('Basis: ${_stripMd(t)}');
+        }
+      } else if (kind == 'chart') {
         final chart = _parseChart(body);
         if (chart != null) {
           if (chart.points.length < (chart.kind == 'hbar' ? 5 : 4)) {
@@ -1101,7 +1447,7 @@ _Parsed _parse(String text) {
       prevPara = para;
     }
   }
-  return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim());
+  return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim(), basis.take(4).toList());
 }
 
 // =============================================================================
@@ -1300,6 +1646,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       if (!_showJump) _scrollToEnd(jump: true);
       return;
     }
+    if (newAnswer) {
+      // The answer may have been written out above the reader's place: say it is there.
+      SemanticsService.sendAnnouncement(View.of(context), 'Jarvis answered.', TextDirection.ltr);
+    }
     if (newAnswer && !_chat.lastAnswerStreamed) {
       // Start reading a new answer at its first line, not its last.
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1325,9 +1675,22 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     });
   }
 
+  /// The server answers admins and owners only (Jarvis can read pay, profit and every customer), so other signed-in staff
+  /// are told so up front instead of being handed a box whose every question fails.
+  bool get _canAsk => !AuthSession.instance.isLoggedIn || AuthSession.instance.isAdmin;
+
+  /// "Edit question" on a failed one: it goes back into the box, ready to change and send.
+  void _editFailed() {
+    final q = _chat.takeBackFailedQuestion();
+    if (q == null) return;
+    _input.text = q;
+    _input.selection = TextSelection.collapsed(offset: q.length);
+    _inputFocus.requestFocus();
+  }
+
   void _submit([String? text]) {
     final q = (text ?? _input.text).trim();
-    if (q.isEmpty || _chat.busy) return;
+    if (q.isEmpty || _chat.busy || !_canAsk) return;
     if (text == null) _input.clear(); // a suggestion or follow-up chip must not wipe what is being typed
     _chat.send(q);
     _inputFocus.requestFocus();
@@ -1343,55 +1706,63 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     final auto = screen * (_wide ? 0.92 : 0.62);
     final width = (_userWidth ?? auto).clamp(minWidth, screen);
     final base = Theme.of(context);
+    // Ctrl+J opens Jarvis from anywhere in the app, so the same keys close it again (Esc does too).
+    void close() => Navigator.of(context).maybePop();
     // Material's default purple showed up on text buttons (Retry, Cancel), selection handles and the like.
-    return Theme(
-      data: base.copyWith(
-        colorScheme: base.colorScheme.copyWith(primary: _brandRed),
-        textSelectionTheme: TextSelectionThemeData(
-          cursorColor: _brandRed,
-          selectionHandleColor: const Color(0xFF1A73E8),
-          selectionColor: const Color(0x663390FF),
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.keyJ, control: true): close,
+        const SingleActivator(LogicalKeyboardKey.keyJ, meta: true): close,
+      },
+      child: Theme(
+        data: base.copyWith(
+          colorScheme: base.colorScheme.copyWith(primary: _brandRed),
+          textSelectionTheme: TextSelectionThemeData(
+            cursorColor: _brandRed,
+            selectionHandleColor: const Color(0xFF1A73E8),
+            selectionColor: const Color(0x663390FF),
+          ),
         ),
-      ),
-      child: Material(
-        color: _paper,
-        elevation: 16,
-        child: Stack(
-          children: [
-            AnimatedContainer(
-              duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
-              curve: Curves.easeOutCubic,
-              width: width,
-              height: double.infinity,
-              decoration: const BoxDecoration(
-                border: Border(left: BorderSide(color: _stroke)),
-              ),
-              child: SafeArea(
-                child: Row(
-                  children: [
-                    if (sideOpen) _sidebar(),
-                    Expanded(child: _chatColumn(screen)),
-                  ],
+        child: Material(
+          color: _paper,
+          elevation: 16,
+          child: Stack(
+            children: [
+              AnimatedContainer(
+                duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
+                curve: Curves.easeOutCubic,
+                width: width,
+                height: double.infinity,
+                decoration: const BoxDecoration(
+                  border: Border(left: BorderSide(color: _stroke)),
+                ),
+                child: SafeArea(
+                  child: Row(
+                    children: [
+                      if (sideOpen) _sidebar(),
+                      Expanded(child: _chatColumn(screen)),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            // drag handle on the left edge
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 8,
-              child: MouseRegion(
-                cursor: SystemMouseCursors.resizeLeftRight,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.translucent,
-                  onHorizontalDragStart: (_) => setState(() => _dragging = true),
-                  onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
-                  onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+              // drag handle on the left edge
+              Positioned(
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 8,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.resizeLeftRight,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onHorizontalDragStart: (_) => setState(() => _dragging = true),
+                    onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
+                    onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                  ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -1554,56 +1925,22 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   }
 
   String _greeting() {
-    final h = DateTime.now().hour;
+    final h = AssistantChat.now().hour;
     final part = h < 12 ? 'Good morning' : (h < 18 ? 'Good afternoon' : 'Good evening');
     final first = AuthSession.instance.name.trim().split(RegExp(r'\s+')).first;
     return first.isEmpty ? part : '$part, $first';
   }
 
+  /// The welcome screen: the daily briefing, questions for the page you came from, and what else Jarvis can look up.
   Widget _emptyState() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 72, 28, 16),
-      children: [
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.auto_awesome_rounded, size: 30, color: _brandRed),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Text(
-                        _greeting(),
-                        textAlign: TextAlign.center,
-                        style: _serifStyle.copyWith(fontSize: 30, fontWeight: FontWeight.w600, letterSpacing: -0.6, height: 1.15),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'Ask about jobs, customers, revenue, estimates, inventory, payroll, reviews or the schedule. I can look things up but I can’t change anything.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 14.5, color: _slate, height: 1.5),
-                ),
-                const SizedBox(height: 28),
-                Wrap(
-                  alignment: WrapAlignment.center,
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    for (final sug in _suggestionsFor(_chat.pagePath))
-                      _SuggestionCard(suggestion: sug, onTap: () => _submit(sug.question)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
+    return _JarvisHome(
+      greeting: _greeting(),
+      canAsk: _canAsk,
+      pagePath: _chat.pagePath,
+      pageName: _chat.pageContext,
+      lastBriefing: _chat.lastBriefing,
+      onAsk: _submit,
+      onOpenChat: _chat.selectChat,
     );
   }
 
@@ -1664,9 +2001,11 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   compact: _safeStream.isNotEmpty,
                   note: _streamHolding(_chat.streamText),
                   onStop: _chat.stop,
+                  lookups: List.of(_chat.live),
                 ),
               if (_chat.stopped && !_chat.busy) _StoppedNote(onRetry: _chat.retry),
-              if (_chat.error != null) _ErrorNote(message: _chat.error!, onRetry: _chat.retry),
+              if (_chat.error != null)
+                _ErrorNote(message: _chat.error!, kind: _chat.errorKind, onRetry: _chat.retry, onEdit: _editFailed),
             ],
           ),
         ),
@@ -1706,15 +2045,16 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                 child: AnimatedBuilder(
                   animation: _input,
                   builder: (context, _) {
+                    if (!_canAsk) return const SizedBox(height: 16); // no keys to explain when the box is switched off
                     final len = _input.text.length;
                     final near = len >= _maxChars * 0.9;
                     return Text(
                       near
                           ? '$len / $_maxChars characters${len >= _maxChars ? ' · that is the limit, anything longer is cut off' : ''}'
-                          : 'Enter to send · Shift+Enter for a new line · ↑ recalls your last question. '
-                                'It only looks things up, but double-check important numbers.',
+                          : 'Enter to send · Shift+Enter for a new line · ↑ recalls your last question · Ctrl+J closes. '
+                                'Read-only: double-check important numbers.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11.5, color: len >= _maxChars ? _bad : _muted, height: 1.4),
+                      style: TextStyle(fontSize: 11.5, color: len >= _maxChars ? DashUi.redText : DashUi.subtle, height: 1.4),
                     );
                   },
                 ),
@@ -1729,7 +2069,20 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   Widget _composerField() {
     return Column(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (_canAsk && _chat.pageContext.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: ListenableBuilder(
+              listenable: _chat,
+              builder: (context, _) => _ContextChip(
+                page: _chat.pageContext,
+                on: _chat.usePage,
+                onToggle: () => setState(() => _chat.usePage = !_chat.usePage),
+              ),
+            ),
+          ),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -1753,14 +2106,15 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   controller: _input,
                   focusNode: _inputFocus,
                   autofocus: true,
+                  enabled: _canAsk,
                   minLines: 1,
                   maxLines: 6,
                   maxLength: _maxChars,
                   style: const TextStyle(fontSize: 15, color: _ink, height: 1.4),
                   cursorColor: _brandRed,
-                  decoration: const InputDecoration(
-                    hintText: 'Ask Jarvis about your business…',
-                    hintStyle: TextStyle(fontSize: 15, color: _muted),
+                  decoration: InputDecoration(
+                    hintText: _canAsk ? 'Ask Jarvis about your business…' : 'Jarvis is available to admin accounts',
+                    hintStyle: const TextStyle(fontSize: 15, color: _muted),
                     counterText: '',
                     isDense: true,
                     filled: false,
@@ -1961,41 +2315,6 @@ class _NewChatButtonState extends State<_NewChatButton> {
                   'New chat',
                   style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: on ? _ink : _muted),
                 ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// A rounded suggestion chip on the empty screen; the full question shows as a tooltip.
-class _SuggestionCard extends StatelessWidget {
-  final _Suggestion suggestion;
-  final VoidCallback onTap;
-  const _SuggestionCard({required this.suggestion, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: suggestion.question,
-      waitDuration: const Duration(milliseconds: 500),
-      child: Material(
-        color: Colors.white,
-        shape: const StadiumBorder(side: BorderSide(color: _stroke)),
-        child: InkWell(
-          customBorder: const StadiumBorder(),
-          hoverColor: _fill,
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 18, 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(suggestion.icon, size: 17, color: _slate),
-                const SizedBox(width: 8),
-                Text(suggestion.title, style: const TextStyle(fontSize: 13.5, color: _ink)),
               ],
             ),
           ),
@@ -2314,7 +2633,11 @@ class _AnswerViewState extends State<_AnswerView> {
           SelectionArea(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [for (final b in blocks) KeyedSubtree(key: ObjectKey(b), child: reveal(_blockView(b)))],
+              children: [
+                for (final b in blocks) KeyedSubtree(key: ObjectKey(b), child: reveal(_blockView(b))),
+                if (_parsed.basis.isNotEmpty)
+                  reveal(_BasisNote(lines: _parsed.basis, links: {for (final l in widget.message.links) _linkKey(l)})),
+              ],
             ),
           ),
           if (!widget.streaming) reveal(_actions()),
@@ -2325,17 +2648,23 @@ class _AnswerViewState extends State<_AnswerView> {
   }
 
   Widget _blockView(_Block b) {
+    final links = {for (final l in widget.message.links) _linkKey(l)};
     return switch (b) {
       _Para() => Padding(
         padding: EdgeInsets.only(bottom: b.tight ? 4 : 14),
-        child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
+        child: Text.rich(
+          TextSpan(
+            style: _bodyStyle,
+            children: _inlineSpans(b.text, _bodyStyle, links: links),
+          ),
+        ),
       ),
       _Head() => Padding(
         padding: const EdgeInsets.only(top: 8, bottom: 8),
         child: Text.rich(
           TextSpan(
             style: _bodyStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w600, height: 1.35),
-            children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 18, height: 1.35)),
+            children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 18, height: 1.35), links: links),
           ),
         ),
       ),
@@ -2382,7 +2711,12 @@ class _AnswerViewState extends State<_AnswerView> {
                     ),
             ),
             Expanded(
-              child: Text.rich(TextSpan(style: _bodyStyle, children: _inlineSpans(b.text, _bodyStyle))),
+              child: Text.rich(
+                TextSpan(
+                  style: _bodyStyle,
+                  children: _inlineSpans(b.text, _bodyStyle, links: links),
+                ),
+              ),
             ),
           ],
         ),
@@ -2394,6 +2728,14 @@ class _AnswerViewState extends State<_AnswerView> {
       _Stats() => Padding(
         padding: const EdgeInsets.only(top: 2, bottom: 14),
         child: _StatRow(items: b.items, animate: _animate),
+      ),
+      _Priorities() => Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 14),
+        child: _PriorityList(items: b.items, links: links, onAsk: widget.streaming ? null : widget.onAsk),
+      ),
+      _Compare() => Padding(
+        padding: const EdgeInsets.only(top: 2, bottom: 14),
+        child: _CompareView(compare: b, links: links),
       ),
       _Chart() => Padding(
         padding: const EdgeInsets.only(top: 2, bottom: 14),
@@ -2416,43 +2758,61 @@ class _AnswerViewState extends State<_AnswerView> {
   }
 
   Widget _actions() {
-    final sources = widget.message.sources;
-    final calls = widget.message.calls;
+    final m = widget.message;
+    final detail = m.lookups.isNotEmpty || m.calls.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.only(top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_actionRow(sources, calls), if (_showCalls && calls.isNotEmpty) _callsBox(calls)],
+        children: [_actionRow(m.sources, detail), if (_showCalls && detail) _callsBox(m)],
       ),
     );
   }
 
-  /// "How I got this": what was looked up and with which filters, so a number can be checked.
-  Widget _callsBox(List<String> calls) {
+  /// "How I got this": each lookup behind the answer, what it looked at, how long it took and whether a part of it could
+  /// not be read, so a number can be checked. Answers saved before lookups were kept show the older one-line list.
+  Widget _callsBox(AssistantMessage m) {
+    final at = m.at;
     return Container(
       margin: const EdgeInsets.only(top: 6, bottom: 2),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
       width: double.infinity,
       decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'How I got this',
-            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _slate),
+          Row(
+            children: [
+              const Text(
+                'How I got this',
+                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _slate),
+              ),
+              const Spacer(),
+              if (at != null)
+                Text(
+                  'Looked up ${_answerTime(at, AssistantChat.now())}',
+                  style: const TextStyle(fontSize: 11.5, color: DashUi.subtle),
+                ),
+            ],
           ),
-          const SizedBox(height: 6),
-          for (final c in calls)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Text('• $c', style: const TextStyle(fontSize: 11.5, color: _slate, height: 1.4)),
-            ),
+          const SizedBox(height: 8),
+          if (m.lookups.isNotEmpty)
+            for (final l in m.lookups) _LookupLine(lookup: l)
+          else
+            for (final c in m.calls)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text('• $c', style: const TextStyle(fontSize: 11.5, color: _slate, height: 1.4)),
+              ),
         ],
       ),
     );
   }
 
-  Widget _actionRow(List<String> sources, List<String> calls) {
+  Widget _actionRow(List<String> sources, bool detail) {
+    final m = widget.message;
+    final gaps = m.lookups.where((l) => !l.ok || l.partial).length;
+    final at = m.at;
     return Padding(
       padding: EdgeInsets.zero,
       child: Wrap(
@@ -2466,25 +2826,42 @@ class _AnswerViewState extends State<_AnswerView> {
             color: _copied ? _good : null,
             onTap: _copy,
           ),
-          if (widget.isLast) _MiniAction(icon: Icons.refresh_rounded, label: 'Regenerate', onTap: widget.onRegenerate),
+          if (widget.isLast)
+            _MiniAction(icon: Icons.refresh_rounded, label: 'Regenerate', onTap: widget.onRegenerate)
+          else if (widget.question != null)
+            // An older answer's figures are as of then: asking again gets today's.
+            _MiniAction(icon: Icons.replay_rounded, label: 'Ask again', onTap: () => widget.onAsk(widget.question!)),
           _vote('up', Icons.thumb_up_outlined, Icons.thumb_up_rounded, 'Good answer'),
           _vote('down', Icons.thumb_down_outlined, Icons.thumb_down_rounded, 'Not helpful'),
-          if (sources.isNotEmpty)
+          if (sources.isNotEmpty || detail)
             Padding(
               padding: const EdgeInsets.only(left: 6),
               child: InkWell(
                 borderRadius: BorderRadius.circular(6),
-                onTap: calls.isEmpty ? null : () => setState(() => _showCalls = !_showCalls),
+                onTap: detail ? () => setState(() => _showCalls = !_showCalls) : null,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.verified_outlined, size: 14, color: _muted),
+                      Icon(
+                        gaps > 0 ? Icons.warning_amber_rounded : Icons.verified_outlined,
+                        size: 14,
+                        color: gaps > 0 ? DashUi.amberText : DashUi.subtle,
+                      ),
                       const SizedBox(width: 5),
-                      Text('Checked ${sources.join(' · ')}', style: const TextStyle(fontSize: 11.5, color: _muted)),
-                      if (calls.isNotEmpty)
-                        Icon(_showCalls ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: _muted),
+                      Flexible(
+                        child: Text(
+                          [
+                            if (sources.isNotEmpty) 'Checked ${sources.join(' · ')}' else 'How I got this',
+                            if (gaps > 0) gaps == 1 ? '1 part not fully read' : '$gaps parts not fully read',
+                            if (at != null) _answerTime(at, AssistantChat.now()),
+                          ].join(' · '),
+                          style: TextStyle(fontSize: 11.5, color: gaps > 0 ? DashUi.amberText : DashUi.subtle),
+                        ),
+                      ),
+                      if (detail)
+                        Icon(_showCalls ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: DashUi.subtle),
                     ],
                   ),
                 ),
@@ -2577,19 +2954,25 @@ class _FollowUpChip extends StatelessWidget {
 const TextStyle _serifStyle = TextStyle(color: _ink);
 final TextStyle _bodyStyle = _serifStyle.copyWith(fontSize: 15.5, height: 1.6);
 
-final RegExp _inlineRe = RegExp(r'\*\*(.+?)\*\*|`([^`]+)`|(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])|\[([^\]]+)\]\(([^)\s]+)\)');
+// A link target may hold spaces only for the app's own records ("customer:Riverside Logistics"); a web address may not.
+final RegExp _inlineRe = RegExp(
+  r'\*\*(.+?)\*\*|`([^`]+)`|(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])|\[([^\]]+)\]\(((?:job|estimate|customer|page):[^)\n]+|[^)\s]+)\)',
+);
 
-/// **bold**, *italic*, `code` and [links](url) (shown as their text) inside a line of text.
-List<InlineSpan> _inlineSpans(String line, TextStyle base) {
+/// **bold**, *italic*, `code` and [links](url) (shown as their text) inside a line of text. [links] holds the keys
+/// ([_linkKey]) of the Drive links the server's lookups returned for this answer: only those open.
+List<InlineSpan> _inlineSpans(String line, TextStyle base, {Set<String> links = const {}}) {
   final spans = <InlineSpan>[];
   var last = 0;
   for (final m in _inlineRe.allMatches(line)) {
     if (m.start > last) spans.add(TextSpan(text: line.substring(last, m.start)));
     if (m.group(1) != null) {
+      // Bold text can hold a link (**[1095809012](job:1095809012)**), so read what is inside it too.
+      final bold = base.copyWith(fontWeight: FontWeight.w700);
       spans.add(
         TextSpan(
-          text: m.group(1),
-          style: base.copyWith(fontWeight: FontWeight.w700),
+          style: bold,
+          children: _inlineSpans(m.group(1)!, bold, links: links),
         ),
       );
     } else if (m.group(2) != null) {
@@ -2605,21 +2988,32 @@ List<InlineSpan> _inlineSpans(String line, TextStyle base) {
         ),
       );
     } else if (m.group(3) != null) {
+      final italic = base.copyWith(fontStyle: FontStyle.italic);
       spans.add(
         TextSpan(
-          text: m.group(3),
-          style: base.copyWith(fontStyle: FontStyle.italic),
+          style: italic,
+          children: _inlineSpans(m.group(3)!, italic, links: links),
         ),
       );
     } else {
       final url = m.group(5) ?? '';
-      if (url.startsWith('job:') && RegExp(r'^[A-Za-z0-9\-]{3,40}$').hasMatch(url.substring(4))) {
-        // A job the assistant named: a link that opens it in the app.
+      final record = _recordLink(url);
+      if (record != null) {
+        // A job, estimate, customer or page the assistant named: a link that opens it in the app.
         spans.add(
           WidgetSpan(
             alignment: PlaceholderAlignment.baseline,
             baseline: TextBaseline.alphabetic,
-            child: _JobLink(jobId: url.substring(4), label: m.group(4) ?? url.substring(4), style: base),
+            child: _RecordLink(route: record.route, what: record.what, label: m.group(4) ?? url, style: base),
+          ),
+        );
+      } else if (_isDriveLink(url) && links.contains(_linkKey(url))) {
+        // A Google Drive file its own lookup returned: opens in the browser.
+        spans.add(
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: _WebLink(uri: Uri.parse(url), label: m.group(4) ?? url, style: base),
           ),
         );
       } else {
@@ -2632,44 +3026,74 @@ List<InlineSpan> _inlineSpans(String line, TextStyle base) {
   return spans;
 }
 
-/// A job number in an answer. Closes the panel and opens that job.
-class _JobLink extends StatefulWidget {
-  final String jobId;
-  final String label;
-  final TextStyle style;
-  const _JobLink({required this.jobId, required this.label, required this.style});
-
-  @override
-  State<_JobLink> createState() => _JobLinkState();
+/// The only web links an answer may open: Google's own Drive / Docs hosts, over https, AND returned by the server's own
+/// Drive lookup for that answer (see [AssistantMessage.links]). Any other link (one written into a note, a review or a
+/// file and repeated by the model, even a Google Form on the same host) stays plain text.
+bool _isDriveLink(String url) {
+  final u = Uri.tryParse(url);
+  return u != null && u.scheme == 'https' && (u.host == 'docs.google.com' || u.host == 'drive.google.com');
 }
 
-class _JobLinkState extends State<_JobLink> {
+/// A Drive link compared without its query (`?usp=drivesdk`), which the model may drop; the path holds the file id.
+String _linkKey(String url) {
+  final u = Uri.tryParse(url);
+  return u == null ? url : '${u.host}${u.path}';
+}
+
+/// A Google Drive file in an answer. Opens it in the browser and leaves the panel open.
+class _WebLink extends StatefulWidget {
+  final Uri uri;
+  final String label;
+  final TextStyle style;
+  const _WebLink({required this.uri, required this.label, required this.style});
+
+  @override
+  State<_WebLink> createState() => _WebLinkState();
+}
+
+class _WebLinkState extends State<_WebLink> {
   bool _hover = false;
 
-  void _open() {
-    GoRouter? router;
-    try {
-      router = GoRouter.of(context);
-    } catch (_) {}
-    Navigator.of(context).pop(); // the panel sits on top of the page, so close it first
-    router?.go('/jobs/${Uri.encodeComponent(widget.jobId)}');
+  Future<void> _open() async {
+    final ok = await AssistantChat.openLink(widget.uri).catchError((_) => false);
+    if (!ok && mounted) {
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text("Couldn't open that file. Try Documents in the app.")));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: _open,
-        child: Text(
-          widget.label,
-          style: widget.style.copyWith(
-            color: _brandRed,
-            fontWeight: FontWeight.w600,
-            decoration: _hover ? TextDecoration.underline : TextDecoration.none,
-            decorationColor: _brandRed,
+    final style = widget.style.copyWith(
+      color: _brandRed,
+      fontWeight: FontWeight.w600,
+      decoration: _hover ? TextDecoration.underline : TextDecoration.none,
+      decorationColor: _brandRed,
+    );
+    return Semantics(
+      link: true,
+      label: '${widget.label}, opens in Google Drive',
+      excludeSemantics: true,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hover = true),
+        onExit: (_) => setState(() => _hover = false),
+        child: GestureDetector(
+          onTap: _open,
+          child: Text.rich(
+            TextSpan(
+              children: [
+                TextSpan(text: widget.label),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.middle,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 3),
+                    child: Icon(Icons.open_in_new_rounded, size: (widget.style.fontSize ?? 15) * 0.8, color: _brandRed),
+                  ),
+                ),
+              ],
+            ),
+            style: style,
           ),
         ),
       ),
@@ -3347,10 +3771,22 @@ class _ChatTableState extends State<_ChatTable> {
   late final List<List<String>> _body = _all.where((r) => !_isTotal(r)).toList();
   late final List<List<String>> _totals = _all.where(_isTotal).toList();
 
+  // Each row's cells as written, links kept, for drawing them; the plain text above is what sorts, copies and saves.
+  late final Map<List<String>, List<String>> _raw = {
+    for (var i = 0; i < _all.length; i++)
+      _all[i]: [for (var c = 0; c < _cols; c++) c < widget.rows[i + 1].length ? widget.rows[i + 1][c] : ''],
+  };
+
   late final List<bool> _numeric = [
     for (var c = 0; c < _cols; c++)
-      _body.every((r) => r[c].isEmpty || _numericRe.hasMatch(r[c])) && _body.any((r) => r[c].isNotEmpty),
+      !_isIdColumn(c) && _body.every((r) => r[c].isEmpty || _numericRe.hasMatch(r[c])) && _body.any((r) => r[c].isNotEmpty),
   ];
+
+  /// A column of job or estimate numbers ("Job", "Estimate #"): read as names, left-aligned, not as amounts to total or
+  /// chart. A "Jobs" column of counts is still a number.
+  static final _idHeaderRe = RegExp(r'^((job|estimate|invoice|po)( ?(#|number|no\.?|id))?|#|id)$', caseSensitive: false);
+  bool _isIdColumn(int c) =>
+      _idHeaderRe.hasMatch(_header[c].trim()) && _body.every((r) => r[c].isEmpty || RegExp(r'^\d{5,}$').hasMatch(r[c].trim()));
 
   /// Last column whose cells are all dollar amounts: that one gets the data bars.
   late final int? _barCol = () {
@@ -3369,6 +3805,13 @@ class _ChatTableState extends State<_ChatTable> {
     }
     return null;
   }();
+
+  // Text columns share the width by how much they hold, so a column of notes is not squeezed into a sliver beside short
+  // ones (a job number, a status). The first column keeps a little extra, as before.
+  late final List<double> _flex = [
+    for (var c = 0; c < _cols; c++)
+      ([_header, ..._body].fold<int>(0, (t, r) => t + r[c].length) / (_body.length + 1) / 9).clamp(c == 0 ? 1.4 : 1.0, 3.2),
+  ];
 
   int? _sortCol;
   bool _asc = true;
@@ -3498,17 +3941,22 @@ class _ChatTableState extends State<_ChatTable> {
 
     Widget cell(List<String> r, int c, {bool total = false}) {
       final t = r[c];
-      Widget text = Text(
-        t,
-        textAlign: _numeric[c] ? TextAlign.right : TextAlign.left,
-        style: TextStyle(
-          fontSize: 13,
-          fontWeight: total ? FontWeight.w800 : (c == 0 ? FontWeight.w600 : FontWeight.w500),
-          color: _ink,
-          height: 1.3,
-          fontFeatures: _numeric[c] ? const [FontFeature.tabularFigures()] : null,
-        ),
+      final raw = _raw[r]?[c] ?? t;
+      final style = TextStyle(
+        fontSize: 13,
+        fontWeight: total ? FontWeight.w800 : (c == 0 ? FontWeight.w600 : FontWeight.w500),
+        color: _ink,
+        height: 1.3,
+        fontFeatures: _numeric[c] ? const [FontFeature.tabularFigures()] : null,
       );
+      final align = _numeric[c] ? TextAlign.right : TextAlign.left;
+      // A job, estimate or customer named in a cell opens like the links in the text around the table.
+      Widget text = raw.contains('](')
+          ? Text.rich(
+              TextSpan(style: style, children: _inlineSpans(raw, style)),
+              textAlign: align,
+            )
+          : Text(t, textAlign: align, style: style);
       if (c == _statusIdx && !total) {
         text = Row(
           mainAxisSize: MainAxisSize.min,
@@ -3555,9 +4003,7 @@ class _ChatTableState extends State<_ChatTable> {
     final table = Table(
       columnWidths: {
         for (var c = 0; c < _cols; c++)
-          c: c == barCol
-              ? const FlexColumnWidth(1.1)
-              : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(c == 0 ? 2 : 1.4)),
+          c: c == barCol ? const FlexColumnWidth(1.1) : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(_flex[c])),
       },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: const TableBorder(horizontalInside: BorderSide(color: _stroke)),
@@ -3654,7 +4100,18 @@ class _Thinking extends StatefulWidget {
   /// stays until the answer is finished so it is always clear whether more is coming.
   final bool compact;
   final String? note; // in compact mode, what is being held back ("Drawing the chart…")
-  const _Thinking({required this.since, required this.onStop, this.status, this.compact = false, this.note});
+
+  /// What has been looked up so far and what is still running, as the server reports it: shown as a checklist so the
+  /// wait says what Jarvis is actually reading.
+  final List<AssistantLookup> lookups;
+  const _Thinking({
+    required this.since,
+    required this.onStop,
+    this.status,
+    this.compact = false,
+    this.note,
+    this.lookups = const [],
+  });
 
   @override
   State<_Thinking> createState() => _ThinkingState();
@@ -3708,8 +4165,14 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
                   child: Text(
                     widget.note!,
                     key: ValueKey(widget.note),
-                    style: const TextStyle(fontSize: 13, color: _muted),
+                    style: const TextStyle(fontSize: 13, color: _slate),
                   ),
+                ),
+              ] else if (widget.lookups.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  'Writing the answer from ${widget.lookups.length} ${widget.lookups.length == 1 ? 'lookup' : 'lookups'}',
+                  style: const TextStyle(fontSize: 13, color: _slate),
                 ),
               ],
             ],
@@ -3717,48 +4180,76 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
         ),
       );
     }
+    // One summary for screen readers: the ticking seconds would otherwise be read out every second.
+    final progress = [
+      for (final l in widget.lookups)
+        l.steps.isEmpty
+            ? '${l.label} ${l.running ? 'running' : 'done'}'
+            : '${l.label}: ${l.steps.where((s) => !s.running).length} of ${l.steps.length} parts done',
+    ].join('; ');
     return Semantics(
       liveRegion: true,
-      excludeSemantics: true, // the ticking seconds would otherwise be read out every second
-      label: 'Jarvis is working on your question',
+      excludeSemantics: true,
+      label: progress.isEmpty ? 'Jarvis is working on your question' : 'Jarvis is working on your question. $progress',
       child: Padding(
         padding: const EdgeInsets.only(bottom: 18),
-        child: Row(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            ScaleTransition(
-              scale: still
-                  ? const AlwaysStoppedAnimation(1.0)
-                  : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-              child: const Icon(Icons.auto_awesome_rounded, size: 20, color: _brandRed),
-            ),
-            const SizedBox(width: 10),
-            AnimatedBuilder(
-              animation: _c,
-              builder: (context, _) => ShaderMask(
-                blendMode: BlendMode.srcIn,
-                shaderCallback: (r) => LinearGradient(
-                  colors: const [_muted, _ink, _muted],
-                  stops: const [0.35, 0.5, 0.65],
-                  transform: _SlideGradient(still ? 0 : _c.value * 2 - 1),
-                ).createShader(r),
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 250),
-                  child: Text(
-                    widget.status ?? _phrases[i],
-                    key: ValueKey(widget.status ?? i),
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                  ),
+            _headline(still, secs, i),
+            if (widget.lookups.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 30, top: 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [for (final l in widget.lookups) _LookupLine(lookup: l)],
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Text(
-              secs >= 12 ? '${secs}s · still working, this can take a minute or two' : (secs >= 3 ? '${secs}s' : ''),
-              style: const TextStyle(fontSize: 11.5, color: _muted, fontFeatures: [FontFeature.tabularFigures()]),
-            ),
           ],
         ),
       ),
+    );
+  }
+
+  Widget _headline(bool still, int secs, int i) {
+    return Row(
+      children: [
+        ScaleTransition(
+          scale: still
+              ? const AlwaysStoppedAnimation(1.0)
+              : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
+          child: const Icon(Icons.auto_awesome_rounded, size: 20, color: _brandRed),
+        ),
+        const SizedBox(width: 10),
+        Flexible(
+          child: AnimatedBuilder(
+            animation: _c,
+            builder: (context, _) => ShaderMask(
+              blendMode: BlendMode.srcIn,
+              shaderCallback: (r) => LinearGradient(
+                colors: const [_slate, _ink, _slate],
+                stops: const [0.35, 0.5, 0.65],
+                transform: _SlideGradient(still ? 0 : _c.value * 2 - 1),
+              ).createShader(r),
+              child: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 250),
+                child: Text(
+                  widget.status ?? _phrases[i],
+                  key: ValueKey(widget.status ?? i),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Text(
+          secs >= 12 ? '${secs}s · still working, this can take a minute or two' : (secs >= 3 ? '${secs}s' : ''),
+          style: const TextStyle(fontSize: 11.5, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()]),
+        ),
+      ],
     );
   }
 }
@@ -3785,30 +4276,72 @@ class _StoppedNote extends StatelessWidget {
   }
 }
 
+/// A question that failed: what happened in a few words, the server's message, what to do about it, and the ways out
+/// (ask again, or put the question back in the box to change it). No retry where retrying cannot help.
 class _ErrorNote extends StatelessWidget {
   final String message;
+  final AssistantErrorKind? kind;
   final VoidCallback onRetry;
-  const _ErrorNote({required this.message, required this.onRetry});
+  final VoidCallback? onEdit;
+  const _ErrorNote({required this.message, required this.onRetry, this.kind, this.onEdit});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFFEF2F2),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFFECACA)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.error_outline_rounded, size: 18, color: Color(0xFFB91C1C)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(message, style: const TextStyle(fontSize: 12.5, color: Color(0xFF7F1D1D), height: 1.35)),
-          ),
-          TextButton(onPressed: onRetry, child: const Text('Retry')),
-        ],
+    // The message already says what to do (the server's or the app's own wording), so the title only names what happened.
+    final title = switch (kind) {
+      AssistantErrorKind.timeout => 'No answer in time',
+      AssistantErrorKind.busy => 'Jarvis is busy',
+      AssistantErrorKind.offline => 'No connection',
+      AssistantErrorKind.session => 'Signed out',
+      AssistantErrorKind.access => 'No access',
+      AssistantErrorKind.setup => 'Not set up yet',
+      _ => 'Something went wrong',
+    };
+    final canRetry = !const {AssistantErrorKind.access, AssistantErrorKind.setup, AssistantErrorKind.session}.contains(kind);
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        decoration: BoxDecoration(
+          color: DashUi.red.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: DashUi.red.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.only(top: 1),
+              child: Icon(Icons.error_outline_rounded, size: 18, color: DashUi.redText),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.redText),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(message, style: const TextStyle(fontSize: 12.5, color: _ink, height: 1.4)),
+                  if (canRetry || onEdit != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Wrap(
+                        spacing: 4,
+                        children: [
+                          if (canRetry) TextButton(onPressed: onRetry, child: const Text('Try again')),
+                          if (onEdit != null && canRetry) TextButton(onPressed: onEdit, child: const Text('Edit question')),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

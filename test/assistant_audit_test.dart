@@ -123,6 +123,7 @@ Show me the top 3 as a chart
 
 void main() {
   AssistantChat.animateAnswers = false; // these mock servers send one JSON reply; do not wait for it to be typed out
+  AssistantChat.now = () => DateTime(2026, 10, 6, 14); // the shots say "Good afternoon" whatever hour the tests run
   setUpAll(() async {
     await _loadFont('Segoe UI', [r'C:\Windows\Fonts\segoeui.ttf', r'C:\Windows\Fonts\segoeuib.ttf', r'C:\Windows\Fonts\seguisb.ttf']);
     final root = Platform.environment['FLUTTER_ROOT'] ?? r'C:\src\flutter';

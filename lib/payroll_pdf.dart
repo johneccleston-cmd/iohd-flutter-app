@@ -307,8 +307,7 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r, _PdfMeta meta) {
                 pw.SizedBox(height: 2),
                 _pt(
                   '${t.kindLabel}  |  ${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
-                  '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed'
-                  '${t.underHurdle ? '  |  Under the weekly hurdle in at least one week, no cash pay for it' : ''}',
+                  '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed',
                   size: 9,
                   color: _pSlate,
                 ),
@@ -393,7 +392,6 @@ const int _keepRows = 16;
 
 List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
   final out = <pw.Widget>[];
-  final under = w.hurdleRule > 0 && w.weeklyGross < w.hurdleRule;
   final status = meta.weekStatus[w.weekStart];
 
   final ledger = <List<String>>[
@@ -405,7 +403,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
     if (w.otherAdjustments != 0) ['Other adjustments', _fmt(w.otherAdjustments)],
     ['Weekly gross', _fmt(w.weeklyGross)],
     if (w.hurdleRule > 0)
-      [under ? 'Under the ${_fmt(w.hurdleRule)} hurdle, no cash pay' : 'Weekly hurdle', _fmt(-w.hurdleApplied)],
+      ['Weekly hurdle', _fmt(-w.hurdleApplied)],
     if (w.advanceShortfall > 0) ['Advance shortfall (recovered later)', _fmt(w.advanceShortfall)],
   ];
 

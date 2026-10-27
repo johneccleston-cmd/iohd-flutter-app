@@ -1,0 +1,216 @@
+{
+ "question": "Give me today's priorities",
+ "events": [
+  {
+   "type": "status",
+   "text": "Looking into it…"
+  },
+  {
+   "type": "reset"
+  },
+  {
+   "type": "status",
+   "text": "Pulling together today's priorities…"
+  },
+  {
+   "type": "tool",
+   "id": "toolu_31",
+   "name": "daily_briefing",
+   "input": "{}",
+   "state": "start",
+   "text": "Pulling together today's priorities…"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Today's schedule",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Next 7 days",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Stuck jobs",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Money owed",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Oldest balances",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Quiet estimates",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Office tasks",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Low stock",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Materials for booked jobs",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Changes since Oct 26",
+   "state": "start"
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Today's schedule",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Next 7 days",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Money owed",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Oldest balances",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Office tasks",
+   "state": "done",
+   "ok": false
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Low stock",
+   "state": "done",
+   "ok": false
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Materials for booked jobs",
+   "state": "done",
+   "ok": false
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Quiet estimates",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Stuck jobs",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "step",
+   "parent": "toolu_31",
+   "label": "Changes since Oct 26",
+   "state": "done",
+   "ok": true
+  },
+  {
+   "type": "tool",
+   "id": "toolu_31",
+   "name": "daily_briefing",
+   "state": "done",
+   "ok": true,
+   "partial": true,
+   "ms": 7
+  },
+  {
+   "type": "status",
+   "text": "Putting it together…"
+  },
+  {
+   "type": "delta",
+   "text": "I could "
+  },
+  {
+   "type": "delta",
+   "text": "not chec"
+  },
+  {
+   "type": "delta",
+   "text": "k stock "
+  },
+  {
+   "type": "delta",
+   "text": "today; h"
+  },
+  {
+   "type": "delta",
+   "text": "ere is t"
+  },
+  {
+   "type": "delta",
+   "text": "he rest."
+  },
+  {
+   "type": "done",
+   "status": 200,
+   "success": true,
+   "answer": "I could not check stock today; here is the rest.",
+   "toolsUsed": [
+    "daily_briefing"
+   ],
+   "calls": [
+    {
+     "tool": "daily_briefing",
+     "input": "{}",
+     "ms": 7,
+     "ok": true,
+     "partial": true
+    }
+   ],
+   "usage": {
+    "input": 20,
+    "output": 40,
+    "cacheRead": 2000,
+    "cacheWrite": 200
+   },
+   "links": []
+  }
+ ]
+}

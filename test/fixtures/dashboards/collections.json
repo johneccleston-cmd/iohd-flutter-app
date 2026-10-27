@@ -1,0 +1,418 @@
+{
+  "success": true,
+  "year": 2026,
+  "summary": {
+    "collected": 2440659,
+    "paymentCount": 1574,
+    "largestPayment": 64358,
+    "priorCollected": 2592737,
+    "outstanding": 238132.83,
+    "outstandingJobs": 209,
+    "over90": 22577.47,
+    "over90Jobs": 40,
+    "writeOffJobs": 4,
+    "writeOffBalance": 333.35
+  },
+  "writeOffMonthly": [
+    {
+      "month_num": 2,
+      "job_count": 1,
+      "balance": 50.47
+    },
+    {
+      "month_num": 3,
+      "job_count": 1,
+      "balance": 202.91
+    },
+    {
+      "month_num": 4,
+      "job_count": 2,
+      "balance": 79.97
+    }
+  ],
+  "history": [
+    {
+      "day": "2026-10-06",
+      "outstanding": 230000,
+      "over90": 21000
+    },
+    {
+      "day": "2026-10-07",
+      "outstanding": 230480,
+      "over90": 21090
+    },
+    {
+      "day": "2026-10-08",
+      "outstanding": 230960,
+      "over90": 21180
+    },
+    {
+      "day": "2026-10-09",
+      "outstanding": 231440,
+      "over90": 21270
+    },
+    {
+      "day": "2026-10-10",
+      "outstanding": 231920,
+      "over90": 21360
+    },
+    {
+      "day": "2026-10-11",
+      "outstanding": 232400,
+      "over90": 21450
+    },
+    {
+      "day": "2026-10-12",
+      "outstanding": 232880,
+      "over90": 21540
+    },
+    {
+      "day": "2026-10-13",
+      "outstanding": 233360,
+      "over90": 21630
+    },
+    {
+      "day": "2026-10-14",
+      "outstanding": 233840,
+      "over90": 21720
+    },
+    {
+      "day": "2026-10-15",
+      "outstanding": 234320,
+      "over90": 21810
+    },
+    {
+      "day": "2026-10-16",
+      "outstanding": 234800,
+      "over90": 21900
+    },
+    {
+      "day": "2026-10-17",
+      "outstanding": 235280,
+      "over90": 21990
+    },
+    {
+      "day": "2026-10-18",
+      "outstanding": 235760,
+      "over90": 22080
+    },
+    {
+      "day": "2026-10-19",
+      "outstanding": 236240,
+      "over90": 22170
+    },
+    {
+      "day": "2026-10-20",
+      "outstanding": 236720,
+      "over90": 22260
+    },
+    {
+      "day": "2026-10-21",
+      "outstanding": 237200,
+      "over90": 22350
+    },
+    {
+      "day": "2026-10-22",
+      "outstanding": 237680,
+      "over90": 22440
+    }
+  ],
+  "overdue": [
+    {
+      "jobId": "9100001",
+      "customer": "Northwind Homes LLC",
+      "amount": 1200,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 900
+    },
+    {
+      "jobId": "9100002",
+      "customer": "Summit Builders",
+      "amount": 2035,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 838
+    },
+    {
+      "jobId": "9100003",
+      "customer": "Lakeside Residence",
+      "amount": 2870,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 776
+    },
+    {
+      "jobId": "9100004",
+      "customer": "Oakridge Property Co",
+      "amount": 3705,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 714
+    },
+    {
+      "jobId": "9100005",
+      "customer": "Pine Hollow Apartments",
+      "amount": 4540,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 652
+    },
+    {
+      "jobId": "9100006",
+      "customer": "Cedar Point Storage",
+      "amount": 5375,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 590
+    },
+    {
+      "jobId": "9100007",
+      "customer": "Northwind Homes LLC",
+      "amount": 6210,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 528
+    },
+    {
+      "jobId": "9100008",
+      "customer": "Summit Builders",
+      "amount": 7045,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 466
+    },
+    {
+      "jobId": "9100009",
+      "customer": "Lakeside Residence",
+      "amount": 7880,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 404
+    },
+    {
+      "jobId": "9100010",
+      "customer": "Oakridge Property Co",
+      "amount": 8715,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 342
+    },
+    {
+      "jobId": "9100011",
+      "customer": "Pine Hollow Apartments",
+      "amount": 9550,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 280
+    },
+    {
+      "jobId": "9100012",
+      "customer": "Cedar Point Storage",
+      "amount": 10385,
+      "status": "Final Invoice Sent",
+      "daysOverdue": 218
+    }
+  ],
+  "monthly": [
+    {
+      "month_num": 1,
+      "collected": 230676,
+      "payment_count": 150
+    },
+    {
+      "month_num": 2,
+      "collected": 195153,
+      "payment_count": 150
+    },
+    {
+      "month_num": 3,
+      "collected": 269204,
+      "payment_count": 150
+    },
+    {
+      "month_num": 4,
+      "collected": 395785,
+      "payment_count": 150
+    },
+    {
+      "month_num": 5,
+      "collected": 326921,
+      "payment_count": 150
+    },
+    {
+      "month_num": 6,
+      "collected": 207158,
+      "payment_count": 150
+    },
+    {
+      "month_num": 7,
+      "collected": 292252,
+      "payment_count": 150
+    },
+    {
+      "month_num": 8,
+      "collected": 362004,
+      "payment_count": 150
+    },
+    {
+      "month_num": 9,
+      "collected": 137737,
+      "payment_count": 150
+    },
+    {
+      "month_num": 10,
+      "collected": 23769,
+      "payment_count": 150
+    }
+  ],
+  "priorMonthly": [
+    {
+      "month_num": 1,
+      "collected": 159188,
+      "payment_count": 150
+    },
+    {
+      "month_num": 2,
+      "collected": 236958,
+      "payment_count": 150
+    },
+    {
+      "month_num": 3,
+      "collected": 241508,
+      "payment_count": 150
+    },
+    {
+      "month_num": 4,
+      "collected": 280098,
+      "payment_count": 150
+    },
+    {
+      "month_num": 5,
+      "collected": 337189,
+      "payment_count": 150
+    },
+    {
+      "month_num": 6,
+      "collected": 227778,
+      "payment_count": 150
+    },
+    {
+      "month_num": 7,
+      "collected": 378541,
+      "payment_count": 150
+    },
+    {
+      "month_num": 8,
+      "collected": 273155,
+      "payment_count": 150
+    },
+    {
+      "month_num": 9,
+      "collected": 226395,
+      "payment_count": 150
+    },
+    {
+      "month_num": 10,
+      "collected": 326806,
+      "payment_count": 150
+    },
+    {
+      "month_num": 11,
+      "collected": 249551,
+      "payment_count": 150
+    },
+    {
+      "month_num": 12,
+      "collected": 268718,
+      "payment_count": 150
+    }
+  ],
+  "methods": [
+    {
+      "method": "Check",
+      "amount": 1674292,
+      "paymentCount": 1177
+    },
+    {
+      "method": "Card",
+      "amount": 724876,
+      "paymentCount": 378
+    },
+    {
+      "method": "ACH",
+      "amount": 40759,
+      "paymentCount": 12
+    },
+    {
+      "method": "Cash",
+      "amount": 976,
+      "paymentCount": 5
+    },
+    {
+      "method": "Other",
+      "amount": -244,
+      "paymentCount": 2
+    }
+  ],
+  "stages": [
+    {
+      "stage": "none",
+      "label": "Final Invoice Sent",
+      "amount": 68389.63,
+      "jobCount": 105
+    },
+    {
+      "stage": "14",
+      "label": "14 Day Notice",
+      "amount": 44494.11,
+      "jobCount": 33
+    },
+    {
+      "stage": "30",
+      "label": "30 Day Notice",
+      "amount": 10492.39,
+      "jobCount": 11
+    },
+    {
+      "stage": "60",
+      "label": "60 Day Notice",
+      "amount": 8604.67,
+      "jobCount": 8
+    },
+    {
+      "stage": "90",
+      "label": "90 Day Notice",
+      "amount": 22577.47,
+      "jobCount": 40
+    },
+    {
+      "stage": "check",
+      "label": "Check on Payment",
+      "amount": 83574.56,
+      "jobCount": 12
+    }
+  ],
+  "topOwing": [
+    {
+      "customer": "Summit Builders",
+      "amount": 64358,
+      "jobCount": 1,
+      "oldestDays": 80
+    },
+    {
+      "customer": "Oakridge Property Co",
+      "amount": 36531.25,
+      "jobCount": 5,
+      "oldestDays": 143
+    },
+    {
+      "customer": "Northwind Homes LLC",
+      "amount": 21610.17,
+      "jobCount": 46,
+      "oldestDays": 1091
+    },
+    {
+      "customer": "Cedar Point Storage",
+      "amount": 20857.33,
+      "jobCount": 1,
+      "oldestDays": 4
+    },
+    {
+      "customer": "Pine Hollow Apartments",
+      "amount": 20679.62,
+      "jobCount": 1,
+      "oldestDays": 108
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

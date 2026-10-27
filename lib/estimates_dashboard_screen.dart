@@ -1,15 +1,19 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
-import 'package:http/http.dart' as http;
 import 'config/api_config.dart';
-import 'config/auth_session.dart';
+import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
+import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
+
+// The Estimates dashboard. Lost value, win rate, estimates sent and the chart follow the selected year (by estimate
+// date); the open pipeline, its ages and the stale estimates are as of today, whatever year they are dated.
+//   scorecards  open value, lost value, win rate, estimates sent
+//   left        the monthly chart (sent and won by value or count, average estimate) over the open pipeline by age
+//   right       lost reasons over the stale estimates; ages, reasons and estimates each open their list
+// The page fits the window without scrolling and without shrinking text (see _Grid).
 
 class EstimatesDashboardScreen extends StatelessWidget {
   const EstimatesDashboardScreen({Key? key}) : super(key: key);
@@ -48,41 +52,6 @@ String _compactMoney(num v) {
   if (a >= 1000000) return '$sign\$${_trimZero(a / 1000000)}M';
   if (a >= 1000) return '$sign\$${_trimZero(a / 1000)}k';
   return '$sign\$${a.round()}';
-}
-
-TextPainter _layoutText(
-  String text,
-  TextStyle style, {
-  double maxWidth = double.infinity,
-  TextAlign align = TextAlign.left,
-}) {
-  return TextPainter(
-    text: TextSpan(text: text, style: style),
-    textDirection: TextDirection.ltr,
-    textAlign: align,
-    maxLines: 1,
-    ellipsis: '…',
-  )..layout(maxWidth: maxWidth);
-}
-
-class _ChartScale {
-  final double max;
-  final double step;
-  const _ChartScale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
-
-_ChartScale _niceScale(double maxV, {bool isCount = false}) {
-  if (maxV <= 0) return const _ChartScale(4, 1);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final nice = norm <= 1 ? 1.0 : (norm <= 2 ? 2.0 : (norm <= 5 ? 5.0 : 10.0));
-  var step = nice * mag;
-  if (isCount && step < 1) step = 1;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _ChartScale(top, step);
 }
 
 // =============================================================================
@@ -143,11 +112,14 @@ const _categoricalPalette = [
 // SCREEN STATE
 // =============================================================================
 
-class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
-  bool _isLoading = true;
-  String? _errorMessage;
-
+class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> with DashboardLoading {
+  /// Every estimate still open today, whatever year it is dated (the same whichever year is shown).
   double _openValue = 0.0;
+
+  /// The part of the open pipeline dated before this year, and that cut-off ("2026-01-01").
+  int _openPriorCount = 0;
+  double _openPriorValue = 0.0;
+  String _openPriorBefore = '';
   double _lostValue = 0.0;
   double _winRate = 0.0;
   int _sentYtd = 0;
@@ -171,37 +143,34 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
   @override
   void initState() {
     super.initState();
-    _fetchDashboardData();
+    dashReload();
   }
 
   @override
   void didUpdateWidget(covariant EstimatesDashboardContent oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedYear != widget.selectedYear) {
-      _fetchDashboardData();
-    }
+    if (oldWidget.selectedYear != widget.selectedYear) dashReload();
   }
+
+  @override
+  Future<void> dashReload({bool fresh = false}) => dashLoad(
+        '/api/dashboards/estimates',
+        query: {'year': '${widget.selectedYear}'},
+        fresh: fresh,
+        apply: _apply,
+      );
 
   int _parseInt(dynamic v) => v == null ? 0 : (v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0);
   double _parseDouble(dynamic v) => v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
 
-  Future<void> _fetchDashboardData() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = null;
-    });
-
-    try {
-      final response = await http.get(
-        Uri.parse('$kApiBaseUrl/api/dashboards/estimates?year=${widget.selectedYear}'),
-        headers: AuthSession.instance.headers(),
-      ).timeout(const Duration(seconds: 60));
-
-      if (response.statusCode == 200) {
-        final Map<String, dynamic> body = json.decode(response.body);
+  void _apply(Map<String, dynamic> body) {
         final scorecards = body['scorecards'] ?? {};
 
         _openValue = _parseDouble(scorecards['openValue']);
+        final prior = scorecards['openPriorYears'];
+        _openPriorCount = prior is Map ? _parseInt(prior['count']) : 0;
+        _openPriorValue = prior is Map ? _parseDouble(prior['value']) : 0.0;
+        _openPriorBefore = prior is Map ? (prior['before']?.toString() ?? '') : '';
         _lostValue = _parseDouble(scorecards['lostValue']);
         _winRate = _parseDouble(scorecards['winRate']);
         _sentYtd = _parseInt(scorecards['sentYtd']);
@@ -265,26 +234,11 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
           ));
         }
 
-        if (mounted) setState(() => _isLoading = false);
-      } else {
-        throw Exception('Status ${response.statusCode}');
-      }
-    } on TimeoutException {
-      if (mounted) {
-        setState(() {
-          _errorMessage = 'The dashboard took too long to load. Check your connection.';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _errorMessage = e.toString().replaceFirst('Exception: ', '');
-          _isLoading = false;
-        });
-      }
-    }
   }
+
+  /// The year prior-year estimates are dated before: "2026" for a cut-off of "2026-01-01".
+  String _priorYearLabel() =>
+      RegExp(r'^\d{4}').stringMatch(_openPriorBefore) ?? '${DashClock.now().year}';
 
   static final _thousands = NumberFormat('#,##0');
   String _fmt(num v) => _thousands.format(v);
@@ -292,1541 +246,617 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> {
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) return const _EstimatesSkeleton();
-    if (_errorMessage != null) return DashErrorPanel(title: "Error loading estimates dashboard", message: _errorMessage!, onRetry: _fetchDashboardData);
+    if (dashLoading) return const _EstimatesSkeleton();
+    if (dashFailure != null) return DashErrorPanel.failure(dashFailure!, what: 'estimates', onRetry: dashReload);
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Top 4 Scorecards (Compact Height, Empty Captions)
-        SizedBox(
-          height: 86,
-          child: Row(
-            children: [
-              Expanded(child: AnimatedMetricCard(title: 'Open Value', value: _openValue, format: (v) => _money(v), caption: '', valueColor: DashUi.indigo, index: 0, trend: _openHistory.length >= 2 ? _openHistory : null)),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Lost Value', value: _lostValue, format: (v) => _money(v), caption: '', valueColor: DashUi.red, index: 1, trend: dashTrend([for (final m in _valueData) m.lostValue], widget.selectedYear))),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Avg Win Rate', value: _winRate, format: (v) => '${v.toStringAsFixed(1)}%', caption: '', valueColor: DashUi.emeraldDeep, index: 2, trend: dashTrend([for (final m in _valueData) m.winRate], widget.selectedYear))),
-              const SizedBox(width: 8),
-              Expanded(child: AnimatedMetricCard(title: 'Estimates Sent YTD', value: _sentYtd.toDouble(), format: (v) => _fmt(v.toInt()), caption: '', valueColor: DashUi.sky, index: 3, trend: dashTrend([for (final m in _valueData) m.sentCount.toDouble()], widget.selectedYear))),
-            ],
-          ),
-        ),
+    final year = widget.selectedYear;
+    final period = dashPeriodLabel(year);
+    final g = DashGeo.of(context);
 
-        const SizedBox(height: 16),
+    // Lost value, win rate and estimates sent count estimates dated in the year shown. Open value is the whole
+    // pipeline as of today, every year included, so it reads the same whichever year is picked.
+    final openCaption = _openPriorCount > 0
+        ? 'All years · $_openPriorCount before ${_priorYearLabel()}'
+        : 'All open estimates · today';
+    final lostCaption = 'Estimates marked lost · $period';
+    final winCaption = 'Won ÷ (won + lost) · all estimates';
+    final sentCaption = 'Quoted, dated $period';
+    // The trend lines show together, only when every card still has room for its words beside one.
+    final sparkRoom = [
+      dashSparkRoom(context, title: 'Open value', value: _money(_openValue), caption: openCaption),
+      dashSparkRoom(context, title: 'Lost value', value: _money(_lostValue), caption: lostCaption),
+      dashSparkRoom(context, title: 'Win rate', value: '${_winRate.toStringAsFixed(1)}%', caption: winCaption),
+      dashSparkRoom(context, title: 'Estimates sent', value: _fmt(_sentYtd), caption: sentCaption),
+    ].reduce(math.max);
 
-        // Main Charts Section
-        Expanded(
-          flex: 10,
-          child: Row(
+    final tiles = <Widget>[
+      AnimatedMetricCard(
+        title: 'Open value',
+        value: _openValue,
+        format: (v) => _money(v),
+        // Short enough to fit at 1280px; "as of today" and the dollar split are in the definition.
+        caption: openCaption,
+        definition: 'Every estimate still at Estimate Provided or Estimate Follow Up today, whatever year '
+            'it is dated, so this is the same whichever year is shown. '
+            '${_openPriorCount > 0 ? '${_money(_openPriorValue)} of it ($_openPriorCount estimates) is dated '
+                'before ${_priorYearLabel()}; the oldest are first in the stale list. ' : ''}'
+            'Nothing is closed or changed here. The line is one reading a day.',
+        valueColor: DashUi.indigo,
+        index: 0,
+        trend: _openHistory.length >= 2 ? _openHistory : null,
+        sparkMinWidth: sparkRoom,
+      ),
+      AnimatedMetricCard(
+        title: 'Lost value',
+        value: _lostValue,
+        format: (v) => _money(v),
+        caption: lostCaption,
+        definition: 'Value of estimates dated $period that are marked lost. The line shows it by '
+            'finished month.',
+        valueColor: DashUi.red,
+        index: 1,
+        trend: dashTrend([for (final m in _valueData) m.lostValue], year),
+        sparkMinWidth: sparkRoom,
+      ),
+      AnimatedMetricCard(
+        title: 'Win rate',
+        value: _winRate,
+        format: (v) => '${v.toStringAsFixed(1)}%',
+        caption: winCaption,
+        definition: "Of the estimates dated $period that have been decided, the share that were won. Open "
+            "estimates aren't counted. This covers every estimate, so it can differ from the Sales "
+            "dashboard's win rate (sales team only).",
+        valueColor: DashUi.emeraldDeep,
+        index: 2,
+        trend: dashTrend([for (final m in _valueData) m.winRate], year),
+        sparkMinWidth: sparkRoom,
+      ),
+      AnimatedMetricCard(
+        title: 'Estimates sent',
+        value: _sentYtd.toDouble(),
+        format: (v) => _fmt(v.toInt()),
+        caption: sentCaption,
+        definition: 'Estimates dated $period that got past Estimate Requested, so a quote was given. The '
+            'line shows them by finished month.',
+        valueColor: DashUi.sky,
+        index: 3,
+        trend: dashTrend([for (final m in _valueData) m.sentCount.toDouble()], year),
+        sparkMinWidth: sparkRoom,
+      ),
+    ];
+
+    return _Grid(
+      tiles: tiles,
+      chart: _EstimatesChart(data: _valueData, year: year),
+      aging: _AgingStrip(g: g, buckets: _agingBuckets, year: year),
+      lost: (tall) => _LostReasonsPanel(g: g, reasons: _lostReasons, year: year, tall: tall),
+      lostRows: _lostReasons.length,
+      stale: (maxRows, fill) => _StalePanel(g: g, rows: _staleEstimates, maxRows: maxRows, fill: fill),
+      staleRows: _staleEstimates.length,
+    );
+  }
+}
+
+// =============================================================================
+// GRID (shared by the page and its skeleton)
+// =============================================================================
+
+/// Lays the page out to fit the window, in the first arrangement that does:
+///   stacked        scorecards; chart over the open pipeline by age | lost reasons over the stale estimates
+///   side by side   the same, with lost reasons and the stale estimates side by side (a short window or larger text)
+///   one column     a window narrower than a desktop one: everything in one column that scrolls
+class _Grid extends StatelessWidget {
+  final List<Widget> tiles;
+  final Widget chart;
+  final Widget aging;
+
+  /// `tall`: two-line rows for a narrow column.
+  final Widget Function(bool tall) lost;
+  final int lostRows;
+
+  /// `maxRows`: stale estimates that fit (the rest are a click away). `fill`: the panel is given a height to fill.
+  final Widget Function(int maxRows, bool fill) stale;
+  final int staleRows;
+
+  const _Grid({
+    required this.tiles,
+    required this.chart,
+    required this.aging,
+    required this.lost,
+    required this.lostRows,
+    required this.stale,
+    required this.staleRows,
+  });
+
+  static const _twoColumnsFrom = 1000.0;
+  static const _minChart = 220.0;
+
+  @override
+  Widget build(BuildContext context) {
+    final g = DashGeo.of(context);
+    return LayoutBuilder(
+      builder: (context, c) {
+        final w = c.maxWidth;
+        final bodyH = c.maxHeight - g.tile - dashGap;
+        // Stacked, the right column is 10 parts of 23; side by side it widens to 8 of 15 (as on Collections), so each
+        // of its two panels has room for a customer's name.
+        final rightInner = (w - dashGap) * 10 / 23 - 40;
+        final tall = rightInner < _LostReasonsPanel.oneLineWidth(g);
+        final lostH = g.rows(lostRows, tall ? g.rowTall : g.rowWide);
+        // Stacked, the stale list gets what the lost reasons leave; side by side, the whole height in half the width.
+        final stackedFit = ((bodyH - lostH - dashGap - g.panelTop) / g.listRow).floor();
+        final sideFit = ((bodyH - g.panelTop) / g.listRow).floor();
+        final chartFits = w >= _twoColumnsFrom && bodyH - dashGap - g.strip >= _minChart;
+        final stacked = chartFits && stackedFit >= 3;
+        final side = chartFits && !stacked && bodyH >= g.rows(lostRows, g.rowTall) && sideFit >= 2;
+        final Widget content;
+        if (stacked || side) {
+          final right = stacked
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    SizedBox(height: lostH, child: lost(tall)),
+                    const SizedBox(height: dashGap),
+                    Expanded(child: stale(stackedFit, true)),
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: lost(true)),
+                    const SizedBox(width: dashGap),
+                    Expanded(child: stale(sideFit, true)),
+                  ],
+                );
+          content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
               Expanded(
-                flex: 7,
-                child: Column(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Expanded(flex: 12, child: _InteractiveSentWonChart(data: _valueData, year: widget.selectedYear)),
-                    const SizedBox(height: 16),
-                    Expanded(flex: 8, child: _AvgEstimateValueChart(data: _valueData, year: widget.selectedYear)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 5,
-                child: Column(
-                  children: [
-                    Expanded(flex: 9, child: _PipelineAgingPanel(buckets: _agingBuckets, year: widget.selectedYear)),
-                    const SizedBox(height: 16),
-                    Expanded(flex: 11, child: _LostReasonsPanel(reasons: _lostReasons, loading: _isLoading, year: widget.selectedYear)),
+                    Expanded(
+                      flex: stacked ? 13 : 7,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(child: chart),
+                          const SizedBox(height: dashGap),
+                          SizedBox(height: g.strip, child: aging),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: dashGap),
+                    Expanded(flex: stacked ? 10 : 8, child: right),
                   ],
                 ),
               ),
             ],
-          ),
-        ),
+          );
+        } else {
+          content = SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(height: g.tile, child: _tileRow(tiles.take(2).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip(2).toList())),
+                const SizedBox(height: dashGap),
+                SizedBox(height: 320, child: chart),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.strip, child: aging),
+                const SizedBox(height: dashGap),
+                SizedBox(height: g.rows(lostRows, g.rowTall), child: lost(true)),
+                const SizedBox(height: dashGap),
+                stale(10, false),
+              ],
+            ),
+          );
+        }
+        return SizedBox(width: w, height: c.maxHeight, child: content);
+      },
+    );
+  }
 
-        // Auto-Scrolling Stale Pipeline Ticker
-        if (_staleEstimates.isNotEmpty) ...[
-          const SizedBox(height: 16),
-          _AutoHorizontalStaleList(estimates: _staleEstimates),
-        ],
+  Widget _tileRow(List<Widget> row) => Row(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      for (var i = 0; i < row.length; i++) ...[
+        if (i > 0) const SizedBox(width: 12),
+        Expanded(child: row[i]),
+      ],
+    ],
+  );
+}
+
+// =============================================================================
+// MONTHLY CHART (sent and won, by value or count; average estimate value)
+// =============================================================================
+
+class _EstimatesChart extends StatelessWidget {
+  final List<_MonthlyValueData> data;
+  final int year;
+  const _EstimatesChart({required this.data, required this.year});
+
+  @override
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat('#,##0');
+    _MonthlyValueData? at(int i) => i < data.length ? data[i] : null;
+    List<double> pick(double Function(_MonthlyValueData) f) => [for (var i = 0; i < 12; i++) at(i) == null ? 0.0 : f(at(i)!)];
+    final active = data.where((d) => d.hasData);
+    final sentValue = pick((d) => d.sentValue);
+    final wonValue = pick((d) => d.wonValue);
+    final sentCount = pick((d) => d.sentCount.toDouble());
+    final wonCount = pick((d) => d.wonCount.toDouble());
+    final avgValue = pick((d) => d.avgSentValue);
+    final totalSent = active.fold<double>(0, (s, d) => s + d.sentValue);
+    final totalCount = active.fold<int>(0, (s, d) => s + d.sentCount);
+    // The year's average sent estimate, as before: all sent value over all sent estimates.
+    final overallAvg = totalCount > 0 ? totalSent / totalCount : 0.0;
+    String months(List<double> v, int last, String Function(double) f) =>
+        [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${f(v[i])}'].join(', ');
+
+    return DashMonthChart(
+      year: year,
+      views: [
+        DashChartView(
+          tab: 'Value',
+          title: 'Sent and won',
+          note: '${_compactMoney(totalSent)} sent in $year',
+          series: [DashSeries('Sent', sentValue, DashUi.slate), DashSeries('Won', wonValue, DashUi.emeraldDeep)],
+          axis: _compactMoney,
+          badge: DashChangeChip.monthOverMonth(sentValue, year, what: 'Value sent'),
+          tip: (i) => [
+            DashTipRow('Sent', '\$${fmt.format(sentValue[i])}', color: DashUi.slate),
+            DashTipRow('Won', '\$${fmt.format(wonValue[i])}', color: DashUi.emeraldDeep),
+            DashTipRow('Estimates', '${fmt.format(wonCount[i])} won of ${fmt.format(sentCount[i])}'),
+          ],
+          summary: (last) => 'Value sent by month: ${months(sentValue, last, _compactMoney)}',
+          emptyText: 'No estimates for $year yet.',
+          semanticsLabel: 'Value of estimates sent and won by month, $year',
+        ),
+        DashChartView(
+          tab: 'Count',
+          title: 'Sent and won',
+          note: '${fmt.format(totalCount)} sent in $year',
+          series: [DashSeries('Sent', sentCount, DashUi.slate), DashSeries('Won', wonCount, DashUi.emeraldDeep)],
+          axis: (v) => fmt.format(v),
+          badge: DashChangeChip.monthOverMonth(sentCount, year, what: 'Estimates sent'),
+          tip: (i) => [
+            DashTipRow('Sent', fmt.format(sentCount[i]), color: DashUi.slate),
+            DashTipRow('Won', fmt.format(wonCount[i]), color: DashUi.emeraldDeep),
+            DashTipRow('Won of sent', sentCount[i] > 0 ? '${(wonCount[i] / sentCount[i] * 100).round()}%' : '—'),
+          ],
+          summary: (last) => 'Estimates sent by month: ${months(sentCount, last, (v) => fmt.format(v))}',
+          emptyText: 'No estimates for $year yet.',
+          semanticsLabel: 'Number of estimates sent and won by month, $year',
+        ),
+        DashChartView(
+          tab: 'Avg value',
+          title: 'Average estimate',
+          note: '\$${fmt.format(overallAvg)} average sent in $year',
+          series: [DashSeries('Average sent', avgValue, DashUi.amber)],
+          average: overallAvg > 0 ? overallAvg : null,
+          averageLabel: overallAvg > 0 ? 'Year average ${_compactMoney(overallAvg)}' : null,
+          axis: _compactMoney,
+          barLabel: _compactMoney,
+          badge: DashChangeChip.monthOverMonth(avgValue, year, what: 'Average estimate value'),
+          tip: (i) => [
+            DashTipRow('Average', '\$${fmt.format(avgValue[i])}', color: DashUi.amber),
+            DashTipRow('Sent', fmt.format(sentCount[i])),
+          ],
+          summary: (last) => 'Average estimate by month: ${months(avgValue, last, _compactMoney)}',
+          emptyText: 'No estimates for $year yet.',
+          semanticsLabel: 'Average value of the estimates sent by month, $year',
+        ),
       ],
     );
   }
 }
 
 // =============================================================================
-// INTERACTIVE SENT VS WON CHART (COMBO SUPPORT + AUTO CYCLE)
+// OPEN PIPELINE BY AGE (as of today)
 // =============================================================================
 
-enum _EstChartMetric { value, volume }
-
-class _InteractiveSentWonChart extends StatefulWidget {
-  final List<_MonthlyValueData> data;
-  final int? year;
-  const _InteractiveSentWonChart({required this.data, this.year});
-
-  @override
-  State<_InteractiveSentWonChart> createState() => _InteractiveSentWonChartState();
-}
-
-class _InteractiveSentWonChartState extends State<_InteractiveSentWonChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-
-  _EstChartMetric _metric = _EstChartMetric.value;
-  int? _paintedIndex;
-  bool _chartHovering = false;
-  Timer? _metricCycleTimer;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
-    _restartMetricCycleTimer();
-  }
-
-  @override
-  void didUpdateWidget(covariant _InteractiveSentWonChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _paintedIndex = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _metricCycleTimer?.cancel();
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _restartMetricCycleTimer() {
-    _metricCycleTimer?.cancel();
-    _metricCycleTimer = Timer.periodic(const Duration(seconds: 8), (_) => _autoCycleMetric());
-  }
-
-  void _autoCycleMetric() {
-    if (!mounted || _chartHovering) return;
-    final nextIndex = (_metric.index + 1) % _EstChartMetric.values.length;
-    _setMetric(_EstChartMetric.values[nextIndex]);
-  }
-
-  void _setActive(int? i) {
-    if (i == _paintedIndex) return;
-    setState(() => _paintedIndex = i);
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  void _setMetric(_EstChartMetric m) {
-    if (m == _metric) return;
-    setState(() => _metric = m);
-    _paintedIndex = null;
-    _hover.value = 0;
-    _intro.forward(from: 0);
-    _restartMetricCycleTimer();
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - _SentWonChartPainter.leftGutter - (_metric == _EstChartMetric.volume ? 30 : 0);
-    if (plotW <= 0) return null;
-    final i = ((dx - _SentWonChartPainter.leftGutter) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final data = widget.data;
-    final yearText = widget.year?.toString() ?? 'this year';
-    final activeData = data.where((d) => d.hasData).toList();
-
-    if (activeData.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: DashUi.panel(),
-        child: Center(
-          child: Text('No estimate data for $yearText yet.', style: const TextStyle(color: DashUi.muted, fontWeight: FontWeight.w500, fontSize: 14)),
-        ),
-      );
-    }
-
-    double headlineValue = 0;
-    for (final d in activeData) {
-      headlineValue += _metric == _EstChartMetric.value ? d.sentValue : d.sentCount.toDouble();
-    }
-
-    var maxV = 0.0;
-    for (final d in data) {
-      if (!d.hasData) continue;
-      maxV = math.max(maxV, _metric == _EstChartMetric.value ? d.sentValue : d.sentCount.toDouble());
-    }
-    final scale = _niceScale(maxV, isCount: _metric == _EstChartMetric.volume);
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            runSpacing: 10,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Estimate Pipeline', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text(
-                        _metric == _EstChartMetric.value ? _compactMoney(headlineValue) : NumberFormat('#,##0').format(headlineValue), 
-                        style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1)
-                      ),
-                      const SizedBox(width: 10),
-                      Text('Total Sent in $yearText', style: const TextStyle(fontSize: 13, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _legendSwatch(Container(width: 12, height: 12, decoration: BoxDecoration(color: DashUi.slate, borderRadius: BorderRadius.circular(3))), 'Sent'),
-                  const SizedBox(width: 12),
-                  _legendSwatch(Container(width: 12, height: 12, decoration: BoxDecoration(color: DashUi.emeraldDeep, borderRadius: BorderRadius.circular(3))), 'Won'),
-                  if (_metric == _EstChartMetric.volume) ...[
-                    const SizedBox(width: 12),
-                    _legendSwatch(Container(width: 14, height: 2, color: DashUi.blue), 'Win Rate'),
-                  ],
-                  const SizedBox(width: 24),
-                  Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _ToggleBtn(label: 'Value \$', selected: _metric == _EstChartMetric.value, onTap: () => _setMetric(_EstChartMetric.value)),
-                        _ToggleBtn(label: 'Volume', selected: _metric == _EstChartMetric.volume, onTap: () => _setMetric(_EstChartMetric.volume)),
-                      ],
-                    ),
-                  )
-                ],
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return MouseRegion(
-                  onEnter: (_) {
-                    _chartHovering = true;
-                    _metricCycleTimer?.cancel(); 
-                  },
-                  onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                  onExit: (_) {
-                    _setActive(null);
-                    _chartHovering = false;
-                    _restartMetricCycleTimer();
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([_intro, _hover]),
-                      builder: (context, _) {
-                        return CustomPaint(
-                          size: Size.infinite,
-                          painter: _SentWonChartPainter(
-                            data: data,
-                            metric: _metric,
-                            scale: scale,
-                            index: _paintedIndex,
-                            intro: _intro.value,
-                            hover: Curves.easeOutCubic.transform(_hover.value),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _legendSwatch(Widget swatch, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [swatch, const SizedBox(width: 6), Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.slate))],
-    );
-  }
-}
-
-class _ToggleBtn extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  const _ToggleBtn({required this.label, required this.selected, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-          decoration: BoxDecoration(
-            color: selected ? Colors.white : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: selected ? DashUi.line : Colors.transparent),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(fontSize: 12.5, fontWeight: selected ? FontWeight.w800 : FontWeight.w600, color: selected ? DashUi.blue : DashUi.slate),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SentWonChartPainter extends CustomPainter {
-  static const double leftGutter = 46;
-  static const double bottomGutter = 26;
-  static const double topPad = 6;
-
-  final List<_MonthlyValueData> data;
-  final _EstChartMetric metric;
-  final _ChartScale scale;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _SentWonChartPainter({
-    required this.data,
-    required this.metric,
-    required this.scale,
-    required this.index,
-    required this.intro,
-    required this.hover,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final rightGutter = metric == _EstChartMetric.volume ? 30.0 : 0.0;
-    final plot = Rect.fromLTRB(leftGutter, topPad, size.width - rightGutter, size.height - bottomGutter);
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
-
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
-
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
-    double winRateY(double pct) => plot.bottom - (pct / 100.0).clamp(0.0, 1.0) * plot.height;
-
-    // Hover Highlight
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height), const Radius.circular(10));
-      canvas.drawRRect(r, Paint()..color = const Color(0xFFEFF6FF).withValues(alpha: hover));
-    }
-
-    // Grid lines
-    for (var i = 0; i <= scale.ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(
-        Offset(plot.left, y), Offset(plot.right, y),
-        Paint()..color = i == 0 ? DashUi.line : DashUi.faint..strokeWidth = 1,
-      );
-      final label = metric == _EstChartMetric.value ? _compactMoney(v) : v.round().toString();
-      final tp = _layoutText(label, const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted));
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    // Right Y-axis for Win Rate %
-    if (metric == _EstChartMetric.volume) {
-      for (var i = 0; i <= 4; i++) {
-        final pct = i * 25.0;
-        final y = winRateY(pct);
-        final tp = _layoutText('${pct.round()}%', const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: DashUi.blue));
-        tp.paint(canvas, Offset(plot.right + 6, y - tp.height / 2));
-      }
-    }
-
-    final sentPts = <Offset>[];
-    final wonPts = <Offset>[];
-    final ratePts = <Offset>[];
-    final stagger = 0.4 / n;
-
-    // Drawing calculations
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final isFocus = focusing && index == i;
-      final cx = plot.left + slotW * (i + 0.5);
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
-      final dim = (focusing && !isFocus) ? 1 - 0.4 * hover : 1.0;
-
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(fontSize: 12.5, fontWeight: isFocus ? FontWeight.w800 : FontWeight.w600, color: isFocus ? DashUi.ink : (p.hasData ? DashUi.slate : const Color(0xFFCBD5E1))),
-        maxWidth: slotW, align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 8));
-
-      if (p.hasData) {
-        if (metric == _EstChartMetric.value) {
-          sentPts.add(Offset(cx, plot.bottom - (plot.bottom - yFor(p.sentValue)) * localT));
-          wonPts.add(Offset(cx, plot.bottom - (plot.bottom - yFor(p.wonValue)) * localT));
-        } else {
-          // Volume Combo Chart: Grouped Bars + Line
-          final barW = math.min(slotW * 0.35, 20.0);
-          final spacing = 2.0;
-          final sentH = (p.sentCount / scale.max) * plot.height * localT;
-          final wonH = (p.wonCount / scale.max) * plot.height * localT;
-
-          canvas.drawRRect(
-            RRect.fromRectAndCorners(Rect.fromLTWH(cx - barW - spacing/2, plot.bottom - sentH, barW, math.max(2, sentH)), topLeft: const Radius.circular(4), topRight: const Radius.circular(4)),
-            Paint()..color = DashUi.slate.withValues(alpha: dim * 0.7),
-          );
-          canvas.drawRRect(
-            RRect.fromRectAndCorners(Rect.fromLTWH(cx + spacing/2, plot.bottom - wonH, barW, math.max(2, wonH)), topLeft: const Radius.circular(4), topRight: const Radius.circular(4)),
-            Paint()..color = DashUi.emeraldDeep.withValues(alpha: dim),
-          );
-          
-          ratePts.add(Offset(cx, plot.bottom - (plot.bottom - winRateY(p.winRate)) * localT));
-        }
-      } else {
-        canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: 16, height: 3), const Radius.circular(2)), Paint()..color = DashUi.line);
-      }
-    }
-
-    void drawLine(List<Offset> pts, Color color, {bool fillUnder = false}) {
-      if (pts.isEmpty) return;
-      final path = Path()..moveTo(pts.first.dx, pts.first.dy);
-      for (var i = 1; i < pts.length; i++) path.lineTo(pts[i].dx, pts[i].dy);
-
-      if (fillUnder) {
-        final areaPath = Path.from(path)..lineTo(pts.last.dx, plot.bottom)..lineTo(pts.first.dx, plot.bottom)..close();
-        canvas.drawPath(areaPath, Paint()..shader = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [color.withValues(alpha: 0.15), color.withValues(alpha: 0.0)]).createShader(plot));
-      }
-      canvas.drawPath(path, Paint()..color = color..strokeWidth = 3..style = PaintingStyle.stroke..strokeJoin = StrokeJoin.round..strokeCap = StrokeCap.round);
-      for (final pt in pts) {
-        canvas.drawCircle(pt, 4, Paint()..color = Colors.white);
-        canvas.drawCircle(pt, 2.5, Paint()..color = color);
-      }
-    }
-
-    if (metric == _EstChartMetric.value) {
-      drawLine(sentPts, DashUi.slate, fillUnder: true);
-      drawLine(wonPts, DashUi.emeraldDeep, fillUnder: true);
-    } else {
-      drawLine(ratePts, DashUi.blue);
-    }
-
-    if (focusing) _paintTooltip(canvas, size, plot, slotW, yFor);
-  }
-
-  void _paintTooltip(Canvas canvas, Size size, Rect plot, double slotW, double Function(double) yFor) {
-    final i = index!;
-    final p = data[i];
-    if (!p.hasData) return;
-
-    final rows = <(String, String, Color)>[];
-    if (metric == _EstChartMetric.value) {
-      rows.add(('Sent', '\$${NumberFormat('#,##0').format(p.sentValue)}', DashUi.slate));
-      rows.add(('Won', '\$${NumberFormat('#,##0').format(p.wonValue)}', DashUi.emeraldDeep));
-    } else {
-      rows.add(('Sent', p.sentCount.toString(), DashUi.slate));
-      rows.add(('Won', p.wonCount.toString(), DashUi.emeraldDeep));
-      rows.add(('Win Rate', '${p.winRate.toStringAsFixed(1)}%', DashUi.blue));
-    }
-
-    final titleTp = _layoutText('${p.month} Detail', const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800));
-    final labelTps = rows.map((r) => _layoutText(r.$1, const TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w500))).toList();
-    final valueTps = rows.map((r) => _layoutText(r.$2, TextStyle(color: r.$3 == DashUi.slate ? Colors.white : r.$3, fontSize: 12, fontWeight: FontWeight.w800))).toList();
-
-    final labelW = labelTps.map((t) => t.width).reduce(math.max);
-    final valueW = valueTps.map((t) => t.width).reduce(math.max);
-    final tipW = math.max(titleTp.width, labelW + 16 + valueW) + 28;
-    final rowH = labelTps.first.height;
-    final tipH = 12 + titleTp.height + 6 + rows.length * rowH + (rows.length - 1) * 3 + 12;
-
-    final cx = plot.left + slotW * (i + 0.5);
-    final barTop = yFor(metric == _EstChartMetric.value ? p.sentValue : p.sentCount.toDouble());
-
-    double tx, ty;
-    var caretAbove = false;
-    final aboveY = barTop - tipH - 16;
-    if (aboveY >= 0) {
-      ty = aboveY;
-      tx = cx - tipW / 2;
-      caretAbove = true;
-    } else {
-      ty = math.max(plot.top, math.min(barTop - 8, plot.bottom - tipH));
-      final rightX = cx + slotW * 0.3 + 12;
-      tx = rightX + tipW <= size.width ? rightX : cx - slotW * 0.3 - 12 - tipW;
-    }
-    tx = math.max(0, math.min(tx, size.width - tipW));
-
-    canvas.saveLayer(Rect.fromLTWH(tx - 24, ty - 24, tipW + 48, tipH + 60), Paint()..color = Colors.white.withValues(alpha: hover));
-    final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(10));
-    canvas.drawRRect(rrect.shift(const Offset(0, 4)), Paint()..color = Colors.black.withValues(alpha: 0.22)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-    canvas.drawRRect(rrect, Paint()..color = DashUi.ink);
-
-    if (caretAbove) {
-      final ccx = math.max(tx + 16, math.min(cx, tx + tipW - 16));
-      final caret = Path()..moveTo(ccx - 5, ty + tipH)..lineTo(ccx + 5, ty + tipH)..lineTo(ccx, ty + tipH + 5)..close();
-      canvas.drawPath(caret, Paint()..color = DashUi.ink);
-    }
-
-    var y = ty + 12;
-    titleTp.paint(canvas, Offset(tx + 14, y));
-    y += titleTp.height + 6;
-    for (var k = 0; k < rows.length; k++) {
-      labelTps[k].paint(canvas, Offset(tx + 14, y));
-      valueTps[k].paint(canvas, Offset(tx + tipW - 14 - valueTps[k].width, y));
-      y += rowH + 3;
-    }
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant _SentWonChartPainter old) => old.data != data || old.metric != metric || old.index != index || old.intro != intro || old.hover != hover;
-}
-
-// =============================================================================
-// AVG ESTIMATE VALUE CHART
-// =============================================================================
-
-class _AvgEstimateValueChart extends StatefulWidget {
-  final List<_MonthlyValueData> data;
-  final int? year;
-  const _AvgEstimateValueChart({required this.data, this.year});
-
-  @override
-  State<_AvgEstimateValueChart> createState() => _AvgEstimateValueChartState();
-}
-
-class _AvgEstimateValueChartState extends State<_AvgEstimateValueChart> with TickerProviderStateMixin {
-  late final AnimationController _intro;
-  late final AnimationController _hover;
-  int? _paintedIndex;
-  bool _chartHovering = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
-    _hover = AnimationController(vsync: this, duration: const Duration(milliseconds: 160));
-  }
-
-  @override
-  void didUpdateWidget(covariant _AvgEstimateValueChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _paintedIndex = null;
-      _hover.value = 0;
-      _intro.forward(from: 0);
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    _hover.dispose();
-    super.dispose();
-  }
-
-  void _setActive(int? i) {
-    if (i == _paintedIndex) return;
-    setState(() => _paintedIndex = i);
-    if (i != null) {
-      _hover.forward();
-    } else {
-      _hover.reverse();
-    }
-  }
-
-  int? _indexFor(double dx, double width) {
-    final n = widget.data.length;
-    if (n == 0) return null;
-    final plotW = width - 46; 
-    if (plotW <= 0) return null;
-    final i = ((dx - 46) / (plotW / n)).floor();
-    if (i < 0 || i >= n) return null;
-    return i;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final data = widget.data;
-    final activeData = data.where((d) => d.hasData).toList();
-
-    if (activeData.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(20.0),
-        decoration: DashUi.panel(),
-        child: const Center(child: Text('No data for avg estimate value yet.', style: TextStyle(color: DashUi.muted))),
-      );
-    }
-
-    double totalRev = 0;
-    int totalEsts = 0;
-    var maxV = 0.0;
-
-    for (final d in activeData) {
-      totalRev += d.sentValue;
-      totalEsts += d.sentCount;
-      maxV = math.max(maxV, d.avgSentValue);
-    }
-    final overallAvg = totalEsts > 0 ? totalRev / totalEsts : 0.0;
-    final scale = _niceScale(maxV);
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 18, 20, 14),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            alignment: WrapAlignment.spaceBetween,
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Text('Average Estimate Value', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Text('\$${NumberFormat('#,##0').format(overallAvg)}', style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1.1)),
-                      const SizedBox(width: 10),
-                      const Text('YTD Average (Sent)', style: TextStyle(fontSize: 12.5, color: DashUi.muted, fontWeight: FontWeight.w500)),
-                    ],
-                  ),
-                ],
-              ),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(width: 12, height: 3, color: DashUi.amber),
-                  const SizedBox(width: 6),
-                  const Text('Avg Value / Est', style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: DashUi.slate)),
-                ],
-              )
-            ],
-          ),
-          const SizedBox(height: 16),
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                return MouseRegion(
-                  onEnter: (_) => _chartHovering = true,
-                  onHover: (e) => _setActive(_indexFor(e.localPosition.dx, c.maxWidth)),
-                  onExit: (_) {
-                    _setActive(null);
-                    _chartHovering = false;
-                  },
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onTapDown: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragStart: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    onHorizontalDragUpdate: (d) => _setActive(_indexFor(d.localPosition.dx, c.maxWidth)),
-                    child: AnimatedBuilder(
-                      animation: Listenable.merge([_intro, _hover]),
-                      builder: (context, _) {
-                        return CustomPaint(
-                          size: Size.infinite,
-                          painter: _AvgEstValuePainter(
-                            data: data,
-                            scale: scale,
-                            index: _paintedIndex,
-                            intro: _intro.value,
-                            hover: Curves.easeOutCubic.transform(_hover.value),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _AvgEstValuePainter extends CustomPainter {
-  static const double leftGutter = 46;
-  static const double bottomGutter = 26;
-  static const double topPad = 6;
-
-  final List<_MonthlyValueData> data;
-  final _ChartScale scale;
-  final int? index;
-  final double intro;
-  final double hover;
-
-  const _AvgEstValuePainter({required this.data, required this.scale, required this.index, required this.intro, required this.hover});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(leftGutter, topPad, size.width, size.height - bottomGutter);
-    if (plot.width <= 0 || plot.height <= 0 || data.isEmpty) return;
-
-    final n = data.length;
-    final slotW = plot.width / n;
-    final focusing = index != null && hover > 0.001;
-
-    double yFor(double v) => plot.bottom - (v / scale.max).clamp(0.0, 1.0) * plot.height;
-
-    if (focusing) {
-      final r = RRect.fromRectAndRadius(Rect.fromLTWH(plot.left + index! * slotW + 2, plot.top, slotW - 4, plot.height), const Radius.circular(10));
-      canvas.drawRRect(r, Paint()..color = const Color(0xFFEFF6FF).withValues(alpha: hover));
-    }
-
-    for (var i = 0; i <= scale.ticks; i++) {
-      final v = i * scale.step;
-      final y = yFor(v);
-      canvas.drawLine(Offset(plot.left, y), Offset(plot.right, y), Paint()..color = i == 0 ? DashUi.line : DashUi.faint..strokeWidth = 1);
-      final tp = _layoutText(_compactMoney(v), const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: DashUi.muted));
-      tp.paint(canvas, Offset(leftGutter - 8 - tp.width, y - tp.height / 2));
-    }
-
-    final validPts = <Offset>[];
-    final stagger = 0.4 / n;
-
-    for (var i = 0; i < n; i++) {
-      final p = data[i];
-      final isFocus = focusing && index == i;
-      final cx = plot.left + slotW * (i + 0.5);
-      final localT = Curves.easeOutCubic.transform(((intro - i * stagger) / 0.6).clamp(0.0, 1.0));
-
-      final labelTp = _layoutText(
-        p.month,
-        TextStyle(fontSize: 12.5, fontWeight: isFocus ? FontWeight.w800 : FontWeight.w600, color: isFocus ? DashUi.ink : (p.hasData ? DashUi.slate : const Color(0xFFCBD5E1))),
-        maxWidth: slotW, align: TextAlign.center,
-      );
-      labelTp.paint(canvas, Offset(cx - labelTp.width / 2, plot.bottom + 8));
-
-      if (p.hasData) {
-        final animY = plot.bottom - (plot.bottom - yFor(p.avgSentValue)) * localT;
-        validPts.add(Offset(cx, animY));
-      } else {
-        canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromCenter(center: Offset(cx, plot.bottom - 1.5), width: 16, height: 3), const Radius.circular(2)), Paint()..color = DashUi.line);
-      }
-    }
-
-    if (validPts.isNotEmpty) {
-      final path = Path()..moveTo(validPts.first.dx, validPts.first.dy);
-      for (var i = 1; i < validPts.length; i++) path.lineTo(validPts[i].dx, validPts[i].dy);
-
-      final areaPath = Path.from(path)..lineTo(validPts.last.dx, plot.bottom)..lineTo(validPts.first.dx, plot.bottom)..close();
-      canvas.drawPath(areaPath, Paint()..shader = LinearGradient(begin: Alignment.topCenter, end: Alignment.bottomCenter, colors: [DashUi.amber.withValues(alpha: 0.15), DashUi.amber.withValues(alpha: 0.0)]).createShader(plot));
-      canvas.drawPath(path, Paint()..color = DashUi.amber..strokeWidth = 3..style = PaintingStyle.stroke..strokeJoin = StrokeJoin.round..strokeCap = StrokeCap.round);
-      
-      for (final pt in validPts) {
-        canvas.drawCircle(pt, 5, Paint()..color = Colors.white);
-        canvas.drawCircle(pt, 3, Paint()..color = DashUi.amber);
-      }
-    }
-
-    if (focusing) {
-      final p = data[index!];
-      if (!p.hasData) return;
-      final rows = [('Avg Value', '\$${NumberFormat('#,##0').format(p.avgSentValue)}'), ('Sent Ests', p.sentCount.toString())];
-      final titleTp = _layoutText('${p.month} Average', const TextStyle(color: Colors.white, fontSize: 13.5, fontWeight: FontWeight.w800));
-      final labelTps = rows.map((r) => _layoutText(r.$1, const TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w500))).toList();
-      final valueTps = rows.map((r) => _layoutText(r.$2, const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700))).toList();
-
-      final tipW = math.max(titleTp.width, labelTps.map((t) => t.width).reduce(math.max) + 16 + valueTps.map((t) => t.width).reduce(math.max)) + 28;
-      final tipH = 12 + titleTp.height + 6 + rows.length * labelTps.first.height + (rows.length - 1) * 3 + 12;
-
-      final cx = plot.left + slotW * (index! + 0.5);
-      final barTop = yFor(p.avgSentValue);
-      double ty = math.max(plot.top, math.min(barTop - tipH - 16 >= 0 ? barTop - tipH - 16 : barTop - 8, plot.bottom - tipH));
-      double tx = math.max(0, math.min(barTop - tipH - 16 >= 0 ? cx - tipW / 2 : cx + slotW * 0.3 + 12, size.width - tipW));
-
-      canvas.saveLayer(Rect.fromLTWH(tx - 24, ty - 24, tipW + 48, tipH + 60), Paint()..color = Colors.white.withValues(alpha: hover));
-      final rrect = RRect.fromRectAndRadius(Rect.fromLTWH(tx, ty, tipW, tipH), const Radius.circular(10));
-      canvas.drawRRect(rrect.shift(const Offset(0, 4)), Paint()..color = Colors.black.withValues(alpha: 0.22)..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8));
-      canvas.drawRRect(rrect, Paint()..color = DashUi.ink);
-
-      var y = ty + 12;
-      titleTp.paint(canvas, Offset(tx + 14, y));
-      y += titleTp.height + 6;
-      for (var k = 0; k < rows.length; k++) {
-        labelTps[k].paint(canvas, Offset(tx + 14, y));
-        valueTps[k].paint(canvas, Offset(tx + tipW - 14 - valueTps[k].width, y));
-        y += labelTps.first.height + 3;
-      }
-      canvas.restore();
-    }
-  }
-  @override bool shouldRepaint(covariant _AvgEstValuePainter old) => old.data != data || old.index != index || old.intro != intro || old.hover != hover;
-}
-
-// =============================================================================
-// OPEN PIPELINE AGING PANEL
-// =============================================================================
-
-class _PipelineAgingPanel extends StatefulWidget {
+class _AgingStrip extends StatelessWidget {
+  final DashGeo g;
   final List<_AgingBucket> buckets;
   final int year;
-  const _PipelineAgingPanel({required this.buckets, required this.year});
+  const _AgingStrip({required this.g, required this.buckets, required this.year});
 
   @override
-  State<_PipelineAgingPanel> createState() => _PipelineAgingPanelState();
-}
+  Widget build(BuildContext context) {
+    final fmt = NumberFormat('#,##0');
+    final total = buckets.fold<double>(0, (s, b) => s + b.value);
+    const tones = [DashUi.sky, DashUi.blue, DashUi.indigo, DashUi.red];
+    return DashSplitPanel(
+      g: g,
+      title: 'Open pipeline by age',
+      note: 'today',
+      tooltip: 'Every open estimate, by how long ago it was dated. Click an age to see its estimates.',
+      emptyText: 'No open estimates.',
+      items: [
+        for (var i = 0; i < buckets.length; i++)
+          DashSplitItem(
+            label: buckets[i].label,
+            amount: buckets[i].value,
+            value: '\$${fmt.format(buckets[i].value)}',
+            // "0-7 days · 17", as the old panel showed it; the words are on hover and for screen readers.
+            share: '· ${fmt.format(buckets[i].count)}',
+            tooltip: '${dashCount(buckets[i].count, 'open estimate')}, \$${fmt.format(buckets[i].value)}',
+            color: buckets[i].label.contains('31') ? DashUi.red : tones[i % 3],
+            semanticsLabel: '${buckets[i].label}: \$${fmt.format(buckets[i].value)} on '
+                '${dashCount(buckets[i].count, 'open estimate')}, ${dashShare(buckets[i].value, total)} of the pipeline',
+            hint: 'Opens the list of estimates',
+            onTap: buckets[i].count > 0 ? () => _open(context, buckets[i]) : null,
+          ),
+      ],
+    );
+  }
 
-class _PipelineAgingPanelState extends State<_PipelineAgingPanel> with SingleTickerProviderStateMixin {
-  late final AnimationController _intro;
-  int? _hovered;
-
-  /// Opens the list of open estimates in this age bucket.
-  void _open(_AgingBucket b, Color color) {
-    showDialog(
+  /// Opens the open estimates in one age bucket.
+  void _open(BuildContext context, _AgingBucket b) {
+    showDialog<void>(
       context: context,
       builder: (_) => EstimateListDialog(
-        year: widget.year,
+        year: year,
         heading: 'Open estimates · ${b.label}',
         totalLabel: 'open',
-        color: color,
+        color: b.label.contains('31') ? DashUi.red : DashUi.blue,
         icon: Icons.hourglass_bottom_rounded,
         uri: Uri.parse(
           '$kApiBaseUrl/api/dashboards/estimates/drill'
-          '?year=${widget.year}&kind=aging&bucket=${Uri.encodeQueryComponent(b.label)}',
+          '?year=$year&kind=aging&bucket=${Uri.encodeQueryComponent(b.label)}',
         ),
         initialSort: EstimateListSort.oldest,
       ),
     );
   }
+}
 
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 800))..forward();
-  }
+// =============================================================================
+// TOP LOST REASONS (the selected year)
+// =============================================================================
 
-  @override
-  void didUpdateWidget(covariant _PipelineAgingPanel old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.buckets, widget.buckets)) _intro.forward(from: 0);
-  }
+class _LostReasonsPanel extends StatelessWidget {
+  final DashGeo g;
+  final List<_LostReason> reasons;
+  final int year;
+  final bool tall;
+  const _LostReasonsPanel({required this.g, required this.reasons, required this.year, required this.tall});
 
-  @override
-  void dispose() {
-    _intro.dispose();
-    super.dispose();
-  }
+  static const labelWidth = 120.0;
+  static const amountWidth = 84.0;
+  static const detailWidth = 62.0;
+  static double oneLineWidth(DashGeo g) => (labelWidth + amountWidth + detailWidth) * g.k + 128;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('OPEN PIPELINE AGING', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.8)),
-          const SizedBox(height: 16),
-          Expanded(
-            child: widget.buckets.isEmpty
-              ? const Center(child: Text('No open estimates.', style: TextStyle(color: DashUi.muted, fontSize: 13, fontWeight: FontWeight.w600)))
-              : LayoutBuilder(
-                  builder: (context, c) {
-                    double maxVal = 0.0;
-                    for (var b in widget.buckets) { if (b.value > maxVal) maxVal = b.value; }
-                    if (maxVal == 0) maxVal = 1;
-                    // Short panel (small window): drop the "N ests" line and tighten the gaps so the bars always fit.
-                    final bool compact = c.maxHeight < 130;
-
-                    return Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: widget.buckets.asMap().entries.map((entry) {
-                        final i = entry.key;
-                        final b = entry.value;
-                        final double hRatio = (b.value / maxVal).clamp(0.05, 1.0);
-                        final isRed = b.label.contains('31');
-                        final color = isRed ? DashUi.red : DashUi.blue;
-                        final hovered = _hovered == i;
-                        final dim = _hovered != null && !hovered;
-                        final clickable = b.count > 0;
-
-                        return Expanded(
-                          child: MouseRegion(
-                            cursor: clickable ? SystemMouseCursors.click : MouseCursor.defer,
-                            onEnter: (_) => setState(() => _hovered = i),
-                            onExit: (_) => setState(() => _hovered = null),
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: clickable ? () => _open(b, color) : null,
-                              child: AnimatedOpacity(
-                                duration: const Duration(milliseconds: 150),
-                                opacity: dim ? 0.4 : 1,
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.end,
-                                    children: [
-                                      Text('\$${NumberFormat('#,##0').format(b.value)}', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: color)),
-                                      const SizedBox(height: 4),
-                                      Expanded(
-                                        child: Stack(
-                                          alignment: Alignment.bottomCenter,
-                                          children: [
-                                            Container(width: 32, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
-                                            AnimatedBuilder(
-                                              animation: _intro,
-                                              builder: (context, child) => FractionallySizedBox(
-                                                heightFactor: hRatio * Curves.easeOutCubic.transform(_intro.value),
-                                                child: AnimatedContainer(
-                                                  duration: const Duration(milliseconds: 150),
-                                                  width: hovered ? 38 : 32,
-                                                  decoration: BoxDecoration(
-                                                    color: color,
-                                                    borderRadius: BorderRadius.circular(6),
-                                                    boxShadow: hovered ? [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 2))] : null,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      SizedBox(height: compact ? 4 : 8),
-                                      Text(
-                                        compact ? '${b.label} · ${b.count}' : b.label,
-                                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: hovered ? color : DashUi.slate),
-                                      ),
-                                      if (!compact)
-                                        Text(
-                                          hovered && clickable ? 'View list ›' : '${b.count} ests',
-                                          style: TextStyle(fontSize: 10, color: hovered && clickable ? color : DashUi.muted, fontWeight: hovered ? FontWeight.w700 : FontWeight.w400),
-                                        ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                        );
-                      }).toList(),
-                    );
-                  },
-                ),
-          ),
-        ],
+    final maxV = reasons.fold<double>(0, (m, r) => math.max(m, r.lostValue));
+    final total = reasons.fold<double>(0, (s, r) => s + r.lostValue);
+    final base = tall ? g.rowTall : g.rowWide;
+    return DashPanel(
+      fill: true,
+      header: DashPanelHeader(
+        g: g,
+        title: 'Lost reasons',
+        note: '$year',
+        tooltip: 'Why estimates dated in $year were lost, by value. Click a reason to see its estimates.',
       ),
+      child: reasons.every((r) => r.count == 0 && r.lostValue <= 0)
+          ? DashEmptyNote('No estimates dated $year were lost.')
+          : DashRows(
+              count: reasons.length,
+              base: base,
+              give: 12,
+              row: (i) {
+                final r = reasons[i];
+                return DashBarRow(
+                  g: g,
+                  label: r.reason,
+                  fraction: maxV > 0 ? r.lostValue / maxV : 0,
+                  color: r.color,
+                  amount: _usd(r.lostValue),
+                  detail: '${r.count} lost',
+                  tall: tall,
+                  labelWidth: labelWidth,
+                  amountWidth: amountWidth,
+                  detailWidth: detailWidth,
+                  onTap: r.count == 0 ? null : () => _open(context, r),
+                  hint: 'Opens the list of estimates',
+                  semanticsLabel: '${r.reason}: ${_usd(r.lostValue)} lost on ${dashCount(r.count, 'estimate')}, '
+                      '${dashShare(r.lostValue, total)} of the lost value',
+                );
+              },
+            ),
     );
   }
-}
 
-// =============================================================================
-// INTERACTIVE LOST REASONS PANEL
-// =============================================================================
-
-class _LostReasonsPanel extends StatefulWidget {
-  final List<_LostReason> reasons;
-  final bool loading;
-  final int year;
-  const _LostReasonsPanel({required this.reasons, required this.loading, required this.year});
-
-  @override
-  State<_LostReasonsPanel> createState() => _LostReasonsPanelState();
-}
-
-class _LostReasonsPanelState extends State<_LostReasonsPanel> with SingleTickerProviderStateMixin {
-  late final AnimationController _intro;
-  int? _hoveredIndex;
-
-  /// Opens the list of lost estimates with this reason.
-  void _open(_LostReason r) {
-    showDialog(
+  /// Opens the lost estimates with this reason.
+  void _open(BuildContext context, _LostReason r) {
+    showDialog<void>(
       context: context,
       builder: (_) => EstimateListDialog(
-        year: widget.year,
+        year: year,
         heading: 'Lost estimates · ${r.reason}',
         totalLabel: 'lost',
         color: r.color,
         icon: Icons.highlight_off_rounded,
         uri: Uri.parse(
           '$kApiBaseUrl/api/dashboards/estimates/drill'
-          '?year=${widget.year}&kind=lost&reason=${Uri.encodeQueryComponent(r.reason)}',
+          '?year=$year&kind=lost&reason=${Uri.encodeQueryComponent(r.reason)}',
         ),
         initialSort: EstimateListSort.value,
       ),
     );
   }
+}
 
-  @override
-  void initState() {
-    super.initState();
-    _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 1000))..forward();
-  }
+String _usd(double v) => '\$${NumberFormat('#,##0').format(v)}';
 
-  @override
-  void didUpdateWidget(covariant _LostReasonsPanel old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.reasons, widget.reasons)) _intro.forward(from: 0);
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20.0),
-      decoration: DashUi.panel(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('TOP LOST REASONS', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: DashUi.ink, letterSpacing: 0.8)),
-          const SizedBox(height: 12),
-          Expanded(
-            child: widget.loading
-                ? const Center(child: CircularProgressIndicator(color: DashUi.blue))
-                : widget.reasons.isEmpty
-                    ? const Center(child: Text('No lost estimates recorded yet.', style: TextStyle(color: DashUi.muted, fontSize: 12.5, fontWeight: FontWeight.w600)))
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final double maxLostValue = widget.reasons.fold(0.0, (max, item) => item.lostValue > max ? item.lostValue : max) * 1.1;
-                          final double totalLost = widget.reasons.fold(0.0, (sum, item) => sum + item.lostValue);
-
-                          // Each reason gets an equal slice of the panel's height, so the rows always fit: the bar and
-                          // text shrink with the slice, and the "N Estimates" line gives way to an inline count when
-                          // a slice gets too short for two lines. Rows are capped so a few reasons don't look stretched.
-                          final double slice = constraints.maxHeight / widget.reasons.length;
-                          final double barH = (slice * 0.6).clamp(8.0, 28.0).toDouble();
-                          final bool twoLines = slice >= 40;
-                          return Column(
-                            children: widget.reasons.asMap().entries.map((entry) {
-                              final int index = entry.key;
-                              final _LostReason reason = entry.value;
-                              final bool isHovered = _hoveredIndex == index;
-                              final bool dim = _hoveredIndex != null && !isHovered;
-
-                              final double ratio = maxLostValue > 0 ? (reason.lostValue / maxLostValue).clamp(0.05, 1.0) : 0.05;
-                              final double pct = totalLost > 0 ? (reason.lostValue / totalLost * 100) : 0.0;
-
-                              return Expanded(
-                                child: MouseRegion(
-                                cursor: reason.count > 0 ? SystemMouseCursors.click : MouseCursor.defer,
-                                onEnter: (_) => setState(() => _hoveredIndex = index),
-                                onExit: (_) => setState(() => _hoveredIndex = null),
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onTap: reason.count == 0 ? null : () => _open(reason),
-                                  child: AnimatedOpacity(
-                                  duration: const Duration(milliseconds: 150),
-                                  opacity: dim ? 0.35 : 1.0,
-                                  child: Row(
-                                    children: [
-                                      SizedBox(
-                                        width: 100,
-                                        child: Align(
-                                          alignment: Alignment.centerLeft,
-                                          child: Column(
-                                          mainAxisSize: MainAxisSize.min,
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            Text(
-                                              twoLines ? reason.reason : '${reason.reason} · ${reason.count}',
-                                              style: TextStyle(fontSize: twoLines ? 13 : 12, height: twoLines ? null : 1.05, fontWeight: FontWeight.bold, color: DashUi.ink),
-                                              maxLines: 1,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                            if (twoLines) ...[
-                                              const SizedBox(height: 2),
-                                              Text('${reason.count} Estimates', style: const TextStyle(fontSize: 11, color: DashUi.muted, fontWeight: FontWeight.w600)),
-                                            ],
-                                          ],
-                                        ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: Stack(
-                                          alignment: Alignment.centerLeft,
-                                          children: [
-                                            Container(height: barH, decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(6))),
-                                            AnimatedBuilder(
-                                              animation: _intro,
-                                              builder: (context, child) => FractionallySizedBox(
-                                                widthFactor: ratio * Curves.easeOutCubic.transform(_intro.value),
-                                                child: AnimatedContainer(
-                                                  duration: const Duration(milliseconds: 150),
-                                                  height: barH,
-                                                  decoration: BoxDecoration(
-                                                    color: reason.color, 
-                                                    borderRadius: BorderRadius.circular(6),
-                                                    boxShadow: isHovered ? [BoxShadow(color: reason.color.withValues(alpha: 0.35), blurRadius: 8, offset: const Offset(0, 2))] : null,
-                                                  )
-                                                ),
-                                              )
-                                            ),
-                                          ],
-                                        ),
-                                      ),
-                                      const SizedBox(width: 16),
-                                      SizedBox(
-                                        width: 100,
-                                        child: Text(
-                                          isHovered ? '${pct.toStringAsFixed(1)}% of Lost' : '\$${NumberFormat('#,##0').format(reason.lostValue)}',
-                                          textAlign: TextAlign.end,
-                                          style: TextStyle(
-                                            fontSize: 13, 
-                                            fontWeight: FontWeight.bold, 
-                                            color: isHovered ? reason.color : DashUi.ink
-                                          ),
-                                        ),
-                                      ),
-                                      SizedBox(
-                                        width: 18,
-                                        child: Icon(Icons.chevron_right_rounded, size: 18, color: isHovered && reason.count > 0 ? reason.color : Colors.transparent),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                ),
-                                ),
-                              );
-                            }).toList(),
-                          );
-                        },
-                      ),
-          ),
-        ],
-      ),
-    );
-  }
+String _age(int days) {
+  if (days < 60) return '$days days';
+  if (days < 730) return '${(days / 30.4).round()} months';
+  return '${(days / 365).floor()} years';
 }
 
 // =============================================================================
-// AUTO-SCROLLING STALE TICKER (USER'S EXACT BASE COPY)
+// STALE ESTIMATES (open 14+ days and worth $1,000+, oldest first; as of today)
 // =============================================================================
 
-class _AutoHorizontalStaleList extends StatefulWidget {
-  final List<_StaleEstimate> estimates;
-
-  const _AutoHorizontalStaleList({required this.estimates});
-
-  @override
-  State<_AutoHorizontalStaleList> createState() =>
-      _AutoHorizontalStaleListState();
-}
-
-class _AutoHorizontalStaleListState
-    extends State<_AutoHorizontalStaleList>
-    with SingleTickerProviderStateMixin {
-  late final Ticker _ticker;
-
-  final GlobalKey _rowKey = GlobalKey();
-  final ValueNotifier<double> _offset = ValueNotifier<double>(0.0);
-
-  static const double _speed = 45.0; // px/sec
-  static const double _cardGap = 12.0;
-  static const double _tickerHeight = 56.0;
-
-  double _cycleWidth = 1.0;
-  Duration? _lastElapsed;
-  bool _isHovered = false;
-  bool _reduceMotion = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _ticker = createTicker(_onTick);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _measureRow();
-      if (!_reduceMotion) {
-        _ticker.start();
-      }
-    });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    final reduceMotion = MediaQuery.of(context).disableAnimations;
-    if (reduceMotion == _reduceMotion) return;
-
-    _reduceMotion = reduceMotion;
-
-    if (_reduceMotion) {
-      _ticker.stop();
-      _lastElapsed = null;
-      _offset.value = 0.0;
-    } else if (!_ticker.isActive) {
-      _lastElapsed = null;
-      _ticker.start();
-    }
-  }
-
-  void _onTick(Duration elapsed) {
-    if (_isHovered || _reduceMotion || _cycleWidth <= 1.0) {
-      _lastElapsed = elapsed;
-      return;
-    }
-
-    final previous = _lastElapsed;
-    _lastElapsed = elapsed;
-    if (previous == null) return;
-
-    final dt = (elapsed - previous).inMicroseconds /
-        Duration.microsecondsPerSecond;
-    if (dt <= 0) return;
-
-    final frameSeconds = math.min(dt, 0.05);
-    final next = _offset.value + (_speed * frameSeconds);
-    _offset.value = next >= _cycleWidth ? next % _cycleWidth : next;
-  }
-
-  void _measureRow() {
-    if (!mounted) return;
-
-    final context = _rowKey.currentContext;
-    final renderObject = context?.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) return;
-
-    final width = renderObject.size.width;
-    if (width <= 0) return;
-
-    final newCycleWidth = width + _cardGap;
-    _cycleWidth = newCycleWidth;
-
-    if (_offset.value >= newCycleWidth) {
-      _offset.value %= newCycleWidth;
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant _AutoHorizontalStaleList oldWidget) {
-    super.didUpdateWidget(oldWidget);
-
-    if (!identical(oldWidget.estimates, widget.estimates)) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _measureRow();
-      });
-    }
-  }
-
-  void _pauseTicker() {
-    _isHovered = true;
-    _lastElapsed = null;
-  }
-
-  void _resumeTicker() {
-    _isHovered = false;
-    _lastElapsed = null;
-  }
-
-  @override
-  void dispose() {
-    _ticker.dispose();
-    _offset.dispose();
-    super.dispose();
-  }
-
-  Widget _buildStaleRow({Key? key}) {
-    return Row(
-      key: key,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (int i = 0; i < widget.estimates.length; i++) ...[
-          if (i > 0) const SizedBox(width: _cardGap),
-          _buildStaleCard(widget.estimates[i]),
-        ],
-      ],
-    );
-  }
-
-  String _fmt(num value) {
-    return value.toStringAsFixed(0).replaceAllMapped(
-      RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
-      (Match m) => '${m[1]},',
-    );
-  }
-
-  Widget _buildStaleCard(_StaleEstimate est) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: DashUi.line),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            alignment: Alignment.center,
-            decoration: const BoxDecoration(
-              color: Color(0xFFFEF2F2),
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(
-              Icons.warning_amber_rounded,
-              color: Color(0xFFDC2626),
-              size: 14,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                est.customerName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  color: DashUi.ink,
-                ),
-              ),
-              Text(
-                '${est.daysOld} days old',
-                style: const TextStyle(fontSize: 10, color: DashUi.muted),
-              ),
-            ],
-          ),
-          const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFFBEB),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: const Color(0xFFFDE68A)),
-            ),
-            child: Text(
-              '\$${_fmt(est.value)}',
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-                color: Color(0xFFD97706),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+class _StalePanel extends StatelessWidget {
+  final DashGeo g;
+  final List<_StaleEstimate> rows;
+  final int maxRows;
+  final bool fill;
+  const _StalePanel({required this.g, required this.rows, required this.maxRows, required this.fill});
 
   @override
   Widget build(BuildContext context) {
-    if (widget.estimates.isEmpty) return const SizedBox.shrink();
-
-    return MouseRegion(
-      onEnter: (_) => _pauseTicker(),
-      onExit: (_) => _resumeTicker(),
-      child: SizedBox(
-        height: _tickerHeight,
-        width: double.infinity,
-        child: ClipRect(
-          child: ValueListenableBuilder<double>(
-            valueListenable: _offset,
-            child: RepaintBoundary(
-              // OverflowBox lets the doubled row be wider than the viewport without a
-              // RenderFlex overflow warning; ClipRect above trims what's off-screen.
-              child: OverflowBox(
-                alignment: Alignment.centerLeft,
-                minWidth: 0,
-                maxWidth: double.infinity,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildStaleRow(key: _rowKey),
-                    const SizedBox(width: _cardGap),
-                    _buildStaleRow(),
-                  ],
-                ),
+    final shown = rows.take(maxRows).toList();
+    final more = rows.length > shown.length;
+    return DashPanel(
+      fill: fill,
+      header: DashPanelHeader(
+        g: g,
+        title: 'Stale estimates',
+        note: 'oldest first',
+        tooltip: 'Open estimates 14 days old or more and worth \$1,000 or more, as of today, oldest first.',
+        trailing: rows.isEmpty
+            ? null
+            : (more
+                ? DashLink(
+                    text: 'All ${rows.length}',
+                    label: 'See all ${dashCount(rows.length, 'stale estimate')}',
+                    onTap: () => _openAll(context),
+                  )
+                : Text(dashCount(rows.length, 'estimate'), style: DashText.meta)),
+      ),
+      child: rows.isEmpty
+          ? SizedBox(height: 2 * g.listRow, child: const DashEmptyNote('No stale estimates today.'))
+          : Align(
+              alignment: Alignment.topCenter,
+              child: DashRows(
+                count: shown.length,
+                base: g.listRow,
+                give: 14,
+                row: (i) => _row(context, shown[i], last: i == shown.length - 1),
               ),
             ),
-            builder: (context, offset, child) {
-              return Transform.translate(
-                offset: Offset(-offset, 0.0),
-                child: child,
-              );
-            },
-          ),
+    );
+  }
+
+  Widget _row(BuildContext context, _StaleEstimate e, {required bool last}) {
+    final old = e.daysOld > 90;
+    final meta = '${e.jobId.isEmpty ? '' : '#${e.jobId} · '}${_age(e.daysOld)} old';
+    return DashPressable(
+      onTap: () => _openAll(context, customer: e.customerName),
+      label: '${e.customerName}: ${_usd(e.value)}, open for ${_age(e.daysOld)}',
+      hint: 'Opens their stale estimates',
+      radius: BorderRadius.circular(8),
+      builder: (hover) => AnimatedContainer(
+        duration: const Duration(milliseconds: 120),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: hover ? DashUi.faint : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: last || hover ? null : const Border(bottom: BorderSide(color: DashUi.faint)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Tooltip(
+                    message: e.customerName,
+                    waitDuration: const Duration(milliseconds: 600),
+                    child: Text(e.customerName, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.name),
+                  ),
+                  Text(
+                    meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: DashText.meta.copyWith(color: old ? DashUi.redText : DashUi.subtle),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            Text(_usd(e.value), style: DashText.money.copyWith(fontSize: 14, color: DashUi.amberText)),
+            SizedBox(
+              width: 22,
+              child: Icon(Icons.chevron_right_rounded, size: 18, color: hover ? DashUi.ink : DashUi.subtle),
+            ),
+          ],
         ),
       ),
     );
   }
+
+  /// Every stale estimate (or one customer's), oldest first, in the list the other drill-downs use. The dashboard
+  /// already has them all, so nothing is fetched.
+  void _openAll(BuildContext context, {String? customer}) {
+    final now = DashClock.now();
+    final today = DateTime(now.year, now.month, now.day);
+    showDialog<void>(
+      context: context,
+      builder: (_) => EstimateListDialog(
+        year: now.year,
+        periodLabel: 'As of today',
+        heading: customer == null ? 'Stale estimates' : '$customer · stale estimates',
+        totalLabel: 'open',
+        color: DashUi.amber,
+        icon: Icons.hourglass_bottom_rounded,
+        items: [
+          for (final e in rows)
+            EstimateListItem(
+              jobId: e.jobId,
+              customerName: e.customerName,
+              status: '',
+              location: '',
+              description: '',
+              // Only the age is known here; the date it was dated is that many days ago.
+              startDate: today.subtract(Duration(days: e.daysOld)),
+              value: e.value,
+              outcome: 'open',
+              daysOld: e.daysOld,
+            ),
+        ],
+        customer: customer,
+        initialSort: EstimateListSort.oldest,
+      ),
+    );
+  }
 }
 
 // =============================================================================
-// LOADING SKELETON
+// SKELETON (the same grid, with placeholders)
 // =============================================================================
 
 class _EstimatesSkeleton extends StatelessWidget {
   const _EstimatesSkeleton();
 
-  Widget _metric() => Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-          decoration: DashUi.panel(radius: 12),
-          child: const Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              SkeletonBox(h: 12, w: 80),
-              SizedBox(height: 12),
-              SkeletonBox(h: 26, w: 90),
-            ],
-          ),
-        ),
-      );
-
   @override
   Widget build(BuildContext context) {
-    return SkeletonPulse(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            height: 86,
-            child: Row(children: [
-              _metric(), const SizedBox(width: 8),
-              _metric(), const SizedBox(width: 8),
-              _metric(), const SizedBox(width: 8),
-              _metric(),
-            ]),
+    final g = DashGeo.of(context);
+    return Semantics(
+      label: 'Loading estimates',
+      child: ExcludeSemantics(
+        child: SkeletonPulse(
+          child: _Grid(
+            tiles: List.generate(4, (_) => const DashSkeletonTile()),
+            chart: const DashSkeletonPanel(fill: true),
+            aging: DashSkeletonPanel(rows: 1, rowH: g.line(15) + 6),
+            lost: (tall) => DashSkeletonPanel(rows: 5, rowH: tall ? g.rowTall : g.rowWide),
+            lostRows: 5,
+            stale: (maxRows, fill) => DashSkeletonPanel(rows: math.min(3, maxRows), rowH: g.listRow),
+            staleRows: 3,
           ),
-          const SizedBox(height: 16),
-          Expanded(
-            flex: 10,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  flex: 7,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 12,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 220),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        flex: 8,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 180),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 5,
-                  child: Column(
-                    children: [
-                      Expanded(
-                        flex: 9,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 160),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        flex: 11,
-                        child: Container(
-                          padding: const EdgeInsets.all(20),
-                          decoration: DashUi.panel(),
-                          child: const Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              SkeletonBox(h: 16, w: 160),
-                              SizedBox(height: 24),
-                              Expanded(child: SkeletonBox(r: 8)),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }

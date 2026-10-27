@@ -146,8 +146,8 @@ void main() {
       await tester.tap(find.textContaining('Checked Jobs'));
       await _pump(tester, 200);
       expect(find.text('How I got this'), findsOneWidget);
-      expect(find.textContaining('Jobs: query Lennar, year 2026'), findsOneWidget);
-      expect(find.textContaining('Custom query: Check the biggest job'), findsOneWidget);
+      expect(find.textContaining('matching “Lennar” · 2026'), findsOneWidget);
+      expect(find.textContaining('Check the biggest job'), findsOneWidget);
       expect(find.textContaining('describe'), findsNothing);
 
       // Thumbs up goes to the server once, with the question, and cannot be repeated.
@@ -233,7 +233,7 @@ void main() {
       await ask(tester, 'What is owed?');
       await _pump(tester, 800);
       expect(find.textContaining('connection closed'), findsOneWidget);
-      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Try again'), findsOneWidget);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 5));
     }, () => client);

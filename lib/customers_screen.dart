@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 
 import 'config/api_config.dart';
@@ -45,7 +46,10 @@ class _PageResult {
 // Screen
 // ---------------------------------------------------------------------------
 class CustomersScreen extends StatefulWidget {
-  const CustomersScreen({super.key});
+  /// A search to start with (the nav bar search and a job page's customer link open /customers?q=...).
+  final String? initialQuery;
+
+  const CustomersScreen({super.key, this.initialQuery});
 
   @override
   State<CustomersScreen> createState() => _CustomersScreenState();
@@ -77,7 +81,20 @@ class _CustomersScreenState extends State<CustomersScreen>
   @override
   void initState() {
     super.initState();
+    _searchController.text = (widget.initialQuery ?? '').trim();
     _load(1);
+  }
+
+  @override
+  void didUpdateWidget(CustomersScreen old) {
+    super.didUpdateWidget(old);
+    // A new search from the nav bar while this screen is already open (it is kept alive): apply it.
+    final q = (widget.initialQuery ?? '').trim();
+    if (q.isNotEmpty && q != (old.initialQuery ?? '').trim() && q != _searchController.text.trim()) {
+      _debounce?.cancel();
+      _searchController.text = q;
+      _load(1);
+    }
   }
 
   @override
@@ -506,7 +523,7 @@ class _CustomersScreenState extends State<CustomersScreen>
 
     return InkWell(
       hoverColor: _C.primarySoft.withOpacity(0.5),
-      onTap: () {},
+      onTap: () => _open(c),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         child: Row(
@@ -617,7 +634,9 @@ class _CustomersScreenState extends State<CustomersScreen>
     final cityState = _cityState(c);
     final address = [location, cityState].whereType<String>().join(' · ');
 
-    return Padding(
+    return InkWell(
+      onTap: () => _open(c),
+      child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -668,8 +687,12 @@ class _CustomersScreenState extends State<CustomersScreen>
           ),
         ],
       ),
+    ),
     );
   }
+
+  /// Opens the customer's own page; the row rides along so the name shows before the full record loads.
+  void _open(Map<String, dynamic> c) => context.go('/customers/${c['id']}', extra: c);
 
   // ---- footer ---------------------------------------------------------------
   Widget _buildFooter() {

@@ -21,6 +21,9 @@ class AppDialog extends StatelessWidget {
   final List<Widget> actions;
   final double width;
 
+  /// Stays in view above the buttons while [body] scrolls, e.g. a summary of what Save will do.
+  final Widget? footer;
+
   const AppDialog({
     super.key,
     required this.title,
@@ -30,6 +33,7 @@ class AppDialog extends StatelessWidget {
     this.icon,
     this.iconColor = DashUi.ink,
     this.width = 460,
+    this.footer,
   });
 
   @override
@@ -104,6 +108,7 @@ class AppDialog extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               Flexible(child: SingleChildScrollView(child: body)),
+              if (footer != null) ...[const SizedBox(height: 14), footer!],
               const SizedBox(height: 20),
               Wrap(
                 alignment: WrapAlignment.end,
@@ -201,7 +206,8 @@ class AppFieldLabel extends StatelessWidget {
   }
 }
 
-/// Pill selector, same as the toggles on the dashboards.
+/// Pill selector, same as the toggles on the dashboards. Each option can be reached with Tab and picked with
+/// Enter or Space, and reads as a selected/unselected button to a screen reader.
 class AppSegmented<V> extends StatelessWidget {
   final V value;
   final List<(V, String)> options;
@@ -225,11 +231,19 @@ class AppSegmented<V> extends StatelessWidget {
         children: [
           for (final o in options)
             Expanded(
-              child: MouseRegion(
-                cursor: SystemMouseCursors.click,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
+              child: Semantics(
+                container: true,
+                button: true,
+                inMutuallyExclusiveGroup: true,
+                selected: o.$1 == value,
+                child: InkWell(
                   onTap: () => onChanged(o.$1),
+                  borderRadius: BorderRadius.circular(8),
+                  splashFactory: NoSplash.splashFactory,
+                  // Only a focus ring: hover and press keep the plain look the dashboards use.
+                  overlayColor: WidgetStateProperty.resolveWith(
+                    (s) => s.contains(WidgetState.focused) ? DashUi.ink.withValues(alpha: 0.10) : Colors.transparent,
+                  ),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),

@@ -1,0 +1,251 @@
+{
+  "success": true,
+  "year": 2026,
+  "scorecards": {
+    "openValue": 12055908,
+    "openCount": 660,
+    "openPriorYears": {
+      "count": 312,
+      "value": 5312640,
+      "before": "2026-01-01"
+    },
+    "lostValue": 247922,
+    "winRate": 87.87878787878788,
+    "sentYtd": 355
+  },
+  "stalePipeline": [
+    {
+      "job_id": "9100001",
+      "customer_name": "Pine Hollow Apartments",
+      "value": 18250,
+      "days_old": 912
+    },
+    {
+      "job_id": "9100002",
+      "customer_name": "Cedar Point Storage",
+      "value": 7400,
+      "days_old": 401
+    },
+    {
+      "job_id": "9200001",
+      "customer_name": "Northwind Homes LLC",
+      "value": 4000,
+      "days_old": 300
+    },
+    {
+      "job_id": "9200002",
+      "customer_name": "Summit Builders",
+      "value": 4900,
+      "days_old": 269
+    },
+    {
+      "job_id": "9200003",
+      "customer_name": "Lakeside Residence",
+      "value": 5800,
+      "days_old": 238
+    },
+    {
+      "job_id": "9200004",
+      "customer_name": "Oakridge Property Co",
+      "value": 6700,
+      "days_old": 207
+    },
+    {
+      "job_id": "9200005",
+      "customer_name": "Pine Hollow Apartments",
+      "value": 7600,
+      "days_old": 176
+    },
+    {
+      "job_id": "9200006",
+      "customer_name": "Cedar Point Storage",
+      "value": 8500,
+      "days_old": 145
+    },
+    {
+      "job_id": "9200007",
+      "customer_name": "Northwind Homes LLC",
+      "value": 9400,
+      "days_old": 114
+    },
+    {
+      "job_id": "9200008",
+      "customer_name": "Summit Builders",
+      "value": 10300,
+      "days_old": 83
+    }
+  ],
+  "staleSummary": {
+    "totalCount": 10,
+    "totalValue": 82850,
+    "oldestDays": 912,
+    "avgDays": 285
+  },
+  "agingBuckets": [
+    {
+      "bucket": "0-7 days",
+      "count": 17,
+      "value": 202797,
+      "stale": false
+    },
+    {
+      "bucket": "8-14 days",
+      "count": 10,
+      "value": 241384,
+      "stale": false
+    },
+    {
+      "bucket": "15-30 days",
+      "count": 31,
+      "value": 433864,
+      "stale": false
+    },
+    {
+      "bucket": "31+ days",
+      "count": 602,
+      "value": 11177863,
+      "stale": true
+    }
+  ],
+  "history": {
+    "openValue": [
+      11920000,
+      11928000,
+      11936000,
+      11944000,
+      11952000,
+      11960000,
+      11968000,
+      11976000,
+      11984000,
+      11992000,
+      12000000,
+      12008000,
+      12016000,
+      12024000,
+      12032000,
+      12040000,
+      12048000
+    ]
+  },
+  "monthlyValue": [
+    {
+      "month_num": 1,
+      "sent_value": 320000,
+      "won_value": 129000,
+      "sent_count": 31,
+      "won_count": 12,
+      "closed_count": 14,
+      "lost_value": 15000
+    },
+    {
+      "month_num": 2,
+      "sent_value": 340000,
+      "won_value": 138000,
+      "sent_count": 32,
+      "won_count": 13,
+      "closed_count": 15,
+      "lost_value": 27000
+    },
+    {
+      "month_num": 3,
+      "sent_value": 360000,
+      "won_value": 147000,
+      "sent_count": 33,
+      "won_count": 13,
+      "closed_count": 15,
+      "lost_value": 39000
+    },
+    {
+      "month_num": 4,
+      "sent_value": 380000,
+      "won_value": 156000,
+      "sent_count": 34,
+      "won_count": 14,
+      "closed_count": 16,
+      "lost_value": 3000
+    },
+    {
+      "month_num": 5,
+      "sent_value": 400000,
+      "won_value": 165000,
+      "sent_count": 35,
+      "won_count": 14,
+      "closed_count": 16,
+      "lost_value": 15000
+    },
+    {
+      "month_num": 6,
+      "sent_value": 420000,
+      "won_value": 174000,
+      "sent_count": 36,
+      "won_count": 15,
+      "closed_count": 17,
+      "lost_value": 27000
+    },
+    {
+      "month_num": 7,
+      "sent_value": 440000,
+      "won_value": 183000,
+      "sent_count": 37,
+      "won_count": 15,
+      "closed_count": 17,
+      "lost_value": 39000
+    },
+    {
+      "month_num": 8,
+      "sent_value": 460000,
+      "won_value": 192000,
+      "sent_count": 38,
+      "won_count": 16,
+      "closed_count": 18,
+      "lost_value": 3000
+    },
+    {
+      "month_num": 9,
+      "sent_value": 480000,
+      "won_value": 201000,
+      "sent_count": 39,
+      "won_count": 16,
+      "closed_count": 18,
+      "lost_value": 75000
+    },
+    {
+      "month_num": 10,
+      "sent_value": 500000,
+      "won_value": 210000,
+      "sent_count": 40,
+      "won_count": 17,
+      "closed_count": 19,
+      "lost_value": 4922
+    }
+  ],
+  "lostReasons": [
+    {
+      "reason": "Other",
+      "lost_value": 204786,
+      "count": 29
+    },
+    {
+      "reason": "Price",
+      "lost_value": 38176,
+      "count": 1
+    },
+    {
+      "reason": "Competitor",
+      "lost_value": 4960,
+      "count": 1
+    },
+    {
+      "reason": "Unresponsive",
+      "lost_value": 0,
+      "count": 1
+    },
+    {
+      "reason": "Timing",
+      "lost_value": 0,
+      "count": 0
+    }
+  ],
+  "generatedAt": "2026-10-22T19:30:00.000Z"
+}

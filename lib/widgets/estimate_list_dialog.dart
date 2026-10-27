@@ -1,15 +1,12 @@
-import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../utils/status_colors.dart';
-import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart' hide TextDirection;
 
-import '../config/auth_session.dart';
 import 'app_dialog.dart';
+import 'dashboard_data.dart';
 import 'dashboard_kit.dart';
 
 // The click-through window used by the Sales and Estimates dashboards: click a number or a chart bar
@@ -90,7 +87,12 @@ class EstimateListDialog extends StatefulWidget {
   final String totalLabel;
   final Color color;
   final IconData icon;
-  final Uri uri;
+
+  /// Where the list comes from. Null when [items] is given instead.
+  final Uri? uri;
+
+  /// The list itself, when the dashboard already has every row (the stale estimates); nothing is fetched then.
+  final List<EstimateListItem>? items;
   final EstimateListSort initialSort;
 
   /// Show the All / Won / Lost / Open pills (lists that mix outcomes).
@@ -105,13 +107,18 @@ class EstimateListDialog extends StatefulWidget {
   /// Word after the day count on each row: "12 days old" (estimates) or "12 days overdue" (unpaid balances).
   final String ageLabel;
 
+  /// Only this customer's rows (Collections' biggest balances), matched the way the server groups them: trimmed,
+  /// blank as "Unknown". Null lists everything the endpoint returns.
+  final String? customer;
+
   const EstimateListDialog({
     super.key,
     required this.year,
     required this.heading,
     required this.color,
     required this.icon,
-    required this.uri,
+    this.uri,
+    this.items,
     this.totalLabel = '',
     this.initialSort = EstimateListSort.newest,
     this.outcomeFilter = false,
@@ -119,7 +126,8 @@ class EstimateListDialog extends StatefulWidget {
     this.noun = 'estimate',
     this.periodLabel,
     this.ageLabel = 'old',
-  });
+    this.customer,
+  }) : assert(uri != null || items != null, 'give the list or where to fetch it');
 
   @override
   State<EstimateListDialog> createState() => _EstimateListDialogState();
@@ -129,7 +137,8 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
   static final _dateFmt = DateFormat('MMM d, yyyy');
 
   bool _loading = true;
-  String? _error;
+  DashLoadException? _error;
+  final _requests = DashRequests();
   List<EstimateListItem> _items = [];
   String _query = '';
   late EstimateListSort _sort = widget.initialSort;
@@ -141,38 +150,58 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _requests.cancel();
+    super.dispose();
+  }
+
+  // Same rules as the dashboards (DashRequests): 60 s timeout, 401 signs out, 403 is "no access", no raw error text.
   Future<void> _load() async {
+    final given = widget.items;
+    if (given != null) {
+      setState(() {
+        _items = _forCustomer(given);
+        _loading = false;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final response = await http.get(widget.uri, headers: AuthSession.instance.headers()).timeout(const Duration(seconds: 60));
-      if (response.statusCode != 200) throw Exception('The server returned status ${response.statusCode}.');
-      final body = json.decode(response.body) as Map<String, dynamic>;
-      final items = ((body['items'] as List<dynamic>?) ?? const [])
-          .map((e) => EstimateListItem.fromJson(e as Map<String, dynamic>))
-          .toList();
-      if (!mounted) return;
+      final payload = await _requests.getUri(widget.uri!);
+      if (payload == null || !mounted) return;
+      List<EstimateListItem> items;
+      try {
+        items = ((payload.body['items'] as List<dynamic>?) ?? const [])
+            .map((e) => EstimateListItem.fromJson(e as Map<String, dynamic>))
+            .toList();
+      } catch (_) {
+        throw const DashLoadException(DashFailure.badData);
+      }
+      items = _forCustomer(items);
       setState(() {
         _items = items;
         _loading = false;
       });
-    } on TimeoutException {
+    } on DashLoadException catch (e) {
       if (mounted) {
         setState(() {
-          _error = 'The list took too long to load.';
-          _loading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = e.toString().replaceFirst('Exception: ', '');
+          _error = e;
           _loading = false;
         });
       }
     }
+  }
+
+  /// Only [EstimateListDialog.customer]'s rows when one is set.
+  List<EstimateListItem> _forCustomer(List<EstimateListItem> items) {
+    final customer = widget.customer;
+    if (customer == null) return items;
+    String key(String name) => name.trim().isEmpty ? 'Unknown' : name.trim();
+    return items.where((i) => key(i.customerName) == key(customer)).toList();
   }
 
   /// What a row is "worth" here: the door lines for a door list, otherwise the estimate itself.
@@ -362,9 +391,11 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            AppNotice(_error!, kind: AppNoticeKind.error),
-            const SizedBox(height: 12),
-            AppButton.ink('Try again', _load, icon: Icons.refresh_rounded),
+            AppNotice('${_error!.title('this list')}. ${_error!.message}', kind: AppNoticeKind.error),
+            if (_error!.canRetry) ...[
+              const SizedBox(height: 12),
+              AppButton.ink('Try again', _load, icon: Icons.refresh_rounded),
+            ],
           ],
         ),
       );
