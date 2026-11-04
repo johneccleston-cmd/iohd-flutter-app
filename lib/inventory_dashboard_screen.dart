@@ -1,12 +1,14 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'config/access.dart';
+import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
 import 'widgets/dashboard_panels.dart';
 
-// The Inventory dashboard. Everything is as of today (there is no year to pick), apart from the stock movement chart,
-// which appears once stock received and used is recorded.
+// The Inventory dashboard. There is no year to pick: stock is as of today, strikes are all time, count accuracy is this
+// year so far, and the stock movement chart appears once stock received and used is recorded.
 //   scorecards  stock value, dead stock, items at or below their reorder point, count accuracy, last cycle count
 //   left        stock value by category, or each category's stock health
 //   right       inventory strikes (fewest first) over stock movement by month
@@ -20,6 +22,7 @@ class InventoryDashboardScreen extends StatelessWidget {
     // No year selector: stock, strikes and cycle counts are all "as of now" (the server ignores a year).
     return DashboardLayout(
       title: 'Inventory',
+      icon: accessIcon('dash_inventory'),
       showYearSelector: false,
       builder: (context, selectedYear) {
         return InventoryDashboardContent(selectedYear: selectedYear);
@@ -104,8 +107,13 @@ class _InventorySummary {
   final double? deadStockValue;
   final int lowStockCount;
 
-  /// Null when not tracked yet (needs completed cycle counts with expected vs counted quantities).
+  /// This year's counted items whose shelf count matched the system (0-100), the same figure as the warehouse KPI page.
+  /// Null before any count with quantities has been recorded this year.
   final double? accuracyPct;
+
+  /// The items behind [accuracyPct]: counted this year, and the ones that matched. Null from a server that doesn't send them.
+  final int? accuracyCounted;
+  final int? accuracyMatched;
   final DateTime? lastCycleCount;
   final List<_CategoryData> categories;
   final List<_InventoryMonth> monthly;
@@ -122,6 +130,8 @@ class _InventorySummary {
     this.deadStockValue,
     this.lowStockCount = 0,
     this.accuracyPct,
+    this.accuracyCounted,
+    this.accuracyMatched,
     this.lastCycleCount,
     this.categories = const [],
     this.monthly = const [],
@@ -173,6 +183,8 @@ class _InventorySummary {
       deadStockValue: json['deadStockValue'] == null ? null : num_(json['deadStockValue']),
       lowStockCount: int_(json['lowStockCount']),
       accuracyPct: json['accuracyPct'] == null ? null : num_(json['accuracyPct']),
+      accuracyCounted: json['accuracy'] is Map && (json['accuracy'] as Map)['counted'] != null ? int_((json['accuracy'] as Map)['counted']) : null,
+      accuracyMatched: json['accuracy'] is Map && (json['accuracy'] as Map)['matched'] != null ? int_((json['accuracy'] as Map)['matched']) : null,
       lastCycleCount: json['lastCycleCount'] != null ? DateTime.tryParse(json['lastCycleCount'].toString()) : null,
       categories: catList,
       topStrikeTechs: techList,
@@ -228,8 +240,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> w
         ? null
         : DateTime(now.year, now.month, now.day).difference(DateTime(last.year, last.month, last.day)).inDays;
 
-    // Everything on this page is "as of now". The two "not tracked yet" cards say so instead of showing a made-up
-    // figure; they fill in once the system records the stock movement and counts they need.
+    // Stock is as of today and accuracy is this year so far; each caption says which. Dead stock says "Not tracked yet"
+    // instead of showing a made-up figure, and fills in once the system records stock movement.
     final valueCaption = 'Active items at cost · today';
     final tiles = <Widget>[
       AnimatedMetricCard(
@@ -246,37 +258,49 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> w
       ),
       AnimatedMetricCard(
         // Shows "—" until stock movement is recorded (it used to always say $0).
-        title: data.deadStockValue == null ? 'Dead stock' : 'Dead Stock (90+ Days)',
+        title: 'Dead stock',
         value: data.deadStockValue,
         format: _moneyFull,
-        caption: data.deadStockValue == null ? 'Not tracked yet' : 'No movement in 90+ days',
+        caption: data.deadStockValue == null ? 'Not tracked yet' : 'No movement in 90+ days · today',
         definition: data.deadStockValue == null
             ? 'Needs a record of stock received and used, which the system does not keep yet.'
-            : null,
+            : 'The value of active items with no stock movement in the last 90 days.',
         valueColor: DashUi.red,
         index: 1,
       ),
       AnimatedMetricCard(
-        // Items at or below a reorder point that has been set.
+        // Items at or below a reorder point that has been set. Amber only when there are some (none is not a problem).
         title: 'At or below reorder point',
         value: data.lowStockCount.toDouble(),
         format: (v) => v.round().toString(),
-        caption: 'Reorder point set · today',
+        caption: 'Items with a reorder point · today',
         definition: 'Active items whose on-hand quantity is at or below their reorder point. Items with '
             'no reorder point are not counted.',
-        valueColor: DashUi.amber,
+        valueColor: data.lowStockCount > 0 ? DashUi.amber : DashUi.ink,
         index: 2,
       ),
       AnimatedMetricCard(
-        // Shows "—" until cycle counts record expected vs counted (it used to be a fixed 98.4%).
-        title: data.accuracyPct == null ? 'Count accuracy' : 'Inventory Accuracy',
+        // This year's cycle counts against the system quantity: the same figure, title and wording as the warehouse
+        // KPI page (an item counted twice is two counts). Shows "—" until a count with quantities has been recorded
+        // this year (it used to be a fixed 98.4%).
+        title: 'Inventory accuracy',
         value: data.accuracyPct,
         format: (v) => '${v.toStringAsFixed(1)}%',
-        caption: data.accuracyPct == null ? 'Not tracked yet' : 'Counted vs expected',
+        caption: data.accuracyPct == null
+            ? 'Starts with the next count'
+            : (data.accuracyCounted != null && data.accuracyMatched != null
+                ? '${data.accuracyMatched} of ${dashCount(data.accuracyCounted!, 'count')} matched · ${now.year}'
+                : 'Counts that matched · ${now.year}'),
         definition: data.accuracyPct == null
-            ? 'Needs cycle counts that record expected and counted quantities, which are not kept yet.'
-            : null,
-        valueColor: DashUi.emeraldDeep,
+            ? 'The share of item counts whose shelf count matched the system quantity. No cycle count with quantities '
+                'has been recorded in ${now.year} yet, so it starts with the next one.'
+            : 'The share of the item counts recorded in ${now.year}'
+                '${data.accuracyCounted == null ? '' : ' (${data.accuracyMatched} of ${data.accuracyCounted})'} whose '
+                'shelf count matched the system quantity. An item counted twice counts twice, and zones still in '
+                "progress are included. The target is 95%. The warehouse team's KPI page shows it week by week.",
+        valueColor: data.accuracyPct == null
+            ? DashUi.muted
+            : (data.accuracyPct! >= 95 ? DashUi.emeraldDeep : (data.accuracyPct! >= 90 ? DashUi.amber : DashUi.red)),
         index: 3,
       ),
       _DateCard(
@@ -285,8 +309,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> w
         caption: daysAgo == null
             ? 'No zone counted yet'
             : daysAgo <= 0
-                ? 'Latest zone finished · today'
-                : 'Latest zone finished · ${dashCount(daysAgo, 'day')} ago',
+                ? 'Zone finished today'
+                : 'Zone finished ${dashCount(daysAgo, 'day')} ago',
         definition: 'When the most recent cycle-count zone was finished.',
         index: 4,
       ),
@@ -308,9 +332,8 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> w
           ? _MovementChart(months: data.monthly, year: widget.selectedYear)
           : _NotTrackedPanel(
               g: g,
-              title: 'Stock received, used and on hand by month',
-              message: 'Not tracked yet. Stock movement (receiving and parts used on jobs) is not recorded in the '
-                  'system yet, so there is nothing real to chart. This fills in once it is.',
+              title: 'Not tracked yet',
+              message: 'Stock received and parts used on jobs aren\'t recorded in the system yet.',
             ),
       movementTracked: data.movementTracked,
     );
@@ -412,14 +435,44 @@ class _Grid extends StatelessWidget {
     );
   }
 
-  Widget _tileRow(List<Widget> row) => Row(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      for (var i = 0; i < row.length; i++) ...[
-        if (i > 0) const SizedBox(width: 12),
-        Expanded(child: row[i]),
-      ],
-    ],
+  /// The scorecards side by side, the row shared by what each card's words need, so a long title or caption ("At or
+  /// below reorder point", "6 days ago") isn't cut short at larger text while a "—" card has room to spare. The stock
+  /// value's trend line only claims its room when the whole row can give it; placeholders share the row evenly.
+  Widget _tileRow(List<Widget> row) => LayoutBuilder(
+    builder: (context, c) {
+      double? need(Widget w, {required bool line}) => switch (w) {
+        AnimatedMetricCard m => dashTileWidth(
+            (line && m.trend != null ? dashSparkRoom : dashTileTextWidth)(
+              context,
+              title: m.title,
+              value: m.value == null ? '—' : m.format(m.value!),
+              caption: m.caption,
+            ),
+          ),
+        // Its date is drawn at 22 px, not the 28 px dashTileTextWidth measures a value at.
+        _DateCard d => dashTileWidth(
+            math.max(
+              dashTileTextWidth(context, title: d.title, value: '', caption: d.caption),
+              dashTileTextWidth(context, title: '', value: d.value) * 22 / 28,
+            ),
+          ),
+        _ => null,
+      };
+      final withLines = [for (final w in row) need(w, line: true)];
+      final fits = withLines.every((n) => n != null) &&
+          withLines.fold<double>(0, (a, n) => a + n!) + 12 * (row.length - 1) <= c.maxWidth;
+      final needs = fits ? withLines : [for (final w in row) need(w, line: false)];
+      final even = needs.any((n) => n == null);
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < row.length; i++) ...[
+            if (i > 0) const SizedBox(width: 12),
+            Expanded(flex: even ? 1 : needs[i]!.round(), child: row[i]),
+          ],
+        ],
+      );
+    },
   );
 }
 
@@ -477,9 +530,11 @@ class _DateCardState extends State<_DateCard> with SingleTickerProviderStateMixi
       child: ExcludeSemantics(
         child: FadeTransition(
           opacity: t,
-          child: Tooltip(
-            message: w.definition,
-            waitDuration: const Duration(milliseconds: 400),
+          child: DashHoverCard(
+            title: w.title,
+            value: w.value,
+            body: w.definition,
+            color: DashUi.ink,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
               decoration: DashUi.panel(radius: 12),
@@ -565,8 +620,12 @@ class _CategoryPanelState extends State<_CategoryPanel> {
   Widget build(BuildContext context) {
     final w = widget;
     final g = w.g;
-    final cats = w.categories;
+    // Biggest first, in both views (the server sends them by name), so the finding names the top row.
+    final cats = [...w.categories]..sort((a, b) => b.total.compareTo(a.total));
     final maxV = cats.fold<double>(0, (m, c) => math.max(m, c.total));
+    // Dead stock needs a movement history the system doesn't keep yet, so every category's dead value is 0: the key
+    // and the hover text leave it out instead of saying "Dead $0" as if it were measured.
+    final deadTracked = cats.any((c) => c.deadValue > 0);
     final base = w.tall ? g.rowTall : g.rowWide;
 
     final header = DashPanelHeader(
@@ -574,8 +633,9 @@ class _CategoryPanelState extends State<_CategoryPanel> {
       title: _health ? 'Stock health by category' : 'Value by category',
       note: 'today',
       tooltip: _health
-          ? 'Each category split into active stock, stock at or below its reorder point, and dead stock.'
-          : 'On-hand value of each category, as of now, and its share of the stock value.',
+          ? 'Each category by value: stock that is not low (above its reorder point, or no reorder point set) and '
+              'stock at or below its reorder point.'
+          : 'On-hand value of each category, as of now, and its share of the stock value, biggest first.',
       trailing: cats.isEmpty
           ? null
           : DashSegmented<bool>(
@@ -594,41 +654,52 @@ class _CategoryPanelState extends State<_CategoryPanel> {
       );
     }
 
-    // The legend has its own line so every row keeps its width (and is there in both views so nothing moves).
+    // The legend has its own line so every row keeps its width (and is there in both views so nothing moves); by value
+    // it names the finding instead.
+    final top = cats.reduce((a, b) => b.total > a.total ? b : a);
     final legend = SizedBox(
       height: g.line(12.5) + 6,
       child: Align(
         alignment: Alignment.centerLeft,
         child: ExcludeSemantics(
           child: _health
-              ? const Wrap(
+              ? Wrap(
                   spacing: 14,
                   children: [
-                    DashLegendSwatch(color: _active, text: 'Active'),
-                    DashLegendSwatch(color: _low, text: 'At or below reorder point'),
-                    DashLegendSwatch(color: _dead, text: 'Dead'),
+                    const DashLegendSwatch(color: _active, text: 'Not low'),
+                    const DashLegendSwatch(color: _low, text: 'At or below reorder point'),
+                    if (deadTracked) const DashLegendSwatch(color: _dead, text: 'Dead'),
                   ],
                 )
-              : Text('${dashCount(cats.length, 'category')} · ${_moneyFull(w.total)} in all', style: DashText.legend),
+              : Text(
+                  '${top.name} holds ${dashShare(top.total, w.total)} of the stock value · ${dashCount(cats.length, 'category')}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: DashUi.slate),
+                ),
         ),
       ),
     );
 
-    final rows = DashRows(
+    // Filling a panel, the rows share its whole height evenly (so a tall window has no blank half-panel under six rows),
+    // and their bars thicken with them, 8 px up to 14.
+    Widget rows(double h) => DashRows(
       count: cats.length,
       base: base,
-      give: 24,
+      give: w.fill ? double.infinity : 24,
       row: (i) {
         final c = cats[i];
+        final barH = 8 + 6 * ((h - base) / 48).clamp(0.0, 1.0);
         final share = dashShare(c.total, w.total);
         final lowShare = dashShare(c.lowStockValue, c.total);
-        final health = 'active ${_moneyFull(c.activeValue)}, at or below reorder point ${_moneyFull(c.lowStockValue)}, '
-            'dead ${_moneyFull(c.deadValue)}';
+        final health = 'not low ${_moneyFull(c.activeValue)}, at or below reorder point '
+            '${_moneyFull(c.lowStockValue)}${deadTracked ? ', dead ${_moneyFull(c.deadValue)}' : ''}';
         return DashBarRow(
           g: g,
           label: c.name,
           fraction: maxV > 0 ? c.total / maxV : 0,
-          color: c.color,
+          // One colour by value (a category is not a meaning); the health view's parts carry the colours.
+          color: DashUi.blue,
           amount: _moneyFull(c.total),
           detail: _health ? '$lowShare low' : share,
           tall: w.tall,
@@ -636,11 +707,14 @@ class _CategoryPanelState extends State<_CategoryPanel> {
           amountWidth: _CategoryPanel.amountWidth,
           detailWidth: _CategoryPanel.detailWidth,
           bar: _health
-              ? DashStackBar(parts: [(c.activeValue, _active), (c.lowStockValue, _low), (c.deadValue, _dead)])
-              : null,
+              ? DashStackBar(
+                  parts: [(c.activeValue, _active), (c.lowStockValue, _low), (c.deadValue, _dead)],
+                  height: barH,
+                )
+              : DashBar(fraction: maxV > 0 ? c.total / maxV : 0, color: DashUi.blue, height: barH),
           tooltip: _health
-              ? 'Active ${_moneyFull(c.activeValue)}\nAt or below reorder point ${_moneyFull(c.lowStockValue)}\n'
-                  'Dead ${_moneyFull(c.deadValue)}'
+              ? 'Not low ${_moneyFull(c.activeValue)}\nAt or below reorder point ${_moneyFull(c.lowStockValue)}'
+                  '${deadTracked ? '\nDead ${_moneyFull(c.deadValue)}' : ''}'
               : (c.name.length > 20 ? c.name : null),
           semanticsLabel: '${c.name}: ${_moneyFull(c.total)}, $share of stock value. ${health[0].toUpperCase()}${health.substring(1)}',
         );
@@ -655,7 +729,14 @@ class _CategoryPanelState extends State<_CategoryPanel> {
         mainAxisSize: MainAxisSize.min,
         children: [
           legend,
-          if (w.fill) Expanded(child: Align(alignment: Alignment.topCenter, child: rows)) else rows,
+          if (w.fill)
+            Expanded(
+              child: LayoutBuilder(
+                builder: (context, c) => rows(math.max(base, c.maxHeight / cats.length)),
+              ),
+            )
+          else
+            rows(base),
         ],
       ),
     );
@@ -663,7 +744,7 @@ class _CategoryPanelState extends State<_CategoryPanel> {
 }
 
 // =============================================================================
-// INVENTORY STRIKES (fewest first, all-time)
+// INVENTORY STRIKES (the three with the fewest, all time)
 // =============================================================================
 
 class _StrikesPanel extends StatelessWidget {
@@ -679,15 +760,17 @@ class _StrikesPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashPanel(
       fill: true,
+      // The server sends the best three only (fewest strikes), so the title says it is a "fewest" list, not everyone.
       header: DashPanelHeader(
         g: g,
-        title: 'Inventory strikes',
-        note: 'fewest first · all-time',
+        title: 'Fewest inventory strikes',
+        note: 'all time',
         // Strikes are a running total per tech (users.inventory_strikes), not per year.
-        tooltip: 'Strikes for inventory mistakes, a running total per technician (not per year). Fewest ranks first.',
+        tooltip: 'The three technicians with the fewest strikes for inventory mistakes, fewest first. Strikes are a '
+            'running total per technician, not per year.',
       ),
       child: techs.isEmpty
-          ? const DashEmptyNote('No inventory strike data recorded.')
+          ? const DashEmptyNote('No active technicians to rank.')
           : DashRows(
               count: techs.length,
               base: rowH(g),
@@ -743,32 +826,73 @@ class _NotTrackedPanel extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashPanel(
       fill: true,
-      header: DashPanelHeader(g: g, title: 'Stock movement', note: 'by month'),
+      header: DashPanelHeader(
+        g: g,
+        title: 'Stock movement',
+        note: 'by month',
+        tooltip: 'Stock received, used on jobs and on hand, month by month, once the system records it.',
+      ),
       child: Semantics(
         label: '$title. $message',
         child: ExcludeSemantics(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(9)),
-                child: const Icon(Icons.hourglass_empty_rounded, size: 18, color: DashUi.slate),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: '$title. ', style: const TextStyle(fontWeight: FontWeight.w700, color: DashUi.ink)),
-                      TextSpan(text: message),
-                    ],
+          child: LayoutBuilder(
+            builder: (context, c) {
+              final note = Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(9)),
+                    child: const Icon(Icons.hourglass_empty_rounded, size: 18, color: DashUi.slate),
                   ),
-                  style: const TextStyle(fontSize: 13, height: 1.4, color: DashUi.slate),
-                ),
-              ),
-            ],
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text.rich(
+                      TextSpan(
+                        children: [
+                          TextSpan(text: '$title. ', style: const TextStyle(fontWeight: FontWeight.w700, color: DashUi.ink)),
+                          TextSpan(text: message),
+                        ],
+                      ),
+                      style: const TextStyle(fontSize: 13, height: 1.4, color: DashUi.slate),
+                    ),
+                  ),
+                ],
+              );
+              // With height to spare (a tall window), the note sits in the middle of the card as an empty state, with
+              // a faint baseline of the twelve months the chart will fill, instead of three lines over a blank card.
+              if (!c.maxHeight.isFinite || c.maxHeight < 200) return note;
+              return Column(
+                children: [
+                  const Spacer(),
+                  ConstrainedBox(constraints: const BoxConstraints(maxWidth: 460), child: note),
+                  const SizedBox(height: 18),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 460),
+                    child: Row(
+                      children: [
+                        for (final m in dashMonthNames)
+                          Expanded(
+                            child: Column(
+                              children: [
+                                Container(
+                                  height: 3,
+                                  margin: const EdgeInsets.symmetric(horizontal: 3),
+                                  decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(2)),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(m, style: DashText.meta.copyWith(fontSize: 10.5, color: DashUi.muted)),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Spacer(flex: 2),
+                ],
+              );
+            },
           ),
         ),
       ),

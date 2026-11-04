@@ -11,12 +11,15 @@
 //
 // The Collections dashboard still has its own private copies of the first few; they behave the same.
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'dash_hover_card.dart';
 import 'dashboard_data.dart';
+import 'dash_story.dart';
 import 'dashboard_kit.dart';
 
 /// Space between panels.
@@ -71,9 +74,7 @@ class DashGeo {
   /// A scorecard row (title, value and caption).
   final double tile;
 
-  DashGeo.of(BuildContext context)
-      : s = MediaQuery.textScalerOf(context),
-        tile = dashTileHeight(context);
+  DashGeo.of(BuildContext context) : s = MediaQuery.textScalerOf(context), tile = dashTileHeight(context);
 
   double line(double size, [double height = 1.3]) => s.scale(size) * height;
 
@@ -95,6 +96,9 @@ class DashGeo {
   /// A name with a line of detail under it.
   double get listRow => math.max(44.0, line(13.5) + line(12) + 10);
 
+  /// The line under a panel's title naming its finding ([DashCallout]).
+  double get callout => line(12) + 6;
+
   /// A column-heading row over a table.
   double get columnHead => line(12) + 6;
 
@@ -112,17 +116,20 @@ double dashTileTextWidth(BuildContext context, {required String title, required 
   // Text inherits the page's style (its font and letter spacing), so measure with it.
   final base = DefaultTextStyle.of(context).style;
   double w(String text, double size, FontWeight weight) => (TextPainter(
-    text: TextSpan(text: text, style: base.merge(TextStyle(fontSize: size, fontWeight: weight))),
+    text: TextSpan(
+      text: text,
+      style: base.merge(TextStyle(fontSize: size, fontWeight: weight)),
+    ),
     textDirection: TextDirection.ltr,
     textScaler: s,
     maxLines: 1,
-  )..layout())
-      .width;
+  )..layout()).width;
   return [
-    w(title, 13, FontWeight.w600),
-    w(value, 28, FontWeight.w800),
-    if (caption.isNotEmpty) w(caption, 12, FontWeight.w500),
-  ].reduce(math.max).ceilToDouble() + 2;
+        w(title, 13, FontWeight.w600),
+        w(value, 28, FontWeight.w800),
+        if (caption.isNotEmpty) w(caption, 12, FontWeight.w500),
+      ].reduce(math.max).ceilToDouble() +
+      2;
 }
 
 /// A scorecard's `sparkMinWidth`: its trend line (84 px and a 12 px gap) only shows when the words still fit beside it.
@@ -184,7 +191,8 @@ class DashPanelHeader extends StatelessWidget {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    if (tooltip != null) text = Tooltip(message: tooltip!, waitDuration: const Duration(milliseconds: 500), child: text);
+    if (tooltip != null)
+      text = Tooltip(message: tooltip!, waitDuration: const Duration(milliseconds: 500), child: text);
     return SizedBox(
       height: g.panelHeader,
       child: Row(
@@ -193,7 +201,9 @@ class DashPanelHeader extends StatelessWidget {
             child: Semantics(
               header: true,
               label: note == null ? title : '$title, $note',
-              child: ExcludeSemantics(child: Align(alignment: Alignment.centerLeft, child: text)),
+              child: ExcludeSemantics(
+                child: Align(alignment: Alignment.centerLeft, child: text),
+              ),
             ),
           ),
           if (trailing != null) ...[const SizedBox(width: 10), trailing!],
@@ -203,13 +213,36 @@ class DashPanelHeader extends StatelessWidget {
   }
 }
 
+/// The line under a panel's title that names what its figures show, in words ("Payroll is 38% of spending").
+class DashCallout extends StatelessWidget {
+  final DashGeo g;
+  final String text;
+  final Color color;
+  const DashCallout({super.key, required this.g, required this.text, this.color = DashUi.emeraldText});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: g.callout,
+    child: Align(
+      alignment: Alignment.topLeft,
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: color),
+      ),
+    ),
+  );
+}
+
 class DashEmptyNote extends StatelessWidget {
   final String text;
   const DashEmptyNote(this.text, {super.key});
 
   @override
-  Widget build(BuildContext context) =>
-      Center(child: Text(text, textAlign: TextAlign.center, style: DashText.empty));
+  Widget build(BuildContext context) => Center(
+    child: Text(text, textAlign: TextAlign.center, style: DashText.empty),
+  );
 }
 
 /// The blue keyboard-focus ring (never shown after a click). Always a decoration, transparent when unfocused:
@@ -234,6 +267,10 @@ class DashPressable extends StatefulWidget {
   final bool? selected;
   final BorderRadius radius;
   final Widget Function(bool hover) builder;
+
+  /// For a button that opens a menu: the same node goes to the MenuAnchor's `childFocusNode`, so the keyboard can move
+  /// into the menu and back.
+  final FocusNode? focusNode;
   const DashPressable({
     super.key,
     required this.onTap,
@@ -242,6 +279,7 @@ class DashPressable extends StatefulWidget {
     this.selected,
     required this.radius,
     required this.builder,
+    this.focusNode,
   });
 
   @override
@@ -271,6 +309,7 @@ class _DashPressableState extends State<DashPressable> {
       inMutuallyExclusiveGroup: widget.selected == null ? null : true,
       onTap: onTap,
       child: FocusableActionDetector(
+        focusNode: widget.focusNode,
         mouseCursor: SystemMouseCursors.click,
         actions: {
           ActivateIntent: CallbackAction<ActivateIntent>(
@@ -402,10 +441,11 @@ class DashBar extends StatelessWidget {
           tween: Tween(begin: 0, end: fraction.clamp(0.0, 1.0)),
           duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 700),
           curve: Curves.easeOutCubic,
-          builder: (context, t, _) => Container(
+          builder: (context, t, _) => _BarFx(
             width: math.max(fraction > 0 ? height : 0.0, c.maxWidth * t),
             height: height,
-            decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(height / 2)),
+            glow: color,
+            child: ColoredBox(color: color),
           ),
         ),
       ),
@@ -422,10 +462,11 @@ class DashStackBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = parts.fold<double>(0, (s, p) => s + math.max(0, p.$1));
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(height / 2),
-      child: Container(
-        height: height,
+    final biggest = parts.isEmpty ? DashUi.slate : parts.reduce((a, b) => b.$1 > a.$1 ? b : a).$2;
+    return _BarFx(
+      height: height,
+      glow: biggest,
+      child: ColoredBox(
         color: DashUi.faint,
         child: total <= 0
             ? null
@@ -433,12 +474,139 @@ class DashStackBar extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   for (final p in parts)
-                    if (p.$1 > 0) Expanded(flex: math.max(1, (p.$1 / total * 1000).round()), child: ColoredBox(color: p.$2)),
+                    if (p.$1 > 0)
+                      Expanded(
+                        flex: math.max(1, (p.$1 / total * 1000).round()),
+                        child: ColoredBox(color: p.$2),
+                      ),
                 ],
               ),
       ),
     );
   }
+}
+
+/// Tells the bar inside a [DashBarRow] that the pointer is over its row.
+class _BarHover extends InheritedWidget {
+  final bool hover;
+  const _BarHover({required this.hover, required super.child});
+
+  static bool of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<_BarHover>()?.hover ?? false;
+
+  @override
+  bool updateShouldNotify(_BarHover old) => hover != old.hover;
+}
+
+/// A bar's fill, with the hover effect: while the pointer is over the row the fill swells past its track, glows in its
+/// own colour, and a band of light sweeps across it once. Under reduced motion it only swells and glows (no sweep).
+class _BarFx extends StatefulWidget {
+  final double? width;
+  final double height;
+  final Color glow;
+  final Widget child;
+  const _BarFx({this.width, required this.height, required this.glow, required this.child});
+
+  @override
+  State<_BarFx> createState() => _BarFxState();
+}
+
+class _BarFxState extends State<_BarFx> with SingleTickerProviderStateMixin {
+  late final AnimationController _sweep = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  bool _wasHover = false;
+
+  @override
+  void dispose() {
+    _sweep.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hover = _BarHover.of(context);
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    if (hover && !_wasHover && !reduce) _sweep.forward(from: 0);
+    if (!hover) _sweep.value = 0;
+    _wasHover = hover;
+    final radius = BorderRadius.circular(widget.height / 2);
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: hover ? 1.0 : 0.0),
+      duration: reduce ? Duration.zero : const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      builder: (context, h, child) => SizedBox(
+        width: widget.width,
+        height: widget.height,
+        child: Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.diagonal3Values(1, 1 + 0.7 * h, 1),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: radius,
+              boxShadow: h > 0
+                  ? [
+                      BoxShadow(
+                        color: widget.glow.withValues(alpha: 0.5 * h),
+                        blurRadius: 12 * h,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: ClipRRect(
+              borderRadius: radius,
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  child!,
+                  if (h > 0 && !reduce)
+                    IgnorePointer(
+                      child: AnimatedBuilder(
+                        animation: _sweep,
+                        builder: (context, _) {
+                          final x = -2 + 4 * Curves.easeInOut.transform(_sweep.value);
+                          return DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment(x - 0.5, 0),
+                                end: Alignment(x + 0.5, 0),
+                                colors: [
+                                  Colors.white.withValues(alpha: 0),
+                                  Colors.white.withValues(alpha: 0.6),
+                                  Colors.white.withValues(alpha: 0),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+      child: widget.child,
+    );
+  }
+}
+
+/// Tracks the pointer over its content, for rows that have nothing to open (so [DashPressable] has no hover state).
+class _RowHover extends StatefulWidget {
+  final Widget Function(bool hover) builder;
+  const _RowHover({required this.builder});
+
+  @override
+  State<_RowHover> createState() => _RowHoverState();
+}
+
+class _RowHoverState extends State<_RowHover> {
+  bool _in = false;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    onEnter: (_) => setState(() => _in = true),
+    onExit: (_) => setState(() => _in = false),
+    child: widget.builder(_in),
+  );
 }
 
 /// Rows spread over a panel's height when it is given one (a little: never below [base], at most [base] + [give]),
@@ -535,48 +703,64 @@ class DashBarRow extends StatelessWidget {
       label: semanticsLabel,
       hint: open ? (hint ?? 'Opens the list') : null,
       radius: BorderRadius.circular(8),
-      builder: (hover) => AnimatedContainer(
-        duration: const Duration(milliseconds: 120),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        decoration: BoxDecoration(
-          color: hover ? color.withValues(alpha: 0.08) : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: tall
-                  ? Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(children: [Expanded(child: labelText), const SizedBox(width: 8), amountText]),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Expanded(child: barWidget),
-                            if (detailText != null) ...[const SizedBox(width: 10), detailText],
-                          ],
-                        ),
-                      ],
-                    )
-                  : Row(
-                      children: [
-                        SizedBox(width: labelWidth * k, child: labelText),
-                        const SizedBox(width: 8),
-                        Expanded(child: barWidget),
-                        const SizedBox(width: 12),
-                        SizedBox(width: amountWidth * k, child: amountText),
-                        if (detailText != null) SizedBox(width: detailWidth * k, child: detailText),
-                      ],
-                    ),
+      builder: (pressHover) => _RowHover(
+        builder: (rowHover) {
+          final hover = pressHover || rowHover;
+          return _BarHover(
+            hover: hover,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: hover ? color.withValues(alpha: 0.08) : color.withValues(alpha: 0),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: tall
+                        ? Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(child: labelText),
+                                  const SizedBox(width: 8),
+                                  amountText,
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Row(
+                                children: [
+                                  Expanded(child: barWidget),
+                                  if (detailText != null) ...[const SizedBox(width: 10), detailText],
+                                ],
+                              ),
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              SizedBox(width: labelWidth * k, child: labelText),
+                              const SizedBox(width: 8),
+                              Expanded(child: barWidget),
+                              const SizedBox(width: 12),
+                              SizedBox(width: amountWidth * k, child: amountText),
+                              if (detailText != null) SizedBox(width: detailWidth * k, child: detailText),
+                            ],
+                          ),
+                  ),
+                  SizedBox(
+                    width: open ? 22 : 0,
+                    child: open
+                        ? Icon(Icons.chevron_right_rounded, size: 18, color: hover ? DashUi.ink : DashUi.subtle)
+                        : null,
+                  ),
+                ],
+              ),
             ),
-            SizedBox(
-              width: open ? 22 : 0,
-              child: open ? Icon(Icons.chevron_right_rounded, size: 18, color: hover ? DashUi.ink : DashUi.subtle) : null,
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -611,7 +795,13 @@ class DashRankBadge extends StatelessWidget {
       ),
       child: Text(
         '$rank',
-        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, height: 1.2, color: fg, fontFeatures: DashText.tabular),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w800,
+          height: 1.2,
+          color: fg,
+          fontFeatures: DashText.tabular,
+        ),
       ),
     );
   }
@@ -622,61 +812,128 @@ class DashRankBadge extends StatelessWidget {
 // =============================================================================
 
 /// A row of choices, one selected: a chart's views ("Revenue", "Profit"). Each is a button screen readers hear as
-/// one of a group, reachable with Tab; the arrow keys are left to the chart.
-class DashSegmented<T> extends StatelessWidget {
+/// one of a group, reachable with Tab; the arrow keys are left to the chart. The selected one is white with its label
+/// in ink, like every tab in the app (the calendar's included): never a coloured label.
+class DashSegmented<T> extends StatefulWidget {
   final T value;
   final List<(T, String)> options;
   final ValueChanged<T> onChanged;
 
   /// What the choice is about, read before each option ("Chart view").
   final String label;
-  final Color activeColor;
+
   const DashSegmented({
     super.key,
     required this.value,
     required this.options,
     required this.onChanged,
     required this.label,
-    this.activeColor = DashUi.blue,
   });
 
   @override
+  State<DashSegmented<T>> createState() => _DashSegmentedState<T>();
+}
+
+/// The white pill is one piece that slides to the option picked (measured after layout, so it fits any label and any
+/// text size); until the first measurement, and with reduced motion, the selected option simply draws it in place.
+class _DashSegmentedState<T> extends State<DashSegmented<T>> {
+  final _stack = GlobalKey();
+  final _keys = <GlobalKey>[];
+  Rect? _thumb;
+
+  static const _pill = BorderRadius.all(Radius.circular(6));
+
+  void _measure() {
+    if (!mounted) return;
+    final i = widget.options.indexWhere((o) => o.$1 == widget.value);
+    final stack = _stack.currentContext?.findRenderObject() as RenderBox?;
+    final box = i < 0 || i >= _keys.length ? null : _keys[i].currentContext?.findRenderObject() as RenderBox?;
+    if (stack == null || box == null || !stack.hasSize || !box.hasSize) return;
+    final r = box.localToGlobal(Offset.zero, ancestor: stack) & box.size;
+    if (r != _thumb) setState(() => _thumb = r);
+  }
+
+  @override
   Widget build(BuildContext context) {
+    while (_keys.length < widget.options.length) {
+      _keys.add(GlobalKey());
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    final still = MediaQuery.disableAnimationsOf(context);
+    final thumb = _thumb;
     return Container(
       padding: const EdgeInsets.all(2),
       decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(8)),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
+        key: _stack,
         children: [
-          for (final o in options)
-            DashPressable(
-              onTap: o.$1 == value ? () {} : () => onChanged(o.$1),
-              label: '$label: ${o.$2}',
-              selected: o.$1 == value,
-              radius: BorderRadius.circular(6),
-              builder: (hover) {
-                final on = o.$1 == value;
-                return AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+          if (thumb != null)
+            AnimatedPositioned(
+              duration: still ? Duration.zero : const Duration(milliseconds: 280),
+              curve: Curves.easeOutCubic,
+              left: thumb.left,
+              top: thumb.top,
+              width: thumb.width,
+              height: thumb.height,
+              child: IgnorePointer(
+                child: Container(
                   decoration: BoxDecoration(
-                    color: on ? Colors.white : (hover ? Colors.white.withValues(alpha: 0.6) : Colors.white.withValues(alpha: 0)),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: on ? DashUi.line : DashUi.line.withValues(alpha: 0)),
+                    color: Colors.white,
+                    borderRadius: _pill,
+                    border: Border.all(color: DashUi.line),
+                    boxShadow: [
+                      BoxShadow(color: DashUi.ink.withValues(alpha: 0.06), blurRadius: 4, offset: const Offset(0, 1)),
+                    ],
                   ),
-                  child: Text(
-                    o.$2,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      height: 1.3,
-                      fontWeight: on ? FontWeight.w700 : FontWeight.w600,
-                      color: on ? activeColor : DashUi.slate,
-                    ),
-                  ),
-                );
-              },
+                ),
+              ),
             ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < widget.options.length; i++)
+                KeyedSubtree(
+                  key: _keys[i],
+                  child: DashPressable(
+                    onTap: widget.options[i].$1 == widget.value ? () {} : () => widget.onChanged(widget.options[i].$1),
+                    label: '${widget.label}: ${widget.options[i].$2}',
+                    selected: widget.options[i].$1 == widget.value,
+                    radius: _pill,
+                    builder: (hover) {
+                      final on = widget.options[i].$1 == widget.value;
+                      // The sliding pill draws the selection once it is measured; before that the option does.
+                      final own = on && thumb == null;
+                      return AnimatedContainer(
+                        duration: still ? Duration.zero : const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: own
+                              ? Colors.white
+                              : (hover && !on
+                                    ? Colors.white.withValues(alpha: 0.6)
+                                    : Colors.white.withValues(alpha: 0)),
+                          borderRadius: _pill,
+                          border: Border.all(color: own ? DashUi.line : DashUi.line.withValues(alpha: 0)),
+                        ),
+                        child: AnimatedDefaultTextStyle(
+                          duration: still ? Duration.zero : const Duration(milliseconds: 200),
+                          // Merged, so the labels keep the app's font (this replaces the ambient style).
+                          style: DefaultTextStyle.of(context).style.merge(
+                            TextStyle(
+                              fontSize: 12.5,
+                              height: 1.3,
+                              fontWeight: on ? FontWeight.w700 : FontWeight.w600,
+                              color: on ? DashUi.ink : DashUi.slate,
+                            ),
+                          ),
+                          child: Text(widget.options[i].$2, maxLines: 1),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
         ],
       ),
     );
@@ -709,7 +966,8 @@ class DashChangeChip extends StatelessWidget {
     return DashChangeChip(
       pct: c.pct,
       text: '$pct% ${c.label}',
-      tooltip: '$what in ${parts.first} against ${parts.last}, the last two finished months. '
+      tooltip:
+          '$what in ${parts.first} against ${parts.last}, the last two finished months. '
           'The month in progress is never compared.',
       semanticsLabel: '${c.pct >= 0 ? 'Up' : 'Down'} $pct% in ${parts.first} against ${parts.last}',
       upIsGood: upIsGood,
@@ -734,7 +992,10 @@ class DashChangeChip extends StatelessWidget {
               children: [
                 Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 13, color: color),
                 const SizedBox(width: 3),
-                Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, height: 1.3, color: color)),
+                Text(
+                  text,
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, height: 1.3, color: color),
+                ),
               ],
             ),
           ),
@@ -768,7 +1029,12 @@ class DashLegendSwatch extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           for (var i = 0; i < 3; i++)
-            Container(width: 4, height: 2.5, margin: EdgeInsets.only(right: i == 2 ? 0 : 2), color: color),
+            Container(
+              width: 4,
+              height: 2.5,
+              margin: EdgeInsets.only(right: i == 2 ? 0 : 2),
+              color: color,
+            ),
         ],
       );
     } else {
@@ -787,7 +1053,9 @@ class DashLegendSwatch extends StatelessWidget {
       children: [
         swatch,
         const SizedBox(width: 6),
-        Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.legend)),
+        Flexible(
+          child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.legend),
+        ),
       ],
     );
   }
@@ -836,6 +1104,9 @@ class DashSplitPanel extends StatelessWidget {
   final List<DashSplitItem> items;
   final String emptyText;
   final String? tooltip;
+
+  /// The finding, after the title ("led by residential (41%)"); the biggest part and its share when not given.
+  final String? finding;
   const DashSplitPanel({
     super.key,
     required this.g,
@@ -844,6 +1115,7 @@ class DashSplitPanel extends StatelessWidget {
     required this.items,
     required this.emptyText,
     this.tooltip,
+    this.finding,
   });
 
   @override
@@ -869,15 +1141,30 @@ class DashSplitPanel extends StatelessWidget {
               label: note == null ? title : '$title, $note',
               child: ExcludeSemantics(child: titleText),
             ),
+            if (total > 0) ...[
+              const SizedBox(width: 4),
+              Flexible(
+                flex: 3,
+                child: Text(
+                  '· ${finding ?? _biggest(total)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: DashUi.slate),
+                ),
+              ),
+            ],
             const SizedBox(width: 16),
-            Expanded(child: total <= 0 ? const SizedBox.shrink() : _splitBar(total)),
+            Expanded(flex: 2, child: total <= 0 ? const SizedBox.shrink() : _splitBar(total)),
           ],
         ),
       ),
       child: total <= 0
           ? SizedBox(
               height: g.line(13) + 3 + g.line(15, 1.2),
-              child: Align(alignment: Alignment.centerLeft, child: Text(emptyText, style: DashText.empty)),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(emptyText, style: DashText.empty),
+              ),
             )
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -889,6 +1176,13 @@ class DashSplitPanel extends StatelessWidget {
               ],
             ),
     );
+  }
+
+  /// "mostly residential (62%)" when the biggest part is the majority, "led by residential (41%)" when it isn't.
+  String _biggest(double total) {
+    final top = items.reduce((a, b) => b.amount > a.amount ? b : a);
+    final lead = top.amount * 2 > total ? 'mostly' : 'led by';
+    return '$lead ${top.label.toLowerCase()} (${dashShare(top.amount, total)})';
   }
 
   /// Repeats the figures listed under it, so screen readers skip it.
@@ -1006,7 +1300,10 @@ class DashSkeletonPanel extends StatelessWidget {
           const Expanded(child: SkeletonBox(r: 10))
         else
           for (var i = 0; i < rows; i++)
-            SizedBox(height: rowH, child: const Align(alignment: Alignment.centerLeft, child: SkeletonBox(h: 12))),
+            SizedBox(
+              height: rowH,
+              child: const Align(alignment: Alignment.centerLeft, child: SkeletonBox(h: 12)),
+            ),
       ],
     ),
   );
@@ -1024,7 +1321,26 @@ class DashSeries {
   final List<double> values;
   final Color color;
   final DashSeriesKind kind;
-  const DashSeries(this.label, this.values, this.color, {this.kind = DashSeriesKind.bar});
+
+  /// Months (0-11) with no figure at all, as opposed to a real 0: a line breaks over them and draws no point there
+  /// (e.g. the rest of the team's labor a day in a month none of them has worked yet). Bars ignore it.
+  final Set<int> gaps;
+
+  /// Bars under zero drawn in this colour instead (a month that lost money), keyed as [belowLabel].
+  final Color? below;
+  final String belowLabel;
+  const DashSeries(
+    this.label,
+    this.values,
+    this.color, {
+    this.kind = DashSeriesKind.bar,
+    this.gaps = const {},
+    this.below,
+    this.belowLabel = 'Below zero',
+  });
+
+  /// The colour of the bar for [value].
+  Color colorFor(double value) => value < 0 && below != null ? below! : color;
 }
 
 /// One line of a month's tooltip, also read to screen readers.
@@ -1074,7 +1390,20 @@ class DashChartView {
   final Widget? badge;
   final String semanticsLabel;
 
-  const DashChartView({
+  /// The story (dash_story.dart): figures that answer the chart's question, shown over it ([DashStoryStat]s), and one
+  /// line naming the finding. With a story the key moves under the chart, like the KPI pages' charts.
+  final List<Widget>? headline;
+  final String? callout;
+  final Color calloutColor;
+
+  /// A line-only view drawn as a headline line ([_DashChartPainter._liveLine]): smooth, shaded against the target
+  /// ([average]), with the latest month's point pulsing (the only part of the chart that keeps moving).
+  final bool liveLine;
+  DashChartView({
+    DashStory? story,
+    List<Widget>? headline,
+    String? callout,
+    Color? calloutColor,
     required this.tab,
     required this.title,
     this.note,
@@ -1091,9 +1420,15 @@ class DashChartView {
     required this.emptyText,
     this.badge,
     required this.semanticsLabel,
-  });
+    this.liveLine = false,
+  }) : headline = headline ?? story?.headline,
+       callout = callout ?? story?.callout,
+       calloutColor = calloutColor ?? story?.calloutColor ?? DashUi.slate;
 
-  List<DashSeries> get bars => [for (final s in series) if (s.kind == DashSeriesKind.bar) s];
+  List<DashSeries> get bars => [
+    for (final s in series)
+      if (s.kind == DashSeriesKind.bar) s,
+  ];
   DashSeries? get line => series.where((s) => s.kind == DashSeriesKind.line).firstOrNull;
 }
 
@@ -1104,7 +1439,7 @@ class _MonthIntent extends Intent {
 
 /// Twelve months in a panel: bars for the year shown (the month in progress lighter, months to come empty), last
 /// year's ticks, a line, an average. Hover or the arrow keys pick a month and a tooltip beside it reads it out; a
-/// toggle in the title row switches between [views] (never on its own).
+/// toggle in the title row switches between [views] (on its own only when [autoCycle] is set).
 class DashMonthChart extends StatefulWidget {
   final List<DashChartView> views;
   final int year;
@@ -1112,21 +1447,65 @@ class DashMonthChart extends StatefulWidget {
   /// Called when the view changes (a page can keep the choice).
   final ValueChanged<int>? onView;
   final int initialView;
-  const DashMonthChart({super.key, required this.views, required this.year, this.onView, this.initialView = 0});
+
+  /// Step to the next view this often (the KPI pages; the dashboards leave it off). It holds while the pointer is on
+  /// the chart or it has keyboard focus, never runs with reduced motion, and a view picked by hand restarts the wait.
+  final Duration? autoCycle;
+  const DashMonthChart({
+    super.key,
+    required this.views,
+    required this.year,
+    this.onView,
+    this.initialView = 0,
+    this.autoCycle,
+  });
 
   @override
   State<DashMonthChart> createState() => _DashMonthChartState();
 }
 
-class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProviderStateMixin {
+class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStateMixin {
   late final AnimationController _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+
+  /// The latest point's pulse on a [DashChartView.liveLine] view; still on every other view.
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  );
   late int _view = widget.initialView.clamp(0, widget.views.length - 1);
 
   /// The month under the pointer, or picked with the arrow keys.
   int? _index;
   bool _focused = false;
 
+  /// [DashMonthChart.autoCycle]: the timer, and whether the pointer is over the panel.
+  Timer? _cycle;
+  bool _pointerIn = false;
+
   bool get _reduceMotion => MediaQuery.disableAnimationsOf(context);
+
+  @override
+  void initState() {
+    super.initState();
+    _restartCycle();
+  }
+
+  void _restartCycle() {
+    _cycle?.cancel();
+    final every = widget.autoCycle;
+    if (every == null) return;
+    _cycle = Timer.periodic(every, (_) {
+      // Also still while the page is off screen (another branch of the app's tabs is showing): tickers are off there.
+      if (!mounted ||
+          _pointerIn ||
+          _focused ||
+          _reduceMotion ||
+          widget.views.length < 2 ||
+          !TickerMode.getValuesNotifier(context).value.enabled)
+        return;
+      _show((_view + 1) % widget.views.length);
+    });
+  }
 
   @override
   void didChangeDependencies() {
@@ -1136,6 +1515,18 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
     } else if (_intro.isDismissed) {
       _intro.forward();
     }
+    _syncPulse();
+  }
+
+  /// The pulse runs only while a [DashChartView.liveLine] view shows and motion is on.
+  void _syncPulse() {
+    final live = widget.views.isNotEmpty && widget.views[_view.clamp(0, widget.views.length - 1)].liveLine;
+    if (live && !_reduceMotion) {
+      if (!_pulse.isAnimating) _pulse.repeat();
+    } else {
+      _pulse.stop();
+      if (_pulse.value != 0.35) _pulse.value = 0.35;
+    }
   }
 
   @override
@@ -1143,11 +1534,14 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
     super.didUpdateWidget(old);
     if (_view >= widget.views.length) _view = 0;
     if (old.year != widget.year) _replay();
+    _syncPulse();
   }
 
   @override
   void dispose() {
+    _cycle?.cancel();
     _intro.dispose();
+    _pulse.dispose();
     super.dispose();
   }
 
@@ -1160,12 +1554,20 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
     }
   }
 
+  /// A view picked by hand: shows it and restarts the auto-cycle's wait.
+
   void _setView(int i) {
+    _show(i);
+    _restartCycle();
+  }
+
+  void _show(int i) {
     if (i == _view) return;
     setState(() {
       _view = i;
       _replay();
     });
+    _syncPulse();
     widget.onView?.call(i);
   }
 
@@ -1232,11 +1634,15 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
 
     final legend = <Widget>[
       for (var i = 0; i < bars.length; i++) DashLegendSwatch(color: bars[i].color, text: bars[i].label),
+      for (final b in bars)
+        if (b.below != null && b.values.any((x) => x < 0)) DashLegendSwatch(color: b.below!, text: b.belowLabel),
       if (inProgress != null && inProgress >= 0 && bars.isNotEmpty && bars.first.values[inProgress] != 0)
         DashLegendSwatch(color: bars.first.color, text: '${dashMonthNames[inProgress]} so far', outlined: true),
-      if (v.prior != null && v.prior!.any((p) => p != 0)) DashLegendSwatch(color: DashUi.slate, text: v.priorLabel, tick: true),
+      if (v.prior != null && v.prior!.any((p) => p != 0))
+        DashLegendSwatch(color: DashUi.slate, text: v.priorLabel, tick: true),
       if (v.line != null) DashLegendSwatch(color: v.line!.color, text: v.line!.label, tick: true),
-      if (v.average != null && v.averageLabel != null) DashLegendSwatch(color: DashUi.subtle, text: v.averageLabel!, dashed: true),
+      if (v.average != null && v.averageLabel != null)
+        DashLegendSwatch(color: DashUi.subtle, text: v.averageLabel!, dashed: true),
     ];
 
     final titleSpan = TextSpan(
@@ -1245,18 +1651,16 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
         if (v.note != null) TextSpan(text: ' · ${v.note}', style: DashText.panelNote),
       ],
     );
-    final title = Row(
+    Widget titleRow(bool badge) => Row(
       children: [
         Flexible(
           child: Semantics(
             header: true,
             label: v.note == null ? v.title : '${v.title}, ${v.note}',
-            child: ExcludeSemantics(
-              child: Text.rich(titleSpan, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ),
+            child: ExcludeSemantics(child: Text.rich(titleSpan, maxLines: 1, overflow: TextOverflow.ellipsis)),
           ),
         ),
-        if (v.badge != null && !empty) ...[const SizedBox(width: 10), v.badge!],
+        if (badge) ...[const SizedBox(width: 10), v.badge!],
       ],
     );
     final toggle = widget.views.length < 2
@@ -1269,33 +1673,40 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
           );
     final legendWrap = ExcludeSemantics(child: Wrap(spacing: 14, runSpacing: 4, children: legend));
     final legendEntries = [for (final l in legend) l as DashLegendSwatch];
-    final showLegend = !empty && legend.isNotEmpty;
+    final story = !empty && v.callout != null;
+    // A story puts the key under the chart, so the title row carries only the title and the toggle.
+    final showLegend = !empty && legend.isNotEmpty && !story;
 
     // The toggle shares the title's row when both fit; otherwise it moves down beside the legend, so the title is
     // never the one cut short.
     final header = LayoutBuilder(
       builder: (context, c) {
-        final inline = toggle == null || _titleWidth(context, titleSpan, v.badge != null && !empty) + 12 +
-                _toggleWidth(context) <= c.maxWidth;
+        bool fits(bool badge) =>
+            toggle == null || _titleWidth(context, titleSpan, badge) + 12 + _toggleWidth(context) <= c.maxWidth;
+        // With a story the headline already says how the year is going, so a change chip that would push the toggle
+        // onto a row of its own (and take that height from the chart) is left out.
+        final badge = v.badge != null && !empty && (!story || fits(true));
+        final inline = fits(badge);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
             Row(
               children: [
-                Expanded(child: title),
+                Expanded(child: titleRow(badge)),
                 if (inline && toggle != null) ...[const SizedBox(width: 12), toggle],
               ],
             ),
             if (inline && showLegend) ...[const SizedBox(height: 6), legendWrap],
-            if (!inline && (!showLegend || _legendWidth(context, legendEntries) + 12 + _toggleWidth(context) <= c.maxWidth)) ...[
+            if (!inline &&
+                (!showLegend || _legendWidth(context, legendEntries) + 12 + _toggleWidth(context) <= c.maxWidth)) ...[
               const SizedBox(height: 6),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   Expanded(child: showLegend ? legendWrap : const SizedBox.shrink()),
                   const SizedBox(width: 12),
-                  toggle,
+                  ?toggle,
                 ],
               ),
             ] else if (!inline) ...[
@@ -1310,72 +1721,73 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
       },
     );
 
-    return DashPanel(
-      fill: true,
-      header: header,
-      child: empty
-          ? DashEmptyNote(v.emptyText)
-          : Semantics(
-              container: true,
-              label: v.semanticsLabel,
-              value: _index == null ? v.summary(_lastMonth) : _describe(v, _index!),
-              hint: 'Left and right arrow keys move between months',
-              child: FocusableActionDetector(
-                shortcuts: const {
-                  SingleActivator(LogicalKeyboardKey.arrowLeft): _MonthIntent(-1),
-                  SingleActivator(LogicalKeyboardKey.arrowRight): _MonthIntent(1),
-                  SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
-                },
-                actions: {
-                  _MonthIntent: CallbackAction<_MonthIntent>(onInvoke: (i) {
+    final Widget chart = empty
+        ? DashEmptyNote(v.emptyText)
+        : Semantics(
+            container: true,
+            label: v.semanticsLabel,
+            value: _index == null ? v.summary(_lastMonth) : _describe(v, _index!),
+            hint: 'Left and right arrow keys move between months',
+            child: FocusableActionDetector(
+              shortcuts: const {
+                SingleActivator(LogicalKeyboardKey.arrowLeft): _MonthIntent(-1),
+                SingleActivator(LogicalKeyboardKey.arrowRight): _MonthIntent(1),
+                SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+              },
+              actions: {
+                _MonthIntent: CallbackAction<_MonthIntent>(
+                  onInvoke: (i) {
                     _step(i.delta);
                     return null;
-                  }),
-                  DismissIntent: CallbackAction<DismissIntent>(onInvoke: (_) {
+                  },
+                ),
+                DismissIntent: CallbackAction<DismissIntent>(
+                  onInvoke: (_) {
                     setState(() => _index = null);
                     return null;
-                  }),
-                },
-                onShowFocusHighlight: (on) => setState(() {
-                  _focused = on;
-                  // Keyboard focus starts on the latest month; leaving clears the pick.
-                  _index = on ? (_index ?? math.max(0, _lastMonth)) : null;
-                }),
-                child: ExcludeSemantics(
-                  child: LayoutBuilder(
-                    builder: (context, c) => MouseRegion(
-                      onHover: (e) {
-                        final i = _indexFor(e.localPosition.dx, c.maxWidth);
-                        if (i != _index) setState(() => _index = i);
-                      },
-                      onExit: (_) {
-                        if (!_focused) setState(() => _index = null);
-                      },
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) => setState(() => _index = _indexFor(d.localPosition.dx, c.maxWidth)),
-                        child: Container(
-                          foregroundDecoration: dashFocusRing(_focused, BorderRadius.circular(8)),
-                          child: Stack(
-                            children: [
-                              RepaintBoundary(
-                                child: AnimatedBuilder(
-                                  animation: _intro,
-                                  builder: (context, _) => CustomPaint(
-                                    size: Size(c.maxWidth, c.maxHeight),
-                                    painter: _DashChartPainter(
-                                      view: v,
-                                      hover: _index,
-                                      inProgress: inProgress,
-                                      intro: Curves.easeOutCubic.transform(_intro.value),
-                                      fontFamily: font,
-                                    ),
+                  },
+                ),
+              },
+              onShowFocusHighlight: (on) => setState(() {
+                _focused = on;
+                // Keyboard focus starts on the latest month; leaving clears the pick.
+                _index = on ? (_index ?? math.max(0, _lastMonth)) : null;
+              }),
+              child: ExcludeSemantics(
+                child: LayoutBuilder(
+                  builder: (context, c) => MouseRegion(
+                    onHover: (e) {
+                      final i = _indexFor(e.localPosition.dx, c.maxWidth);
+                      if (i != _index) setState(() => _index = i);
+                    },
+                    onExit: (_) {
+                      if (!_focused) setState(() => _index = null);
+                    },
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) => setState(() => _index = _indexFor(d.localPosition.dx, c.maxWidth)),
+                      child: Container(
+                        foregroundDecoration: dashFocusRing(_focused, BorderRadius.circular(8)),
+                        child: Stack(
+                          children: [
+                            RepaintBoundary(
+                              child: AnimatedBuilder(
+                                animation: Listenable.merge([_intro, _pulse]),
+                                builder: (context, _) => CustomPaint(
+                                  size: Size(c.maxWidth, c.maxHeight),
+                                  painter: _DashChartPainter(
+                                    view: v,
+                                    hover: _index,
+                                    inProgress: inProgress,
+                                    intro: Curves.easeOutCubic.transform(_intro.value),
+                                    pulse: v.liveLine ? _pulse.value : 0,
+                                    fontFamily: font,
                                   ),
                                 ),
                               ),
-                              if (_index != null) _tooltip(v, c, _index!),
-                            ],
-                          ),
+                            ),
+                            if (_index != null) _tooltip(v, c, _index!),
+                          ],
                         ),
                       ),
                     ),
@@ -1383,7 +1795,33 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
                 ),
               ),
             ),
+          );
+    final panel = DashPanel(
+      fill: true,
+      header: header,
+      child: !story
+          ? chart
+          : DashStoryFrame(
+              headline: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  for (final (k, stat) in (v.headline ?? const <Widget>[]).indexed) ...[
+                    if (k > 0) const SizedBox(width: 22),
+                    stat,
+                  ],
+                ],
+              ),
+              callout: v.callout!,
+              calloutColor: v.calloutColor,
+              chart: chart,
+              legend: legend.isEmpty ? null : Wrap(spacing: 14, runSpacing: 4, children: legend),
+            ),
     );
+    if (widget.autoCycle == null) return panel;
+    // The auto-cycle holds while the pointer is anywhere on the panel (reading a month, reaching for the toggle).
+    return MouseRegion(onEnter: (_) => _pointerIn = true, onExit: (_) => _pointerIn = false, child: panel);
   }
 
   double _measure(BuildContext context, InlineSpan span) => (TextPainter(
@@ -1391,8 +1829,7 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
     textDirection: TextDirection.ltr,
     textScaler: MediaQuery.textScalerOf(context),
     maxLines: 1,
-  )..layout())
-      .width;
+  )..layout()).width;
 
   /// The title and note on one line, plus room for a change chip.
   double _titleWidth(BuildContext context, InlineSpan span, bool badge) {
@@ -1416,9 +1853,13 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
     final base = DefaultTextStyle.of(context).style;
     var w = 4.0;
     for (final view in widget.views) {
-      w += _measure(
+      w +=
+          _measure(
             context,
-            TextSpan(text: view.tab, style: base.merge(const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700))),
+            TextSpan(
+              text: view.tab,
+              style: base.merge(const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+            ),
           ) +
           22;
     }
@@ -1452,7 +1893,7 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
       child: IgnorePointer(
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(color: DashUi.ink, borderRadius: BorderRadius.circular(10)),
+          decoration: dashTipDecoration,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -1473,7 +1914,9 @@ class _DashMonthChartState extends State<DashMonthChart> with SingleTickerProvid
                         ),
                         const SizedBox(width: 6),
                       ],
-                      Expanded(child: Text(r.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: dim)),
+                      Expanded(
+                        child: Text(r.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: dim),
+                      ),
                       const SizedBox(width: 8),
                       Text(r.value, style: strong),
                     ],
@@ -1531,6 +1974,9 @@ class _DashChartPainter extends CustomPainter {
   final int? hover;
   final int? inProgress;
   final double intro;
+
+  /// The latest point's pulse, 0 to 1 and round again ([DashChartView.liveLine] only).
+  final double pulse;
   final String? fontFamily;
 
   const _DashChartPainter({
@@ -1538,18 +1984,27 @@ class _DashChartPainter extends CustomPainter {
     required this.hover,
     required this.inProgress,
     required this.intro,
+    this.pulse = 0,
     required this.fontFamily,
   });
 
-  void _text(Canvas canvas, String s, Offset at, TextStyle style, {TextAlign align = TextAlign.left}) {
+  void _text(Canvas canvas, String s, Offset at, TextStyle style, {TextAlign align = TextAlign.left, Color? backing}) {
     final tp = TextPainter(
-      text: TextSpan(text: s, style: style.copyWith(fontFamily: fontFamily)),
+      text: TextSpan(
+        text: s,
+        style: style.copyWith(fontFamily: fontFamily),
+      ),
       textDirection: TextDirection.ltr,
     )..layout();
-    final dx = align == TextAlign.right
-        ? at.dx - tp.width
-        : (align == TextAlign.center ? at.dx - tp.width / 2 : at.dx);
-    tp.paint(canvas, Offset(dx, at.dy - tp.height / 2));
+    final dx = align == TextAlign.right ? at.dx - tp.width : (align == TextAlign.center ? at.dx - tp.width / 2 : at.dx);
+    final top = Offset(dx, at.dy - tp.height / 2);
+    if (backing != null) {
+      canvas.drawRRect(
+        RRect.fromRectAndRadius((top & tp.size).inflate(2), const Radius.circular(3)),
+        Paint()..color = backing,
+      );
+    }
+    tp.paint(canvas, top);
   }
 
   bool _future(int i) => inProgress != null && i > inProgress!;
@@ -1587,7 +2042,7 @@ class _DashChartPainter extends CustomPainter {
           lo = math.min(lo, b.values[i]);
         }
       }
-      if (line != null) {
+      if (line != null && !line.gaps.contains(i)) {
         hi = math.max(hi, line.values[i]);
         lo = math.min(lo, line.values[i]);
       }
@@ -1622,6 +2077,8 @@ class _DashChartPainter extends CustomPainter {
     // Value labels only with one bar series and when each month has room for "$396k" without touching its neighbours.
     final labels = v.barLabel != null && bars.length == 1 && slot >= 34;
     final labelAlpha = ((intro - 0.6) / 0.4).clamp(0.0, 1.0);
+    // Bar labels the average line crosses, drawn after it.
+    final onLine = <(String, Offset, TextStyle)>[];
 
     for (var i = 0; i < 12; i++) {
       final cx = plot.left + slot * i + slot / 2;
@@ -1684,11 +2141,11 @@ class _DashChartPainter extends CustomPainter {
         } else if (grouped) {
           for (var b = 0; b < bars.length; b++) {
             final x = cx - barW - 1 + b * (barW + 2);
-            drawBar(x, barW, 0, bars[b].values[i], bars[b].color);
+            drawBar(x, barW, 0, bars[b].values[i], bars[b].colorFor(bars[b].values[i]));
           }
           barTop = y(bars.fold<double>(0, (m, b) => math.max(m, b.values[i])));
         } else {
-          drawBar(cx - barW / 2, barW, 0, bars.first.values[i], bars.first.color);
+          drawBar(cx - barW / 2, barW, 0, bars.first.values[i], bars.first.colorFor(bars.first.values[i]));
           barTop = y(math.max(0, bars.first.values[i]));
         }
       }
@@ -1709,10 +2166,8 @@ class _DashChartPainter extends CustomPainter {
         );
         if (ty > labelY - 11 && ty < barTop + 2) labelY = ty - 11;
       }
-
       if (labels && labelAlpha > 0 && !future && bars.first.values[i] != 0) {
-        _text(
-          canvas,
+        final label = (
           v.barLabel!(bars.first.values[i]),
           Offset(cx, labelY),
           TextStyle(
@@ -1721,8 +2176,15 @@ class _DashChartPainter extends CustomPainter {
             color: (focus ? DashUi.ink : DashUi.slate).withValues(alpha: labelAlpha * (dim ? 0.45 : 1)),
             fontFeatures: DashText.tabular,
           ),
-          align: TextAlign.center,
         );
+        // A label the dashed average line would cross (a bar a little under the average) stays on its bar and is
+        // drawn after the line, on a patch of the panel's white, so neither the figure nor the bar's height misleads.
+        final avg = v.average;
+        if (avg != null && avg > 0 && (labelY - y(avg)).abs() < 9) {
+          onLine.add(label);
+        } else {
+          _text(canvas, label.$1, label.$2, label.$3, align: TextAlign.center);
+        }
       }
     }
 
@@ -1735,36 +2197,46 @@ class _DashChartPainter extends CustomPainter {
         canvas.drawLine(Offset(x, ay), Offset(math.min(x + 4, plot.right), ay), dash);
       }
     }
+    for (final (text, at, style) in onLine) {
+      _text(canvas, text, at, style, align: TextAlign.center, backing: Colors.white);
+    }
 
-    if (line != null) {
-      final pts = <Offset>[
+    if (line != null && v.liveLine) {
+      _liveLine(canvas, plot, slot, y, line);
+    } else if (line != null) {
+      // Each point keeps its month, so a gap (a month with no figure) breaks the line and the hover still matches.
+      final pts = <(int, Offset)>[
         for (var i = 0; i < 12; i++)
-          if (!_future(i)) Offset(plot.left + slot * i + slot / 2, y(line.values[i])),
+          if (!_future(i) && !line.gaps.contains(i)) (i, Offset(plot.left + slot * i + slot / 2, y(line.values[i]))),
       ];
-      if (pts.length >= 2) {
-        final path = Path()..moveTo(pts.first.dx, pts.first.dy);
-        for (final p in pts.skip(1)) {
-          path.lineTo(p.dx, p.dy);
-        }
-        final metric = path.computeMetrics().firstOrNull;
-        if (metric != null) {
-          canvas.drawPath(
-            metric.extractPath(0, metric.length * intro),
-            Paint()
-              ..color = line.color
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 2.2
-              ..strokeJoin = StrokeJoin.round
-              ..strokeCap = StrokeCap.round,
-          );
+      final path = Path();
+      for (var k = 0; k < pts.length; k++) {
+        final (month, at) = pts[k];
+        if (k == 0 || pts[k - 1].$1 != month - 1) {
+          path.moveTo(at.dx, at.dy);
+        } else {
+          path.lineTo(at.dx, at.dy);
         }
       }
+      // Every piece draws itself in together as the chart opens.
+      for (final metric in path.computeMetrics()) {
+        if (metric.length <= 0) continue;
+        canvas.drawPath(
+          metric.extractPath(0, metric.length * intro),
+          Paint()
+            ..color = line.color
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.2
+            ..strokeJoin = StrokeJoin.round
+            ..strokeCap = StrokeCap.round,
+        );
+      }
       if (intro >= 1) {
-        for (var i = 0; i < pts.length; i++) {
-          final focus = hover == i;
-          canvas.drawCircle(pts[i], focus ? 4.5 : 3, Paint()..color = Colors.white);
+        for (final (month, at) in pts) {
+          final focus = hover == month;
+          canvas.drawCircle(at, focus ? 4.5 : 3, Paint()..color = Colors.white);
           canvas.drawCircle(
-            pts[i],
+            at,
             focus ? 4.5 : 3,
             Paint()
               ..color = line.color
@@ -1776,11 +2248,168 @@ class _DashChartPainter extends CustomPainter {
     }
   }
 
+  /// [DashChartView.liveLine]: a smooth curve that draws itself in left to right, the gap to the target ([average])
+  /// shaded green above it and red below it, each finished month's point ringed green or red against the target, the
+  /// month in progress joined by a dashed stretch, and the latest point pulsing with its figure in a pill over it.
+  void _liveLine(Canvas canvas, Rect plot, double slot, double Function(double) y, DashSeries line) {
+    final idx = [
+      for (var i = 0; i < 12; i++)
+        if (!_future(i)) i,
+    ];
+    if (idx.isEmpty) return;
+    final pts = [for (final i in idx) Offset(plot.left + slot * i + slot / 2, y(line.values[i]))];
+    final target = view.average != null && view.average! > 0 ? view.average : null;
+    final partial = pts.length >= 2 && idx.last == inProgress;
+
+    // Level tangents at every point: smooth, and it never swings past a month's own figure.
+    Path curve(List<Offset> p) {
+      final path = Path()..moveTo(p.first.dx, p.first.dy);
+      for (var k = 1; k < p.length; k++) {
+        final mid = (p[k - 1].dx + p[k].dx) / 2;
+        path.cubicTo(mid, p[k - 1].dy, mid, p[k].dy, p[k].dx, p[k].dy);
+      }
+      return path;
+    }
+
+    final full = curve(pts);
+    final reveal = pts.first.dx + (pts.last.dx - pts.first.dx) * intro;
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(plot.left, plot.top - top, reveal + 8, plot.bottom + 1));
+
+    if (pts.length >= 2) {
+      if (target != null) {
+        // The gap between the line and the target: green where it's over, red where it's under.
+        final ty = y(target);
+        final band = Path.from(full)
+          ..lineTo(pts.last.dx, ty)
+          ..lineTo(pts.first.dx, ty)
+          ..close();
+        for (final (over, color) in [(true, DashUi.emerald), (false, DashUi.red)]) {
+          final zone = over
+              ? Rect.fromLTRB(plot.left, plot.top - top, plot.right, ty)
+              : Rect.fromLTRB(plot.left, ty, plot.right, plot.bottom);
+          canvas.save();
+          canvas.clipRect(zone);
+          canvas.drawPath(
+            band,
+            Paint()
+              ..shader = LinearGradient(
+                begin: over ? Alignment.bottomCenter : Alignment.topCenter,
+                end: over ? Alignment.topCenter : Alignment.bottomCenter,
+                colors: [color.withValues(alpha: 0.04), color.withValues(alpha: 0.16)],
+              ).createShader(zone),
+          );
+          canvas.restore();
+        }
+      } else {
+        final area = Path.from(full)
+          ..lineTo(pts.last.dx, plot.bottom)
+          ..lineTo(pts.first.dx, plot.bottom)
+          ..close();
+        canvas.drawPath(
+          area,
+          Paint()
+            ..shader = LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [line.color.withValues(alpha: 0.2), line.color.withValues(alpha: 0)],
+            ).createShader(plot),
+        );
+      }
+
+      // A soft glow under the line, then the line: solid through the finished months, dashed into this one.
+      Paint stroke(Color c, double w) => Paint()
+        ..color = c
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = w
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round;
+      canvas.drawPath(full, stroke(line.color.withValues(alpha: 0.14), 8));
+      if (!partial || pts.length > 2) {
+        canvas.drawPath(partial ? curve(pts.sublist(0, pts.length - 1)) : full, stroke(line.color, 2.6));
+      }
+      if (partial) {
+        final a = pts[pts.length - 2], b = pts.last, mid = (a.dx + b.dx) / 2;
+        final tail = Path()
+          ..moveTo(a.dx, a.dy)
+          ..cubicTo(mid, a.dy, mid, b.dy, b.dx, b.dy);
+        for (final m in tail.computeMetrics()) {
+          for (var d = 0.0; d < m.length; d += 9) {
+            canvas.drawPath(m.extractPath(d, math.min(d + 5, m.length)), stroke(line.color, 2.6));
+          }
+        }
+      }
+    }
+
+    // Finished months' points, ringed by how they did against the target.
+    for (var k = 0; k < pts.length - 1; k++) {
+      final i = idx[k];
+      final focus = hover == i;
+      final value = line.values[i];
+      final ring = target == null ? line.color : (value >= target ? DashUi.emerald : DashUi.red);
+      final r = focus ? 5.0 : 3.6;
+      canvas.drawCircle(pts[k], r, Paint()..color = Colors.white);
+      canvas.drawCircle(
+        pts[k],
+        r,
+        Paint()
+          ..color = ring.withValues(alpha: hover != null && !focus ? 0.45 : 1)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2.2,
+      );
+    }
+    canvas.restore();
+
+    // The latest point once the line reaches it: two rings spreading out from it, the dot, and its figure in a pill.
+    final arrive = ((intro - 0.85) / 0.15).clamp(0.0, 1.0);
+    if (arrive <= 0) return;
+    final p = pts.last;
+    final value = line.values[idx.last];
+    for (final phase in [pulse, (pulse + 0.5) % 1]) {
+      canvas.drawCircle(
+        p,
+        5 + 13 * Curves.easeOut.transform(phase),
+        Paint()..color = line.color.withValues(alpha: 0.3 * (1 - phase) * arrive),
+      );
+    }
+    canvas.drawCircle(p, 6.5 * arrive, Paint()..color = Colors.white);
+    canvas.drawCircle(p, 4.5 * arrive, Paint()..color = line.color);
+
+    final tp = TextPainter(
+      text: TextSpan(
+        text: '${(view.barLabel ?? view.axis)(value)}${partial ? ' so far' : ''}',
+        style: TextStyle(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          height: 1.2,
+          color: Colors.white.withValues(alpha: arrive),
+          fontFamily: fontFamily,
+          fontFeatures: DashText.tabular,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final w = tp.width + 14, h = tp.height + 6;
+    final above = p.dy - 14 - h >= plot.top - top + 2;
+    final box = Rect.fromLTWH(
+      (p.dx - w / 2).clamp(plot.left, math.max(plot.left, plot.right - w)),
+      above ? p.dy - 14 - h : p.dy + 14,
+      w,
+      h,
+    );
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(box, Radius.circular(h / 2)),
+      Paint()..color = DashUi.ink.withValues(alpha: 0.92 * arrive),
+    );
+    tp.paint(canvas, Offset(box.left + 7, box.top + 3));
+  }
+
   @override
   bool shouldRepaint(covariant _DashChartPainter old) =>
       !identical(old.view, view) ||
       old.hover != hover ||
       old.intro != intro ||
+      old.pulse != pulse ||
       old.inProgress != inProgress ||
       old.fontFamily != fontFamily;
 }

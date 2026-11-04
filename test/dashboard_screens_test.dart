@@ -68,7 +68,7 @@ final _dashboards = <_Dash>[
         ('projection = revenue + deposits / share of year gone (295/365)', _num(f['yearlyProjected']), (_num(f['revenueYtd']) / (295 / 365)).roundToDouble()),
       ];
     },
-    'Jobs + deposits · YTD',
+    'Jan 1 – today',
   ),
   _Dash(
     'commissions',
@@ -98,7 +98,7 @@ final _dashboards = <_Dash>[
         ('commission % payouts = total payouts (every 2026 payout is after go-live)', _num(rate['payouts']), _num(s['totalPayoutsYtd'])),
       ];
     },
-    'Finalized runs · 2026 pay weeks',
+    'Finalized runs · 2026',
   ),
   _Dash(
     'technicians',
@@ -143,7 +143,7 @@ final _dashboards = <_Dash>[
         ('win rate = won / closed', _num(f['summary']['winRate']), _sum(months.map((m) => m['won_count'])) / _sum(months.map((m) => m['closed_count'])) * 100),
       ];
     },
-    'Sales team estimates won · Jan 1 – today',
+    'Sales team · Jan 1 – today',
   ),
   _Dash(
     'collections',
@@ -158,7 +158,7 @@ final _dashboards = <_Dash>[
       ('over 90 = the 90-day stage', _num(f['summary']['over90']), _num((f['stages'] as List).firstWhere((s) => s['stage'] == '90')['amount'])),
       ('written-off balance = monthly write-offs', _num(f['summary']['writeOffBalance']), _sum((f['writeOffMonthly'] as List).map((w) => w['balance']))),
     ],
-    'Invoiced, not yet paid · today',
+    'Invoiced, unpaid · today',
   ),
   _Dash(
     'jobs',
@@ -170,7 +170,7 @@ final _dashboards = <_Dash>[
       ('completed = monthly completed', _num(f['scorecards']['completedYtd']), _sum((f['monthlyVolume'] as List).map((m) => m['completed_count']))),
       ('active open = jobs by status', _num(f['scorecards']['activeOpenJobs']), _sum((f['statusCounts'] as List).map((s) => s['count']))),
     ],
-    'Open, from any year · today',
+    'From any year · today',
   ),
   _Dash(
     'estimates',
@@ -188,7 +188,7 @@ final _dashboards = <_Dash>[
         ('sent = monthly sent', _num(f['scorecards']['sentYtd']), _sum(months.map((m) => m['sent_count']))),
       ];
     },
-    'Estimates marked lost · Jan 1 – today',
+    'Marked lost · Jan 1 – today',
   ),
 ];
 
@@ -232,7 +232,7 @@ void main() {
           final before = api.to(d.path).length;
 
           api.delay[d.path] = const Duration(seconds: 2);
-          await t.tap(find.byTooltip('Refresh now'));
+          await t.tap(dashRefreshButton);
           await t.pump(const Duration(milliseconds: 200));
           expect(find.text('Refreshing…'), findsOneWidget);
           expect(find.text(headline), findsWidgets, reason: 'figures stay up while a refresh runs (no skeleton)');
@@ -250,7 +250,7 @@ void main() {
         final api = _api();
         await pumpDashboard(t, d.screen(), api: api, body: () async {
           api.status[d.path] = 500;
-          await t.tap(find.byTooltip('Refresh now'));
+          await t.tap(dashRefreshButton);
           await settleDashboard(t, frames: 5);
           expect(find.text("Couldn't refresh"), findsOneWidget);
           expect(find.text(d.headline(dashFixture(d.fixture)).first), findsWidgets);
@@ -304,14 +304,17 @@ void main() {
           ? held.future
           : null);
     await pumpDashboard(t, const ReportsScreen(), api: api, body: () async {
-      await t.tap(find.byTooltip('Previous year'));
+      await t.tap(dashYearArrow('Previous year'));
       await settleDashboard(t);
-      expect(find.text('Full year 2025'), findsOneWidget);
+      // A finished year: the first card's caption names it, and there is no projection card.
+      expect(find.text('All of 2025'), findsOneWidget);
+      expect(find.text('Yearly projection'), findsNothing);
 
       held.complete(http.Response(json.encode(dashFixture('financial')), 200)); // 2026 answers late
       await settleDashboard(t);
       expect(find.text(dashFixture('financial')['revenueYtd'] as String), findsNothing);
-      expect(find.text('Full year 2025'), findsOneWidget);
+      expect(find.text('All of 2025'), findsOneWidget);
+      expect(find.text('Yearly projection'), findsNothing);
     });
   });
 
@@ -338,7 +341,7 @@ void main() {
   testWidgets('Inventory has no year selector and asks for no year', (t) async {
     final api = _api();
     await pumpDashboard(t, const InventoryDashboardScreen(), api: api);
-    expect(find.byTooltip('Previous year'), findsNothing);
+    expect(dashYearArrow('Previous year'), findsNothing);
     expect(api.to('/api/dashboards/inventory').single.url.queryParameters.containsKey('year'), isFalse);
   });
 
@@ -347,7 +350,7 @@ void main() {
     await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api());
     final f = dashFixture('collections');
     expect(
-      find.bySemanticsLabel(RegExp('^Collected 2026: ${RegExp.escape(_usd(_num(f['summary']['collected'])))}\\. Payments received')),
+      find.bySemanticsLabel(RegExp('^Collected: ${RegExp.escape(_usd(_num(f['summary']['collected'])))}\\. Payments received')),
       findsOneWidget,
     );
     handle.dispose();

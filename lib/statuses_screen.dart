@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'utils/job_statuses.dart';
@@ -403,6 +404,7 @@ class _StatusesScreenState extends State<StatusesScreen> {
         children: [
           PageBanner(
             title: 'Estimate & Job Statuses',
+            icon: accessIcon('statuses'),
             actions: [
               PageBanner.refresh(onPressed: _loading ? null : _load),
               PageBanner.button(

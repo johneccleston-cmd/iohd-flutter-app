@@ -267,6 +267,99 @@ void main() {
     });
   });
 
+  group('missed completions', () {
+    testWidgets('"Tech did not mark complete" on an unverified visit verifies it and counts it against the tech',
+        (t) async {
+      final api = FakeCorrApi();
+      await withCorrections(t, api, () async {
+        await _openFix(t, 1); // Christopher: Not verified (fixed by the office)
+        await t.tap(find.text('Tech did not mark complete'));
+        await pumpN(t, 3);
+        expect(find.textContaining('Counts as a missed completion for Christopher Montgomery-Alvarez'), findsOneWidget);
+        expect(_saveButton(t).onPressed, isNotNull, reason: 'the reason picked Verified, so there is a change');
+        final fetchesBefore = api.paths.where((p) => p.contains('/missed-completions')).length;
+        await t.tap(find.text('Save correction'));
+        await pumpN(t, 25);
+        expect(api.posts.single['verified'], true);
+        expect(api.posts.single['missedCompletion'], true);
+        expect(find.text('Tech missed'), findsOneWidget, reason: "the visit row is flagged");
+        expect(api.paths.where((p) => p.contains('/missed-completions')).length, fetchesBefore + 1,
+            reason: 'the counts are reloaded after a save');
+      }, size: const Size(1440, 1100));
+    });
+
+    testWidgets('the same reason on a visit that is already verified does not count', (t) async {
+      final api = FakeCorrApi();
+      await withCorrections(t, api, () async {
+        await _openFix(t, 0); // Daniel: Verified
+        await t.tap(find.text('Set a value'));
+        await pumpN(t, 3);
+        await t.enterText(_weightField, '1');
+        await t.tap(find.text('Tech did not mark complete'));
+        await pumpN(t, 3);
+        expect(find.textContaining('already verified, so it does not count'), findsOneWidget);
+        await t.tap(find.text('Save correction'));
+        await pumpN(t);
+      }, size: const Size(1440, 1100));
+      expect(api.posts.single.containsKey('missedCompletion'), isFalse);
+      expect(api.posts.single.containsKey('verified'), isFalse, reason: 'the reason never un-verifies a visit');
+    });
+
+    testWidgets('verifying for another reason does not count', (t) async {
+      final api = FakeCorrApi();
+      await withCorrections(t, api, () async {
+        await _openFix(t, 1);
+        await t.tap(find.text('Verified').last);
+        await t.tap(find.text('Office error'));
+        await pumpN(t, 3);
+        await t.tap(find.text('Save correction'));
+        await pumpN(t);
+      }, size: const Size(1440, 1100));
+      expect(api.posts.single['verified'], true);
+      expect(api.posts.single.containsKey('missedCompletion'), isFalse);
+    });
+
+    testWidgets('the rail lists each tech with their count this year', (t) async {
+      await withCorrections(t, FakeCorrApi(), () async {
+        expect(find.text('Missed completions'), findsOneWidget);
+        expect(find.text('2026 · 4 total'), findsOneWidget);
+        expect(find.text('Andrew Johnson'), findsOneWidget);
+        expect(find.text('3'), findsOneWidget);
+        expect(find.text('Brett Miller'), findsOneWidget);
+      });
+    });
+
+    testWidgets('no counts yet says how one is recorded', (t) async {
+      await withCorrections(t, FakeCorrApi()..missed = [], () async {
+        expect(find.textContaining('None yet.'), findsOneWidget);
+        expect(find.text('2026'), findsOneWidget);
+      });
+    });
+
+    testWidgets('a failed load can be retried and leaves the recent list working', (t) async {
+      final api = FakeCorrApi()..missedStatus = 500;
+      await withCorrections(t, api, () async {
+        expect(find.text("Couldn't load the counts."), findsOneWidget);
+        expect(find.text('Recent corrections'), findsOneWidget);
+        api.missedStatus = 200;
+        await t.tap(find.text('Try again'));
+        await pumpN(t);
+        expect(find.text('Andrew Johnson'), findsOneWidget);
+      });
+    });
+
+    testWidgets('a recent correction that counted is tagged', (t) async {
+      final api = FakeCorrApi()
+        ..recent = [
+          {...corrRecent[1], 'action': 'set_verified', 'old_value': 'false', 'new_value': 'true', 'reason': 'Tech did not mark complete', 'missed_completion': true},
+          corrRecent[0],
+        ];
+      await withCorrections(t, api, () async {
+        expect(find.text('Missed completion'), findsOneWidget);
+      });
+    });
+  });
+
   group('original and corrected values', () {
     testWidgets('a fixed value shows what it was before the office fix', (t) async {
       await withCorrections(t, FakeCorrApi(), () async {

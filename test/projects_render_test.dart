@@ -22,9 +22,9 @@ Future<void> _loadFont(String family, List<String> paths) async {
 http.Response _ok(String body, [int code = 200]) =>
     http.Response.bytes(utf8.encode(body), code, headers: {'content-type': 'application/json; charset=utf-8'});
 
-Future<void> _shot(WidgetTester tester, String name, http.Response Function(http.Request) h, {String? tapText}) async {
+Future<void> _shot(WidgetTester tester, String name, http.Response Function(http.Request) h, {String? tapText, Finder? tap, Size size = const Size(1366, 768)}) async {
   tester.view.devicePixelRatio = 1.0;
-  tester.view.physicalSize = const Size(1366, 768);
+  tester.view.physicalSize = size;
   addTearDown(tester.view.reset);
   await http.runWithClient(() async {
     await tester.pumpWidget(MaterialApp(
@@ -35,8 +35,8 @@ Future<void> _shot(WidgetTester tester, String name, http.Response Function(http
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
-    if (tapText != null) {
-      await tester.tap(find.text(tapText).first);
+    if (tapText != null || tap != null) {
+      await tester.tap(tap ?? find.text(tapText!).first);
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }
@@ -58,4 +58,43 @@ void main() {
   testWidgets('detail', (t) => _shot(t, 'projects_detail', (r) => _ok(body), tapText: "KPI's, Reporting & Dashboards"));
   testWidgets('empty', (t) => _shot(t, 'projects_empty', (r) => _ok(jsonEncode({'success': true, 'projects': []}))));
   testWidgets('error', (t) => _shot(t, 'projects_error', (r) => _ok(jsonEncode({'success': false, 'error': 'The project sheet could not be reached. Try again.'}), 502)));
+  testWidgets('list 1920', (t) => _shot(t, 'projects_list_1920', (r) => _ok(body), size: const Size(1920, 1000)));
+  testWidgets('list 1100', (t) => _shot(t, 'projects_list_1100', (r) => _ok(body), size: const Size(1100, 700)));
+  testWidgets('overdue filter', (t) => _shot(t, 'projects_overdue', (r) => _ok(body), tapText: 'Overdue  2'));
+  testWidgets('all statuses', (t) => _shot(t, 'projects_all', (r) => _ok(body), tapText: 'All  13'));
+
+  // A failed refresh used to leave the old list on screen with no word that it failed.
+  testWidgets('refresh failure keeps the list and says so', (t) async {
+    var calls = 0;
+    await _shot(t, 'projects_refresh_error', (r) {
+      calls++;
+      return calls == 1 ? _ok(body) : _ok(jsonEncode({'success': false, 'error': 'The project sheet could not be reached.'}), 502);
+    }, tap: find.byTooltip('Refresh'));
+    expect(find.textContaining("Couldn't refresh projects"), findsOneWidget);
+    expect(find.text('Vendors & Parts'), findsOneWidget);
+  });
+
+  // The server rejects links without http(s); a pasted "drive.google.com/..." link is sent with https:// added.
+  testWidgets('bare link gets https on save', (t) async {
+    Map<String, dynamic>? sent;
+    t.view.physicalSize = const Size(1366, 768);
+    t.view.devicePixelRatio = 1.0;
+    addTearDown(t.view.reset);
+    await http.runWithClient(() async {
+      await t.pumpWidget(const MaterialApp(home: ProjectsScreen()));
+      await t.pump(const Duration(milliseconds: 200));
+      await t.tap(find.text('Get GC License'));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Add file'));
+      await t.pump();
+      await t.enterText(find.widgetWithText(TextField, 'File name').last, 'Map');
+      await t.enterText(find.widgetWithText(TextField, 'Link (paste a Drive or web link)').last, ' drive.google.com/file/d/abc ');
+      await t.tap(find.text('Save'));
+      await t.pumpAndSettle();
+    }, () => MockClient((r) async {
+      if (r.method == 'PUT') sent = jsonDecode(r.body) as Map<String, dynamic>;
+      return _ok(body);
+    }));
+    expect((sent?['files'] as List).last, {'name': 'Map', 'url': 'https://drive.google.com/file/d/abc'});
+  });
 }

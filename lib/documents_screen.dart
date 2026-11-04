@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
@@ -199,6 +200,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
         children: [
           PageBanner(
             title: 'Documents',
+            icon: accessIcon('documents'),
             actions: [
               if (_phase == _Phase.connected && _email != null)
                 Flexible(

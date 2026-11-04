@@ -29,6 +29,7 @@ const Color _brandRed = AppTheme.brandRed;
 const Color _paper = AppTheme.surfaceColor; // page background
 const Color _sidebarBg = DashUi.faint;
 const Color _ink = AppTheme.primaryText;
+const Color _navy = DashUi.ink; // the top bar's navy: selected controls and the send button
 const Color _slate = AppTheme.secondaryText;
 const Color _muted = AppTheme.sectionLabel;
 const Color _stroke = AppTheme.strokeBorder;
@@ -919,8 +920,9 @@ class AssistantChat extends ChangeNotifier {
   }
 }
 
-/// Opens the assistant as a panel sliding in from the right, over whatever screen you are on.
-Future<void> showAssistantPanel(BuildContext context) {
+/// Opens the assistant as a panel on the right, over whatever screen you are on. It grows out of [from], the Ask Jarvis
+/// button's place on screen, and shrinks back into it on close; without one it grows from the top right corner.
+Future<void> showAssistantPanel(BuildContext context, {Rect? from}) {
   final chat = AssistantChat.instance;
   try {
     final uri = GoRouterState.of(context).uri;
@@ -930,21 +932,144 @@ Future<void> showAssistantPanel(BuildContext context) {
     chat.pagePath = ''; // not under a router (tests, previews)
     chat.pageContext = '';
   }
-  return showGeneralDialog<void>(
-    context: context,
-    barrierDismissible: true,
-    barrierLabel: 'Close assistant',
-    barrierColor: Colors.black.withValues(alpha: 0.25),
-    transitionDuration: const Duration(milliseconds: 240),
-    pageBuilder: (_, _, _) => const Align(alignment: Alignment.centerRight, child: _AssistantPanel()),
-    transitionBuilder: (_, animation, _, child) => SlideTransition(
-      position: Tween<Offset>(
-        begin: const Offset(1, 0),
-        end: Offset.zero,
-      ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic)),
-      child: child,
-    ),
+  return Navigator.of(context, rootNavigator: true).push(
+    _JarvisRoute(from: from, still: MediaQuery.disableAnimationsOf(context)),
   );
+}
+
+/// The panel's route: the dimmed page behind it, and how long opening and closing take. The motion itself is drawn by
+/// [_GrowOut] and [_Arrive] inside the panel, which know its width.
+class _JarvisRoute extends PopupRoute<void> {
+  final Rect? from;
+  final bool still; // reduce motion is on: open and close at once
+  _JarvisRoute({required this.from, required this.still});
+
+  @override
+  Color get barrierColor => Colors.black.withValues(alpha: 0.25);
+
+  @override
+  bool get barrierDismissible => true;
+
+  @override
+  String get barrierLabel => 'Close assistant';
+
+  @override
+  Duration get transitionDuration => still ? Duration.zero : const Duration(milliseconds: 520);
+
+  // Leaving is quicker than arriving: once you are done, the page behind should come back at once.
+  @override
+  Duration get reverseTransitionDuration => still ? Duration.zero : const Duration(milliseconds: 260);
+
+  @override
+  Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) =>
+      Semantics(
+        scopesRoute: true,
+        explicitChildNodes: true,
+        child: const Align(alignment: Alignment.centerRight, child: _AssistantPanel()),
+      );
+}
+
+/// The panel growing out of the Ask Jarvis button: its outline stretches from the button to the full panel while the
+/// button's navy (and mark) fade into it, and on close it shrinks back into the button. Open, it is the plain panel.
+class _GrowOut extends StatefulWidget {
+  final double width; // the panel's; it is as tall as the window and sits against its right edge
+  final Widget child;
+  const _GrowOut({required this.width, required this.child});
+
+  @override
+  State<_GrowOut> createState() => _GrowOutState();
+}
+
+class _GrowOutState extends State<_GrowOut> {
+  // Room left of the panel for its shadow, so the clip lets it through by the end and it doesn't pop in.
+  static const double _shadowRoom = 40;
+
+  _JarvisRoute? _route;
+  CurvedAnimation? _shape;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route == _route || route is! _JarvisRoute) return;
+    _route = route;
+    _shape?.dispose();
+    // The Material 3 container transform's curve; leaving speeds up into the button rather than easing to a stop.
+    _shape = CurvedAnimation(
+      parent: route.animation!,
+      curve: Curves.easeInOutCubicEmphasized,
+      reverseCurve: Easing.emphasizedAccelerate.flipped,
+    );
+  }
+
+  @override
+  void dispose() {
+    _shape?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final route = _route;
+    final shape = _shape;
+    if (route == null || shape == null) return widget.child;
+    return AnimatedBuilder(
+      animation: shape,
+      child: widget.child,
+      builder: (context, child) {
+        final t = shape.value;
+        final open = shape.isCompleted;
+        // In the panel's own coordinates. The route fills the window, so the panel's left edge is at width - panel.
+        final window = MediaQuery.sizeOf(context);
+        final panel = Rect.fromLTWH(-_shadowRoom, 0, widget.width + _shadowRoom, window.height);
+        final from = (route.from ?? Rect.fromLTWH(window.width - 56, 11, 38, 38))
+            .shift(Offset(widget.width - window.width, 0));
+        final rect = Rect.lerp(from, panel, t)!;
+        // The button's navy, gone a quarter of the way out, while the shape is still small: any later and the fade
+        // from navy to white passes through a big grey slab.
+        final cover = (1 - t / 0.25).clamp(0.0, 1.0);
+        // Same widgets open or not, so nothing in the panel loses its state when the motion ends.
+        // the button's corners, rounder mid-flight like a sheet in motion, square once it meets the window's edges
+        final corner = 10 * (1 - t) + 10 * math.sin(math.pi * t);
+        return ClipRRect(
+          clipper: _RRectClip(RRect.fromRectAndRadius(rect, Radius.circular(corner))),
+          clipBehavior: open ? Clip.none : Clip.antiAlias,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              child!,
+              if (cover > 0)
+                Positioned.fromRect(
+                  rect: rect,
+                  child: IgnorePointer(
+                    child: ColoredBox(
+                      color: _navy.withValues(alpha: cover),
+                      child: Center(
+                        child: Opacity(
+                          opacity: cover,
+                          child: const JarvisMark(size: 18, color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RRectClip extends CustomClipper<RRect> {
+  final RRect rrect;
+  const _RRectClip(this.rrect);
+
+  @override
+  RRect getClip(Size size) => rrect;
+
+  @override
+  bool shouldReclip(_RRectClip old) => old.rrect != rrect;
 }
 
 /// A plain-English name for the screen the person is on, for the assistant ("Job 1096719829 detail page").
@@ -1481,7 +1606,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   /// The chat list starts open on a roomy window and closed on a narrow one, where it would leave the chat a sliver.
   bool _sideOpen(double screen) => _sideChoice ?? screen >= 760;
-  static const _sideWidth = 200.0;
+  static const _sideWidth = 216.0;
+  static bool _recentOpen = true; // the saved chats under "Recent chats", remembered while the app is open
   bool _showJump = false; // scrolled away from the bottom of a long thread
 
   @override
@@ -1564,7 +1690,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     if (ok == true) _chat.deleteChat(i);
   }
 
-  /// Left list of saved chats: start a new one, switch, rename or delete.
+  /// Left column: the Jarvis name, new chat, the saved chats (switch, rename or delete), and quick actions.
   Widget _sidebar() {
     return Container(
       width: _sideWidth,
@@ -1577,40 +1703,111 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         builder: (context, _) => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(10, 14, 10, 6),
-              child: _NewChatButton(onTap: _chat.canAddChat ? _chat.newChat : null),
-            ),
             const Padding(
-              padding: EdgeInsets.fromLTRB(18, 10, 16, 4),
-              child: Text(
-                'Recents',
-                style: TextStyle(fontSize: 12, color: _muted, fontWeight: FontWeight.w500),
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+              padding: EdgeInsets.fromLTRB(18, 18, 16, 14),
+              child: Row(
                 children: [
-                  for (var i = _chat.chats.length - 1; i >= 0; i--)
-                    _ChatRow(
-                      label: _chat.chats[i].label,
-                      selected: i == _chat.active,
-                      enabled: !_chat.busy,
-                      onTap: () => _chat.selectChat(i),
-                      onRename: () => _rename(i),
-                      onDelete: () => _delete(i),
-                    ),
+                  JarvisMark(size: 22),
+                  SizedBox(width: 10),
+                  Text(
+                    'Jarvis',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: _navy, letterSpacing: -0.3),
+                  ),
                 ],
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(14, 4, 14, 12),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _SideRow(
+                    icon: Icons.add_circle_outline_rounded,
+                    label: 'New chat',
+                    onTap: _chat.canAddChat ? _chat.newChat : null,
+                  ),
+                  _SideRow(
+                    icon: Icons.schedule_rounded,
+                    label: 'Recent chats',
+                    expanded: _recentOpen,
+                    trailing: Icon(
+                      _recentOpen ? Icons.expand_more_rounded : Icons.chevron_right_rounded,
+                      size: 20,
+                      color: _slate,
+                    ),
+                    onTap: () => setState(() => _recentOpen = !_recentOpen),
+                  ),
+                ],
+              ),
+            ),
+            // the saved chats, then the quick actions right under them; with many chats the two scroll together
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 8),
+                children: [
+                  if (_recentOpen)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 2, 10, 4),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (var i = _chat.chats.length - 1; i >= 0; i--)
+                            _ChatRow(
+                              label: _chat.chats[i].label,
+                              selected: i == _chat.active,
+                              enabled: !_chat.busy,
+                              onTap: () => _chat.selectChat(i),
+                              onRename: () => _rename(i),
+                              onDelete: () => _delete(i),
+                            ),
+                        ],
+                      ),
+                    ),
+                  if (_canAsk) ...[
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 10, 20, 0),
+                      child: Divider(height: 1, thickness: 1, color: _stroke),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(20, 16, 16, 6),
+                      child: Text(
+                        'Quick actions',
+                        style: TextStyle(fontSize: 12, color: DashUi.subtle, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          // the daily briefing: what to act on first and why
+                          _SideRow(
+                            icon: Icons.auto_awesome_rounded,
+                            iconColor: _brandRed,
+                            label: 'Today’s priorities',
+                            small: true,
+                            onTap: _chat.busy ? null : () => _submit(_briefingQuestion),
+                          ),
+                          _SideRow(
+                            icon: Icons.chat_bubble_outline_rounded,
+                            label: 'Ask a question',
+                            small: true,
+                            onTap: () => _inputFocus.requestFocus(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 14, 14),
               child: Text(
                 _chat.chats.length >= AssistantChat.maxChats
                     ? 'Chat limit reached. Delete one to start another.'
                     : '${_chat.chats.length} of ${AssistantChat.maxChats} chats',
-                style: const TextStyle(fontSize: 11, color: _muted),
+                style: const TextStyle(fontSize: 11.5, color: DashUi.subtle),
               ),
             ),
           ],
@@ -1723,45 +1920,48 @@ class _AssistantPanelState extends State<_AssistantPanel> {
             selectionColor: const Color(0x663390FF),
           ),
         ),
-        child: Material(
-          color: _paper,
-          elevation: 16,
-          child: Stack(
-            children: [
-              AnimatedContainer(
-                duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
-                curve: Curves.easeOutCubic,
-                width: width,
-                height: double.infinity,
-                decoration: const BoxDecoration(
-                  border: Border(left: BorderSide(color: _stroke)),
-                ),
-                child: SafeArea(
-                  child: Row(
-                    children: [
-                      if (sideOpen) _sidebar(),
-                      Expanded(child: _chatColumn(screen)),
-                    ],
+        child: _GrowOut(
+          width: width,
+          child: Material(
+            color: _paper,
+            elevation: 16,
+            child: Stack(
+              children: [
+                AnimatedContainer(
+                  duration: _dragging ? Duration.zero : const Duration(milliseconds: 260),
+                  curve: Curves.easeOutCubic,
+                  width: width,
+                  height: double.infinity,
+                  decoration: const BoxDecoration(
+                    border: Border(left: BorderSide(color: _stroke)),
+                  ),
+                  child: SafeArea(
+                    child: Row(
+                      children: [
+                        if (sideOpen) _Arrive(begin: 0.2, end: 0.62, rise: 0, child: _sidebar()),
+                        Expanded(child: _chatColumn(screen)),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              // drag handle on the left edge
-              Positioned(
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 8,
-                child: MouseRegion(
-                  cursor: SystemMouseCursors.resizeLeftRight,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    onHorizontalDragStart: (_) => setState(() => _dragging = true),
-                    onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
-                    onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                // drag handle on the left edge
+                Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: 8,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeLeftRight,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.translucent,
+                      onHorizontalDragStart: (_) => setState(() => _dragging = true),
+                      onHorizontalDragUpdate: (d) => setState(() => _userWidth = (width - d.delta.dx).clamp(minWidth, screen)),
+                      onHorizontalDragEnd: (_) => setState(() => _dragging = false),
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -1771,7 +1971,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   Widget _chatColumn(double screen) {
     return Column(
       children: [
-        _header(screen),
+        _Arrive(begin: 0.22, end: 0.64, rise: 0, child: _header(screen)),
         Expanded(
           child: Stack(
             children: [
@@ -1860,7 +2060,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
             ],
           ),
         ),
-        _composer(),
+        _Arrive(begin: 0.44, end: 0.92, rise: 14, child: _composer()),
       ],
     );
   }
@@ -1882,7 +2082,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
               listenable: _chat,
               builder: (context, _) {
                 final current = _chat.chats[_chat.active];
-                final title = current.messages.isEmpty && current.title == null ? 'Jarvis' : current.label;
+                // on the welcome screen the name is already beside it in the left column
+                final title = current.messages.isEmpty && current.title == null
+                    ? (_sideOpen(screen) ? '' : 'Jarvis')
+                    : current.label;
                 return Text(
                   title,
                   maxLines: 1,
@@ -1938,9 +2141,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       canAsk: _canAsk,
       pagePath: _chat.pagePath,
       pageName: _chat.pageContext,
-      lastBriefing: _chat.lastBriefing,
       onAsk: _submit,
-      onOpenChat: _chat.selectChat,
     );
   }
 
@@ -2018,43 +2219,44 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
       child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 760),
+        // as wide as the welcome screen above it, and as the thread once there is one
+        child: ListenableBuilder(
+          listenable: _chat,
+          builder: (context, child) => ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: _chat.messages.isEmpty && !_chat.busy ? _homeWidth : 760),
+            child: child,
+          ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
-                padding: const EdgeInsets.fromLTRB(20, 6, 10, 10),
+                padding: const EdgeInsets.fromLTRB(14, 6, 6, 6),
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(26),
-                  border: Border.all(color: focused ? _brandRed.withValues(alpha: 0.4) : _stroke),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: focused ? _navy.withValues(alpha: 0.35) : _stroke),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withValues(alpha: focused ? 0.07 : 0.04),
-                      blurRadius: focused ? 22 : 14,
-                      offset: const Offset(0, 4),
+                      color: _navy.withValues(alpha: focused ? 0.07 : 0.04),
+                      blurRadius: 14,
+                      offset: const Offset(0, 3),
                     ),
                   ],
                 ),
                 child: _composerField(),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(0, 8, 0, 10),
+                padding: const EdgeInsets.fromLTRB(14, 7, 14, 10),
                 child: AnimatedBuilder(
                   animation: _input,
                   builder: (context, _) {
-                    if (!_canAsk) return const SizedBox(height: 16); // no keys to explain when the box is switched off
                     final len = _input.text.length;
-                    final near = len >= _maxChars * 0.9;
+                    if (!_canAsk || len < _maxChars * 0.9) return const SizedBox(height: 16); // only the character limit is worth saying
                     return Text(
-                      near
-                          ? '$len / $_maxChars characters${len >= _maxChars ? ' · that is the limit, anything longer is cut off' : ''}'
-                          : 'Enter to send · Shift+Enter for a new line · ↑ recalls your last question · Ctrl+J closes. '
-                                'Read-only: double-check important numbers.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 11.5, color: len >= _maxChars ? DashUi.redText : DashUi.subtle, height: 1.4),
+                      '$len / $_maxChars characters${len >= _maxChars ? ' · that is the limit, anything longer is cut off' : ''}',
+                      style: TextStyle(fontSize: 12, color: len >= _maxChars ? DashUi.redText : DashUi.subtle, height: 1.4),
                     );
                   },
                 ),
@@ -2066,103 +2268,88 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     );
   }
 
+  /// The message box: what you type, and Send (or Stop) beside it.
   Widget _composerField() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
-        if (_canAsk && _chat.pageContext.isNotEmpty)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: ListenableBuilder(
-              listenable: _chat,
-              builder: (context, _) => _ContextChip(
-                page: _chat.pageContext,
-                on: _chat.usePage,
-                onToggle: () => setState(() => _chat.usePage = !_chat.usePage),
+        Expanded(
+          child: Focus(
+            // Enter sends, Shift+Enter adds a new line.
+            onKeyEvent: (node, event) {
+              if (event is KeyDownEvent &&
+                  (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) &&
+                  !HardwareKeyboard.instance.isShiftPressed) {
+                _submit();
+                return KeyEventResult.handled;
+              }
+              if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp && _input.text.isEmpty) {
+                _recallLast();
+                return KeyEventResult.handled;
+              }
+              return KeyEventResult.ignored;
+            },
+            child: TextField(
+              controller: _input,
+              focusNode: _inputFocus,
+              autofocus: true,
+              enabled: _canAsk,
+              minLines: 1,
+              maxLines: 6,
+              maxLength: _maxChars,
+              style: const TextStyle(fontSize: 14.5, color: _ink, height: 1.4),
+              cursorColor: _brandRed,
+              decoration: InputDecoration(
+                hintText: _canAsk ? 'Ask Jarvis about your business…' : 'Jarvis is available to admin accounts',
+                hintStyle: const TextStyle(fontSize: 14.5, color: DashUi.subtle),
+                counterText: '',
+                isDense: true,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 9),
+                border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
               ),
             ),
           ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Expanded(
-              child: Focus(
-                // Enter sends, Shift+Enter adds a new line.
-                onKeyEvent: (node, event) {
-                  if (event is KeyDownEvent &&
-                      (event.logicalKey == LogicalKeyboardKey.enter || event.logicalKey == LogicalKeyboardKey.numpadEnter) &&
-                      !HardwareKeyboard.instance.isShiftPressed) {
-                    _submit();
-                    return KeyEventResult.handled;
-                  }
-                  if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.arrowUp && _input.text.isEmpty) {
-                    _recallLast();
-                    return KeyEventResult.handled;
-                  }
-                  return KeyEventResult.ignored;
-                },
-                child: TextField(
-                  controller: _input,
-                  focusNode: _inputFocus,
-                  autofocus: true,
-                  enabled: _canAsk,
-                  minLines: 1,
-                  maxLines: 6,
-                  maxLength: _maxChars,
-                  style: const TextStyle(fontSize: 15, color: _ink, height: 1.4),
-                  cursorColor: _brandRed,
-                  decoration: InputDecoration(
-                    hintText: _canAsk ? 'Ask Jarvis about your business…' : 'Jarvis is available to admin accounts',
-                    hintStyle: const TextStyle(fontSize: 15, color: _muted),
-                    counterText: '',
-                    isDense: true,
-                    filled: false,
-                    contentPadding: EdgeInsets.symmetric(vertical: 14),
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                  ),
+        ),
+        const SizedBox(width: 8),
+        AnimatedBuilder(
+          animation: Listenable.merge([_chat, _input]),
+          builder: (context, _) {
+            if (_chat.busy) {
+              return IconButton.filled(
+                tooltip: 'Stop',
+                onPressed: _chat.stop,
+                icon: const Icon(Icons.stop_rounded, size: 18),
+                style: IconButton.styleFrom(
+                  backgroundColor: _navy,
+                  foregroundColor: Colors.white,
+                  fixedSize: const Size(34, 34),
+                  minimumSize: const Size(34, 34),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: const CircleBorder(),
                 ),
+              );
+            }
+            final ready = _input.text.trim().isNotEmpty;
+            // Navy even while there is nothing to send, only softer, so it reads as the Send button and not a gap.
+            return IconButton.filled(
+              tooltip: 'Send',
+              onPressed: ready ? _submit : null,
+              icon: const Icon(Icons.arrow_upward_rounded, size: 18),
+              style: IconButton.styleFrom(
+                backgroundColor: _navy,
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: _navy.withValues(alpha: 0.35),
+                disabledForegroundColor: Colors.white,
+                fixedSize: const Size(34, 34),
+                minimumSize: const Size(34, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                shape: const CircleBorder(),
               ),
-            ),
-            const SizedBox(width: 6),
-            Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: AnimatedBuilder(
-                animation: Listenable.merge([_chat, _input]),
-                builder: (context, _) {
-                  if (_chat.busy) {
-                    return IconButton.filled(
-                      tooltip: 'Stop',
-                      onPressed: _chat.stop,
-                      icon: const Icon(Icons.stop_rounded, size: 20),
-                      style: IconButton.styleFrom(
-                        backgroundColor: _ink,
-                        foregroundColor: Colors.white,
-                        fixedSize: const Size(36, 36),
-                        shape: const CircleBorder(),
-                      ),
-                    );
-                  }
-                  final ready = _input.text.trim().isNotEmpty;
-                  return IconButton.filled(
-                    tooltip: 'Send',
-                    onPressed: ready ? _submit : null,
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 19),
-                    style: IconButton.styleFrom(
-                      backgroundColor: _brandRed,
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: _fill,
-                      disabledForegroundColor: _muted,
-                      fixedSize: const Size(36, 36),
-                      shape: const CircleBorder(),
-                    ),
-                  );
-                },
-              ),
-            ),
-          ],
+            );
+          },
         ),
       ],
     );
@@ -2277,44 +2464,64 @@ class _ChatRowState extends State<_ChatRow> {
   }
 }
 
-class _NewChatButton extends StatefulWidget {
+/// A row in the left column: an icon and a label, greyed out while it can't be used.
+class _SideRow extends StatefulWidget {
+  final IconData icon;
+  final Color? iconColor;
+  final String label;
+  final Widget? trailing;
+  final bool small; // the quick actions, a size under the main rows
+  final bool? expanded; // for a row that opens and closes a list
   final VoidCallback? onTap;
-  const _NewChatButton({required this.onTap});
+  const _SideRow({
+    required this.icon,
+    this.iconColor,
+    required this.label,
+    this.trailing,
+    this.small = false,
+    this.expanded,
+    required this.onTap,
+  });
 
   @override
-  State<_NewChatButton> createState() => _NewChatButtonState();
+  State<_SideRow> createState() => _SideRowState();
 }
 
-class _NewChatButtonState extends State<_NewChatButton> {
+class _SideRowState extends State<_SideRow> {
   bool _hover = false;
 
   @override
   Widget build(BuildContext context) {
     final on = widget.onTap != null;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
+    return Semantics(
+      button: true,
+      expanded: widget.expanded,
       child: Material(
-        color: _hover && on ? _fillStrong.withValues(alpha: 0.5) : Colors.transparent,
+        color: _hover && on ? _fillStrong.withValues(alpha: 0.6) : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
           borderRadius: BorderRadius.circular(10),
           onTap: widget.onTap,
+          onHover: (v) => setState(() => _hover = v),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+            padding: EdgeInsets.symmetric(horizontal: 8, vertical: widget.small ? 7 : 8),
             child: Row(
               children: [
-                Container(
-                  width: 26,
-                  height: 26,
-                  decoration: BoxDecoration(color: on ? _brandRed : _muted.withValues(alpha: 0.5), shape: BoxShape.circle),
-                  child: const Icon(Icons.add_rounded, size: 18, color: Colors.white),
+                Icon(widget.icon, size: widget.small ? 17 : 18, color: on ? (widget.iconColor ?? _navy) : DashUi.subtle),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    widget.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: widget.small ? 13 : 13.5,
+                      fontWeight: FontWeight.w500,
+                      color: on ? _navy : DashUi.subtle,
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 10),
-                Text(
-                  'New chat',
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: on ? _ink : _muted),
-                ),
+                ?widget.trailing,
               ],
             ),
           ),
@@ -3975,6 +4182,7 @@ class _ChatTableState extends State<_ChatTable> {
       if (c == _barCol && !total && maxBar > 0) {
         final f = (_num(t) / maxBar).clamp(0.0, 1.0);
         padded = Stack(
+          alignment: AlignmentDirectional.centerEnd, // the amount sits right, under its header, like the other number columns
           children: [
             Positioned.fill(
               child: Padding(

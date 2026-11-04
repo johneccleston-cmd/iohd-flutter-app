@@ -10,9 +10,13 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
+import 'config/access.dart';
+import 'widgets/app_ribbon.dart';
 import 'config/api_config.dart';
+import 'config/app_info.dart';
 import 'config/auth_session.dart';
 import 'payroll_history_dialog.dart';
 import 'payroll_pending_panel.dart';
@@ -120,6 +124,13 @@ class _Line {
       isPool = j['kind'] == 'company_pool',
       jobAmount = _d(j['jobAmount']),
       techShare = _d(j['techShare']);
+
+  /// Jobs that closed from the pay week of Oct 26 take the pool off the labor (the tech's rate drops a point); earlier
+  /// ones off the job's commission. The backend names the line after the rule it used.
+  bool get poolOnLabor => isPool && name.toLowerCase().contains('job labor');
+
+  String poolLabel(double rate) =>
+      'Company pool (${_pct(rate * 100)} of job ${poolOnLabor ? 'labor' : 'commission'})';
 }
 
 class _Job {
@@ -223,6 +234,9 @@ class _Week {
   final double cashPay;
   final double advanceShortfall;
   final double advanceRecovered; // shortfall taken out of this week's other pay
+  final double carryIn; // advance shortfall still owed from earlier weeks (finalized runs)
+  final double carryRecovered; // what this week's run takes (or would take) toward it
+  final bool carryProjected; // true until the week has a finalized run
   final List<_Job> jobs;
   final List<_DayItem> advances;
   final List<_DayItem> callbacks;
@@ -243,7 +257,10 @@ class _Week {
       cashPay = _d(j['cashPay']),
       advanceShortfall = _d(j['advanceShortfall']),
       advanceRecovered = _d(j['advanceRecovered']),
-      jobs = ((j['jobs'] as List?) ?? const [])
+      carryIn = _d(j['carryIn']),
+      carryRecovered = _d(j['carryRecovered']),
+      carryProjected = j['carryProjected'] == true,
+      jobs =((j['jobs'] as List?) ?? const [])
           .map((e) => _Job(Map<String, dynamic>.from(e as Map)))
           .toList(),
       advances = ((j['advances'] as List?) ?? const [])
@@ -392,7 +409,7 @@ class _RegCol {
 enum _Metric {
   totalDue(
     'Total Due',
-    'Weekly cash pay and retainage released',
+    'Cash pay and retainage released, less recoveries',
     DashUi.emeraldDeep,
   ),
   commission(
@@ -885,10 +902,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
       );
       final bytes = await _buildPayrollPdf(r, meta);
       if (!mounted) return;
-      await Printing.layoutPdf(
-        name: 'payroll-${r.start}_${r.end}.pdf',
-        format: _pdfPageFormat,
-        onLayout: (_) async => bytes,
+      // Saved straight to a file: the browser's print dialog ignores the name we give it and suggests the app's.
+      final fileName = payrollPdfFileName(r.start, r.end);
+      final saved = await FilePicker.saveFile(
+        dialogTitle: 'Save payroll report',
+        fileName: fileName,
+        bytes: bytes,
+        type: FileType.custom,
+        allowedExtensions: const ['pdf'],
+      );
+      if (!mounted || (saved == null && !kIsWeb)) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Saved $fileName')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -963,17 +988,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
               ? 'Still showing the previous report, ${_day(r.start)} to ${_day(r.end, year: true)}.'
               : 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.');
 
-    final title = Semantics(
-      header: true,
-      child: const Text(
-        'PAYROLL',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 16,
-          fontWeight: FontWeight.bold,
-          letterSpacing: 1.2,
-        ),
-      ),
+    // The standard ribbon's icon tile and heading (the toolbar under them is Payroll's own).
+    Widget title(bool roomy) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (roomy) ...[RibbonIcon(accessIcon('hr_payroll')), const SizedBox(width: 12)],
+        const RibbonTitle('PAYROLL'),
+      ],
     );
 
     return LayoutBuilder(
@@ -992,7 +1013,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           body = Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              title,
+              title(true),
               const SizedBox(width: 28),
               Expanded(child: _toolbarControls(label, compact: !allPills)),
               const SizedBox(width: 12),
@@ -1017,7 +1038,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               if (inner >= 520)
                 Row(
                   children: [
-                    title,
+                    title(true),
                     const SizedBox(width: 12),
                     Expanded(child: actions),
                   ],
@@ -1025,7 +1046,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               else ...[
                 Padding(
                   padding: const EdgeInsets.only(top: 4, bottom: 8),
-                  child: title,
+                  child: title(false),
                 ),
                 actions,
               ],
@@ -1035,35 +1056,27 @@ class _PayrollScreenState extends State<PayrollScreen> {
           );
         }
 
-        return Container(
-          constraints: const BoxConstraints(minHeight: 56),
-          padding: EdgeInsets.fromLTRB(side, 8, side, 8),
-          decoration: const BoxDecoration(
-            color: DashUi.ink, // the header banner colour every dashboard uses
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 8,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              body,
-              if (note != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  note,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w500,
+        return RibbonSurface(
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 56),
+            padding: EdgeInsets.fromLTRB(side, 8, side, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                body,
+                if (note != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    note,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         );
       },
@@ -1345,7 +1358,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
           style: TextStyle(
             fontSize: 12,
             fontWeight: selected ? FontWeight.w700 : FontWeight.w600,
-            color: selected ? DashUi.blue : (hover ? DashUi.ink : DashUi.slate),
+            color: selected ? DashUi.ink : (hover ? DashUi.ink : DashUi.slate),
           ),
         ),
       ),
@@ -1918,7 +1931,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   j.closedOn,
                   j.workers.isEmpty ? t.name : j.workers.join(', '),
                   _jobTitle(j),
-                  '1% of job commission on job total ${_fmt(j.jobRevenue)}',
+                  '1% of job ${j.lines.any((l) => l.poolOnLabor) ? 'labor' : 'commission'} on job total ${_fmt(j.jobRevenue)}',
                   j.toCompanyPool,
                 ),
               );
@@ -3583,6 +3596,28 @@ class _PayrollScreenState extends State<PayrollScreen> {
             color: _cashColor(w.cashPay),
             bold: true,
           ),
+          if (w.carryIn > 0) ...[
+            _ledgerRow(
+              'Still owed from earlier weeks',
+              w.carryIn,
+              color: DashUi.red,
+              note: 'Advance shortfall from earlier pay weeks, recovered from the next pay that can cover it.',
+            ),
+            if (w.carryRecovered > 0)
+              _ledgerRow(
+                w.carryProjected ? 'Recovered by this week\'s run' : 'Recovered in this week\'s run',
+                -w.carryRecovered,
+                color: DashUi.red,
+                note: w.carryProjected ? 'Projected until the week is finalized.' : null,
+              ),
+            if (w.carryRecovered > 0)
+              _ledgerRow(
+                'Paid after recovery',
+                w.cashPay - w.carryRecovered,
+                color: _cashColor(w.cashPay - w.carryRecovered),
+                bold: true,
+              ),
+          ],
         ],
       ),
     );
@@ -3910,7 +3945,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         children: [
           cell(
             l.isPool
-                ? 'Company pool (${_pct(report.companyPoolRate * 100)} of job commission)'
+                ? l.poolLabel(report.companyPoolRate)
                 : l.name,
             style: base,
           ),

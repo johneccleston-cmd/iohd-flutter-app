@@ -212,19 +212,20 @@ class AppSegmented<V> extends StatelessWidget {
   final V value;
   final List<(V, String)> options;
   final ValueChanged<V> onChanged;
-  final Color activeColor;
 
+  /// The selected label is always ink, like every tab in the app.
   const AppSegmented({
     super.key,
     required this.value,
     required this.options,
     required this.onChanged,
-    this.activeColor = DashUi.ink,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // Not selectable text: the app-wide selection's I-beam would replace the click cursor over the labels.
+    return SelectionContainer.disabled(
+      child: Container(
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
       child: Row(
@@ -238,6 +239,7 @@ class AppSegmented<V> extends StatelessWidget {
                 selected: o.$1 == value,
                 child: InkWell(
                   onTap: () => onChanged(o.$1),
+                  mouseCursor: SystemMouseCursors.click,
                   borderRadius: BorderRadius.circular(8),
                   splashFactory: NoSplash.splashFactory,
                   // Only a focus ring: hover and press keep the plain look the dashboards use.
@@ -260,7 +262,7 @@ class AppSegmented<V> extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 12.5,
                         fontWeight: o.$1 == value ? FontWeight.w800 : FontWeight.w600,
-                        color: o.$1 == value ? activeColor : DashUi.slate,
+                        color: o.$1 == value ? DashUi.ink : DashUi.slate,
                       ),
                     ),
                   ),
@@ -269,6 +271,7 @@ class AppSegmented<V> extends StatelessWidget {
             ),
         ],
       ),
+    ),
     );
   }
 }

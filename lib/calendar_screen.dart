@@ -9,13 +9,15 @@ import 'theme/app_theme.dart';
 
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'utils/status_colors.dart';
-import 'widgets/dashboard_kit.dart' show SkeletonPulse;
+import 'widgets/dashboard_data.dart' show DashClock;
+import 'widgets/dashboard_kit.dart' show DashUi, SkeletonPulse;
+import 'widgets/dashboard_panels.dart' show DashPressable;
 
 // Kept public and unchanged in behavior: other screens may import it.
 Color getStatusColor(String? status) => statusColor(status);
@@ -24,19 +26,122 @@ Color getStatusColor(String? status) => statusColor(status);
 // THEME + HELPERS
 // =============================================================================
 
-const _ink = AppTheme.primaryText;
-const _slate = AppTheme.secondaryText;
-const _muted = AppTheme.sectionLabel;
+// Integrity's own palette: deep navy for text and "selected", a neutral (not blue-grey) page, white cards and
+// controls, slate hairlines, and the brand red kept for one job: marking today.
 
-/// For muted text people actually read (counts, empty-state notes, field labels). `_muted` is only ~2.5:1 on white.
-const _mutedText = AppTheme.mutedText;
-const _line = AppTheme.strokeBorder;
-const _faint = AppTheme.subtleFill;
-const _faintLight = AppTheme.subtleFillLight;
+/// Deep navy: headings, customer names and every selected control.
+const _ink = Color(0xFF17233F);
+const _slate = DashUi.slate;
+
+/// Decoration only (other months' day numbers, chevrons): about 2.6:1 on white.
+const _muted = DashUi.muted;
+
+/// For muted text people actually read (counts, empty-state notes, field labels).
+const _mutedText = DashUi.subtle;
+
+/// Hairlines on cards, menus and the weekday header.
+const _line = DashUi.line;
+
+/// Gridlines and control borders: a step darker than [_line], so the days and the toolbar read as distinct pieces.
+const _grid = Color(0xFFD9DFE7);
+
+/// Hover fills and tracks (the segmented controls), on the neutral page.
+const _faint = Color(0xFFEEF1F5);
+const _faintLight = Color(0xFFF8F9FB);
 const _brand = AppTheme.brandRed;
 
-/// Shade of the current day: its square is tinted rather than ringed or coloured.
-const _todayBg = AppTheme.todayTint;
+/// Integrity red, restrained: today's date and weekday, nothing else.
+const _todayRed = Color(0xFFC62828);
+
+/// The selected view and type and Retry: the navy the rest of the office screens use for "selected".
+const _accent = _ink;
+
+/// Today's square: white, lifted off the neutral page, with a red rule along its top (see [_monthCell]).
+const _todayBg = Colors.white;
+
+// The grid is laid out like the dashboards at small scale: white cards with a hairline border on a quiet page.
+/// A weekday of the period on screen.
+const _cellBg = Color(0xFFF5F7FA);
+
+/// Saturdays and Sundays: a touch deeper, so the working week reads as one block.
+const _weekendBg = Color(0xFFF0F2F6);
+
+/// A day from the neighbouring month, a step darker again so the period on screen stands out.
+const _otherMonthBg = Color(0xFFE9ECF1);
+
+/// The calendar's six appointment colours. Service Fusion has ~40 statuses in a dozen saturated hues (lime, cyan,
+/// magenta...), which turned a busy day into a patchwork; here each status falls into one of six families with one
+/// meaning each, chosen from the status itself, so a card is the same colour on every render.
+enum _Tone {
+  green(DashUi.emeraldDeep, Color(0xFF047857)), // on the schedule: booked visits
+  blue(DashUi.blue, Color(0xFF1D4ED8)), // in progress: parts, projects, deliveries
+  amber(DashUi.amber, DashUi.amberText), // needs attention: delayed, partial, still to schedule
+  purple(Color(0xFF7C3AED), Color(0xFF6D28D9)), // estimates
+  red(Color(0xFFC0443C), Color(0xFFA3332C)), // money: deposits, invoices, notices
+  slate(Color(0xFF8391A7), DashUi.slate); // done, closed, cancelled, or a status we don't know
+
+  /// The bar, dot and tint.
+  final Color color;
+
+  /// The status name drawn in this colour (darker, for 4.5:1 on white).
+  final Color text;
+  const _Tone(this.color, this.text);
+}
+
+const _toneByStatus = <String, _Tone>{
+  'site check': _Tone.green,
+  'scheduled': _Tone.green,
+  'warranty work': _Tone.green,
+  'callback': _Tone.green,
+  'appointment': _Tone.green,
+  'need to order': _Tone.blue,
+  'part ordered': _Tone.blue,
+  'manage project': _Tone.blue,
+  'verify delivery': _Tone.blue,
+  'need to sell': _Tone.blue,
+  'need to schedule': _Tone.amber,
+  'delayed': _Tone.amber,
+  'need to warranty': _Tone.amber,
+  'partially complete': _Tone.amber,
+  'estimate requested': _Tone.purple,
+  'estimate follow up': _Tone.purple,
+  'estimate accepted': _Tone.purple,
+  'estimate provided': _Tone.purple,
+  'estimate won': _Tone.purple,
+  'need deposit': _Tone.red,
+  'final invoice sent': _Tone.red,
+  'write-off': _Tone.red,
+  '14 day notice': _Tone.red,
+  '30 day notice': _Tone.red,
+  '60 day notice': _Tone.red,
+  '90 day notice': _Tone.red,
+  'check on payment': _Tone.red,
+  'complete': _Tone.slate,
+  'close job': _Tone.slate,
+  'paid & closed': _Tone.slate,
+  'google review sent': _Tone.slate,
+  'cancelled': _Tone.slate,
+  'lost': _Tone.slate,
+};
+
+/// The family for [status]. Sub-variants ("Scheduled - Full Day") take the status before the dash, as in
+/// [knownStatusColor]; an estimate whose status isn't listed is still purple, anything else unknown is slate.
+_Tone _toneFor(String status, {bool estimate = false}) {
+  final t = status.trim().toLowerCase();
+  final dash = t.indexOf(' - ');
+  return _toneByStatus[t] ??
+      (dash > 0 ? _toneByStatus[t.substring(0, dash).trim()] : null) ??
+      (estimate ? _Tone.purple : _Tone.slate);
+}
+
+/// Height of every toolbar control, so buttons, menus and toggles line up.
+const _ctlH = 36.0;
+
+/// How often the schedule is re-read while the page is on screen.
+const _refreshEvery = Duration(minutes: 5);
+
+/// Today, from the clock tests can pin (DashClock), so month and year edges can be tested on purpose.
+DateTime _now() => DashClock.now();
 
 DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
@@ -58,11 +163,17 @@ class _ChipStyle {
   final Color fg;
   final Color bar;
   final Color accent; // status color, for badges and tech dots
-  const _ChipStyle(this.bg, this.fg, this.bar, this.accent);
+  final Color border;
+  const _ChipStyle(this.bg, this.fg, this.bar, this.accent, this.border);
 }
 
-_ChipStyle _styleFor(Color c) {
-  return _ChipStyle(c.withValues(alpha: 0.12), const Color(0xFF1F2937), c, c);
+/// Event cards are white with a hairline border, like the dashboards' panels; the status colour is the bar down the
+/// left edge (and the dot), never a fill, so sixteen jobs on a day read as one calm column instead of a patchwork.
+/// [dimmed] (days from the neighbouring months) fades the card without a costly Opacity layer per chip.
+_ChipStyle _styleFor(Color c, {bool dimmed = false}) {
+  return dimmed
+      ? _ChipStyle(Color.lerp(Colors.white, _otherMonthBg, 0.4)!, _mutedText, c.withValues(alpha: 0.45), c, _line)
+      : _ChipStyle(Colors.white, _ink, c, c, _line);
 }
 
 // =============================================================================
@@ -73,7 +184,10 @@ _ChipStyle _styleFor(Color c) {
 /// described in plain words instead of printing the raw exception, which includes the request URL.
 class _CalendarError implements Exception {
   final String message;
-  const _CalendarError(this.message);
+
+  /// No access (403): trying again cannot help, so no Retry is offered.
+  final bool forbidden;
+  const _CalendarError(this.message, {this.forbidden = false});
 }
 
 class _CalEvent {
@@ -107,7 +221,8 @@ class _CalEvent {
     return s == s.toLowerCase() ? _titleCase(s) : s;
   }
 
-  Color get color => getStatusColor(status);
+  _Tone get tone => _toneFor(status, estimate: isEstimate);
+  Color get color => tone.color;
 
   /// "9:00 AM" / "9:00 AM - 11:00 AM" from the visit's promised time frame, or null for an all-day job.
   String? get timeLabel {
@@ -180,16 +295,18 @@ class _CalEvent {
     var techs = (m['techs'] ?? '').toString().trim();
     // The server writes "Unassigned" when a job has no tech; that is the absence of a name, not a person called that.
     if (techs.toLowerCase() == 'unassigned') techs = '';
+    // Two visits on one day each list their techs, so a name can come twice ("Brett Hall, Marcus Lee, Brett Hall").
+    final techList = techs.isEmpty
+        ? const <String>[]
+        : {...techs.split(RegExp(r'\s*[,;&/]\s*')).map((t) => t.trim()).where((t) => t.isNotEmpty)}.toList();
     final customer = (m['customer_name'] ?? '').toString().trim();
     return _CalEvent(
       raw: m,
       day: day,
       status: (m['status'] ?? '').toString(),
       customer: customer.isEmpty ? 'Unknown Customer' : customer,
-      techs: techs,
-      techList: techs.isEmpty
-          ? const []
-          : techs.split(RegExp(r'\s*[,;&/]\s*')).map((t) => t.trim()).where((t) => t.isNotEmpty).toList(),
+      techs: techList.join(', '),
+      techList: techList,
       isEstimate: _truthy(m['is_estimate']),
     );
   }
@@ -219,9 +336,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Timer? _refreshTimer;
   bool _slowLoad = false; // still loading after a few seconds: the free-tier server is probably waking up
   String? _error;
+  bool _forbidden = false; // the error is "no access": no Retry
   int _requestId = 0;
 
-  DateTime _focused = _dateOnly(DateTime.now());
+  DateTime _focused = _dateOnly(_now());
   _CalView _view = _CalView.month;
 
   Map<DateTime, List<_CalEvent>> _byDay = {};
@@ -229,6 +347,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime? _loadedEnd;
 
   final FocusNode _focusNode = FocusNode();
+  // The filter buttons share their focus with their menus, so the keyboard can go into a menu and back.
+  final FocusNode _techButtonFocus = FocusNode(debugLabel: 'Tech filter');
+  final FocusNode _statusButtonFocus = FocusNode(debugLabel: 'Status filter');
   final Set<String> _techs = {};
   _TypeFilter _type = _TypeFilter.all;
   final Set<String> _statusFilter = {};
@@ -240,17 +361,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _stale = false;
   DateTime? _loadedAt;
 
+  /// False while another page of the app is in front: the shell keeps this page alive behind it (an indexed stack
+  /// with tickers off), and there is no point re-reading a schedule nobody is looking at.
+  bool _visible = true;
+
+  /// A 5-minute refresh came round while the page was hidden; coming back makes up for it once.
+  bool _missedRefresh = false;
+
+  /// Scroll the month to the week with today in it once that week is drawn with its events (first load, Today).
+  bool _wantToday = true;
+
   @override
   void initState() {
     super.initState();
     _restoreTechs();
     _ensureLoaded();
     // Pick up changes made elsewhere (new jobs, rescheduled visits) and roll "today" over at midnight, without a spinner.
-    _refreshTimer = Timer.periodic(const Duration(minutes: 5), (_) {
+    _refreshTimer = Timer.periodic(_refreshEvery, (_) {
       if (!mounted) return;
+      if (!_visible) {
+        _missedRefresh = true; // caught up on return (didChangeDependencies)
+        return;
+      }
       if (!_loading) _ensureLoaded(force: true, quiet: true);
       setState(() {});
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final visible = TickerMode.valuesOf(context).enabled;
+    if (visible == _visible) return;
+    _visible = visible;
+    if (visible && _missedRefresh) {
+      _missedRefresh = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && !_loading) _ensureLoaded(force: true, quiet: true);
+      });
+    }
   }
 
   @override
@@ -258,6 +407,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _slowTimer?.cancel();
     _refreshTimer?.cancel();
     _focusNode.dispose();
+    _techButtonFocus.dispose();
+    _statusButtonFocus.dispose();
     super.dispose();
   }
 
@@ -276,6 +427,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
   DateTime get _visibleStart => _view == _CalView.month ? _gridStart : _weekStart;
   DateTime get _visibleEnd => _addDays(_visibleStart, _view == _CalView.month ? _weeksInGrid * 7 : 7);
 
+  // A day outside the loaded window is not loaded yet (or failed to load): it must never read as "nothing scheduled".
+
+  /// Whether [day] lies in the loaded window.
+  bool _dayLoaded(DateTime day) {
+    final s = _loadedStart, e = _loadedEnd;
+    return s != null && e != null && !day.isBefore(s) && day.isBefore(e);
+  }
+
+  /// Whether every day on screen is loaded.
+  bool get _covered {
+    final s = _loadedStart, e = _loadedEnd;
+    return s != null && e != null && !_visibleStart.isBefore(s) && !_visibleEnd.isAfter(e);
+  }
+
+  /// Whether any day on screen is loaded (moving one month on, most of the new month usually already is).
+  bool get _anyLoaded {
+    final s = _loadedStart, e = _loadedEnd;
+    return s != null && e != null && _visibleStart.isBefore(e) && _visibleEnd.isAfter(s);
+  }
+
   // ---------------------------------------------------------------------------
   // Data
   // ---------------------------------------------------------------------------
@@ -285,12 +456,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   ///
   /// [quiet] is for the background refresh: no loading indicator, and a failure keeps what is on screen.
   Future<void> _ensureLoaded({bool force = false, bool quiet = false}) async {
-    final vs = _visibleStart, ve = _visibleEnd;
-    if (!force &&
-        _loadedStart != null &&
-        _loadedEnd != null &&
-        !vs.isBefore(_loadedStart!) &&
-        !ve.isAfter(_loadedEnd!)) {
+    if (!force && _covered) {
       // Already held. Drop any request still in flight for a window we no longer need: if it landed it would
       // replace the data with a window that does not cover this view and leave the grid empty.
       if (_loading || _error != null) {
@@ -298,6 +464,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         setState(() {
           _loading = false;
           _error = null;
+          _forbidden = false;
         });
       }
       return;
@@ -309,6 +476,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         _loading = true;
         _slowLoad = false;
         _error = null;
+        _forbidden = false;
       });
       _slowTimer?.cancel();
       _slowTimer = Timer(const Duration(seconds: 8), () {
@@ -334,7 +502,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         return;
       }
       if (response.statusCode == 403) {
-        throw const _CalendarError("Your account doesn't have access to the calendar.");
+        throw const _CalendarError("Your account doesn't have access to the calendar.", forbidden: true);
       }
       if (response.statusCode != 200) {
         throw _CalendarError('The server returned status ${response.statusCode}.');
@@ -379,18 +547,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
         };
         _loadedStart = windowStart;
         _loadedEnd = windowEnd;
-        _loadedAt = DateTime.now();
+        _loadedAt = DateTime.now(); // wall-clock time, for "Showing the schedule from 10:42 AM"
         _loading = false;
         _error = null;
+        _forbidden = false;
         _stale = false;
       });
       // The window is centred on the month that was focused when this request started. If you moved on within the old
       // window while it ran (a background refresh does this), what is on screen may now fall outside the new one.
-      if (_visibleStart.isBefore(windowStart) || _visibleEnd.isAfter(windowEnd)) _ensureLoaded();
+      if (!_covered) _ensureLoaded();
     } on TimeoutException {
       _fail(id, 'The server took too long to respond.', quiet: quiet);
     } on _CalendarError catch (e) {
-      _fail(id, e.message, quiet: quiet);
+      _fail(id, e.message, quiet: quiet, forbidden: e.forbidden);
     } on FormatException {
       _fail(id, 'The server sent a reply the calendar could not read.', quiet: quiet);
     } catch (_) {
@@ -398,7 +567,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
   }
 
-  void _fail(int id, String message, {bool quiet = false}) {
+  void _fail(int id, String message, {bool quiet = false, bool forbidden = false}) {
     if (!mounted || id != _requestId) return;
     if (quiet) {
       // The background refresh failed: keep what is on screen, but say it may be out of date.
@@ -407,8 +576,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
     }
     setState(() {
       _error = message;
+      _forbidden = forbidden;
       _loading = false;
     });
+  }
+
+  /// The Refresh and Retry buttons. While a load is already on its way a second request would only race it.
+  void _reload() {
+    if (_loading) return;
+    _ensureLoaded(force: true);
   }
 
   // ---------------------------------------------------------------------------
@@ -511,6 +687,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _go(int dir) {
     setState(() {
+      _wantToday = false;
       _focused = _view == _CalView.month
           ? DateTime(_focused.year, _focused.month + dir, 1)
           : _addDays(_focused, 7 * dir);
@@ -519,7 +696,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   void _goToday() {
-    setState(() => _focused = _dateOnly(DateTime.now()));
+    setState(() {
+      _focused = _dateOnly(_now());
+      _wantToday = true;
+    });
     _ensureLoaded();
   }
 
@@ -527,7 +707,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     if (v == _view) return;
     setState(() {
       _view = v;
-      final today = _dateOnly(DateTime.now());
+      _wantToday = false;
+      final today = _dateOnly(_now());
       // Month -> week: land on today's week when viewing the current month, else the 1st.
       if (v == _CalView.week && today.year == _focused.year && today.month == _focused.month) {
         _focused = today;
@@ -572,7 +753,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
       },
     );
     if (picked == null || !mounted) return;
-    setState(() => _focused = _dateOnly(picked));
+    setState(() {
+      _focused = _dateOnly(picked);
+      _wantToday = false;
+    });
     _ensureLoaded();
   }
 
@@ -606,6 +790,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final e = _addDays(s, 6);
     if (s.month == e.month) {
       return '${DateFormat('MMM d').format(s)} – ${e.day}, ${e.year}';
+    }
+    // The week of New Year names both years ("Dec 27, 2026 – Jan 2, 2027"), or it would read as December 2027.
+    if (s.year != e.year) {
+      return '${DateFormat('MMM d, y').format(s)} – ${DateFormat('MMM d, y').format(e)}';
     }
     return '${DateFormat('MMM d').format(s)} – ${DateFormat('MMM d, y').format(e)}';
   }
@@ -671,7 +859,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                             style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w800,
-                              color: _muted,
+                              color: _mutedText,
                               letterSpacing: 1,
                             ),
                           ),
@@ -766,7 +954,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       color: Colors.white,
       child: Column(
         children: [
-          Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 10), child: _toolbar()),
+          Padding(padding: const EdgeInsets.fromLTRB(20, 14, 20, 12), child: _toolbar()),
           SizedBox(
             height: 2,
             child: _loading
@@ -783,8 +971,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
               ),
             ),
-          if (_error != null) _errorBanner() else if (_stale) _staleBanner(),
-          const Divider(height: 1, color: _line),
+          // A failure over days that ARE loaded is a banner (the grid is still right, maybe old); a failure for days that
+          // never loaded is said on the grid itself (see _withStatus), where an empty month would otherwise be.
+          if (_error != null && _anyLoaded) _errorBanner() else if (_stale && _error == null) _staleBanner(),
+          const Divider(height: 1, color: _grid),
           Expanded(
             child: LayoutBuilder(
               builder: (context, c) {
@@ -807,48 +997,96 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  /// A note over a grid with nothing in it, so a quiet period or a filter that hides everything never looks like a
-  /// broken page.
+  /// A note over the grid when there is nothing to show, so a quiet period, a filter that hides everything or a period
+  /// that failed to load never looks like a broken (or an empty) page.
   Widget _withStatus(Widget grid) {
+    final failed = _error != null && !_anyLoaded;
     var visible = 0;
     for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
       visible += _eventsFor(d).length;
     }
-    final empty = !_loading && _error == null && visible == 0;
+    final empty = !_loading && _error == null && _covered && visible == 0;
+
+    Widget? note;
+    if (failed) {
+      note = _note(
+        icon: Icons.cloud_off_rounded,
+        iconColor: _brand,
+        title: _loadedStart == null ? "Couldn't load the calendar" : "Couldn't load $_periodTitle",
+        message: _error,
+        action: _forbidden ? null : ('Retry', _reload),
+      );
+    } else if (empty) {
+      note = _note(
+        icon: Icons.event_available_rounded,
+        iconColor: _muted,
+        title: _filtersActive
+            ? 'Nothing matches these filters'
+            : 'Nothing scheduled this ${_view == _CalView.month ? 'month' : 'week'}',
+        action: _filtersActive ? ('Clear filters', _clearFilters) : null,
+      );
+    }
     return Stack(
       fit: StackFit.expand,
       children: [
         grid,
-        if (empty)
-          Center(
-            // Only the note itself takes clicks (for "Clear filters"); the empty days behind it stay clickable.
-            child: IgnorePointer(
-              ignoring: !_filtersActive,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _line),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.event_available_rounded, size: 30, color: _muted),
-                    const SizedBox(height: 6),
-                    Text(
-                      _filtersActive
-                          ? 'Nothing matches these filters'
-                          : 'Nothing scheduled this ${_view == _CalView.month ? 'month' : 'week'}',
-                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _slate),
-                    ),
-                    if (_filtersActive) TextButton(onPressed: _clearFilters, child: const Text('Clear filters')),
-                  ],
-                ),
-              ),
-            ),
-          ),
+        // Only a note with a button takes clicks; otherwise the days behind it stay clickable.
+        if (note != null) Center(child: note),
       ],
+    );
+  }
+
+  Widget _note({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    String? message,
+    (String, VoidCallback)? action,
+  }) {
+    return IgnorePointer(
+      ignoring: action == null,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 420),
+        margin: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(24, 18, 24, 14),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: _line),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 30, color: iconColor),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: _ink, height: 1.3),
+            ),
+            if (message != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _slate, height: 1.35),
+              ),
+            ],
+            if (action != null) ...[
+              const SizedBox(height: 8),
+              TextButton(
+                onPressed: () {
+                  action.$2();
+                  _refocus();
+                },
+                style: TextButton.styleFrom(foregroundColor: _accent, textStyle: _buttonText(context)),
+                child: Text(action.$1),
+              ),
+            ] else
+              const SizedBox(height: 4),
+          ],
+        ),
+      ),
     );
   }
 
@@ -857,89 +1095,106 @@ class _CalendarScreenState extends State<CalendarScreen> {
   // ---------------------------------------------------------------------------
 
   Widget _toolbar() {
-    final nav = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _NavBtn(
-          icon: Icons.chevron_left_rounded,
-          tooltip: _view == _CalView.month ? 'Previous month (←)' : 'Previous week (←)',
-          onTap: () {
-            _go(-1);
-            _refocus();
-          },
-        ),
-        const SizedBox(width: 4),
-        _NavBtn(
-          icon: Icons.chevron_right_rounded,
-          tooltip: _view == _CalView.month ? 'Next month (→)' : 'Next week (→)',
-          onTap: () {
-            _go(1);
-            _refocus();
-          },
-        ),
-        const SizedBox(width: 8),
-        Tooltip(
-          message: 'Jump to today (T)',
-          child: OutlinedButton(
-            onPressed: () {
+    // ‹ Today ›: one bordered group, as the dashboards' year selector groups its arrows with the year.
+    const divider = SizedBox(height: 18, child: VerticalDivider(width: 1, thickness: 1, color: _grid));
+    final nav = Container(
+      height: _ctlH,
+      // The border is drawn over the buttons, so they keep the full control height inside it.
+      foregroundDecoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _grid),
+      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _ToolButton(
+            tooltip: _view == _CalView.month ? 'Previous month (←)' : 'Previous week (←)',
+            plain: true,
+            width: _ctlH,
+            onTap: () {
+              _go(-1);
+              _refocus();
+            },
+            child: const Icon(Icons.chevron_left_rounded, size: 22, color: _ink),
+          ),
+          divider,
+          _ToolButton(
+            tooltip: 'Jump to today (T)',
+            label: 'Today',
+            plain: true,
+            onTap: () {
               _goToday();
               _refocus();
             },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: _ink,
-              side: const BorderSide(color: _line),
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              textStyle: _buttonText(context),
-            ),
-            child: const Text('Today'),
+            child: Text('Today', style: _buttonText(context).copyWith(color: _ink)),
           ),
-        ),
-      ],
+          divider,
+          _ToolButton(
+            tooltip: _view == _CalView.month ? 'Next month (→)' : 'Next week (→)',
+            plain: true,
+            width: _ctlH,
+            onTap: () {
+              _go(1);
+              _refocus();
+            },
+            child: const Icon(Icons.chevron_right_rounded, size: 22, color: _ink),
+          ),
+        ],
+      ),
     );
 
-    final title = InkWell(
-      borderRadius: BorderRadius.circular(8),
-      onTap: _pickDate,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(
-              child: Text(
-                _periodTitle,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: _ink),
+    final title = Semantics(
+      header: true,
+      child: DashPressable(
+        onTap: _pickDate,
+        label: 'Jump to a date. Showing $_periodTitle',
+        radius: BorderRadius.circular(8),
+        builder: (hover) => AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          padding: const EdgeInsets.fromLTRB(8, 3, 4, 3),
+          decoration: BoxDecoration(
+            color: hover ? _faint : _faint.withValues(alpha: 0),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(_periodTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: _titleStyle),
               ),
-            ),
-            const SizedBox(width: 2),
-            const Icon(Icons.expand_more_rounded, color: _muted),
-          ],
+              const SizedBox(width: 2),
+              Icon(Icons.expand_more_rounded, color: hover ? _slate : _muted),
+            ],
+          ),
         ),
       ),
     );
 
-    final clear = TextButton.icon(
-      onPressed: () {
+    final clear = _ToolButton(
+      tooltip: 'Show every tech, status and type',
+      label: 'Clear filters',
+      quiet: true,
+      plain: true,
+      onTap: () {
         _clearFilters();
         _refocus();
       },
-      icon: const Icon(Icons.filter_alt_off_outlined, size: 17),
-      label: const Text('Clear filters'),
-      style: TextButton.styleFrom(
-        foregroundColor: _slate,
-        minimumSize: const Size(0, 38),
-        textStyle: _buttonText(context),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.filter_alt_off_outlined, size: 17, color: _slate),
+          const SizedBox(width: 6),
+          Text('Clear filters', style: _buttonText(context).copyWith(color: _slate)),
+        ],
       ),
     );
 
     final filters = <Widget>[
       _techMenu(),
       _statusMenu(),
-      _SegToggle<_TypeFilter>(
+      _Segmented<_TypeFilter>(
+        label: 'Show',
         options: const [(_TypeFilter.all, 'All'), (_TypeFilter.jobs, 'Jobs'), (_TypeFilter.estimates, 'Estimates')],
         value: _type,
         onChanged: (v) {
@@ -947,7 +1202,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _refocus();
         },
       ),
-      _SegToggle<_CalView>(
+      _Segmented<_CalView>(
+        label: 'View',
         options: const [(_CalView.month, 'Month'), (_CalView.week, 'Week')],
         value: _view,
         onChanged: (v) {
@@ -955,19 +1211,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
           _refocus();
         },
       ),
-      _IconPill(
-        icon: Icons.refresh_rounded,
+      _ToolButton(
         tooltip: 'Refresh',
+        width: _ctlH,
         onTap: () {
-          _ensureLoaded(force: true);
+          _reload();
           _refocus();
         },
+        // Greyed while a load is on its way (a second press would do nothing).
+        child: Icon(Icons.refresh_rounded, size: 19, color: _loading ? _muted : _slate),
       ),
     ];
 
     return LayoutBuilder(
       builder: (context, c) {
-        if (c.maxWidth >= 1100) {
+        if (c.maxWidth >= _oneRowWidth(context)) {
           // Everything on one line. "Clear filters" sits at the left of the right-aligned group, so showing or
           // hiding it never moves the controls the user is clicking.
           return Row(
@@ -1006,40 +1264,70 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  /// A filter button in the toolbar's style, used by the tech and status menus.
-  Widget _filterButton({required IconData icon, required String label, required bool active, required bool open}) {
-    return Container(
-      width: 150, // fixed, so ticking names never resizes the button and shifts the menu under it
-      height: 40,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: active ? _faint : Colors.white,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: active ? _muted : _line),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: active ? _ink : _slate),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              label,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: active ? _ink : _slate),
+  static const _titleStyle = TextStyle(
+    fontSize: 22,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.4,
+    height: 1.3,
+    color: _ink,
+    fontFeatures: [FontFeature.tabularFigures()],
+  );
+
+  /// Width of one filter button: fixed, so ticking names never resizes it and shifts the open menu under it.
+  static const _filterW = 150.0;
+
+  /// How wide the toolbar must be to hold everything on one line at the current text size: the controls, the longest
+  /// usual title for this view, and room for "Clear filters" whether it shows or not (so ticking a filter never
+  /// flips the layout and moves the button under the pointer).
+  double _oneRowWidth(BuildContext context) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final base = DefaultTextStyle.of(context).style; // the app's font, as the Text widgets get it
+    double w(String s, TextStyle style) => (TextPainter(
+      text: TextSpan(text: s, style: base.merge(style)),
+      textDirection: TextDirection.ltr,
+      textScaler: scaler,
+    )..layout()).width;
+    final button = _buttonText(context);
+    final seg = _Segmented.textStyle(true);
+    double segW(List<String> labels) => 8 + labels.fold(0.0, (a, l) => a + w(l, seg) + 24);
+    final nav = _ctlH * 2 + 2 + w('Today', button) + 24;
+    final title = w(_view == _CalView.month ? 'September 2026' : 'Sep 27 – Oct 3, 2026', _titleStyle) + 12 + 24;
+    final clear = 17 + 6 + w('Clear filters', button) + 20 + 6;
+    final filters = _filterW * 2 + segW(['All', 'Jobs', 'Estimates']) + segW(['Month', 'Week']) + _ctlH + 8 * 4;
+    return nav + 12 + title + 12 + clear + filters;
+  }
+
+  /// What a filter button shows: its icon, the current choice and an open/closed chevron.
+  Widget _filterContent({required IconData icon, required String label, required bool active, required bool open}) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: active ? _ink : _slate),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+              color: active ? _ink : _slate,
             ),
           ),
-          const SizedBox(width: 2),
-          Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18, color: _muted),
-        ],
-      ),
+        ),
+        const SizedBox(width: 2),
+        Icon(open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18, color: _mutedText),
+      ],
     );
   }
 
   Widget _techMenu() {
+    final label = _techs.isEmpty ? 'All techs' : (_techs.length == 1 ? _techs.first : '${_techs.length} techs');
     return Theme(
       data: _blackChecks(context),
       child: MenuAnchor(
         onClose: _refocus,
+        childFocusNode: _techButtonFocus,
         menuChildren: [
           MenuItemButton(
             onPressed: _techs.isEmpty
@@ -1075,17 +1363,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
             ),
           ),
         ],
-        builder: (context, controller, _) => Tooltip(
-          message: 'Filter by tech (select several)',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => controller.isOpen ? controller.close() : controller.open(),
-            child: _filterButton(
-              icon: Icons.person_outline_rounded,
-              label: _techs.isEmpty ? 'All techs' : (_techs.length == 1 ? _techs.first : '${_techs.length} techs'),
-              active: _techs.isNotEmpty,
-              open: controller.isOpen,
-            ),
+        builder: (context, controller, _) => _ToolButton(
+          tooltip: 'Filter by tech (select several)',
+          label: 'Tech filter: $label',
+          focusNode: _techButtonFocus,
+          width: _filterW,
+          active: _techs.isNotEmpty,
+          onTap: () => controller.isOpen ? controller.close() : controller.open(),
+          child: _filterContent(
+            icon: Icons.person_outline_rounded,
+            label: label,
+            active: _techs.isNotEmpty,
+            open: controller.isOpen,
           ),
         ),
       ),
@@ -1124,7 +1413,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       padding: EdgeInsets.fromLTRB(16, first ? 6 : 14, 16, 4),
       child: Text(
         text,
-        style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900, color: _mutedText, letterSpacing: 0.8),
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: _mutedText, letterSpacing: 0.8),
       ),
     );
 
@@ -1164,7 +1453,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     Container(
                       width: 9,
                       height: 9,
-                      decoration: BoxDecoration(color: getStatusColor(k.split('|').last), shape: BoxShape.circle),
+                      decoration: BoxDecoration(
+                        color: _toneFor(k.split('|').last, estimate: k.startsWith('estimate|')).color,
+                        shape: BoxShape.circle,
+                      ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(child: Text(labels[k]!)),
@@ -1189,24 +1481,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
       data: _blackChecks(context),
       child: MenuAnchor(
         onClose: _refocus,
+        childFocusNode: _statusButtonFocus,
         menuChildren: children,
-        builder: (context, controller, _) => Tooltip(
-          message: 'Filter by status (select several)',
-          child: InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: () => controller.isOpen ? controller.close() : controller.open(),
-            child: _filterButton(
-              icon: Icons.filter_list_rounded,
-              label: label,
-              active: _statusFilter.isNotEmpty,
-              open: controller.isOpen,
-            ),
+        builder: (context, controller, _) => _ToolButton(
+          tooltip: 'Filter by status (select several)',
+          label: 'Status filter: $label',
+          focusNode: _statusButtonFocus,
+          width: _filterW,
+          active: _statusFilter.isNotEmpty,
+          onTap: () => controller.isOpen ? controller.close() : controller.open(),
+          child: _filterContent(
+            icon: Icons.filter_list_rounded,
+            label: label,
+            active: _statusFilter.isNotEmpty,
+            open: controller.isOpen,
           ),
         ),
       ),
     );
   }
 
+  /// A load failed while some or all of the period on screen is loaded: what is shown is real (maybe old), and the
+  /// days the load did not reach say "Not loaded" themselves.
   Widget _errorBanner() {
     final red = _brand;
     return Container(
@@ -1224,13 +1520,18 @@ class _CalendarScreenState extends State<CalendarScreen> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              _loadedStart == null
-                  ? "Couldn't load the calendar. ${_error ?? ''}"
-                  : "Couldn't refresh the calendar. ${_error ?? ''} Showing the last loaded data.",
+              _covered
+                  ? "Couldn't refresh the calendar. ${_error ?? ''} Showing the last loaded data."
+                  : "Couldn't load all of $_periodTitle. ${_error ?? ''}",
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _ink),
             ),
           ),
-          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+          if (!_forbidden)
+            TextButton(
+              onPressed: _reload,
+              style: TextButton.styleFrom(foregroundColor: _accent, textStyle: _buttonText(context)),
+              child: const Text('Retry'),
+            ),
         ],
       ),
     );
@@ -1254,7 +1555,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
             ),
           ),
-          TextButton(onPressed: () => _ensureLoaded(force: true), child: const Text('Retry')),
+          TextButton(
+            onPressed: _reload,
+            style: TextButton.styleFrom(foregroundColor: _accent, textStyle: _buttonText(context)),
+            child: const Text('Retry'),
+          ),
         ],
       ),
     );
@@ -1268,51 +1573,76 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final days = <DateTime>[];
     for (var d = _visibleStart; d.isBefore(_visibleEnd); d = _addDays(d, 1)) {
       if (_view == _CalView.month && d.month != _focused.month) continue;
-      if (_eventsFor(d).isNotEmpty) days.add(d);
+      if (_shownFor(d).isNotEmpty) days.add(d);
     }
     if (days.isEmpty) return const SizedBox.expand(); // _withStatus puts the "nothing scheduled" note over it
-    return _VScroll(
-      builder: (controller) => ListView.builder(
-        controller: controller,
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
-        itemCount: days.length,
-        itemBuilder: (_, i) {
-          final day = days[i];
-          final events = _eventsFor(day);
-          final isToday = _sameDay(day, DateTime.now());
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Semantics(
-                  header: true,
-                  child: Row(
-                    children: [
-                      _DayNumber(day: day.day, isToday: isToday, size: 32, fontSize: 15),
-                      const SizedBox(width: 10),
-                      Text(
-                        DateFormat('EEEE, MMM d').format(day),
-                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        '${events.length} ${events.length == 1 ? 'event' : 'events'}',
-                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
-                      ),
-                    ],
+
+    // With today in this period the list opens on it (or on the next day with work, or the last one): a busy month
+    // is dozens of screens long. The days before it are built upwards from there, a scroll up away, and Today comes
+    // back to it. Otherwise the list starts at the top.
+    final today = _dateOnly(_now());
+    var split = 0;
+    if (!today.isBefore(_visibleStart) && today.isBefore(_visibleEnd)) {
+      final next = days.indexWhere((d) => !d.isBefore(today));
+      split = next >= 0 ? next : days.length - 1;
+    }
+    const center = ValueKey('agenda-center');
+
+    Widget dayBlock(DateTime day) {
+      final events = _eventsFor(day);
+      final isToday = _sameDay(day, _now());
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 2),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Semantics(
+              header: true,
+              child: Row(
+                children: [
+                  _DayNumber(day: day.day, isToday: isToday, size: 32, fontSize: 15),
+                  const SizedBox(width: 10),
+                  Text(
+                    DateFormat('EEEE, MMM d').format(day),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _ink),
                   ),
-                ),
-                const SizedBox(height: 8),
-                for (final e in events)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: _EventCard(event: e, onTap: () => _openEvent(e)),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
                   ),
-              ],
+                ],
+              ),
             ),
-          );
-        },
+            const SizedBox(height: 8),
+            for (final e in events)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _EventCard(event: e, onTap: () => _openEvent(e)),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return _VScroll(
+      jumpTo: _wantToday ? 0 : null, // the centre: today's day
+      onJumped: () => _wantToday = false,
+      builder: (controller) => CustomScrollView(
+        controller: controller,
+        center: center,
+        slivers: [
+          // Laid out upwards from the centre, so the nearest earlier day comes first.
+          SliverList.builder(itemCount: split, itemBuilder: (_, i) => dayBlock(days[split - 1 - i])),
+          SliverPadding(
+            key: center,
+            padding: const EdgeInsets.only(bottom: 16),
+            sliver: SliverList.builder(
+              itemCount: days.length - split,
+              itemBuilder: (_, i) => dayBlock(days[split + i]),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1325,8 +1655,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
   static const _chipGap = 3.0;
   static const _dayHeaderH = 26.0;
 
+  /// The events to draw on [day]: none while it is not loaded, where the day shows placeholders (loading) or says
+  /// "Not loaded" (the load failed) instead.
+  List<_CalEvent> _shownFor(DateTime day) => _dayLoaded(day) ? _eventsFor(day) : const [];
+
+  /// A day the last load did not reach, while nothing is loading: said in the day itself, so it never reads as quiet.
+  /// (When no day on screen loaded at all, the note over the grid says it once instead.)
+  bool _notLoaded(DateTime day) => !_loading && _anyLoaded && !_dayLoaded(day);
+
+  static const _notLoadedStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText);
+
   /// Weekday header stays put. Every event on a day is shown (never "+N more"): each week is as tall as its busiest
-  /// day needs, and at least tall enough to fill the window, so a quiet month fits and a busy one scrolls.
+  /// day needs, and at least tall enough to fill the window, so a quiet month fits and a busy one scrolls. A busy
+  /// month is several screens tall, so it opens (and Today returns) on the week with today in it.
   Widget _monthGrid() {
     const days = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
     const headerH = 34.0;
@@ -1343,13 +1684,26 @@ class _CalendarScreenState extends State<CalendarScreen> {
         final dayH = _dayHeaderH * grow;
         final fill = math.max(_minRowH, ((c.maxHeight - headerH) / weeks).floorToDouble());
 
-        double rowHeight(int w) {
-          var most = 0;
-          for (var d = 0; d < 7; d++) {
-            most = math.max(most, _eventsFor(_addDays(start, w * 7 + d)).length);
-          }
-          // top and bottom padding (4 + 3), the day number, then a chip and its gap per event
-          return math.max(fill, 4 + 3 + dayH + most * (chipH + _chipGap) + 2);
+        final heights = [
+          for (var w = 0; w < weeks; w++)
+            // top and bottom padding (4 + 3), the day number, then a chip and its gap per event
+            math.max(
+              fill,
+              4 +
+                  3 +
+                  dayH +
+                  [for (var d = 0; d < 7; d++) _shownFor(_addDays(start, w * 7 + d)).length].reduce(math.max) *
+                      (chipH + _chipGap) +
+                  2,
+            ),
+        ];
+
+        // Where today's week starts, once the month is loaded with today in it.
+        double? todayAt;
+        // Whole days, rounded: across a daylight-saving change four weeks are 671 or 673 hours, not 672.
+        final todayIndex = (_dateOnly(_now()).difference(start).inHours / 24).round();
+        if (_wantToday && _covered && todayIndex >= 0 && todayIndex < weeks * 7) {
+          todayAt = heights.take(todayIndex ~/ 7).fold<double>(0, (a, h) => a + h);
         }
 
         return Column(
@@ -1357,21 +1711,29 @@ class _CalendarScreenState extends State<CalendarScreen> {
             Container(
               height: headerH,
               decoration: const BoxDecoration(
-                color: _faintLight,
-                border: Border(bottom: BorderSide(color: _line)),
+                color: Colors.white,
+                border: Border(bottom: BorderSide(color: _grid)),
               ),
               child: Row(
                 children: [
-                  for (final d in days)
+                  for (var i = 0; i < 7; i++)
                     Expanded(
-                      child: Center(
-                        child: Text(
-                          d,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: _slate,
-                            letterSpacing: 1.2,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 12),
+                        child: Align(
+                          // Lined up with the day numbers under it.
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            days[i],
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              // Today's weekday in red, like its date below.
+                              color: _covered && _now().weekday % 7 == i && _focused.month == _now().month
+                                  ? _todayRed
+                                  : _mutedText,
+                              letterSpacing: 1.1,
+                            ),
                           ),
                         ),
                       ),
@@ -1382,13 +1744,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
             Expanded(
               // The scrollbar stays visible whenever a busy month runs past the window, so it is clear there is more.
               child: _VScroll(
+                jumpTo: todayAt,
+                onJumped: () => _wantToday = false,
                 builder: (controller) => SingleChildScrollView(
                   controller: controller,
                   child: Column(
                     children: [
                       for (var w = 0; w < weeks; w++)
                         SizedBox(
-                          height: rowHeight(w),
+                          height: heights[w],
                           child: Row(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
@@ -1418,30 +1782,41 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   Widget _monthCell(DateTime day, bool lastCol, {required bool twoLine, required double chipH, required double dayH}) {
     final inMonth = day.month == _focused.month;
-    final isToday = _sameDay(day, DateTime.now());
-    final events = _eventsFor(day);
-    // First load, nothing to show yet: faint placeholder bars (a different number per day) instead of an empty grid.
-    final skeleton = _loading && _loadedStart == null;
+    final isToday = _sameDay(day, _now());
+    final events = _shownFor(day);
+    // This period is still on its way: faint placeholder bars (a different number per day) instead of empty days.
+    final skeleton = _loading && !_dayLoaded(day);
 
-    final bg = isToday ? _todayBg : (!inMonth ? _faintLight : Colors.white);
+    final weekend = day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
+    final bg = isToday ? _todayBg : (!inMonth ? _otherMonthBg : (weekend ? _weekendBg : _cellBg));
 
     return Semantics(
       button: events.isNotEmpty,
       label:
           '${DateFormat('EEEE, MMMM d').format(day)}${isToday ? ', today' : ''}, '
-          '${events.isEmpty ? 'nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
+          '${!_dayLoaded(day)
+              ? 'not loaded'
+              : events.isEmpty
+              ? 'nothing scheduled'
+              : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
       child: Material(
         color: bg,
         child: InkWell(
           onTap: events.isEmpty ? null : () => _openDay(day), // an empty day has nothing to show
-          hoverColor: events.isEmpty ? Colors.transparent : _faint.withValues(alpha: 0.7),
+          hoverColor: events.isEmpty ? Colors.transparent : _ink.withValues(alpha: 0.035),
           child: Container(
             decoration: BoxDecoration(
               border: Border(
-                right: lastCol ? BorderSide.none : const BorderSide(color: _line),
-                bottom: const BorderSide(color: _line),
+                right: lastCol ? BorderSide.none : const BorderSide(color: _grid),
+                bottom: const BorderSide(color: _grid),
               ),
             ),
+            // Today: a red rule across the top of a white square. Painted over the cell, so it takes no layout room.
+            foregroundDecoration: isToday
+                ? const BoxDecoration(
+                    border: Border(top: BorderSide(color: _todayRed, width: 2.5)),
+                  )
+                : null,
             padding: const EdgeInsets.fromLTRB(5, 4, 5, 3),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1455,8 +1830,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       label: day.day == 1 ? '${DateFormat('MMM').format(day)} 1' : null,
                       isToday: isToday,
                       muted: !inMonth,
-                      size: dayH - 2,
-                      fontSize: 14.5,
+                      size: dayH - 4,
+                      fontSize: 13.5,
                     ),
                   ),
                 ),
@@ -1468,11 +1843,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
                           Container(
                             height: 14,
                             margin: const EdgeInsets.only(bottom: 4),
-                            decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(6)),
+                            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(6)),
                           ),
                       ],
                     ),
                   ),
+                if (_notLoaded(day)) const Text('Not loaded', style: _notLoadedStyle),
                 if (!skeleton)
                   for (final e in events)
                     Padding(
@@ -1522,13 +1898,20 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Widget _weekColumn(DateTime day, bool last) {
-    final isToday = _sameDay(day, DateTime.now());
-    final events = _eventsFor(day);
+    final isToday = _sameDay(day, _now());
+    final events = _shownFor(day);
+    final pending = !_dayLoaded(day); // this week is still loading, or failed to: never "No events"
+    final weekend = day.weekday == DateTime.saturday || day.weekday == DateTime.sunday;
     return Container(
       decoration: BoxDecoration(
-        color: isToday ? _todayBg : (day.weekday >= 6 ? _faintLight : Colors.white),
-        border: Border(right: last ? BorderSide.none : const BorderSide(color: _line)),
+        color: isToday ? _todayBg : (weekend ? _weekendBg : _cellBg),
+        border: Border(right: last ? BorderSide.none : const BorderSide(color: _grid)),
       ),
+      foregroundDecoration: isToday
+          ? const BoxDecoration(
+              border: Border(top: BorderSide(color: _todayRed, width: 2.5)),
+            )
+          : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1536,49 +1919,78 @@ class _CalendarScreenState extends State<CalendarScreen> {
             button: events.isNotEmpty,
             label:
                 '${DateFormat('EEEE, MMMM d').format(day)}${isToday ? ', today' : ''}, '
-                '${events.isEmpty ? 'nothing scheduled' : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
+                '${pending
+                    ? 'not loaded'
+                    : events.isEmpty
+                    ? 'nothing scheduled'
+                    : '${events.length} ${events.length == 1 ? 'event' : 'events'}'}',
             excludeSemantics: true,
-            child: InkWell(
-              onTap: events.isEmpty ? null : () => _openDay(day),
-              child: Container(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-                decoration: const BoxDecoration(
-                  border: Border(bottom: BorderSide(color: _line)),
-                ),
-                child: Row(
-                  children: [
-                    _DayNumber(day: day.day, isToday: isToday, size: 34, fontSize: 16, rounded: true),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            DateFormat('EEE').format(day).toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: _slate,
-                              letterSpacing: 1,
+            // The day's header is a white strip over the slate column (tinted for today), like a panel's title row.
+            child: Material(
+              color: Colors.white,
+              child: InkWell(
+                onTap: events.isEmpty ? null : () => _openDay(day),
+                hoverColor: _ink.withValues(alpha: 0.035),
+                child: Container(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+                  decoration: const BoxDecoration(
+                    border: Border(bottom: BorderSide(color: _grid)),
+                  ),
+                  child: Row(
+                    children: [
+                      _DayNumber(day: day.day, isToday: isToday, size: 34, fontSize: 16, rounded: true),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              DateFormat('EEE').format(day).toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: isToday ? _todayRed : _slate,
+                                letterSpacing: 1.1,
+                              ),
                             ),
-                          ),
-                          Text(
-                            events.isEmpty
-                                ? 'No events'
-                                : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
-                          ),
-                        ],
+                            Text(
+                              _notLoaded(day)
+                                  ? 'Not loaded'
+                                  : pending
+                                  ? ' '
+                                  : events.isEmpty
+                                  ? 'No events'
+                                  : '${events.length} ${events.length == 1 ? 'event' : 'events'}',
+                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _mutedText),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
           // An empty day says "No events" once, in its header; the column below is simply left quiet.
           Expanded(
-            child: events.isEmpty
+            child: pending && _loading
+                ? Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: SkeletonPulse(
+                      child: Column(
+                        children: [
+                          for (var i = 0; i < 1 + day.day % 3; i++)
+                            Container(
+                              height: 72,
+                              margin: const EdgeInsets.only(bottom: 8),
+                              decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
+                            ),
+                        ],
+                      ),
+                    ),
+                  )
+                : events.isEmpty
                 ? const SizedBox.expand()
                 : ListView.separated(
                     padding: const EdgeInsets.all(10),
@@ -1598,7 +2010,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
 // =============================================================================
 
 /// Compact chip for the month grid: one line (time + customer), or two (customer, then time and techs) in roomy cells.
-class _EventChip extends StatelessWidget {
+class _EventChip extends StatefulWidget {
   final _CalEvent event;
   final bool twoLine;
   final bool dimmed; // days outside the focused month
@@ -1613,36 +2025,51 @@ class _EventChip extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    final st = _styleFor(event.color);
-    final techs = event.techs.isEmpty ? 'No tech' : event.shortTechs(ambiguous);
+  State<_EventChip> createState() => _EventChipState();
+}
 
-    return Opacity(
-      opacity: dimmed ? 0.5 : 1,
-      child: Tooltip(
-        message: event.tooltip,
-        waitDuration: const Duration(milliseconds: 450),
-        child: Material(
-          color: st.bg,
+class _EventChipState extends State<_EventChip> {
+  bool _hover = false;
+
+  _CalEvent get event => widget.event;
+  bool get twoLine => widget.twoLine;
+
+  @override
+  Widget build(BuildContext context) {
+    final st = _styleFor(event.color, dimmed: widget.dimmed);
+    final techs = event.techs.isEmpty ? 'No tech' : event.shortTechs(widget.ambiguous);
+
+    return _HoverPreview(
+      event: event,
+      // Hovered: the border firms up and the card lifts a hair off the day; no fill, so the column stays calm.
+      child: Material(
+        color: st.bg,
+        elevation: _hover ? 1.5 : 0,
+        shadowColor: _ink.withValues(alpha: 0.35),
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(6),
-          clipBehavior: Clip.antiAlias,
-          child: InkWell(
-            onTap: onTap,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Container(width: 3.5, color: st.bar),
-                Expanded(
-                  child: LayoutBuilder(
-                    builder: (context, c) => Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      // Phone-width cells are ~60px: just the name, the rest is in the tooltip and the day view.
-                      child: _text(st, techs, micro: c.maxWidth < 96),
-                    ),
+          side: BorderSide(color: _hover ? _muted.withValues(alpha: 0.7) : st.border),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: widget.onTap,
+          onHover: (h) => setState(() => _hover = h),
+          hoverColor: Colors.transparent,
+          focusColor: _accent.withValues(alpha: 0.1),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _StatusBar(color: st.bar, inset: twoLine ? 5 : 4),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, c) => Padding(
+                    padding: const EdgeInsets.only(left: 6, right: 6),
+                    // Phone-width cells are ~60px: just the name, the rest is in the tooltip and the day view.
+                    child: _text(st, techs, micro: c.maxWidth < 96),
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1674,20 +2101,27 @@ class _EventChip extends StatelessWidget {
                       event.customer,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: st.fg, height: 1.15),
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: st.fg,
+                        height: 1.15,
+                        letterSpacing: -0.1,
+                      ),
                     ),
                   ),
-                  if (event.isEstimate) ...[const SizedBox(width: 4), _EstBadge(color: st.fg)],
+                  if (event.isEstimate) ...[const SizedBox(width: 4), const _EstBadge(color: _mutedText)],
                 ],
               ),
+              const SizedBox(height: 1),
               Text(
                 [event.timeLabel ?? 'All day', techs].join('  ·  '),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  color: st.fg.withValues(alpha: 0.7),
+                  fontWeight: FontWeight.w500,
+                  color: widget.dimmed ? _muted : _mutedText,
                   height: 1.2,
                 ),
               ),
@@ -1698,7 +2132,12 @@ class _EventChip extends StatelessWidget {
               if (time != null) ...[
                 Text(
                   time,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: st.fg.withValues(alpha: 0.7)),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: _mutedText,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
                 const SizedBox(width: 4),
               ],
@@ -1707,40 +2146,110 @@ class _EventChip extends StatelessWidget {
                   event.customer,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: st.fg),
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: st.fg),
                 ),
               ),
-              if (event.isEstimate) ...[const SizedBox(width: 4), _EstBadge(color: st.fg)],
+              if (event.isEstimate) ...[const SizedBox(width: 4), const _EstBadge(color: _mutedText)],
             ],
           );
   }
 }
 
+/// The preview a month chip shows on hover: a white card on the overlay (so it is never clipped by its day or the
+/// scroll area), customer first, then the status in its colour, when, and who. Its plain text is [_CalEvent.tooltip],
+/// so screen readers hear exactly what they did before.
+class _HoverPreview extends StatelessWidget {
+  final _CalEvent event;
+  final Widget child;
+  const _HoverPreview({required this.event, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final base = (Theme.of(context).textTheme.bodyMedium ?? const TextStyle()).copyWith(
+      fontSize: 12.5,
+      fontWeight: FontWeight.w500,
+      color: _slate,
+      height: 1.5,
+    );
+    return Tooltip(
+      richMessage: TextSpan(
+        children: [
+          TextSpan(
+            text: event.customer,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: _ink, height: 1.35),
+          ),
+          TextSpan(
+            text: '\n${event.statusLabel}${event.isEstimate ? ' (estimate)' : ''}',
+            style: TextStyle(fontWeight: FontWeight.w700, color: event.tone.text),
+          ),
+          TextSpan(text: '\n${event.timeLabel ?? 'All day'}'),
+          TextSpan(
+            text: '\n${event.techs.isNotEmpty ? 'Techs: ${event.techs}' : 'No tech assigned'}',
+            style: TextStyle(fontStyle: event.techs.isEmpty ? FontStyle.italic : null),
+          ),
+        ],
+      ),
+      textStyle: base,
+      padding: const EdgeInsets.fromLTRB(14, 10, 16, 11),
+      margin: const EdgeInsets.symmetric(horizontal: 12),
+      verticalOffset: 18,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _line),
+        boxShadow: [
+          BoxShadow(color: _ink.withValues(alpha: 0.12), blurRadius: 18, offset: const Offset(0, 6)),
+          BoxShadow(color: _ink.withValues(alpha: 0.06), blurRadius: 3, offset: const Offset(0, 1)),
+        ],
+      ),
+      waitDuration: const Duration(milliseconds: 450),
+      child: child,
+    );
+  }
+}
+
 /// Larger card used in the week view, the day dialog and the narrow-screen agenda. When first, then who, then the
 /// status as a small dot and plain words (a solid, shouted pill cut off in narrow columns).
-class _EventCard extends StatelessWidget {
+class _EventCard extends StatefulWidget {
   final _CalEvent event;
   final VoidCallback onTap;
   const _EventCard({required this.event, required this.onTap});
 
   @override
+  State<_EventCard> createState() => _EventCardState();
+}
+
+class _EventCardState extends State<_EventCard> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
+    final event = widget.event;
     final st = _styleFor(event.color);
 
+    // Hover as on the month chips: a firmer border and a slight lift, never a fill.
     return Material(
       color: st.bg,
-      borderRadius: BorderRadius.circular(10),
+      elevation: _hover ? 2 : 0,
+      shadowColor: _ink.withValues(alpha: 0.3),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: _hover ? _muted.withValues(alpha: 0.7) : st.border),
+      ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: onTap,
+        onTap: widget.onTap,
+        onHover: (h) => setState(() => _hover = h),
+        hoverColor: Colors.transparent,
+        focusColor: _accent.withValues(alpha: 0.1),
         child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Container(width: 5, color: st.bar),
+              _StatusBar(color: st.bar, inset: 8, width: 4),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 9, 10, 10),
+                  padding: const EdgeInsets.fromLTRB(9, 9, 10, 10),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -1750,14 +2259,15 @@ class _EventCard extends StatelessWidget {
                           Expanded(
                             child: Text(
                               event.timeLabel ?? 'All day',
-                              style: TextStyle(
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w800,
-                                color: st.fg.withValues(alpha: 0.75),
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                                color: _mutedText,
+                                fontFeatures: [FontFeature.tabularFigures()],
                               ),
                             ),
                           ),
-                          if (event.isEstimate) ...[const SizedBox(width: 6), _EstBadge(color: st.fg)],
+                          if (event.isEstimate) ...[const SizedBox(width: 6), const _EstBadge(color: _mutedText)],
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -1765,60 +2275,40 @@ class _EventCard extends StatelessWidget {
                         event.customer,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: st.fg, height: 1.2),
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: st.fg,
+                          height: 1.25,
+                          letterSpacing: -0.15,
+                        ),
                       ),
-                      const SizedBox(height: 6),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.only(top: 3),
-                            child: Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(color: event.color, shape: BoxShape.circle),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              event.statusLabel,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: st.fg.withValues(alpha: 0.85),
-                                height: 1.2,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 7),
+                      _StatusBadge(label: event.statusLabel, tone: event.tone),
+                      const SizedBox(height: 8),
                       if (event.techs.isEmpty)
-                        Text(
+                        const Text(
                           'No tech assigned',
                           style: TextStyle(
                             fontSize: 12,
-                            fontWeight: FontWeight.w600,
+                            fontWeight: FontWeight.w500,
                             fontStyle: FontStyle.italic,
-                            color: st.fg.withValues(alpha: 0.6),
+                            color: _mutedText,
                           ),
                         )
                       else
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            _InitialsStack(names: event.techList, color: st.fg),
+                            _InitialsStack(names: event.techList, color: _slate),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
                                 event.techs,
-                                style: TextStyle(
+                                style: const TextStyle(
                                   fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: st.fg.withValues(alpha: 0.85),
+                                  fontWeight: FontWeight.w500,
+                                  color: _slate,
                                   height: 1.35,
                                 ),
                               ),
@@ -1915,8 +2405,8 @@ class _InitialsStack extends StatelessWidget {
   }
 }
 
-/// The day number. Today is the one filled dark circle (or rounded square in the week view), the standard cue, so it
-/// is found at a glance without relying on a faint tint.
+/// The day number. Today's is red on a soft red tag (a pill, or a rounded square in the week view), matched by the red
+/// rule across the top of its day.
 class _DayNumber extends StatelessWidget {
   final int day;
   final String? label; // "Oct 1" on the first of a month
@@ -1937,14 +2427,15 @@ class _DayNumber extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = isToday ? Colors.white : (muted ? _muted : _ink);
+    // Today is a soft red tag with a red number: found at a glance, without a heavy filled circle.
+    final fg = isToday ? _todayRed : (muted ? _mutedText : _ink);
     return Container(
       constraints: BoxConstraints(minWidth: size),
       height: size,
       padding: const EdgeInsets.symmetric(horizontal: 6),
       decoration: BoxDecoration(
-        color: isToday ? _ink : (rounded ? _faint : null),
-        borderRadius: BorderRadius.circular(rounded ? 10 : size / 2),
+        color: isToday ? _todayRed.withValues(alpha: 0.09) : (rounded ? _faint : null),
+        borderRadius: BorderRadius.circular(rounded ? 9 : size / 2),
       ),
       child: Center(
         widthFactor: 1,
@@ -1953,7 +2444,12 @@ class _DayNumber extends StatelessWidget {
           child: Text(
             label ?? '$day',
             maxLines: 1,
-            style: TextStyle(fontSize: fontSize, fontWeight: isToday ? FontWeight.w800 : FontWeight.w700, color: fg),
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: isToday ? FontWeight.w800 : FontWeight.w600,
+              color: fg,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
           ),
         ),
       ),
@@ -1962,10 +2458,13 @@ class _DayNumber extends StatelessWidget {
 }
 
 /// A vertical scroll area with an always-visible scrollbar. It owns its controller, so two of them can exist at once
-/// while the grid cross-fades between months.
+/// while the grid cross-fades between months. Given [jumpTo], it scrolls there after the frame (as far as the content
+/// allows) and reports it with [onJumped], so the request is used once.
 class _VScroll extends StatefulWidget {
   final Widget Function(ScrollController controller) builder;
-  const _VScroll({required this.builder});
+  final double? jumpTo;
+  final VoidCallback? onJumped;
+  const _VScroll({required this.builder, this.jumpTo, this.onJumped});
 
   @override
   State<_VScroll> createState() => _VScrollState();
@@ -1973,6 +2472,28 @@ class _VScroll extends StatefulWidget {
 
 class _VScrollState extends State<_VScroll> {
   final ScrollController _controller = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _scheduleJump();
+  }
+
+  @override
+  void didUpdateWidget(_VScroll old) {
+    super.didUpdateWidget(old);
+    _scheduleJump();
+  }
+
+  void _scheduleJump() {
+    final to = widget.jumpTo;
+    if (to == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_controller.hasClients) return;
+      _controller.jumpTo(to.clamp(0.0, _controller.position.maxScrollExtent));
+      widget.onJumped?.call();
+    });
+  }
 
   @override
   void dispose() {
@@ -1983,6 +2504,59 @@ class _VScrollState extends State<_VScroll> {
   @override
   Widget build(BuildContext context) {
     return Scrollbar(controller: _controller, thumbVisibility: true, child: widget.builder(_controller));
+  }
+}
+
+/// The status colour down the left edge of an event card: a short rounded bar set in from the edges.
+class _StatusBar extends StatelessWidget {
+  final Color color;
+  final double inset; // gap above and below
+  final double width;
+  const _StatusBar({required this.color, required this.inset, this.width = 3});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: width,
+      margin: EdgeInsets.fromLTRB(4, inset, 0, inset),
+      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(width)),
+    );
+  }
+}
+
+/// A status as the design system draws one: a tinted pill, a dot in the status colour and the name in dark text
+/// (several status colours are too light to read as text).
+class _StatusBadge extends StatelessWidget {
+  final String label;
+  final _Tone tone;
+  const _StatusBadge({required this.label, required this.tone});
+
+  @override
+  Widget build(BuildContext context) {
+    final color = tone.color;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(7, 2, 9, 2),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.09), borderRadius: BorderRadius.circular(999)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 7,
+            height: 7,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 6),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: tone.text, height: 1.3),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2169,101 +2743,139 @@ class _DetailRow extends StatelessWidget {
 // CONTROLS
 // =============================================================================
 
-class _SegToggle<T> extends StatelessWidget {
+/// A toolbar button built like the dashboards' controls (DashPressable): one height, a hover shade, the blue ring for
+/// keyboard focus only, and a single screen-reader button. White with a hairline border by default; [quiet] is a grey
+/// fill without a border (the ‹ › arrows), [plain] has no fill until hovered (Clear filters), and [active] marks a
+/// filter that is narrowing the calendar.
+class _ToolButton extends StatelessWidget {
+  final String tooltip;
+  final String? label; // read by screen readers; the tooltip when not given
+  final VoidCallback onTap;
+  final Widget child;
+  final double? width;
+  final bool active;
+  final bool quiet;
+  final bool plain;
+  final FocusNode? focusNode;
+  const _ToolButton({
+    required this.tooltip,
+    required this.onTap,
+    required this.child,
+    this.label,
+    this.width,
+    this.active = false,
+    this.quiet = false,
+    this.plain = false,
+    this.focusNode,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(8);
+    return Tooltip(
+      message: tooltip,
+      excludeFromSemantics: true, // the button already has its name
+      waitDuration: const Duration(milliseconds: 400),
+      child: DashPressable(
+        onTap: onTap,
+        label: label ?? tooltip,
+        focusNode: focusNode,
+        radius: radius,
+        builder: (hover) {
+          final Color fill;
+          final Color border;
+          if (plain) {
+            fill = hover ? _faint : _faint.withValues(alpha: 0);
+            border = Colors.transparent;
+          } else if (quiet) {
+            fill = hover ? _line : _faint;
+            border = Colors.transparent;
+          } else {
+            // Every bordered control shares one border; an active filter takes the navy edge and a soft fill.
+            fill = active ? _faintLight : (hover ? _faintLight : Colors.white);
+            border = active ? _ink.withValues(alpha: 0.55) : (hover ? _muted : _grid);
+          }
+          return AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            width: width,
+            height: _ctlH,
+            padding: width == _ctlH ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: fill,
+              borderRadius: radius,
+              border: Border.all(color: border),
+            ),
+            // widthFactor: as wide as the label (an `alignment` would stretch the button across a Wrap's whole run).
+            child: Center(widthFactor: 1, child: child),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// A row of choices with one selected, styled as the dashboards' DashSegmented (the selected one white, its label in
+/// dark ink) at the toolbar's height. Each choice is a button reachable with Tab; screen readers hear
+/// "[label]: Month, selected".
+class _Segmented<T> extends StatelessWidget {
+  final String label;
   final List<(T, String)> options;
   final T value;
   final ValueChanged<T> onChanged;
-  const _SegToggle({required this.options, required this.value, required this.onChanged});
+  const _Segmented({required this.label, required this.options, required this.value, required this.onChanged});
+
+  static TextStyle textStyle(bool on) => TextStyle(
+    fontSize: 12.5,
+    height: 1.3,
+    fontWeight: on ? FontWeight.w700 : FontWeight.w600,
+    color: on ? _accent : _slate,
+  );
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 40,
+      height: _ctlH,
       padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
+      // The same border as the buttons beside it, so the whole toolbar reads as one set of controls.
+      decoration: BoxDecoration(
+        color: _faint,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: _grid),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           for (final o in options)
-            Semantics(
-              button: true,
+            DashPressable(
+              onTap: o.$1 == value ? () {} : () => onChanged(o.$1),
+              label: '$label: ${o.$2}',
               selected: o.$1 == value,
-              label: o.$2,
-              excludeSemantics: true,
-              child: InkWell(
-                // A real InkWell, so the toggle can be reached and switched with the keyboard.
-                borderRadius: BorderRadius.circular(8),
-                onTap: () => onChanged(o.$1),
-                child: AnimatedContainer(
+              radius: BorderRadius.circular(6),
+              builder: (hover) {
+                final on = o.$1 == value;
+                return AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   alignment: Alignment.center,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: o.$1 == value ? Colors.white : Colors.transparent,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: o.$1 == value ? _line : Colors.transparent),
+                    color: on
+                        ? Colors.white
+                        : (hover ? Colors.white.withValues(alpha: 0.6) : Colors.white.withValues(alpha: 0)),
+                    borderRadius: BorderRadius.circular(5),
+                    border: Border.all(color: on ? _grid : _grid.withValues(alpha: 0)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _ink.withValues(alpha: on ? 0.08 : 0),
+                        blurRadius: 2,
+                        offset: const Offset(0, 1),
+                      ),
+                    ],
                   ),
-                  child: Text(
-                    o.$2,
-                    style: TextStyle(
-                      fontSize: 12.5,
-                      fontWeight: o.$1 == value ? FontWeight.w800 : FontWeight.w600,
-                      color: o.$1 == value ? _ink : _slate,
-                    ),
-                  ),
-                ),
-              ),
+                  child: Text(o.$2, maxLines: 1, style: textStyle(on)),
+                );
+              },
             ),
         ],
-      ),
-    );
-  }
-}
-
-class _IconPill extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-  const _IconPill({required this.icon, required this.tooltip, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: _line),
-        ),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
-          child: SizedBox(width: 40, height: 40, child: Icon(icon, size: 19, color: _slate)),
-        ),
-      ),
-    );
-  }
-}
-
-class _NavBtn extends StatelessWidget {
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-  const _NavBtn({required this.icon, required this.tooltip, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: Material(
-        color: _faint,
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: onTap,
-          child: SizedBox(width: 38, height: 38, child: Icon(icon, size: 24, color: _ink)),
-        ),
       ),
     );
   }

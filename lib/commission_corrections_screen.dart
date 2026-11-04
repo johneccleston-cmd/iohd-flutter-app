@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import 'config/access.dart';
+import 'widgets/app_ribbon.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/app_dialog.dart';
@@ -41,6 +43,10 @@ const _searchLimit = 25; // the server returns at most this many jobs
 const _historyLimit = 30; // ...and this many corrections for one job
 const _runLimit = 200; // ...and this many payroll runs
 const _minReason = 5;
+
+/// The reason that, on a visit going from Not verified to Verified, counts as a missed completion: the tech didn't tap
+/// Completed, so the office did. Each one counts once against the tech and takes points off their integrity score.
+const _missedReason = 'Tech did not mark complete';
 
 class _ApiError implements Exception {
   final String message;
@@ -218,6 +224,9 @@ typedef _PayWeek = ({DateTime start, _WeekState state});
 class _Visit {
   final Map<String, dynamic> day;
   final bool verified, callback, fixedV, fixedC, fixedW, before;
+
+  /// The office verified this visit because the tech never marked it complete (counts against the tech).
+  final bool missed;
   final String weight;
 
   /// Field -> its value before the office fixed it (only for fields that are fixed now, see [_valuesBeforeFix]).
@@ -236,6 +245,7 @@ class _Visit {
       fixedC = day['override_callback'] != null,
       fixedW = day['override_weight'] != null,
       before = day['beforeGoLive'] == true,
+      missed = day['missed_completion'] == true,
       weight = _weightText(day['day_weight']),
       zeroWeightHint =
           ((_num(day['day_weight']) ?? 0) == 0 && day['is_callback'] != true && day['override_weight'] == null)
@@ -287,6 +297,12 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
   bool _recentLoading = true;
   String? _recentError;
 
+  /// Missed completions this year, per tech, most first (see [_missedReason]).
+  List<Map<String, dynamic>> _missed = [];
+  int? _missedYear;
+  bool _missedLoading = true;
+  String? _missedError;
+
   /// Mondays ('yyyy-MM-dd') that have a finalized payroll run; null until loaded, or when that failed.
   Set<String>? _paidWeeks;
 
@@ -301,6 +317,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
   void initState() {
     super.initState();
     _loadRecent();
+    _loadMissed();
     _loadRuns();
   }
 
@@ -331,6 +348,31 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
       setState(() {
         _recentLoading = false;
         _recentError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _loadMissed({bool quiet = false}) async {
+    if (!quiet) {
+      setState(() {
+        _missedLoading = true;
+        _missedError = null;
+      });
+    }
+    try {
+      final data = await _call('GET', '$_base/missed-completions');
+      if (!mounted) return;
+      setState(() {
+        _missed = List<Map<String, dynamic>>.from(data['techs'] ?? const []);
+        _missedYear = _num(data['year'])?.round();
+        _missedLoading = false;
+        _missedError = null;
+      });
+    } catch (e) {
+      if (!mounted || quiet) return; // a background refresh keeps the counts it has
+      setState(() {
+        _missedLoading = false;
+        _missedError = e.toString();
       });
     }
   }
@@ -477,6 +519,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
         final warnings = List<String>.from(data['warnings'] ?? const []);
         _toast(warnings.isEmpty ? done : '$done ${warnings.first}');
         _loadRecent(quiet: true);
+        _loadMissed(quiet: true);
       }
       return null;
     } catch (e) {
@@ -598,25 +641,8 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     );
   }
 
-  /// The same dark banner every HR page uses.
-  Widget _banner(bool narrow) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 56),
-      padding: EdgeInsets.symmetric(horizontal: narrow ? 12 : 24, vertical: 8),
-      alignment: Alignment.centerLeft,
-      decoration: const BoxDecoration(
-        color: DashUi.ink,
-        boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
-      ),
-      child: Semantics(
-        header: true,
-        child: const Text(
-          'COMMISSION CORRECTIONS',
-          style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-        ),
-      ),
-    );
-  }
+  /// The app's standard ribbon, as on every HR page.
+  Widget _banner(bool narrow) => AppRibbon(title: 'COMMISSION CORRECTIONS', icon: accessIcon('hr_corrections'));
 
   // ---- Left: search and recent corrections -----------------------------------
 
@@ -797,7 +823,104 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     );
   }
 
-  Widget _buildRecent() {
+  /// With no search typed: this year's missed completions per tech, then the recent corrections.
+  Widget _buildRecent() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      _missedSection(),
+      Expanded(child: _recentList()),
+    ],
+  );
+
+  /// How often each tech left a visit for the office to mark complete this year. Each one lowers their integrity
+  /// score. One short row per tech, so it never needs to scroll.
+  Widget _missedSection() {
+    final total = _missed.fold<int>(0, (n, r) => n + (_num(r['missed'])?.round() ?? 0));
+    final Widget body;
+    if (_missedLoading) {
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 4),
+        child: SkeletonPulse(
+          child: Container(
+            height: 14,
+            decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(6)),
+          ),
+        ),
+      );
+    } else if (_missedError != null) {
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+        child: Row(
+          children: [
+            const Expanded(
+              child: Text("Couldn't load the counts.", style: TextStyle(fontSize: 12.5, color: _redText)),
+            ),
+            TextButton(onPressed: _loadMissed, child: const Text('Try again')),
+          ],
+        ),
+      );
+    } else if (_missed.isEmpty) {
+      body = const Padding(
+        padding: EdgeInsets.fromLTRB(16, 0, 16, 4),
+        child: Text(
+          'None yet. A visit you verify for the reason "$_missedReason" counts against that tech.',
+          style: TextStyle(fontSize: 12.5, color: _subtle, height: 1.35),
+        ),
+      );
+    } else {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [for (final r in _missed) _missedRow(r)],
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Tooltip(
+            message: "Visits the office had to mark complete because the tech didn't. Each one lowers that tech's "
+                'integrity score.',
+            child: _railHeading(
+              'Missed completions',
+              [if (_missedYear != null) '$_missedYear', if (_missed.isNotEmpty) '$total total'].join(' · '),
+            ),
+          ),
+          body,
+        ],
+      ),
+    );
+  }
+
+  Widget _missedRow(Map<String, dynamic> r) {
+    final n = _num(r['missed'])?.round() ?? 0;
+    return MergeSemantics(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 3, 16, 3),
+        child: Row(
+          children: [
+            const Icon(Icons.flag_rounded, size: 14, color: _amberText),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                r['tech_name']?.toString() ?? 'Unknown',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _ink),
+              ),
+            ),
+            Text(
+              '$n',
+              semanticsLabel: '$n missed completion${n == 1 ? '' : 's'}',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: _ink, fontFeatures: _figures),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _recentList() {
     if (_recentLoading) return const Center(child: CircularProgressIndicator(strokeWidth: 2.5, color: _ink));
     if (_recentError != null) return _inlineError("Couldn't load recent corrections.\n$_recentError", _loadRecent);
     if (_recent.isEmpty) return _hint('Search for a job to see its visits.\nCorrections you make will be listed here.');
@@ -851,6 +974,11 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
                   '${c['changed_by_name'] ?? ''} · ${_stamp(c['changed_at'])}',
                   style: const TextStyle(fontSize: 12, color: _subtle),
                 ),
+                if (c['missed_completion'] == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: _tag('Missed completion', _amber, text: _amberText, icon: Icons.flag_rounded),
+                  ),
                 if (reason.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 3),
@@ -1390,6 +1518,18 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
       ? _pill('Verified', tone: _green, text: _greenText, icon: Icons.check_rounded, fixed: v.fixedV)
       : _pill('Not verified', tone: _slate, text: _slate, icon: Icons.remove_rounded, fixed: v.fixedV);
 
+  /// [short] for the table's narrow Verified column.
+  Widget _missedPill({bool short = false}) => Tooltip(
+    message: "The tech didn't mark this visit complete, so the office did. It counts once against their integrity "
+        'score, and stops counting if the fix is removed or set back to Not verified.',
+    child: Semantics(
+      container: true,
+      label: 'Missed completion: the office marked it complete',
+      excludeSemantics: true,
+      child: _pill(short ? 'Tech missed' : 'Missed completion', tone: _amber, text: _amberText, icon: Icons.flag_rounded),
+    ),
+  );
+
   Widget _callbackPill(_Visit v) => v.callback
       ? _pill('Callback', tone: _red, text: _redText, icon: Icons.replay_rounded, fixed: v.fixedC)
       : _pill('Not callback', tone: _slate, text: _slate, fixed: v.fixedC);
@@ -1535,6 +1675,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
                 _verifiedPill(v),
                 if (v.was['verified'] != null && v.was['verified'] != (v.verified ? 'Verified' : 'Not verified'))
                   _was('was ${v.was['verified']}'),
+                if (v.missed) Padding(padding: const EdgeInsets.only(top: 4), child: _missedPill(short: true)),
               ],
             ),
           ),
@@ -1607,6 +1748,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
                 fixed: v.fixedW,
               ),
               _verifiedPill(v),
+              if (v.missed) _missedPill(),
               _callbackPill(v),
             ],
           ),
@@ -1847,7 +1989,7 @@ class _FixDayDialogState extends State<_FixDayDialog> {
   String? _error;
   bool _saving = false;
 
-  static const _reasons = ['Tech did not mark complete', 'Tech marked complete by mistake', 'Office error'];
+  static const _reasons = [_missedReason, 'Tech marked complete by mistake', 'Office error'];
   static const _other = 'Other';
 
   Map<String, dynamic> get _d => widget.day;
@@ -1907,6 +2049,15 @@ class _FixDayDialogState extends State<_FixDayDialog> {
   }
 
   bool get _valid => _hasChange && !_weightMissing && _weightOk && _reasonOk && !_saving;
+
+  /// The save verifies a visit the tech never marked complete, for that reason: a missed completion against the tech.
+  bool get _missed => _verified == _Pick.yes && !_isVerified && _why == _missedReason;
+
+  void _pickReason(String label) => setState(() {
+    _why = label;
+    // The reason says what the fix is: on a visit that isn't verified, it means "verify it".
+    if (label == _missedReason && !_isVerified && _verified == _Pick.keep) _verified = _Pick.yes;
+  });
 
   /// Each field this save changes, with its value now and after. A replacement, never a difference: the value after
   /// is what the visit will have.
@@ -1987,6 +2138,7 @@ class _FixDayDialogState extends State<_FixDayDialog> {
     } else if (_weight == _Pick.yes) {
       body['weight'] = _weightValue;
     }
+    if (_missed) body['missedCompletion'] = true;
     body['reason'] = _reasonText;
 
     setState(() {
@@ -2058,10 +2210,10 @@ class _FixDayDialogState extends State<_FixDayDialog> {
       button: true,
       label: label,
       excludeSemantics: true,
-      onTap: _saving ? null : () => setState(() => _why = label),
+      onTap: _saving ? null : () => _pickReason(label),
       child: InkWell(
         borderRadius: BorderRadius.circular(8),
-        onTap: _saving ? null : () => setState(() => _why = label),
+        onTap: _saving ? null : () => _pickReason(label),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 7),
           child: Row(
@@ -2160,6 +2312,20 @@ class _FixDayDialogState extends State<_FixDayDialog> {
                   ],
                 ),
         ),
+        if (_why == _missedReason) ...[
+          const SizedBox(height: 10),
+          _missed
+              ? AppNotice(
+                  'Counts as a missed completion for ${_d['tech_name']}. It takes points off their integrity score, '
+                  'and stops counting if this fix is ever removed.',
+                  kind: AppNoticeKind.warning,
+                )
+              : AppNotice(
+                  _isVerified
+                      ? 'This visit is already verified, so it does not count as a missed completion.'
+                      : 'Only counts as a missed completion when you set Counts as worked to Verified.',
+                ),
+        ],
         if (_error != null) ...[
           const SizedBox(height: 10),
           Semantics(liveRegion: true, child: AppNotice(_error!, kind: AppNoticeKind.error)),

@@ -169,6 +169,7 @@ const CUSTOMERS = ['Northwind Homes LLC', 'Summit Builders', 'Lakeside Residence
         };
       }),
     },
+    paceMonthly: empty ? [] : [62, 68, 78, 74, 81, 84, 79, 77, 72, 52].slice(0, ELAPSED).map((workDays, i) => ({ month: i + 1, workDays })),
     techs: empty ? [] : techs,
     generatedAt: GENERATED_AT,
   });
@@ -312,6 +313,7 @@ const CUSTOMERS = ['Northwind Homes LLC', 'Summit Builders', 'Lakeside Residence
     },
     monthlyVolume: empty ? [] : vol.map(([c, inst, svc], i) => ({ month_num: i + 1, completed_count: c, install_count: inst, service_count: svc })),
     weeklySplit: [],
+    monthlyProfit: empty ? [] : vol.map(([c], i) => ({ month_num: i + 1, profit: c * (400 + (i % 4) * 25) })),
     monthlySplit: empty ? [] : Array.from({ length: ELAPSED }, (_, i) => ({ month_num: i + 1, commercial_rev: i === 9 ? 4200 : 40000 + (i % 4) * 45000, residential_rev: i === 9 ? 8600 : 150000 + (i % 3) * 30000 })),
     statusCounts: empty ? [] : statuses.map(([status, count]) => ({ status, count })),
     pipelineStages: [],

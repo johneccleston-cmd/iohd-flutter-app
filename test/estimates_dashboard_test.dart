@@ -56,7 +56,8 @@ void main() {
         'Open pipeline by age',
         '31+ days',
         'Lost reasons',
-        for (final r in (f['lostReasons'] as List)) r['reason'] as String,
+        for (final r in (f['lostReasons'] as List))
+          if ((r['count'] as num) > 0) r['reason'] as String,
         'Stale estimates',
         stale.first['customer_name'] as String,
         stale[1]['customer_name'] as String,
@@ -86,12 +87,12 @@ void main() {
         expect(q['kind'], 'aging');
         expect(q['bucket'], '31+ days');
         expect(find.text('Open estimates · 31+ days'), findsOneWidget);
+        expect(find.textContaining('As of today · '), findsOneWidget, reason: 'open today, whatever year they are dated');
         await saveDashShot(t, 'estimates_drill_aging');
       });
     });
 
-    testWidgets('a lost reason opens its lost estimates; a reason with none has nothing to open', (t) async {
-      final handle = t.ensureSemantics();
+    testWidgets('a lost reason opens its lost estimates; a reason with none has no row', (t) async {
       final api = _api();
       await pumpDashboard(t, const EstimatesDashboardScreen(), api: api, body: () async {
         await t.tap(find.text('Price'));
@@ -102,10 +103,10 @@ void main() {
         expect(find.text('Lost estimates · Price'), findsOneWidget);
         await t.tap(find.byTooltip('Close'));
         await settleDashboard(t, frames: 5);
-        final timing = t.getSemantics(find.bySemanticsLabel(RegExp(r'^Timing: \$0 lost on 0 estimates')));
-        expect(timing.flagsCollection.isButton, isFalse);
+        expect(find.text('Timing'), findsNothing, reason: 'nothing was lost to it');
+        expect(find.text('Unresponsive'), findsOneWidget, reason: 'one estimate was, even at \$0');
+        expect(find.text('83% of lost value has no specific reason'), findsOneWidget);
       });
-      handle.dispose();
     });
 
     testWidgets('every stale estimate is a click away, oldest first; a row opens that customer\'s', (t) async {
@@ -137,12 +138,18 @@ void main() {
       final handle = t.ensureSemantics();
       await pumpDashboard(t, const EstimatesDashboardScreen(), api: _api(), body: () async {
         expect(find.textContaining('Sent and won · '), findsOneWidget);
+        // Dollars, not a share: "41% of that value won" read as a second win rate beside the 87.9% scorecard.
+        expect(find.text('won so far'), findsOneWidget);
+        expect(find.textContaining('of that value won'), findsNothing);
+        expect(find.textContaining('Sep vs Aug'), findsNothing, reason: 'a bare chip cannot say whether sent or won moved');
         await t.tap(find.bySemanticsLabel('Chart view: Count'));
         await settleDashboard(t, frames: 10);
-        expect(find.text('Sent and won · 355 sent in 2026'), findsOneWidget);
+        expect(find.text('Sent and won · by estimate date'), findsOneWidget);
+        expect(find.text('won so far'), findsOneWidget);
+        expect(find.textContaining('of them won'), findsNothing);
         await t.tap(find.bySemanticsLabel('Chart view: Avg value'));
         await settleDashboard(t, frames: 10);
-        expect(find.textContaining('Average estimate · '), findsOneWidget);
+        expect(find.text('Average estimate · by estimate date'), findsOneWidget);
         await saveDashShot(t, 'estimates_view_avg');
       });
       handle.dispose();
@@ -154,7 +161,23 @@ void main() {
         expect(find.text(_usd(b['value'] as num)), findsWidgets);
         expect(find.text('· ${b['count']}'), findsOneWidget);
       }
-      expect(find.text('All years · 312 before 2026'), findsOneWidget);
+      expect(find.text('All years · 312 estimates pre-2026'), findsOneWidget);
+    });
+
+    testWidgets('the win rate line is won ÷ (won + lost) by month, as the scorecard counts it', (t) async {
+      await pumpDashboard(t, const EstimatesDashboardScreen(), api: _api());
+      final card = t.widget<AnimatedMetricCard>(
+        find.byWidgetPredicate((w) => w is AnimatedMetricCard && w.title == 'Win rate'),
+      );
+      final jan = (f['monthlyValue'] as List).cast<Map<String, dynamic>>().first;
+      expect(card.trend!.first, closeTo((jan['won_count'] as num) / (jan['closed_count'] as num) * 100, 0.001));
+    });
+
+    testWidgets('a past year reads as that year', (t) async {
+      await pumpDashboard(t, const Scaffold(body: EstimatesDashboardContent(selectedYear: 2025)), api: _api());
+      expect(find.text('Quoted · all of 2025'), findsOneWidget);
+      expect(find.text('Marked lost · all of 2025'), findsOneWidget);
+      expect(find.text('won'), findsOneWidget, reason: 'not "so far" for a finished year');
     });
   });
 
@@ -179,6 +202,8 @@ void main() {
         expect(find.text('No estimates for 2026 yet.'), findsOneWidget);
         expect(find.text('No estimates dated 2026 were lost.'), findsOneWidget);
         expect(find.text('No stale estimates today.'), findsOneWidget);
+        expect(find.text('—'), findsOneWidget, reason: 'nothing decided is no win rate, not 0%');
+        expect(find.text('0.0%'), findsNothing);
         await saveDashShot(t, 'estimates_empty');
       });
       expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));

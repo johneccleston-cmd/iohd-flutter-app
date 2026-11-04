@@ -42,6 +42,7 @@ import 'site_checks_screen.dart';
 import 'takeoffs_screen.dart';
 import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
+import 'widgets/dash_hover_card.dart';
 
 
 
@@ -89,7 +90,7 @@ final GoRouter _router = GoRouter(
           // Add the new routes here so they live inside the same indexed shell
           GoRoute(path: '/statuses', builder: (context, state) => const StatusesScreen()),
           GoRoute(path: '/payments', builder: (context, state) => const PaymentsScreen()),
-          GoRoute(path: '/invoices', builder: (context, state) => const InvoicesScreen()),
+          GoRoute(path: '/invoices', builder: (context, state) => InvoicesScreen(initialQuery: state.uri.queryParameters['q'])),
           GoRoute(path: '/documents', builder: (context, state) => const DocumentsScreen()),
           GoRoute(path: '/site-checks', builder: (context, state) => const SiteChecksScreen()),
           GoRoute(path: '/takeoffs', builder: (context, state) => const TakeoffsScreen()),
@@ -141,7 +142,7 @@ final GoRouter _router = GoRouter(
               // 🔥 UPDATED: Live Purchase Orders Screen
               GoRoute(
                 path: 'purchase-orders', 
-                builder: (context, state) => const PurchaseOrdersScreen(),
+                builder: (context, state) => PurchaseOrdersScreen(initialQuery: state.uri.queryParameters['q']),
               ),
               // 🔥 UPDATED: Live Vendors Screen
               GoRoute(
@@ -337,11 +338,14 @@ class IohdHubApp extends StatelessWidget {
             ),
           ),
         ),
+        // Every plain tooltip wears the scorecard hover card's look (see dash_hover_card.dart).
         tooltipTheme: TooltipThemeData(
-          waitDuration: const Duration(milliseconds: 450),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(color: const Color(0xFF0F172A), borderRadius: BorderRadius.circular(8)),
-          textStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Colors.white),
+          waitDuration: const Duration(milliseconds: 350),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          margin: const EdgeInsets.all(8),
+          constraints: const BoxConstraints(maxWidth: 320),
+          decoration: dashTipDecoration,
+          textStyle: dashTipBodyStyle,
         ),
         snackBarTheme: SnackBarThemeData(
           behavior: SnackBarBehavior.floating,

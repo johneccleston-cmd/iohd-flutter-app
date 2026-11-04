@@ -11,6 +11,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'dash_hover_card.dart';
 import 'dashboard_data.dart';
 
 class DashUi {
@@ -251,6 +252,10 @@ class AnimatedMetricCard extends StatefulWidget {
   /// The trend line is hidden when the card's inner width is below this (it needs room beside the number).
   final double sparkMinWidth;
 
+  /// Drawn where the trend line goes when there is none (84 x 48, a small illustration such as a streak's flame).
+  /// Hidden, like the trend line, when the card is narrower than [sparkMinWidth].
+  final Widget? trailing;
+
   /// Space above and below the text; a screen with a fixed, shorter card height can tighten it.
   final double verticalPadding;
 
@@ -265,6 +270,7 @@ class AnimatedMetricCard extends StatefulWidget {
     this.format = dashMoney,
     this.trend,
     this.sparkMinWidth = 250,
+    this.trailing,
     this.verticalPadding = 14,
   });
 
@@ -419,9 +425,14 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
             final withCaption = w.caption.isNotEmpty && c.maxHeight + 0.5 >= _contentHeight(scaler);
             // Skip the sparkline when the card is too narrow to fit it beside the number.
             final showSpark = w.trend != null && c.maxWidth > w.sparkMinWidth;
+            final showTrailing = w.trend == null && w.trailing != null && c.maxWidth > w.sparkMinWidth;
             return Row(
               children: [
                 Expanded(child: _textColumn(v, withCaption: withCaption)),
+                if (showTrailing) ...[
+                  const SizedBox(width: 12),
+                  SizedBox(width: 84, height: 48, child: w.trailing),
+                ],
                 if (showSpark) ...[
                   const SizedBox(width: 12),
                   SizedBox(
@@ -458,7 +469,7 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
       ),
     );
     if (hover.isNotEmpty) {
-      card = Tooltip(message: hover, waitDuration: const Duration(milliseconds: 400), child: card);
+      card = DashHoverCard(title: w.title, value: v == null ? '—' : w.format(v), body: hover, color: w.valueColor, child: card);
     }
 
     // Screen readers get the finished figure and its meaning in one phrase, not the count-up in progress.
@@ -481,6 +492,34 @@ class _AnimatedMetricCardState extends State<AnimatedMetricCard>
   }
 }
 
+/// The scorecards' trend line on its own, for a panel that wants one beside a figure. Draws itself in once; with
+/// fewer than two readings it shows the dashed placeholder line instead.
+class DashSparkline extends StatelessWidget {
+  final List<double> values;
+  final Color color;
+
+  /// Null fills the width it is given.
+  final double? width;
+  const DashSparkline({super.key, required this.values, required this.color, this.width = 84});
+
+  @override
+  Widget build(BuildContext context) {
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    return SizedBox(
+      width: width,
+      height: 48,
+      child: ExcludeSemantics(
+        child: TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: 1),
+          duration: reduce ? Duration.zero : const Duration(milliseconds: 1800),
+          curve: Curves.easeOutCubic,
+          builder: (context, t, _) => CustomPaint(painter: _SparklinePainter(values: values, color: color, progress: t)),
+        ),
+      ),
+    );
+  }
+}
+
 class _SparklinePainter extends CustomPainter {
   final List<double> values;
   final Color color;
@@ -497,9 +536,12 @@ class _SparklinePainter extends CustomPainter {
     const pad = 5.0;
     final w = size.width - pad * 2;
     final h = size.height - pad * 2;
+    // From zero (or the lowest reading, when one is below zero, such as a pool that went negative) to the highest.
     final maxV = values.fold<double>(0, math.max);
+    final minV = values.fold<double>(0, math.min);
+    final span = maxV - minV;
 
-    if (values.length < 2 || maxV <= 0) {
+    if (values.length < 2 || span <= 0) {
       final base = Paint()
         ..color = DashUi.line
         ..strokeWidth = 1.5
@@ -521,7 +563,7 @@ class _SparklinePainter extends CustomPainter {
       for (var i = 0; i < values.length; i++)
         Offset(
           pad + w * i / (values.length - 1),
-          pad + h * (1 - values[i] / maxV),
+          pad + h * (1 - (values[i] - minV) / span),
         ),
     ];
 
@@ -630,6 +672,9 @@ class DashErrorPanel extends StatelessWidget {
 
   /// Null hides the button (for problems a retry can't fix, like a missing permission).
   final VoidCallback? onRetry;
+
+  /// The button's words: "Try again" after a failure, "Refresh" for a year with nothing in it yet.
+  final String retryLabel;
   final String? hint;
   final IconData icon;
 
@@ -640,7 +685,8 @@ class DashErrorPanel extends StatelessWidget {
     super.key,
     required this.title,
     required this.message,
-    required VoidCallback this.onRetry,
+    required this.onRetry,
+    this.retryLabel = 'Try again',
     this.hint = 'Check your connection, then try again.',
     this.icon = Icons.cloud_off_rounded,
   }) : _centerTitle = false;
@@ -658,6 +704,7 @@ class DashErrorPanel extends StatelessWidget {
           DashFailure.offline => Icons.cloud_off_rounded,
         },
         onRetry = failure.canRetry ? onRetry : null,
+        retryLabel = 'Try again',
         _centerTitle = true;
 
   @override
@@ -702,7 +749,7 @@ class DashErrorPanel extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onRetry,
                 icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: const Text('Try again'),
+                label: Text(retryLabel),
                 style: FilledButton.styleFrom(
                   backgroundColor: DashUi.emeraldDeep,
                 ),
@@ -868,9 +915,10 @@ class _AutoScrollTickerState extends State<AutoScrollTicker>
 /// Only finished months are used (dashCompleteMonths): the month in progress is left off, because a few days of it
 /// drawn next to whole months reads as a collapse. The line starts one month before the first non-zero value so it
 /// doesn't open with a long flat stretch. Returns null when there are fewer than two points, so the card shows no
-/// line rather than a dot.
+/// line rather than a dot, and when every point is zero (a flat line along the floor says nothing).
 List<double>? dashTrend(List<double> monthly, int year) {
   final pts = monthly.take(dashCompleteMonths(year)).toList();
+  if (pts.every((v) => v == 0)) return null;
   final first = pts.indexWhere((v) => v > 0);
   final trimmed = first < 0 ? pts : pts.sublist(math.max(0, first - 1));
   return trimmed.length >= 2 ? trimmed : null;

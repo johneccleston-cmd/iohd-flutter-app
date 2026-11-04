@@ -32,6 +32,11 @@ analyze or tests passed.
 - API calls go through `AuthSession.instance.headers()`, have a `.timeout(...)`, and treat 401 as "sign out".
 - Every data screen handles loading, error (with retry) and empty states. See the `ux-states` skill.
 - Use the existing tokens (`DashUi`, `AppTheme`) instead of new hex literals.
+- Every screen starts with the standard ribbon from `lib/widgets/app_ribbon.dart`, never a hand-built dark bar:
+  `DashboardLayout` for dashboards and KPI pages, `PageBanner` (or `AppRibbon`) for full pages and dialogs that
+  carry a title bar, `RibbonSurface` + `RibbonIcon`/`RibbonTitle` only when a toolbar needs its own layout (Payroll).
+  Pass the page's menu icon (`accessIcon('<key>')`), use `RibbonColors` for anything drawn on it, `PageBanner.button`
+  for white buttons and `RibbonRefreshButton` for Refresh. Change the ribbon's look or motion only in `app_ribbon.dart`.
 - Don't add new secrets to source. `kAuthToken` is a shared app key, not a user credential.
 - Office-only app: the login rejects non-admin accounts. Don't weaken that check.
 

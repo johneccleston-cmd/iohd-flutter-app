@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import 'widgets/app_ribbon.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
@@ -256,31 +257,18 @@ class _PayrollHistoryDialogState extends State<_PayrollHistoryDialog> {
     );
   }
 
-  /// The payroll screen's dark banner, so the dialog reads as part of that page rather than a stock pop-up.
-  Widget _banner() => Container(
-    color: DashUi.ink,
-    padding: const EdgeInsets.fromLTRB(24, 10, 12, 10),
-    child: Row(
-      children: [
-        const Icon(Icons.history_rounded, size: 20, color: Colors.white70),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Semantics(
-            header: true,
-            child: const Text(
-              'PAYROLL HISTORY',
-              style: TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-            ),
-          ),
-        ),
-        IconButton(
-          tooltip: 'Close',
-          color: Colors.white,
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.close_rounded),
-        ),
-      ],
-    ),
+  /// The app's standard ribbon, so the dialog reads as part of the Payroll page rather than a stock pop-up.
+  Widget _banner() => AppRibbon(
+    title: 'PAYROLL HISTORY',
+    icon: Icons.history_rounded,
+    controls: [
+      IconButton(
+        tooltip: 'Close',
+        color: Colors.white,
+        onPressed: () => Navigator.pop(context),
+        icon: const Icon(Icons.close_rounded),
+      ),
+    ],
   );
 
   Widget _body() {

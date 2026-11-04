@@ -56,6 +56,16 @@ and use dark text.
 
 ## Components
 
+- **The ribbon (standard page title bar).** Every screen starts with the navy ribbon from
+  `lib/widgets/app_ribbon.dart`: a navy-to-blue gradient with light from above, a lit bottom hairline,
+  the page's menu icon on a sky-to-indigo tile, the title in white capitals (16, bold, letterSpacing 1.3)
+  with an optional quieter "kind" ("COLLECTIONS DASHBOARD"), and controls on the right. On open the
+  icon pops, the title slides in, the controls follow and a band of light sweeps across; a refresh
+  (via `RibbonActivity`) spins the Refresh icon and runs a light along the edge. Motion is off with
+  reduce motion. Use `DashboardLayout` (dashboards, KPI pages), `PageBanner`/`AppRibbon` (full pages,
+  titled dialogs) or `RibbonSurface` + `RibbonIcon`/`RibbonTitle` (custom toolbars like Payroll).
+  Never hand-build a dark banner, and change the look only inside `app_ribbon.dart`. Colours on it
+  come from `RibbonColors`.
 - Buttons: one primary `FilledButton` (brand red) per view. Use `OutlinedButton` for secondary actions
   and `TextButton` for tertiary ones. Use icon + label for important actions. Disable the button
   and show a spinner while it's submitting.

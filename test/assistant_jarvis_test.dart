@@ -133,7 +133,9 @@ void main() {
     AssistantChat.instance.pageContext = '';
   });
 
-  testWidgets('"Today’s priorities" asks for the daily briefing, and How I got this names the lookups behind it', (tester) async {
+  testWidgets('asking for today\'s priorities runs the daily briefing, and How I got this names the lookups behind it', (
+    tester,
+  ) async {
     _reply = {
       'success': true,
       'answer': _briefing,
@@ -146,8 +148,10 @@ void main() {
     };
     await http.runWithClient(() async {
       await _open(tester);
-      expect(find.text('Today’s priorities'), findsOneWidget);
-      await tester.tap(find.text('Today’s priorities'));
+      expect(find.text('Run briefing'), findsNothing, reason: 'the welcome screen has no briefing card');
+      await tester.enterText(_composer('Ask Jarvis'), "Give me today's priorities and tell me why each one matters.");
+      await _pump(tester, 100);
+      await tester.tap(find.byTooltip('Send'));
       await _pump(tester, 1500);
 
       final sent = (_asked.single['messages'] as List).last as Map;
@@ -262,7 +266,7 @@ void main() {
     await http.runWithClient(() async {
       await _open(tester);
       expect(find.textContaining('only for admin and owner accounts'), findsOneWidget);
-      expect(find.text('Today’s priorities'), findsNothing);
+      expect(find.text('Today’s priorities'), findsNothing, reason: 'no quick actions for staff who cannot ask');
       final box = tester.widget<TextField>(_composer('Jarvis is available'));
       expect(box.enabled, isFalse);
       await expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/jarvis_not_admin.png'));

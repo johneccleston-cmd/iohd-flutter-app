@@ -120,15 +120,21 @@ void main() {
     }, () => _mock(r));
   });
 
-  testWidgets('balance: the amount while owed, "Paid in full" once settled, and no balance on an estimate', (t) async {
+  testWidgets('balance: the amount while owed, "Paid in full" only with payments on file, and no balance on an estimate', (t) async {
     await http.runWithClient(() async {
       await _pump(t, _record(due: 400));
+      await t.tap(find.text('Payment'));
+      await t.pumpAndSettle();
       expect(find.text('Balance Due'), findsOneWidget);
       expect(find.text(r'$400.00'), findsOneWidget);
       expect(find.text('Paid in full'), findsNothing);
 
+      // $0 due but nothing on file: not claimed as paid (Service Fusion shows $0 on jobs it moved to an invoice).
       await _pump(t, _record(due: 0));
-      expect(find.text('Paid in full'), findsOneWidget);
+      await t.tap(find.text('Payment'));
+      await t.pumpAndSettle();
+      expect(find.text('Paid in full'), findsNothing);
+      expect(find.text(r'$0.00 (no payment on file)'), findsOneWidget);
 
       await _pump(t, _record(estimate: true, due: 1000));
       await t.tap(find.text('Payment'));
@@ -138,7 +144,7 @@ void main() {
     }, () => _mock(_record()));
   });
 
-  testWidgets('line items are a table with a subtotal, the charges and the total', (t) async {
+  testWidgets("Service Fusion's line items show read-only in the Line Items panel, with its charges and total", (t) async {
     final r = _record(
       total: 1087.75,
       itemsTotal: 1000,
@@ -149,33 +155,23 @@ void main() {
     );
     await http.runWithClient(() async {
       await _pump(t, r);
-      await t.ensureVisible(find.text('Items subtotal'));
-      for (final h in ['ITEM', 'QTY', 'RATE', 'AMOUNT']) {
-        expect(find.text(h), findsOneWidget);
-      }
-      expect(find.text('Items subtotal'), findsOneWidget);
-      expect(find.text('Sales Tax (Fayetteville)'), findsOneWidget);
+      await t.ensureVisible(find.text('Line Items'));
+      expect(find.text('Line Items'), findsOneWidget);
+      expect(find.text('Complete door'), findsOneWidget);
+      expect(find.text('Sales tax'), findsOneWidget);
+      expect(find.text('Same Day Service Credit'), findsOneWidget);
       expect(find.text(r'-$10.00'), findsOneWidget, reason: 'a discount shows as a negative');
-      expect(find.text('Job total'), findsOneWidget);
-      expect(find.text('Other (not itemized above)'), findsNothing, reason: 'it all adds up');
+      expect(find.text(r'$1,087.75'), findsWidgets);
+      expect(find.text('Not itemized in Service Fusion'), findsNothing, reason: 'it all adds up');
     }, () => _mock(r));
 
     // Something in the total that is not an item or a listed charge is shown, not hidden.
     final gap = _record(total: 1100, itemsTotal: 1000);
     await http.runWithClient(() async {
       await _pump(t, gap);
-      await t.ensureVisible(find.text('Items subtotal'));
-      expect(find.text('Other (not itemized above)'), findsOneWidget);
-    }, () => _mock(gap));
-
-    // On an estimate the gap is the sales tax Service Fusion doesn't send, and is labelled that way.
-    final est = _record(estimate: true, total: 1085, itemsTotal: 1000);
-    await http.runWithClient(() async {
-      await _pump(t, est);
-      await t.ensureVisible(find.text('Items subtotal'));
+      await t.ensureVisible(find.text('Line Items'));
       expect(find.text('Tax and other charges'), findsOneWidget);
-      expect(find.text('Estimate total'), findsOneWidget);
-    }, () => _mock(est));
+    }, () => _mock(gap));
   });
 
   testWidgets('opened by its address (no row to show yet) the page shows a skeleton, then the job', (t) async {

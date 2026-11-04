@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'config/access.dart';
 import 'widgets/flat_page.dart';
 
 class TakeoffsScreen extends StatelessWidget {
@@ -14,6 +15,7 @@ class TakeoffsScreen extends StatelessWidget {
         children: [
           PageBanner(
             title: 'Takeoffs',
+            icon: accessIcon('takeoffs'),
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Takeoff', onPressed: () {})],
           ),
           const Expanded(

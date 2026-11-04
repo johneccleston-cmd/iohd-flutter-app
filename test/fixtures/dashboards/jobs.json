@@ -256,5 +256,47 @@
     "jobsWithCategories": 1349,
     "jobsWithLineItems": 1446
   },
-  "generatedAt": "2026-10-22T19:30:00.000Z"
+  "generatedAt": "2026-10-22T19:30:00.000Z",
+  "monthlyProfit": [
+    {
+      "month_num": 1,
+      "profit": 63600
+    },
+    {
+      "month_num": 2,
+      "profit": 55675
+    },
+    {
+      "month_num": 3,
+      "profit": 71550
+    },
+    {
+      "month_num": 4,
+      "profit": 79800
+    },
+    {
+      "month_num": 5,
+      "profit": 73200
+    },
+    {
+      "month_num": 6,
+      "profit": 83300
+    },
+    {
+      "month_num": 7,
+      "profit": 80100
+    },
+    {
+      "month_num": 8,
+      "profit": 79325
+    },
+    {
+      "month_num": 9,
+      "profit": 62800
+    },
+    {
+      "month_num": 10,
+      "profit": 3400
+    }
+  ]
 }

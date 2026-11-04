@@ -61,13 +61,13 @@ void main() {
     await pumpDashboard(t, const CollectionsDashboardScreen(), api: api, body: () async {
       await saveDashShot(t, 'state_updated');
       api.delay['/api/dashboards/collections'] = const Duration(seconds: 2);
-      await t.tap(find.byTooltip('Refresh now'));
+      await t.tap(dashRefreshButton);
       await t.pump(const Duration(milliseconds: 300));
       await saveDashShot(t, 'state_refreshing');
       await t.pump(const Duration(seconds: 3));
       api.delay.clear();
       api.status['/api/dashboards/collections'] = 500;
-      await t.tap(find.byTooltip('Refresh now'));
+      await t.tap(dashRefreshButton);
       await settleDashboard(t, frames: 5);
       await saveDashShot(t, 'state_refresh_failed');
     });

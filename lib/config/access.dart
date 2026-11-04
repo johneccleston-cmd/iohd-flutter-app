@@ -91,3 +91,6 @@ final List<AccessResource> kAccessPages = [
     for (final r in g.items)
       if (r.route != null) r,
 ];
+
+/// The icon the menus show for resource [key] (a dashboard's title bar shows the same one).
+IconData accessIcon(String key) => kAccessPages.firstWhere((r) => r.key == key).icon;

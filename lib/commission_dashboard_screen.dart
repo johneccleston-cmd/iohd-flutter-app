@@ -5,10 +5,12 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'payroll_history_dialog.dart';
 import 'payroll_run_dialog.dart';
+import 'widgets/dash_story.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
@@ -16,11 +18,14 @@ import 'widgets/dashboard_panels.dart';
 
 // The Commissions dashboard. Most of it follows the selected year; the retainage pool, the payroll card and the
 // retainage release are about today, whatever year is shown.
-//   scorecards  payouts, sales commission, retainage pool, average per recipient, commission % of revenue
+//   scorecards  payouts, sales commission, locked retainage, average per person, commission % of revenue
 //   left        everyone paid: paid this year, locked retainage, and (this year only) this pay week against the hurdle
-//   right       paid (or revenue) by month, over two strips: payroll (is last week run, run it, the run history) and
+//   right       commission paid by month, over two strips: payroll (is last week run, run it, the run history) and
 //               the next retainage release
 // The page fits the window without scrolling and without shrinking text (see _Grid).
+//
+// Money shows cents throughout: these are pay amounts that have to agree with the payroll register. Only the chart's
+// scale (its axis and bar labels) is rounded, and the hurdle, a round rule, reads "$750".
 
 String _money(double v) {
   final neg = v < 0;
@@ -28,7 +33,7 @@ String _money(double v) {
   return '${neg ? '-' : ''}\$$s';
 }
 
-/// "$781.74", "$750" (no cents when there are none).
+/// "$750": for the hurdle, a rule rather than a pay amount (no cents when there are none).
 String _moneyShort(double v) => _money(v).replaceAll('.00', '');
 
 String _trimZero(double v) {
@@ -55,6 +60,7 @@ class CommissionDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashboardLayout(
       title: 'Commissions',
+      icon: accessIcon('dash_commissions'),
       builder: (context, selectedYear) {
         return CommissionDashboardContent(selectedYear: selectedYear);
       },
@@ -229,6 +235,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   double _nextDisbursement = 0;
   int _nextDisbursementTechs = 0;
 
+  /// The day commissions began (the server's meta.goLiveDate), which explains an empty year or empty months.
+  String _goLive = '';
+
   @override
   void initState() {
     super.initState();
@@ -273,6 +282,7 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
         ((summary['avgCommissionPerRecipient'] ?? summary['avgCommissionPerTech']) as num?)?.toDouble() ?? 0.0;
     _rate = _CommissionRate.fromJson(summary['commissionRate']);
     _weeklyHurdle = ((body['meta'] as Map?)?['weeklyThreshold'] as num?)?.toDouble() ?? 750;
+    _goLive = ((body['meta'] as Map?)?['goLiveDate'] ?? '').toString();
     final sales = (summary['salesCommission'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
     _salesCommission = (sales['total'] as num?)?.toDouble() ?? 0.0;
     final next = (summary['nextDisbursement'] as Map<String, dynamic>?) ?? const <String, dynamic>{};
@@ -288,6 +298,13 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
   List<double>? _payoutTrend() =>
       _chartData.isEmpty ? null : dashTrend([for (final p in _chartData) p.payout], widget.selectedYear);
 
+  /// Why a year has nothing paid: it was before commissions began, it went by without any, or none yet.
+  String _nothingPaid(int year) {
+    final began = DateTime.tryParse(_goLive);
+    if (began != null && year < began.year) return 'Commissions began ${dashShortDate(_goLive)}, ${began.year}';
+    return year < DashClock.now().year ? 'No commission paid in $year' : 'No commission paid yet in $year';
+  }
+
   @override
   Widget build(BuildContext context) {
     if (dashLoading) return const _CommissionSkeleton();
@@ -299,6 +316,13 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
     final rate = _rate;
     final people = _recipientCount == 1 ? 'person' : 'people';
     final g = DashGeo.of(context);
+    // Titles and captions are kept short enough to stay whole on five cards at 1280 px with 130% text; the hover card
+    // holds the full definition.
+    final paidCaption = 'Finalized runs · $year';
+    const poolTitle = 'Locked retainage';
+    const poolCaption = 'Commercial · all time';
+    const rateTitle = 'Commission ÷ revenue';
+    final rateCaption = rate == null ? '' : 'Jobs closed ${dashDateRange(rate.from, rate.to)}';
     // The meters are for the CURRENT pay week, so they only show for the current year.
     final thisWeek = year == DashClock.now().year;
 
@@ -308,34 +332,35 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
       AnimatedMetricCard(
         title: 'Total payouts',
         value: _totalPayouts,
-        caption: 'Finalized runs · $year pay weeks',
+        caption: paidCaption,
         definition:
             'What finalized payroll runs paid out for pay weeks that start in $year (voided runs '
-            'left out, adjustments netted). The line shows it by finished month.',
+            'left out, adjustments netted). A pay week counts in the month it starts in. The line shows it '
+            'by finished month.',
         index: 0,
         trend: _payoutTrend(),
         sparkMinWidth: dashSparkRoom(
           context,
           title: 'Total payouts',
           value: _money(_totalPayouts),
-          caption: 'Finalized runs · $year pay weeks',
+          caption: paidCaption,
         ),
         valueColor: DashUi.emeraldDeep,
       ),
       AnimatedMetricCard(
         title: 'Sales commission',
         value: _salesCommission,
-        caption: 'Earned by sales reps · $year',
+        caption: 'Won estimates · $year',
         definition:
             'Commission sales reps earned on won estimates, counted in the pay week it falls due, for '
             "weeks in $year that have started. It doesn't wait for a finalized payroll run.",
         index: 1,
-        valueColor: DashUi.amber,
+        valueColor: DashUi.emeraldDeep,
       ),
       AnimatedMetricCard(
-        title: 'Commercial retainage pool',
+        title: poolTitle,
         value: _retainagePool,
-        caption: 'Locked · all-time',
+        caption: poolCaption,
         definition:
             'Commercial retainage still locked, from jobs settled in a finalized payroll run. Not '
             'limited to $year. The line is one reading a day.',
@@ -343,30 +368,30 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
         trend: _retainageHistory.length >= 2 ? _retainageHistory : null,
         sparkMinWidth: dashSparkRoom(
           context,
-          title: 'Commercial retainage pool',
+          title: poolTitle,
           value: _money(_retainagePool),
-          caption: 'Locked · all-time',
+          caption: poolCaption,
         ),
         valueColor: DashUi.indigo,
       ),
       AnimatedMetricCard(
-        title: 'Avg commission per recipient',
+        title: 'Average per person',
         value: _avgPerRecipient,
-        caption: 'Paid ÷ $_recipientCount on the job pool',
-        definition:
-            'What finalized payroll runs paid the $_recipientCount $people on the job pool in $year, '
-            'divided by $_recipientCount. That is the technicians and anyone else paid from the pool, '
-            'such as a sales rep with a pool cap. Sales reps paid only sales commission are in neither '
-            'number.',
+        caption: _recipientCount == 0 ? 'No one on the job pool' : '$_recipientCount on the job pool · $year',
+        definition: _recipientCount == 0
+            ? 'No one was on the job pool in $year, so there is nothing to average.'
+            : 'What finalized payroll runs paid the $_recipientCount $people on the job pool in $year, '
+                  'divided by $_recipientCount. That is the technicians and anyone else paid from the pool, '
+                  'such as a sales rep with a pool cap, and someone not paid yet counts as \$0. Sales reps paid '
+                  'only sales commission are in neither number.',
         index: 3,
         valueColor: DashUi.ink,
       ),
       if (rate != null)
         AnimatedMetricCard(
-          title: 'Commission % of revenue',
+          title: rateTitle,
           value: rate.pct,
-          // Short enough to fit beside four other cards at 1280px; the full rule is in the definition.
-          caption: 'Of completed revenue · ${dashDateRange(rate.from, rate.to)}',
+          caption: rateCaption,
           definition:
               'What finalized payroll runs paid for the pay weeks ${dashShortDate(rate.from)} to '
               '${dashShortDate(rate.to)} (${_money(rate.payouts)}), divided by the revenue of the '
@@ -378,9 +403,9 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
           trend: rate.weeklyPct.length >= 2 ? rate.weeklyPct : null,
           sparkMinWidth: dashSparkRoom(
             context,
-            title: 'Commission % of revenue',
+            title: rateTitle,
             value: '${rate.pct.toStringAsFixed(1)}%',
-            caption: 'Of completed revenue · ${dashDateRange(rate.from, rate.to)}',
+            caption: rateCaption,
           ),
           format: (v) => '${v.toStringAsFixed(1)}%',
         ),
@@ -388,10 +413,17 @@ class _CommissionDashboardContentState extends State<CommissionDashboardContent>
 
     return _Grid(
       tiles: tiles,
-      people: (layout) =>
-          _PeoplePanel(g: g, staff: _staff, year: year, thisWeek: thisWeek, hurdle: _weeklyHurdle, layout: layout),
+      people: (layout) => _PeoplePanel(
+        g: g,
+        staff: _staff,
+        year: year,
+        thisWeek: thisWeek,
+        hurdle: _weeklyHurdle,
+        nothingPaid: _nothingPaid(year),
+        layout: layout,
+      ),
       peopleCount: _staff.length,
-      chart: _PayoutChart(data: _chartData, year: year),
+      chart: _PayoutChart(data: _chartData, year: year, goLive: _goLive, nothingPaid: _nothingPaid(year)),
       payroll: _PayrollRunsCard(onChanged: () => dashReload(fresh: true)),
       release: QuarterlyPayoutCountdownCard(amount: _nextDisbursement, techCount: _nextDisbursementTechs),
       thisWeek: thisWeek,
@@ -456,7 +488,7 @@ class _Grid extends StatelessWidget {
           final peopleInner = (w - dashGap) * 11 / 23 - 40;
           final oneLine = peopleInner >= _PeoplePanel.oneLineWidth(g, thisWeek);
           final rowH = oneLine ? g.rowWide : _PeoplePanel.twoLineRow(g);
-          final rowsH = bodyH - g.panelTop - (oneLine ? g.columnHead : 0);
+          final rowsH = bodyH - g.panelTop - _PeoplePanel.calloutH(g) - (oneLine ? g.columnHead : 0);
           final maxRows = math.max(2, (rowsH / rowH).floor());
           content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -503,9 +535,9 @@ class _Grid extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(height: g.tile, child: _tileRow(tiles.take(3).toList())),
+                SizedBox(height: g.tile, child: _tileRow(tiles.take((tiles.length + 1) ~/ 2).toList())),
                 const SizedBox(height: dashGap),
-                SizedBox(height: g.tile, child: _tileRow(tiles.skip(3).toList())),
+                SizedBox(height: g.tile, child: _tileRow(tiles.skip((tiles.length + 1) ~/ 2).toList())),
                 const SizedBox(height: dashGap),
                 people(const _PeopleLayout(oneLine: false, maxRows: 999, fill: false)),
                 const SizedBox(height: dashGap),
@@ -558,6 +590,9 @@ class _PeoplePanel extends StatelessWidget {
   /// The current pay week's hurdle column (the current year only).
   final bool thisWeek;
   final double hurdle;
+
+  /// The line to show when no one has been paid in [year].
+  final String nothingPaid;
   final _PeopleLayout layout;
   const _PeoplePanel({
     required this.g,
@@ -565,6 +600,7 @@ class _PeoplePanel extends StatelessWidget {
     required this.year,
     required this.thisWeek,
     required this.hurdle,
+    required this.nothingPaid,
     required this.layout,
   });
 
@@ -592,6 +628,9 @@ class _PeoplePanel extends StatelessWidget {
       (thisWeek ? 14 + _barMin + 8 + _weekAmountW * g.k + _flameW : 0) +
       16;
 
+  /// The line under the title naming the finding.
+  static double calloutH(DashGeo g) => g.line(12) + 6;
+
   /// On the hurdle meters: everyone but sales reps (they have no weekly hurdle).
   bool _onHurdle(_StaffCommissionProfile p) => !p.isSales;
 
@@ -609,44 +648,45 @@ class _PeoplePanel extends StatelessWidget {
       note: '$year',
       tooltip:
           'Everyone eligible for commission: what finalized payroll runs paid them for pay weeks in $year, the '
-          'commercial retainage still locked for them (all-time)'
-          '${thisWeek ? ', and their gross for the current pay week against the ${_moneyShort(hurdle)} weekly hurdle' : ''}.',
-      trailing: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (thisWeek && techs.isNotEmpty)
-            Text(
-              '$cleared of ${techs.length} cleared',
-              style: DashText.meta.copyWith(color: DashUi.emeraldText, fontWeight: FontWeight.w700),
-            ),
-          if (!all) ...[
-            const SizedBox(width: 10),
-            DashLink(
+          'commercial retainage still locked for them (all time)'
+          '${thisWeek ? ', and their gross for the current pay week against the ${_moneyShort(hurdle)} weekly hurdle. '
+                    'A flame counts the pay weeks in a row at or above it' : ''}.',
+      trailing: all
+          ? null
+          : DashLink(
               text: 'All ${staff.length}',
-              label: 'See all ${dashCount(staff.length, 'person')} paid commission',
+              label: 'See all ${dashCount(staff.length, 'person')} on commission',
               onTap: () => _openAll(context),
             ),
-          ],
-        ],
-      ),
     );
 
     if (staff.isEmpty) {
       return DashPanel(
         fill: layout.fill,
         header: header,
-        child: SizedBox(height: 2 * rowH, child: const DashEmptyNote('No one is set up for commission yet.')),
+        child: SizedBox(
+          height: 2 * rowH,
+          child: DashEmptyNote(
+            year < DashClock.now().year ? 'No one was paid commission in $year.' : 'No one is set up for commission yet.',
+          ),
+        ),
       );
     }
 
     final give = layout.fill ? 600.0 : (layout.oneLine ? 24.0 : 14.0);
+    final paid = staff.fold<double>(0, (t, p) => t + p.commission);
+    final top = staff.reduce((a, b) => b.commission > a.commission ? b : a);
+    final finding = [
+      if (paid > 0) 'Top: ${top.name}, ${(top.commission / paid * 100).round()}%' else nothingPaid,
+      if (thisWeek && techs.isNotEmpty) '$cleared of ${techs.length} past the ${_moneyShort(hurdle)} hurdle this week',
+    ].join(' · ');
     return DashPanel(
       fill: layout.fill,
       header: header,
       child: LayoutBuilder(
         builder: (context, c) {
           // One size for the headings and every row, so the columns line up under their labels.
-          final area = c.maxHeight.isFinite ? c.maxHeight - (layout.oneLine ? g.columnHead : 0) : double.infinity;
+          final area = c.maxHeight.isFinite ? c.maxHeight - calloutH(g) - (layout.oneLine ? g.columnHead : 0) : double.infinity;
           final h = area.isFinite ? (area / shown.length).clamp(rowH, rowH + give).toDouble() : rowH;
           final size = _RowSize(_scale(h, c.maxWidth), _photo(h));
           final rows = DashRows(count: shown.length, base: rowH, give: give, row: (i) => _row(shown[i], i, size));
@@ -654,6 +694,15 @@ class _PeoplePanel extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
+              SizedBox(
+                height: calloutH(g),
+                child: Text(
+                  finding,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: paid > 0 ? DashUi.emeraldText : DashUi.slate),
+                ),
+              ),
               if (layout.oneLine) _headings(size),
               if (layout.fill)
                 Expanded(
@@ -696,7 +745,15 @@ class _PeoplePanel extends StatelessWidget {
             if (thisWeek) ...[
               const SizedBox(width: 14),
               Expanded(
-                child: Text('This week', maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.column),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('This week', maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.column),
+                    ),
+                    // Over the flames, so their numbers explain themselves.
+                    if (staff.any((p) => p.hurdleStreak > 0)) const Text('Streak', style: DashText.column),
+                  ],
+                ),
               ),
             ],
           ],
@@ -710,7 +767,7 @@ class _PeoplePanel extends StatelessWidget {
     final week = !thisWeek || !_onHurdle(p)
         ? ''
         : p.weekGross >= hurdle
-        ? '. This pay week ${_money(p.weekGross)}, ${_moneyShort(p.weekGross - hurdle)} over the '
+        ? '. This pay week ${_money(p.weekGross)}, ${_money(p.weekGross - hurdle)} over the '
               '${_moneyShort(hurdle)} hurdle'
         : '. This pay week ${_money(p.weekGross)} of the ${_moneyShort(hurdle)} hurdle';
     final streak = thisWeek && p.hurdleStreak > 0
@@ -857,7 +914,7 @@ class _PeoplePanel extends StatelessWidget {
                     Expanded(
                       child: Semantics(
                         header: true,
-                        child: Text('Everyone paid commission · $year', style: DashText.panelTitle),
+                        child: Text('Everyone on commission · $year', style: DashText.panelTitle),
                       ),
                     ),
                     IconButton(
@@ -878,6 +935,7 @@ class _PeoplePanel extends StatelessWidget {
                         year: year,
                         thisWeek: thisWeek,
                         hurdle: hurdle,
+                        nothingPaid: nothingPaid,
                         layout: const _PeopleLayout(oneLine: false, maxRows: 999, fill: false),
                       ),
                     ],
@@ -893,7 +951,8 @@ class _PeoplePanel extends StatelessWidget {
 }
 
 /// One person's gross for the current pay week against the weekly hurdle: the bar fills in once (rows one after
-/// another), turns green with a tick once cleared, and a flame shows the weeks in a row at or above it. Gross
+/// another), neutral while the week builds (short of the hurdle midweek is not a problem), green with a tick once
+/// cleared, and a flame shows the weeks in a row at or above it. Gross
 /// includes the commercial retainage held that week (it counts toward the hurdle but is not paid).
 class _HurdleMeter extends StatelessWidget {
   final _StaffCommissionProfile person;
@@ -914,12 +973,12 @@ class _HurdleMeter extends StatelessWidget {
     final p = person;
     final h = hurdle <= 0 ? 1.0 : hurdle;
     final cleared = p.weekGross >= h;
-    final color = cleared ? DashUi.emeraldDeep : DashUi.amber;
+    final color = cleared ? DashUi.emeraldDeep : DashUi.slate;
     final over = p.weekGross - h;
     return Tooltip(
       message: cleared
-          ? '${_money(p.weekGross)} this pay week, ${_moneyShort(over)} over the ${_moneyShort(h)} hurdle'
-          : '${_money(p.weekGross)} this pay week, ${_moneyShort(-over)} short of the ${_moneyShort(h)} hurdle',
+          ? '${_money(p.weekGross)} this pay week, ${_money(over)} over the ${_moneyShort(h)} hurdle'
+          : '${_money(p.weekGross)} this pay week, ${_money(-over)} short of the ${_moneyShort(h)} hurdle',
       waitDuration: const Duration(milliseconds: 500),
       child: Row(
         children: [
@@ -956,72 +1015,67 @@ class _HurdleMeter extends StatelessWidget {
 class _PayoutChart extends StatelessWidget {
   final List<_MonthlyPayoutPoint> data;
   final int year;
-  const _PayoutChart({required this.data, required this.year});
+
+  /// The day commissions began: in that year it explains why the months before it are empty.
+  final String goLive;
+
+  /// What to say when the year has nothing paid.
+  final String nothingPaid;
+  const _PayoutChart({required this.data, required this.year, required this.goLive, required this.nothingPaid});
 
   @override
   Widget build(BuildContext context) {
-    List<double> pick(double Function(_MonthlyPayoutPoint) f) => [
-      for (var i = 0; i < 12; i++) i < data.length ? f(data[i]) : 0.0,
+    final values = [for (var i = 0; i < 12; i++) i < data.length ? data[i].payout : 0.0];
+    final thisYear = year == DashClock.now().year;
+    final total = values.fold<double>(0, (a, b) => a + b);
+    // The average of the finished months that have something in them (the month in progress would pull it down, and
+    // the callout's "N% under the average" uses the same months). With one such month there is nothing to compare it
+    // with: an "average" equal to the only bar says nothing, so it waits for a second.
+    final finishedWithData = [
+      for (var i = 0; i < dashCompleteMonths(year) && i < 12; i++)
+        if (values[i] > 0) i,
     ];
-    final payouts = pick((p) => p.payout);
-    final revenue = pick((p) => p.revenue);
-
-    DashChartView view({
-      required String tab,
-      required String title,
-      required String what,
-      required String row,
-      required List<double> values,
-      required Color color,
-    }) {
-      final withData = values.where((v) => v > 0).toList();
-      final total = withData.fold<double>(0, (a, b) => a + b);
-      // The average of the months that have something in them, as before.
-      final avg = withData.isEmpty ? 0.0 : total / withData.length;
-      return DashChartView(
-        tab: tab,
-        title: title,
-        note: '${_compactMoney(total)} in $year',
-        series: [DashSeries(row, values, color)],
-        average: avg > 0 ? avg : null,
-        averageLabel: avg > 0 ? 'Monthly average ${_compactMoney(avg)}' : null,
-        axis: _compactMoney,
-        barLabel: _compactMoney,
-        badge: DashChangeChip.monthOverMonth(values, year, what: what),
-        tip: (i) => [
-          DashTipRow(row, _money(values[i]), color: color),
-          if (values[i] > 0 && total > 0) DashTipRow('Share of year', '${(values[i] / total * 100).round()}%'),
-          if (values[i] > 0 && avg > 0)
-            DashTipRow(
-              'Vs average',
-              '${values[i] >= avg ? '+' : '-'}${((values[i] - avg).abs() / avg * 100).round()}%',
-            ),
-        ],
-        summary: (last) =>
-            '$title: ${[for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(values[i])}'].join(', ')}',
-        emptyText: 'Nothing recorded for $year yet.',
-        semanticsLabel: '$title, $year',
-      );
-    }
+    final avg = finishedWithData.length < 2 ? 0.0 : dashFinishedAverage(values, year);
+    final began = DateTime.tryParse(goLive)?.year == year;
 
     return DashMonthChart(
       year: year,
       views: [
-        view(
+        DashChartView(
           tab: 'Commissions',
-          title: 'Paid by month',
-          what: 'Commission paid',
-          row: 'Disbursed',
-          values: payouts,
-          color: DashUi.emeraldDeep,
-        ),
-        view(
-          tab: 'Revenue',
-          title: 'Revenue by month',
-          what: 'Revenue',
-          row: 'Revenue',
-          values: revenue,
-          color: DashUi.sky,
+          title: 'Commission paid',
+          // Each pay week counts in the month it starts in (the Total payouts card says so in full).
+          note: began ? 'finalized payroll, since ${dashShortDate(goLive)}' : 'finalized payroll',
+          story: dashMonthStory(
+            values: values,
+            year: year,
+            figure: total,
+            figureFormat: _money,
+            figureLabel: thisYear ? 'paid so far in $year' : 'paid in $year',
+            figureColor: DashUi.emeraldText,
+            format: _compactMoney,
+            unit: ' paid',
+            extra: [if (avg > 0) DashStoryStat(avg, _money, 'a month on average', DashUi.ink)],
+          ),
+          series: [DashSeries('Paid', values, DashUi.emeraldDeep)],
+          average: avg > 0 ? avg : null,
+          averageLabel: avg > 0 ? 'Average month ${_compactMoney(avg)}' : null,
+          axis: _compactMoney,
+          barLabel: _compactMoney,
+          badge: DashChangeChip.monthOverMonth(values, year, what: 'Commission paid'),
+          tip: (i) => [
+            DashTipRow('Paid', _money(values[i]), color: DashUi.emeraldDeep),
+            if (values[i] > 0 && total > 0) DashTipRow('Share of year', '${(values[i] / total * 100).round()}%'),
+            if (values[i] > 0 && avg > 0)
+              DashTipRow(
+                'Vs average',
+                '${values[i] >= avg ? '+' : '-'}${((values[i] - avg).abs() / avg * 100).round()}%',
+              ),
+          ],
+          summary: (last) =>
+              'Commission paid: ${[for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(values[i])}'].join(', ')}',
+          emptyText: '$nothingPaid.',
+          semanticsLabel: 'Commission paid, $year',
         ),
       ],
     );
@@ -1349,7 +1403,7 @@ class _PayrollRunsCardState extends State<_PayrollRunsCard> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Pay week ${_short(weekKey)} – ${_short(weekEnd)}',
+            'Pay week ${dashDateRange(weekKey, weekEnd)}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: DashText.meta.copyWith(fontSize: 12.5),
@@ -1465,9 +1519,11 @@ class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownC
     final hours = _timeRemaining.inHours % 24;
     final minutes = _timeRemaining.inMinutes % 60;
     final seconds = _timeRemaining.inSeconds % 60;
-    final what = widget.amount > 0
-        ? '${_money(widget.amount)} to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}'
-        : 'nothing scheduled';
+    final due = widget.amount > 0;
+    final techs = '${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}';
+    // The date is fixed whatever is owed, so the clock always runs. "Yet": retainage keeps coming due as commercial
+    // jobs are settled in payroll.
+    final what = due ? '${_money(widget.amount)} to $techs' : 'nothing due yet';
     final date = '${dashMonthNames[_target.month - 1]} ${_target.day}';
     // Inside the last day the clock warms to amber: the release is about to happen.
     final accent = days == 0 ? DashUi.amber : DashUi.indigo;
@@ -1478,7 +1534,8 @@ class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownC
         g: g,
         title: 'Retainage release',
         note: date,
-        tooltip: 'Locked retainage is released at the start of each quarter. Next: $date, $what.',
+        tooltip: 'Locked commercial retainage is released on Apr 1, Jul 1 and Oct 1 (there is no January release). '
+            'Next: $date, $what. The clock counts down to that date.',
       ),
       // The clock's digits change every second. Kept out of text selection: a selectable whose text keeps changing
       // stops mouse selection from working elsewhere on the page (seen in Chrome).
@@ -1493,55 +1550,46 @@ class _QuarterlyPayoutCountdownCardState extends State<QuarterlyPayoutCountdownC
                 children: [
                   Expanded(
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Flexible(
-                          flex: 2,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  widget.amount > 0 ? _money(widget.amount) : 'Nothing scheduled',
-                                  maxLines: 1,
-                                  style: TextStyle(
-                                    fontSize: widget.amount > 0 ? 17 : 13,
-                                    height: 1.15,
-                                    fontWeight: FontWeight.w800,
-                                    color: widget.amount > 0 ? DashUi.ink : DashUi.subtle,
-                                    fontFeatures: DashText.tabular,
-                                  ),
-                                ),
-                                if (widget.amount > 0)
-                                  Text(
-                                    'to ${widget.techCount} ${widget.techCount == 1 ? 'tech' : 'techs'}',
-                                    maxLines: 1,
-                                    style: DashText.meta.copyWith(fontSize: 11.5, height: 1.2, color: DashUi.subtle),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
+                        // What is due stays whole at full size; it sits on two lines that fit the strip's height.
+                        if (due)
+                          Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _money(widget.amount),
+                                maxLines: 1,
+                                style: DashText.bigMoney.copyWith(height: 1.15),
+                              ),
+                              Text(
+                                'to $techs',
+                                maxLines: 1,
+                                style: DashText.meta.copyWith(fontSize: 11.5, height: 1.2),
+                              ),
+                            ],
+                          )
+                        else
+                          Text('Nothing due yet', maxLines: 1, style: DashText.label.copyWith(color: DashUi.slate)),
                         const SizedBox(width: 8),
-                        Flexible(
-                          flex: 3,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerRight,
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                _ClockChip(value: days, unit: 'd', color: accent, pad: false),
-                                const SizedBox(width: 4),
-                                _ClockChip(value: hours, unit: 'h', color: accent),
-                                const SizedBox(width: 4),
-                                _ClockChip(value: minutes, unit: 'm', color: accent),
-                                const SizedBox(width: 4),
-                                _ClockChip(value: seconds, unit: 's', color: accent, live: !calm),
-                              ],
+                        // The clock shows as many units as fit at full size, the days always: the ones that don't
+                        // fit wrap onto a second line, which is clipped away. Text is never scaled down.
+                        Expanded(
+                          child: Center(
+                            child: SizedBox(
+                              height: g.line(17, 1.15) + 8,
+                              child: Wrap(
+                                alignment: WrapAlignment.end,
+                                spacing: 4,
+                                runSpacing: 8,
+                                clipBehavior: Clip.hardEdge,
+                                children: [
+                                  _ClockChip(value: days, unit: 'd', color: accent, pad: false, still: calm),
+                                  _ClockChip(value: hours, unit: 'h', color: accent, still: calm),
+                                  _ClockChip(value: minutes, unit: 'm', color: accent, still: calm),
+                                  _ClockChip(value: seconds, unit: 's', color: accent, live: !calm, still: calm),
+                                ],
+                              ),
                             ),
                           ),
                         ),
@@ -1567,15 +1615,24 @@ class _ClockChip extends StatelessWidget {
   final Color color;
   final bool pad;
   final bool live;
-  const _ClockChip({required this.value, required this.unit, required this.color, this.pad = true, this.live = false});
+
+  /// Reduced motion: the digits change in place, without the slide.
+  final bool still;
+  const _ClockChip({
+    required this.value,
+    required this.unit,
+    required this.color,
+    this.pad = true,
+    this.live = false,
+    this.still = false,
+  });
 
   @override
   Widget build(BuildContext context) {
     final digits = pad ? value.toString().padLeft(2, '0') : '$value';
     return AnimatedContainer(
-      duration: const Duration(milliseconds: 400),
-      constraints: const BoxConstraints(minWidth: 40),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      duration: still ? Duration.zero : const Duration(milliseconds: 400),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.09),
         borderRadius: BorderRadius.circular(8),
@@ -1588,7 +1645,7 @@ class _ClockChip extends StatelessWidget {
         textBaseline: TextBaseline.alphabetic,
         children: [
           AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
+            duration: still ? Duration.zero : const Duration(milliseconds: 220),
             transitionBuilder: (child, anim) => FadeTransition(
               opacity: anim,
               child: SlideTransition(

@@ -21,7 +21,7 @@ import 'dashboard_fit.dart';
 import 'dashboard_harness.dart';
 
 const _path = '/api/financial_dashboard';
-const _chartTitle = 'Completed jobs · \$2.3M revenue';
+const _chartTitle = 'Revenue & profit · completed jobs, by start month';
 
 /// The monthly chart's plot.
 final _plot = find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_DashChartPainter');
@@ -42,17 +42,21 @@ void main() {
       mustShow: [
         'Revenue + deposits',
         'Commercial pool',
-        'Locked · all-time',
+        'Company pool',
         'Revenue by segment',
         'Other', // the last segment
         'Operating expenses',
         'Payroll (office)',
-        'Uncategorized', // the smallest of the eight categories: none are grouped away at desktop sizes
         'Revenue & profit',
       ],
       extra: (t, size, scale) async {
-        expect(find.textContaining('Other categories'), findsNothing, reason: 'every category has its own row');
-        expect(t.getRect(_plot).height, greaterThan(scale == 1 ? 180 : 150), reason: 'the chart has room to read');
+        // In a short window or at 130% text the pools card and all eight categories can't both stay whole, so the
+        // smallest categories share one row there (as the panel always does when rows run out).
+        if (scale == 1 && size.height >= 720) {
+          expect(find.textContaining('Other categories'), findsNothing, reason: 'every category has its own row');
+          expect(find.text('Uncategorized'), findsOneWidget, reason: 'the smallest of the eight categories has a row');
+        }
+        expect(t.getRect(_plot).height, greaterThan(scale == 1 ? 140 : 100), reason: 'the chart has room to read'); // under its headline and callout
       },
     );
 
@@ -76,17 +80,21 @@ void main() {
     testWidgets('trend lines show where the words still fit beside them', (t) async {
       await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1920, 940));
       final cards = t.widgetList<AnimatedMetricCard>(find.byType(AnimatedMetricCard)).toList();
-      expect(cards.where((c) => c.trend != null), hasLength(4), reason: 'the four main cards have a line to show');
+      expect(cards.where((c) => c.trend != null), hasLength(5), reason: 'the five main cards have a line to show');
       final lines = find.descendant(of: find.byType(AnimatedMetricCard), matching: find.byType(CustomPaint));
-      expect(lines, findsAtLeastNWidgets(4), reason: 'at 1920 px each main card has room for its line');
+      expect(lines, findsAtLeastNWidgets(5), reason: 'at 1920 px each main card has room for its line');
     });
   });
 
   group('chart', () {
     testWidgets('three views, picked by hand: revenue and profit, margin, net income', (t) async {
-      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), body: () async {
+      // 1500x800: room for the change chip beside the title (a narrower window leaves it to the headline).
+      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
         expect(find.text(_chartTitle), findsOneWidget);
         expect(find.text('14% Sep vs Aug'), findsOneWidget, reason: 'last two finished months, never October');
+        // The story: the year's revenue and profit, and the best month.
+        expect(find.text('revenue so far'), findsOneWidget);
+        expect(find.textContaining('Best month: '), findsOneWidget);
         await t.tap(find.text('Margin'));
         await settleDashboard(t, frames: 10);
         expect(find.textContaining('Profit margin · '), findsOneWidget);
@@ -151,10 +159,11 @@ void main() {
   group('figures', () {
     testWidgets('every category with its amount and share; the segments read as shares of revenue + deposits', (t) async {
       final handle = t.ensureSemantics();
-      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi());
+      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1366, 768));
       final f = dashFixture('financial');
       final total = (f['operatingExpenses'] as List).fold<num>(0, (s, e) => s + (e['amount'] as num));
-      expect(find.text('Operating expenses · ${_usd(total)} YTD'), findsOneWidget);
+      expect(find.text('Operating expenses · ${_usd(total)} in 2026'), findsOneWidget);
+      expect(find.text('8 categories'), findsNothing, reason: 'every category has a row, so the count adds nothing');
       for (final e in (f['operatingExpenses'] as List)) {
         expect(find.text(e['category'] as String), findsOneWidget);
         expect(find.text(_usd(e['amount'] as num)), findsWidgets);
@@ -162,6 +171,34 @@ void main() {
       expect(find.bySemanticsLabel(RegExp(r'^Payroll \(office\): \$353,073, 38% of operating expenses$')), findsOneWidget);
       expect(find.bySemanticsLabel(RegExp(r'^Residential: \$1,052,228, 41% of revenue \+ deposits$')), findsOneWidget);
       handle.dispose();
+    });
+
+    testWidgets('hovering a category row swells and glows its bar, with one sweep of light, and settles back', (t) async {
+      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1366, 768), body: () async {
+        final fx = find.byWidgetPredicate((w) => w.runtimeType.toString() == '_BarFx');
+        final row = find.text('Payroll (office)');
+        final bar = find.descendant(of: find.ancestor(of: row, matching: find.byType(MouseRegion)).first, matching: fx);
+        double scaleY() {
+          final tr = t.widget<Transform>(find.descendant(of: bar.first, matching: find.byType(Transform)).first);
+          return tr.transform.getMaxScaleOnAxis();
+        }
+
+        expect(scaleY(), 1.0);
+        final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(t.getCenter(row) + const Offset(120, 0));
+        await t.pump(const Duration(milliseconds: 100));
+        await t.pump(const Duration(milliseconds: 300));
+        expect(scaleY(), greaterThan(1.4), reason: 'the bar swells past its track while the row is hovered');
+        await saveDashShot(t, 'financial_expense_hover');
+        await t.pump(const Duration(milliseconds: 700)); // the sweep has run its course
+        await mouse.moveTo(const Offset(2, 2));
+        await t.pump(const Duration(milliseconds: 50));
+        await t.pump(const Duration(milliseconds: 400));
+        expect(scaleY(), 1.0);
+        await mouse.removePointer();
+        await t.pumpAndSettle();
+      });
     });
 
     testWidgets('more categories than rows: the smallest share one row that names them and adds up', (t) async {
@@ -191,16 +228,44 @@ void main() {
       handle.dispose();
     });
 
-    testWidgets('a past year shows the actual year, not a projection, and has no month in progress', (t) async {
+    testWidgets('a past year names its period, drops the projection (it would repeat the first card), has no month in progress', (t) async {
       await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), body: () async {
-        expect(find.text('Jobs + deposits · YTD'), findsOneWidget);
+        expect(find.text('Jan 1 – today'), findsOneWidget);
+        expect(find.text('Completed · Jan 1 – today'), findsOneWidget);
+        expect(find.text('Of revenue · Jan 1 – today'), findsOneWidget);
+        expect(find.text('2026 jobs, finished or not'), findsOneWidget);
         expect(find.text('Yearly projection'), findsOneWidget);
-        await t.tap(find.byTooltip('Previous year'));
+        expect(find.byType(AnimatedMetricCard), findsNWidgets(5));
+        await t.tap(dashYearArrow('Previous year'));
         await settleDashboard(t);
-        expect(find.text('Full year 2025'), findsOneWidget);
-        expect(find.text('Actual revenue + deposits'), findsOneWidget);
-        expect(find.text('Jobs + deposits · 2025'), findsOneWidget);
+        expect(find.text('All of 2025'), findsOneWidget);
+        expect(find.text('Completed · all of 2025'), findsOneWidget);
+        expect(find.text('2025 jobs, finished or not'), findsOneWidget);
+        expect(find.textContaining('today'), findsNothing, reason: 'a finished year never reads as running to today');
+        expect(find.text('Yearly projection'), findsNothing);
+        expect(find.byType(AnimatedMetricCard), findsNWidgets(4));
         expect(find.text('Oct so far'), findsNothing, reason: 'a past year has no month in progress');
+      });
+    });
+
+    testWidgets('no pool history: no line, so nothing fills the space with a dashed placeholder', (t) async {
+      await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1920, 940), body: () async {
+        expect(find.byType(DashSparkline), findsNothing);
+      });
+    });
+
+    testWidgets('a pool draws its line from real readings; all-zero readings have nothing to draw', (t) async {
+      final api = DashFakeApi()
+        ..extra.add((req) async {
+          if (req.url.path != _path) return null;
+          final f = dashFixture('financial');
+          (f['history'] as Map<String, dynamic>)
+            ..['companyPool'] = [10, 14, 17]
+            ..['commercialPool'] = [0, 0, 0];
+          return http.Response(json.encode(f), 200);
+        });
+      await pumpDashboard(t, const ReportsScreen(), api: api, size: const Size(1920, 940), body: () async {
+        expect(find.byType(DashSparkline), findsOneWidget);
       });
     });
   });
@@ -218,6 +283,16 @@ void main() {
         expect(find.text('Revenue + deposits'), findsOneWidget);
       });
       expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+    });
+
+    testWidgets('an empty past year does not say "yet"', (t) async {
+      final api = DashFakeApi()..yearFixture['$_path?year=2025'] = 'financial_empty';
+      await pumpDashboard(t, const ReportsScreen(), api: api, body: () async {
+        await t.tap(dashYearArrow('Previous year'));
+        await settleDashboard(t);
+        expect(find.text('Nothing recorded for 2025.'), findsOneWidget);
+        expect(find.text('No operating expenses recorded for 2025.'), findsOneWidget);
+      });
     });
 
     testWidgets('an empty year says so in every panel', (t) async {
@@ -240,7 +315,7 @@ void main() {
         await t.tap(find.text('Try again'));
         await settleDashboard(t);
         api.status[_path] = 500;
-        await t.tap(find.byTooltip('Refresh now'));
+        await t.tap(dashRefreshButton);
         await settleDashboard(t, frames: 5);
         expect(find.text("Couldn't refresh"), findsOneWidget);
         expect(find.text('\$2,566,410'), findsOneWidget);

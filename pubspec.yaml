@@ -1,5 +1,5 @@
 name: iohd_desktop
-description: "A new Flutter project."
+description: "IOHD Office, the back-office app for Integrity Overhead Door, LLC."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -44,6 +44,7 @@ dependencies:
   url_launcher: ^6.3.3
   file_picker: ^13.1.0
   shared_preferences: ^2.5.6
+  font_awesome_flutter: ^11.0.0
 
 dev_dependencies:
   flutter_test:

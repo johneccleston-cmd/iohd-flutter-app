@@ -1,6 +1,8 @@
-// Renders the Calls & Texts panel (collapsed threads + popup) with fake data. Shots: build/dash_shots/quo_*.png
+// Renders the Communications panel (collapsed threads + popup) with fake data. Shots: build/dash_shots/quo_*.png
 import 'dart:async';
 import 'dart:convert';
+
+import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -128,7 +130,8 @@ void main() {
         await saveDashShot(tester, 'quo_threads');
         await tester.tap(find.textContaining('Main Office'));
         await settleDashboard(tester, frames: 5);
-        expect(find.text('Thanks for calling Integrity Overhead Doors.'), findsOneWidget);
+        // The popup opens on the newest message; the oldest is further up its list (built, scrolled out of view).
+        expect(find.text('Thanks for calling Integrity Overhead Doors.', skipOffstage: false), findsOneWidget);
         expect(find.text('Heather Vera'), findsOneWidget);
         expect(find.text('(479) 341-1151'), findsOneWidget); // the popup names the number it is with
         await saveDashShot(tester, 'quo_popup');
@@ -190,9 +193,199 @@ void main() {
         await settleDashboard(tester, frames: 5);
         await tester.tap(find.text('No job'));
         await settleDashboard(tester, frames: 5);
-        expect(moved, {'quoIds': ['m1'], 'jobId': 'auto'});
+        expect(moved, {'quoIds': ['m1'], 'jobId': null}, reason: '"No job" is a choice: the automatic match must not put it back');
       },
     );
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('job mode says why a call or text is on the job, behind an (i), with nothing to confirm', (tester) async {
+    final activity = [
+      {..._m('m3', 'incoming', 'Gate code is 4410.', '2026-10-22T15:00:00Z', 'Manny Vera'), 'job_id': '1097733351', 'job_is_manual': true, 'match': 'manual'},
+      {..._m('m2', 'incoming', 'Door at 12 Main St is stuck', '2026-10-22T14:30:00Z', 'Manny Vera'), 'job_id': '1097733351', 'match': 'address'},
+      {..._m('m1', 'incoming', 'Hi, can I get a quote?', '2026-10-22T13:40:00Z', 'Manny Vera'), 'job_id': '1097733351', 'match': 'same_day'},
+    ];
+    Map<String, dynamic>? saved;
+    final api = DashFakeApi()
+      ..extra.add((req) async {
+        if (req.url.path == '/api/quo/jobs/1097733351/activity') {
+          return http.Response(
+            json.encode({
+              'phone': '(479) 341-1151', 'hasPhone': true, 'customerId': 63366142,
+              'jobs': [{'job_id': '1097733351', 'status': 'Active', 'is_estimate': false, 'start_date': '2026-10-20', 'location': '12 Main St'}],
+              'activity': activity,
+            }),
+            200,
+          );
+        }
+        if (req.url.path == '/api/quo/links' && req.method == 'PUT') {
+          saved = json.decode(req.body) as Map<String, dynamic>;
+          return http.Response('{"ok":true}', 200);
+        }
+        return null;
+      });
+    final errors = await pumpDashboard(
+      tester,
+      const Scaffold(backgroundColor: Colors.white, body: SingleChildScrollView(child: QuoActivityPanel(jobId: '1097733351'))),
+      api: api,
+      size: const Size(1100, 700),
+      body: () async {
+        await tester.tap(find.textContaining('Main Office'));
+        await settleDashboard(tester, frames: 5);
+        // The reason sits behind an (i): nothing extra is printed in the bubble, hovering shows it.
+        expect(find.text('Matched by address'), findsNothing);
+        expect(find.byTooltip('Matched by address'), findsOneWidget);
+        expect(find.byTooltip('Same day it was created'), findsOneWidget);
+        expect(find.byIcon(Icons.info_outline_rounded), findsNWidgets(2));
+        expect(find.text('Confirm'), findsNothing);
+        await saveDashShot(tester, 'quo_job_match_reasons');
+        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(tester.getCenter(find.byTooltip('Same day it was created')));
+        await tester.pump(const Duration(milliseconds: 600));
+        expect(find.text('Same day it was created'), findsOneWidget, reason: 'hovering the (i) shows the reason');
+        await saveDashShot(tester, 'quo_job_match_reason_hover');
+        await mouse.removePointer();
+        expect(saved, isNull, reason: 'nothing is saved by looking');
+      },
+    );
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('a conversation on a job has a 3-dot menu that removes it from the job, with undo', (tester) async {
+    final activity = [
+      {..._m('m2', 'incoming', 'Door at 12 Main St is stuck', '2026-10-22T14:30:00Z', 'Manny Vera'), 'job_id': '1097733351', 'match': 'address'},
+      {..._m('m1', 'incoming', 'Hi, can I get a quote?', '2026-10-22T13:40:00Z', 'Manny Vera'), 'job_id': '1097733351', 'match': 'thread'},
+    ];
+    final puts = <Map<String, dynamic>>[];
+    final api = DashFakeApi()
+      ..extra.add((req) async {
+        if (req.url.path == '/api/quo/jobs/1097733351/activity') {
+          return http.Response(
+            json.encode({
+              'phone': '(479) 341-1151', 'hasPhone': true, 'customerId': 63366142,
+              'jobs': [{'job_id': '1097733351', 'status': 'Active', 'is_estimate': true, 'start_date': '2026-10-20', 'location': '12 Main St'}],
+              'activity': activity,
+            }),
+            200,
+          );
+        }
+        if (req.url.path == '/api/quo/links' && req.method == 'PUT') {
+          puts.add(json.decode(req.body) as Map<String, dynamic>);
+          return http.Response('{"ok":true}', 200);
+        }
+        return null;
+      });
+    final errors = await pumpDashboard(
+      tester,
+      const Scaffold(backgroundColor: Colors.white, body: SingleChildScrollView(child: QuoActivityPanel(jobId: '1097733351'))),
+      api: api,
+      size: const Size(1100, 700),
+      body: () async {
+        expect(find.byIcon(Icons.more_vert_rounded), findsOneWidget);
+        await saveDashShot(tester, 'quo_thread_row');
+        await tester.tap(find.byIcon(Icons.more_vert_rounded));
+        await settleDashboard(tester, frames: 5);
+        expect(find.text('Remove from Estimate 1097733351'), findsOneWidget);
+        await saveDashShot(tester, 'quo_thread_menu');
+        await tester.tap(find.text('Remove from Estimate 1097733351'));
+        await settleDashboard(tester, frames: 5);
+        // Every call/text of the conversation, stored as "no job" so the automatic match leaves it alone.
+        expect(puts.single['jobId'], isNull);
+        expect((puts.single['quoIds'] as List).toSet(), {'m1', 'm2'});
+        expect(find.textContaining('Removed 2 calls and texts from Estimate 1097733351'), findsOneWidget);
+        await tester.tap(find.text('Undo'));
+        await settleDashboard(tester, frames: 5);
+        expect(puts.last['jobId'], 'auto', reason: 'undo deletes the link, so what was there before applies again');
+      },
+    );
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('the customer\'s Communications list has a 3-dot menu to attach a conversation to a job or delete it', (tester) async {
+    final activity = [
+      {..._m('m2', 'incoming', 'Can someone look at the spring?', '2026-10-22T14:30:00Z', 'Manny Vera'), 'job_id': null},
+      {..._m('m1', 'outgoing', 'We can be there Thursday.', '2026-10-22T14:40:00Z', 'Heather Vera'), 'job_id': null},
+    ];
+    final calls = <String>[];
+    Map<String, dynamic>? attached;
+    Map<String, dynamic>? deleted;
+    final api = DashFakeApi()
+      ..extra.add((req) async {
+        if (req.url.path == '/api/quo/customers/63366142/activity') {
+          return http.Response(
+            json.encode({
+              'phone': '(479) 341-1151', 'hasPhone': true, 'customerId': 63366142,
+              'jobs': [
+                {'job_id': '1097733351', 'status': 'Active', 'is_estimate': false, 'start_date': '2026-10-20', 'location': '12 Main St'},
+                {'job_id': '1090000001', 'status': 'Won', 'is_estimate': true, 'start_date': '2026-09-01', 'location': '9 Oak Ave'},
+              ],
+              'activity': calls.contains('deleted') ? <Map<String, dynamic>>[] : activity,
+            }),
+            200,
+          );
+        }
+        if (req.url.path == '/api/quo/links' && req.method == 'PUT') {
+          attached = json.decode(req.body) as Map<String, dynamic>;
+          return http.Response('{"ok":true}', 200);
+        }
+        if (req.url.path == '/api/quo/activity/delete' && req.method == 'POST') {
+          deleted = json.decode(req.body) as Map<String, dynamic>;
+          calls.add('deleted');
+          return http.Response('{"ok":true,"deleted":2}', 200);
+        }
+        return null;
+      });
+    final errors = await pumpDashboard(tester, _panel, api: api, size: const Size(1100, 700), body: () async {
+      await tester.tap(find.byIcon(Icons.more_vert_rounded));
+      await settleDashboard(tester, frames: 5);
+      expect(find.text('Attach to a job or estimate...'), findsOneWidget);
+      expect(find.textContaining('Remove from'), findsNothing, reason: 'it is not on a job yet');
+      expect(find.text('Delete conversation'), findsOneWidget);
+      await saveDashShot(tester, 'quo_customer_thread_menu');
+      await tester.tap(find.text('Attach to a job or estimate...'));
+      await settleDashboard(tester, frames: 5);
+      await tester.tap(find.textContaining('Estimate 1090000001'));
+      await settleDashboard(tester, frames: 5);
+      expect((attached!['quoIds'] as List).toSet(), {'m1', 'm2'}, reason: 'the whole conversation');
+      expect(attached!['jobId'], '1090000001');
+      expect(find.textContaining('Attached 2 calls and texts to Estimate 1090000001'), findsOneWidget);
+
+      await tester.tap(find.byIcon(Icons.more_vert_rounded));
+      await settleDashboard(tester, frames: 5);
+      await tester.tap(find.text('Delete conversation'));
+      await settleDashboard(tester, frames: 5);
+      expect(find.text('Delete this conversation?'), findsOneWidget);
+      expect(deleted, isNull, reason: 'nothing is deleted until it is confirmed');
+      await saveDashShot(tester, 'quo_delete_confirm');
+      await tester.tap(find.text('Delete'));
+      await settleDashboard(tester, frames: 5);
+      expect((deleted!['quoIds'] as List).toSet(), {'m1', 'm2'});
+      expect(find.textContaining('Main Office'), findsNothing, reason: 'the conversation leaves the list');
+    });
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('cancelling the delete changes nothing', (tester) async {
+    var posted = false;
+    final api = _api({
+      'phone': '(479) 341-1151', 'hasPhone': true, 'customerId': 63366142, 'jobs': [],
+      'activity': [_m('m1', 'incoming', 'Hello', '2026-10-22T14:30:00Z', 'Manny Vera')],
+    }, (req) async {
+      if (req.url.path == '/api/quo/activity/delete') posted = true;
+      return null;
+    });
+    final errors = await pumpDashboard(tester, _panel, api: api, size: const Size(1100, 700), body: () async {
+      await tester.tap(find.byIcon(Icons.more_vert_rounded));
+      await settleDashboard(tester, frames: 5);
+      expect(find.textContaining('Attach to a job'), findsNothing, reason: 'a customer with no jobs has nothing to attach to');
+      await tester.tap(find.text('Delete conversation'));
+      await settleDashboard(tester, frames: 5);
+      await tester.tap(find.text('Cancel'));
+      await settleDashboard(tester, frames: 5);
+      expect(posted, isFalse);
+      expect(find.textContaining('Main Office'), findsOneWidget);
+    });
     expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
   });
 
@@ -329,12 +522,13 @@ void main() {
         expect(find.textContaining('Showing the latest 5 calls and texts'), findsOneWidget);
         await tester.tap(find.textContaining('Main Office'));
         await settleDashboard(tester, frames: 5);
-        expect(find.text('Open picture'), findsOneWidget);
-        expect(find.text('(no text)'), findsOneWidget);
-        expect(find.text('Outgoing call · no answer'), findsOneWidget);
-        expect(find.text('Missed call'), findsOneWidget);
-        expect(find.text('Incoming call · 1m 35s'), findsOneWidget);
-        expect(find.byIcon(Icons.phone_missed_rounded), findsNWidgets(2));
+        // The popup opens on the newest message; older ones are further up its list (built, scrolled out of view).
+        expect(find.text('Open picture', skipOffstage: false), findsOneWidget);
+        expect(find.text('(no text)', skipOffstage: false), findsOneWidget);
+        expect(find.text('Outgoing call · no answer', skipOffstage: false), findsOneWidget);
+        expect(find.text('Missed call', skipOffstage: false), findsOneWidget);
+        expect(find.text('Incoming call · 1m 35s', skipOffstage: false), findsOneWidget);
+        expect(find.byIcon(Icons.phone_missed_rounded, skipOffstage: false), findsNWidgets(2));
         await saveDashShot(tester, 'quo_media');
       },
     );

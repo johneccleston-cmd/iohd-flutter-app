@@ -11,12 +11,14 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import 'widgets/app_ribbon.dart';
 import 'config/api_config.dart';
 import 'config/access.dart';
 import 'config/auth_session.dart';
 import 'utils/avatar_image.dart';
 import 'widgets/animated_select.dart';
 import 'widgets/app_dialog.dart';
+import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_kit.dart';
 
 part 'team_admin_widgets.dart';
@@ -1330,15 +1332,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             body: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Container(
-                  constraints: const BoxConstraints(minHeight: 56),
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-                  decoration: const BoxDecoration(
-                    color: DashUi.ink, // the header banner colour every dashboard uses
-                    boxShadow: [BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2))],
-                  ),
-                  child: _header(),
-                ),
+                _header(),
                 if (_loading)
                   const Expanded(child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
                 else if (_error != null && _users.isEmpty)
@@ -1367,32 +1361,22 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
   }
 
   Widget _header() {
-    return Row(
-      children: [
-        Expanded(
-          child: Semantics(
-            header: true,
-            child: const Text(
-              'TEAM',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+    return AppRibbon(
+      title: 'TEAM',
+      icon: Icons.manage_accounts_rounded, // the HR menu's Team entry
+      controls: [
+        if (_refreshing)
+          const SizedBox(
+            width: 36,
+            height: 36,
+            child: Center(
+              child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
             ),
-          ),
-        ),
-        IconButton(
-          tooltip: 'Refresh the team',
-          onPressed: (_loading || _refreshing) ? null : _refresh,
-          icon: _refreshing
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                )
-              : const Icon(Icons.refresh_rounded, color: Colors.white, size: 20),
-        ),
+          )
+        else
+          RibbonRefreshButton(tooltip: 'Refresh the team', onPressed: _loading ? null : _refresh),
         const SizedBox(width: 8),
-        // White on the dark banner (the usual dark button would disappear into it).
+        // White on the ribbon (the usual dark button would disappear into it).
         FilledButton.icon(
           onPressed: _users.isEmpty ? null : _addEmployee,
           icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
@@ -3760,8 +3744,7 @@ Widget _segmented<V>({
   required V value,
   required List<(V, String)> options,
   required ValueChanged<V> onChanged,
-  Color activeColor = DashUi.ink,
-}) => AppSegmented<V>(value: value, options: options, onChanged: onChanged, activeColor: activeColor);
+}) => AppSegmented<V>(value: value, options: options, onChanged: onChanged);
 
 Widget _inkButton(String label, VoidCallback? onPressed, {IconData? icon, bool danger = false}) =>
     AppButton.ink(label, onPressed, icon: icon, danger: danger);

@@ -46,7 +46,8 @@ Rect dashTextRect(WidgetTester t, String text) {
 }
 
 /// Pumps [screen] at each of [dashFitSizes] and checks the rules above. [mustShow] are texts whose whole box has to
-/// be inside the window. [extra] runs more checks at each size.
+/// be inside the window. [extra] runs more checks at each size. [mayCut] names texts that are cut short on purpose
+/// (a review quote with a link to read it whole).
 void dashFitTests(
   String name,
   Widget Function() screen,
@@ -54,6 +55,7 @@ void dashFitTests(
   required List<String> mustShow,
   Future<void> Function(WidgetTester t, Size size, double scale)? extra,
   List<(Size, double, String)> sizes = dashFitSizes,
+  bool Function(String text)? mayCut,
 }) {
   for (final (size, scale, tag) in sizes) {
     testWidgets('$name $tag: everything on screen, nothing scrolls, no overflow', (t) async {
@@ -62,7 +64,7 @@ void dashFitTests(
       final errors = await pumpDashboard(t, screen(), api: api(), size: size, textScale: scale, body: () async {
         await saveDashShot(t, '${name}_$tag');
         scrollers = dashVerticalScrollers(t);
-        truncated = dashTruncatedTexts(t);
+        truncated = [for (final s in dashTruncatedTexts(t)) if (mayCut == null || !mayCut(s)) s];
         final window = Offset.zero & size;
         for (final text in mustShow) {
           final r = dashTextRect(t, text);

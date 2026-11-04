@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'config/access.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 
@@ -41,6 +42,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> {
         children: [
           PageBanner(
             title: 'Product Catalog',
+            icon: accessIcon('catalog'),
             actions: [
               PageBanner.button(
                 icon: Icons.add_rounded,

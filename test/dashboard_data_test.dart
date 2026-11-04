@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
 import 'package:iohd_desktop/widgets/dashboard_data.dart';
+import 'package:iohd_desktop/widgets/dash_story.dart';
 import 'package:iohd_desktop/widgets/dashboard_kit.dart';
 
 import 'dashboard_harness.dart';
@@ -102,6 +103,51 @@ void main() {
     test('a series the caller already cut short is left as it is', () {
       // The KPI warehouse page passes year 0 with only finished months; that keeps working.
       expect(dashTrend(<double>[3, 4, 5], 0), [3, 4, 5]);
+    });
+
+    test('nothing but zeros means no line (a flat line on the floor says nothing)', () {
+      expect(dashTrend(List<double>.filled(12, 0), 2026), isNull);
+      expect(dashTrend(List<double>.filled(12, 0), 2025), isNull);
+    });
+  });
+
+  group("a monthly chart's story (pinned to Oct 22, 2026)", () {
+    DashStory story(List<double> values, {List<double>? prior, double? average, bool points = false}) => dashMonthStory(
+          values: values,
+          year: 2026,
+          figure: 0,
+          figureFormat: (v) => '$v',
+          figureLabel: 'so far',
+          prior: prior,
+          average: average,
+          points: points,
+          format: (v) => '${v.round()}',
+        );
+
+    test('against last year: a finished month with nothing this year still counts, the month in progress never does', () {
+      // Feb had nothing this year and 100 last year; October (in progress) is left out. Jan-Sep: 800 against 900.
+      final s = story(<double>[100, 0, 100, 100, 100, 100, 100, 100, 100, 50, 0, 0], prior: List<double>.filled(12, 100));
+      final change = s.headline[1] as DashStoryStat;
+      expect(change.label, 'on 2025, same months');
+      expect(change.value, closeTo(100 / 900 * 100, 1e-9)); // down 11%, not the 0% that skipping Feb gave
+    });
+
+    test('a month that had nothing last year stays out of the comparison', () {
+      // Jan had nothing last year, so Feb-Sep are compared: level (counting Jan would read 12.5% up).
+      final s = story(<double>[100, 100, 100, 100, 100, 100, 100, 100, 100, 0, 0, 0],
+          prior: <double>[0, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100, 100]);
+      expect((s.headline[1] as DashStoryStat).value, 0);
+    });
+
+    test("the callout measures the latest month against the chart's own dashed line when it is given", () {
+      // The mean of Jan-Sep is 94, but the chart's line (a weighted average) is 200: Sep is 75% under it.
+      final s = story(<double>[100, 100, 100, 100, 100, 100, 100, 100, 50, 0, 0, 0], average: 200);
+      expect(s.callout, 'Best month: Jan, 100 · Sep was 75% under the average');
+    });
+
+    test('a rate is compared in points, not a percent of a percent', () {
+      final s = story(<double>[40, 45, 42, 41, 44, 43, 40, 42, 37, 0, 0, 0], average: 43, points: true);
+      expect(s.callout, 'Best month: Feb, 45 · Sep was 6 points under the average');
     });
   });
 

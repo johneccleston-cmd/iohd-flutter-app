@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'config/access.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 
@@ -36,6 +37,7 @@ class _VendorsScreenState extends State<VendorsScreen> {
         children: [
           PageBanner(
             title: 'Vendors',
+            icon: accessIcon('vendors'),
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Vendor', onPressed: () {})],
           ),
           Expanded(

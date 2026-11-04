@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -165,20 +166,23 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
     _error = m;
   });
 
-  /// Moves one call/text to [jobId] (a job id), or 'auto' to remove its link (no job).
-  Future<void> _assign(String quoId, String? jobId) async {
+  Future<void> _assign(String quoId, String? jobId) => _assignMany([quoId], jobId);
+
+  /// Moves calls/texts to [jobId] (a job id), or null for "deliberately no job" (which also stops the automatic match);
+  /// 'auto' deletes the link, so the automatic match applies again.
+  Future<bool> _assignMany(List<String> quoIds, String? jobId) async {
     String? problem;
     try {
       final res = await http
           .put(
             Uri.parse('$kApiBaseUrl/api/quo/links'),
             headers: {...AuthSession.instance.headers(), 'Content-Type': 'application/json'},
-            body: json.encode({'quoIds': [quoId], 'jobId': jobId}),
+            body: json.encode({'quoIds': quoIds, 'jobId': jobId}),
           )
           .timeout(const Duration(seconds: 30));
       if (res.statusCode == 401) {
         AuthSession.instance.logout();
-        return;
+        return false;
       }
       if (res.statusCode != 200) problem = _errorOf(res) ?? 'Could not save that change (${res.statusCode}).';
     } on TimeoutException {
@@ -186,12 +190,99 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
     } catch (_) {
       problem = 'Could not reach the server.';
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     if (problem != null) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(problem)));
-      return;
+      return false;
     }
     await _load(quiet: true); // in job mode the message leaves this list when it moves elsewhere
+    return true;
+  }
+
+  /// "Attach to a job or estimate" on a conversation: every call and text in it goes to the one chosen.
+  Future<void> _attachThread(List<Map<String, dynamic>> msgs) async {
+    final current = {for (final m in msgs) if (m['job_id'] != null) '${m['job_id']}'};
+    final picked = await _showJobPicker(
+      context,
+      _jobs,
+      current: current.length == 1 ? current.first : null,
+      allowNone: false,
+      subtitle: 'The whole conversation shows on the job or estimate you pick. It stays on the customer either way.',
+    );
+    final jobId = picked?.$1;
+    if (jobId == null || !mounted) return;
+    final ids = [for (final m in msgs) '${m['quo_id']}'];
+    if (!await _assignMany(ids, jobId) || !mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text('Attached ${ids.length == 1 ? '1 call or text' : '${ids.length} calls and texts'} to ${_labelFor(_jobs, jobId)}.')));
+  }
+
+  /// "Delete conversation": removes its calls and texts from IOHD Office for good (Quo keeps its own copy).
+  Future<void> _deleteThread(List<Map<String, dynamic>> msgs) async {
+    final ids = [for (final m in msgs) '${m['quo_id']}'];
+    final n = ids.length;
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'Delete this conversation?',
+        icon: Icons.delete_outline_rounded,
+        iconColor: const Color(0xFFB91C1C),
+        body: Text(
+          '${n == 1 ? '1 call or text' : '$n calls and texts'} will be removed from IOHD Office: from this customer, from any job or estimate, and from the reports. '
+          'Quo keeps its own copy. This cannot be undone here.',
+          style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.4),
+        ),
+        actions: [
+          AppButton.ghost('Cancel', () => Navigator.pop(ctx, false)),
+          AppButton.ink('Delete', () => Navigator.pop(ctx, true), danger: true),
+        ],
+      ),
+    );
+    if (yes != true || !mounted) return;
+    String? problem;
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$kApiBaseUrl/api/quo/activity/delete'),
+            headers: {...AuthSession.instance.headers(), 'Content-Type': 'application/json'},
+            body: json.encode({'quoIds': ids}),
+          )
+          .timeout(const Duration(seconds: 30));
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout();
+        return;
+      }
+      if (res.statusCode != 200) problem = _errorOf(res) ?? 'Could not delete that (${res.statusCode}).';
+    } on TimeoutException {
+      problem = 'The server took too long to respond.';
+    } catch (_) {
+      problem = 'Could not reach the server.';
+    }
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context)..hideCurrentSnackBar();
+    if (problem != null) {
+      messenger.showSnackBar(SnackBar(content: Text(problem)));
+      return;
+    }
+    await _load(quiet: true);
+    messenger.showSnackBar(SnackBar(content: Text('Deleted ${n == 1 ? '1 call or text' : '$n calls and texts'}.')));
+  }
+
+  /// "Remove from Job X" on a conversation: every call/text of it that is on that job stops belonging to it. Stored as
+  /// "no job", so the automatic match does not put it back. Undo deletes those links, which restores what was there.
+  Future<void> _unattach(List<Map<String, dynamic>> msgs, String jobId) async {
+    final ids = [for (final m in msgs) if ('${m['job_id']}' == jobId) '${m['quo_id']}'];
+    if (ids.isEmpty || !await _assignMany(ids, null) || !mounted) return;
+    final label = _labelFor(_jobs, jobId);
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.hideCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text('Removed ${ids.length == 1 ? '1 call or text' : '${ids.length} calls and texts'} from $label.'),
+        action: SnackBarAction(label: 'Undo', onPressed: () => _assignMany(ids, 'auto')),
+      ),
+    );
   }
 
   /// Threads newest first; each thread's items stay oldest first.
@@ -277,44 +368,42 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
       );
     }
     if (_loading && _items.value.isEmpty) {
-      return const Padding(padding: EdgeInsets.all(24), child: SkeletonPulse(child: SizedBox(height: 200, width: double.infinity)));
+      return const Padding(padding: EdgeInsets.fromLTRB(20, 16, 20, 16), child: SkeletonPulse(child: _ThreadSkeleton()));
     }
     // A job can still have linked calls when its customer has no number on file, so only say "no phone" when there are none.
     if (!_hasPhone && _items.value.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.all(48),
-        child: Text(
-          widget.jobId != null
-              ? "This job's customer has no phone number on file, so there is nothing to match to Quo."
-              : 'This customer has no phone number on file, so there is nothing to match to Quo.',
-          style: const TextStyle(fontSize: 15, color: DashUi.slate),
-        ),
+      return _QuoEmpty(
+        icon: Icons.phone_disabled_rounded,
+        title: 'No phone number on file',
+        message: widget.jobId != null
+            ? "This job's customer has no phone number on file, so there is nothing to match to Quo."
+            : 'This customer has no phone number on file, so there is nothing to match to Quo.',
       );
     }
     final threads = _threads();
     if (threads.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
-        child: Text(
-          widget.jobId != null
-              ? "No calls or texts mention this job's address yet, and none have been linked to it by hand. All of the customer's calls and texts are on their Calls & Texts tab, where you can link one to this job."
-              : 'No calls or texts with ${_phone ?? 'this number'} yet. New ones appear here as they happen in Quo.',
-          style: const TextStyle(fontSize: 15, color: DashUi.slate),
-        ),
+      return _QuoEmpty(
+        icon: Icons.forum_outlined,
+        title: 'No calls or texts yet',
+        message: widget.jobId != null
+            ? "No calls or texts have been matched to this job yet, and none have been linked to it by hand. All of the customer's calls and texts are on their Communications tab, where you can attach a conversation to this job."
+            : 'No calls or texts with ${_phone ?? 'this number'} yet. New ones appear here as they happen in Quo.',
       );
     }
     // Only name the number on each row when the conversations are with more than one number.
     final manyNumbers = threads.map((t) => t.$2.last['phone_key']).toSet().length > 1;
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final t in threads) _threadRow(t.$1, t.$2, showNumber: manyNumbers),
-          const Divider(height: 1, color: DashUi.line),
+          for (var i = 0; i < threads.length; i++) ...[
+            if (i > 0) const Divider(height: 1, indent: 66, endIndent: 12, color: DashUi.line),
+            _threadRow(threads[i].$1, threads[i].$2, showNumber: manyNumbers),
+          ],
           if (_truncated)
             Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
               child: Text(
                 'Showing the latest ${_items.value.length} calls and texts. Older ones are in Quo.',
                 style: const TextStyle(fontSize: 14, color: DashUi.slate),
@@ -334,12 +423,16 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
     final title = showNumber ? '$line  ·  ${_formatPhone(last['phone_key']?.toString())}' : line;
     final counts = [if (texts > 0) '$texts ${texts == 1 ? 'text' : 'texts'}', if (calls > 0) '$calls ${calls == 1 ? 'call' : 'calls'}'].join(' · ');
     final missed = _missedSinceReply(msgs);
-    const titleStyle = TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink);
+    // The jobs and estimates this conversation is on (usually one), for the "Remove from ..." menu.
+    final attached = {for (final m in msgs) if (m['job_id'] != null && '${m['job_id']}'.isNotEmpty) '${m['job_id']}'}.toList();
+    const titleStyle = TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: DashUi.ink);
+    final lastIsCall = last['kind'] == 'call';
     return InkWell(
       onTap: () => _open(key),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
-        decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+      borderRadius: BorderRadius.circular(10),
+      hoverColor: DashUi.faint,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
         child: Row(
           children: [
             // A missed call nobody has answered yet is visible here, without opening the conversation.
@@ -347,14 +440,23 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
               Tooltip(
                 message: missed == 1 ? 'Missed call, no reply yet' : '$missed missed calls, no reply yet',
                 child: Container(
-                  width: 26,
-                  height: 26,
-                  decoration: const BoxDecoration(color: DashUi.red, shape: BoxShape.circle),
-                  child: const Icon(Icons.phone_missed_rounded, size: 16, color: Colors.white),
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: DashUi.red,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: DashUi.red.withValues(alpha: 0.25), width: 4, strokeAlign: BorderSide.strokeAlignOutside),
+                  ),
+                  child: const Icon(Icons.phone_missed_rounded, size: 18, color: Colors.white),
                 ),
               )
             else
-              const SizedBox(width: 26, child: Center(child: Icon(Icons.forum_outlined, size: 22, color: DashUi.ink))),
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(color: DashUi.blue.withValues(alpha: 0.1), shape: BoxShape.circle),
+                child: Icon(lastIsCall ? Icons.call_outlined : Icons.sms_outlined, size: 19, color: DashUi.blue),
+              ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
@@ -380,14 +482,70 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
               ),
             ),
             const SizedBox(width: 12),
-            Text(when == null ? '' : DateFormat('MMM d, y').format(when), style: const TextStyle(fontSize: 14, color: DashUi.slate)),
-            const SizedBox(width: 6),
+            Tooltip(
+              message: when == null ? '' : DateFormat('EEE, MMM d, y h:mm a').format(when),
+              child: Text(_when(when), style: const TextStyle(fontSize: 13, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()])),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'More',
+              icon: const Icon(Icons.more_vert_rounded, color: DashUi.slate),
+              onSelected: (v) {
+                if (v == 'attach') {
+                  _attachThread(msgs);
+                } else if (v == 'delete') {
+                  _deleteThread(msgs);
+                } else if (v.startsWith('remove:')) {
+                  _unattach(msgs, v.substring(7));
+                }
+              },
+              itemBuilder: (_) => [
+                if (_jobs.isNotEmpty) PopupMenuItem(value: 'attach', child: Text(attached.isEmpty ? 'Attach to a job or estimate...' : 'Move to another job or estimate...')),
+                for (final id in attached) PopupMenuItem(value: 'remove:$id', child: Text('Remove from ${_labelFor(_jobs, id)}')),
+                const PopupMenuDivider(),
+                const PopupMenuItem(value: 'delete', child: Text('Delete conversation', style: TextStyle(color: DashUi.redText))),
+              ],
+            ),
             const Icon(Icons.chevron_right_rounded, color: DashUi.slate),
           ],
         ),
       ),
     );
   }
+}
+
+/// The customer's jobs and estimates to choose from. Returns (jobId, _), with a null jobId for "No job"; null if dismissed.
+Future<(String?, bool)?> _showJobPicker(BuildContext context, List<Map<String, dynamic>> jobs, {String? current, required bool allowNone, String? subtitle}) {
+  return showDialog<(String?, bool)>(
+    context: context,
+    builder: (ctx) => AppDialog(
+      title: 'Which job is this about?',
+      subtitle: subtitle ?? 'The call or text shows on the job you pick. It stays on the customer either way.',
+      icon: Icons.link_rounded,
+      width: 520,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final j in jobs)
+            ListTile(
+              dense: true,
+              selected: '${j['job_id']}' == current,
+              title: Text('${j['is_estimate'] == true ? 'Estimate' : 'Job'} ${j['job_id']}  ·  ${j['status'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w700)),
+              subtitle: Text('${j['start_date'] ?? ''}  ${j['location'] ?? ''}'.trim(), maxLines: 1, overflow: TextOverflow.ellipsis),
+              onTap: () => Navigator.pop(ctx, ('${j['job_id']}', false)),
+            ),
+          if (jobs.isEmpty) const Padding(padding: EdgeInsets.all(8), child: Text('This customer has no jobs or estimates.')),
+          if (allowNone) ListTile(dense: true, title: const Text('No job'), onTap: () => Navigator.pop(ctx, (null, true))),
+        ],
+      ),
+      actions: const [],
+    ),
+  );
+}
+
+/// "Job 123" or "Estimate 123" for a job id in the customer's list.
+String _labelFor(List<Map<String, dynamic>> jobs, String id) {
+  final j = jobs.where((j) => '${j['job_id']}' == id).firstOrNull;
+  return '${j?['is_estimate'] == true ? 'Estimate' : 'Job'} $id';
 }
 
 /// The server's `{"error": "..."}` message, if the response has one.
@@ -536,185 +694,432 @@ class _ThreadDialogState extends State<_ThreadDialog> {
           toEnd(2);
         }
         void send() => _send(lineId, phoneKey);
+
+        // The conversation, oldest first: a separator at each new day, and messages from the same person a few
+        // minutes apart grouped under one name and avatar.
+        final rows = <Widget>[];
+        for (var i = 0; i < msgs.length; i++) {
+          final a = msgs[i];
+          final prev = i > 0 ? msgs[i - 1] : null;
+          final next = i + 1 < msgs.length ? msgs[i + 1] : null;
+          final when = _at(a);
+          if (prev == null || !_sameDay(_at(prev), when)) rows.add(_DaySeparator(when));
+          final startsGroup = prev == null || !_grouped(prev, a);
+          final endsGroup = next == null || !_grouped(a, next);
+          rows.add(
+            _BubbleIn(
+              key: ValueKey('bubble-${a['quo_id']}'),
+              delay: (msgs.length - 1 - i).clamp(0, 8),
+              child: _bubble(a, startsGroup: startsGroup, endsGroup: endsGroup),
+            ),
+          );
+        }
+
         return AppDialog(
           title: title,
           subtitle: number.isEmpty ? null : number,
           icon: Icons.forum_outlined,
-          width: 620,
+          width: 660,
           // Leaves room for the dialog's title, the text box and its padding so the dialog never scrolls the list itself.
-          body: SizedBox(
-            height: (MediaQuery.sizeOf(context).height - 270).clamp(160.0, 520.0),
+          body: Container(
+            height: (MediaQuery.sizeOf(context).height - 300).clamp(160.0, 540.0),
+            decoration: BoxDecoration(
+              color: DashUi.faint,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: DashUi.line),
+            ),
+            clipBehavior: Clip.antiAlias,
             child: ListView(
               controller: _scroll,
-              children: [for (final a in msgs) _bubble(a)],
+              // History is capped by the server, so build well past the view: the jump to the newest message lands
+              // exactly, and scrolling back never waits on a bubble being laid out.
+              scrollCacheExtent: const ScrollCacheExtent.pixels(4000),
+              padding: const EdgeInsets.fromLTRB(14, 6, 14, 14),
+              children: rows,
             ),
           ),
-          footer: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Expanded(
-                // Enter starts a new line (texts are often several lines); Ctrl+Enter sends.
-                child: CallbackShortcuts(
-                  bindings: {const SingleActivator(LogicalKeyboardKey.enter, control: true): send},
-                  child: TextField(
-                    controller: _text,
-                    minLines: 1,
-                    maxLines: 4,
-                    maxLength: 1600,
-                    enabled: !_sending,
-                    decoration: InputDecoration(
-                      hintText: 'Text ${number.isEmpty ? 'the customer' : number}  (Ctrl+Enter to send)',
-                      counterText: '',
-                      border: const OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              FilledButton.icon(
-                onPressed: _sending ? null : send,
-                icon: _sending
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.send_rounded, size: 18),
-                label: const Text('Send'),
-              ),
-            ],
-          ),
+          footer: _composer(number, send),
           actions: const [],
         );
       },
     );
   }
 
-  String _jobLabel(Map<String, dynamic> a) {
-    final id = a['job_id']?.toString();
-    if (id == null || id.isEmpty) return 'No job';
-    final j = widget.jobs.where((j) => '${j['job_id']}' == id).firstOrNull;
-    return '${j?['is_estimate'] == true ? 'Estimate' : 'Job'} $id';
-  }
-
-  /// Which job or estimate does this call/text belong to? Lists the customer's jobs and "No job".
-  Future<void> _pickJob(Map<String, dynamic> a) async {
-    final current = a['job_id']?.toString();
-    final picked = await showDialog<(String?, bool)>(
-      context: context,
-      builder: (ctx) => AppDialog(
-        title: 'Which job is this about?',
-        subtitle: 'The call or text shows on the job you pick. It stays on the customer either way.',
-        icon: Icons.link_rounded,
-        width: 520,
-        body: Column(
+  /// The text box with Send inside it, and under it the shortcut and (while typing) how long the text is.
+  Widget _composer(String number, VoidCallback send) {
+    return ValueListenableBuilder<TextEditingValue>(
+      valueListenable: _text,
+      builder: (context, value, _) {
+        final len = value.text.trim().length;
+        final parts = len == 0 ? 0 : (len / 160).ceil();
+        final ready = len > 0 && !_sending;
+        final still = MediaQuery.disableAnimationsOf(context);
+        return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final j in widget.jobs)
-              ListTile(
-                dense: true,
-                selected: '${j['job_id']}' == current,
-                title: Text('${j['is_estimate'] == true ? 'Estimate' : 'Job'} ${j['job_id']}  ·  ${j['status'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                subtitle: Text('${j['start_date'] ?? ''}  ${j['location'] ?? ''}'.trim(), maxLines: 1, overflow: TextOverflow.ellipsis),
-                onTap: () => Navigator.pop(ctx, ('${j['job_id']}', false)),
-              ),
-            if (widget.jobs.isEmpty) const Padding(padding: EdgeInsets.all(8), child: Text('This customer has no jobs or estimates.')),
-            ListTile(dense: true, title: const Text('No job'), onTap: () => Navigator.pop(ctx, ('auto', true))),
-          ],
-        ),
-        actions: const [],
-      ),
-    );
-    if (picked == null) return;
-    await widget.onAssign('${a['quo_id']}', picked.$1);
-  }
-
-  Widget _bubble(Map<String, dynamic> a) {
-    final out = a['direction'] == 'outgoing';
-    final when = DateTime.tryParse('${a['occurred_at'] ?? ''}')?.toLocal();
-    final stamp = when == null ? '' : DateFormat('MMM d, h:mm a').format(when);
-    final isCall = a['kind'] == 'call';
-    final summary = (a['ai_summary'] is Map ? (a['ai_summary']['summary'] as List?) : null)?.map((e) => '$e').join(' ');
-    final nextSteps = (a['ai_summary'] is Map ? (a['ai_summary']['nextSteps'] as List?) : null)?.map((e) => '$e').toList() ?? const <String>[];
-    final media = isCall ? const <(String, String)>[] : _mediaOf(a);
-    final hasBody = '${a['body'] ?? ''}'.trim().isNotEmpty;
-    final fg = out ? Colors.white : DashUi.ink;
-    final sub = out ? Colors.white70 : DashUi.slate;
-    final missed = _missed(a);
-    // Red reads on the light incoming bubble only; an unanswered outgoing call keeps the white text on its dark bubble.
-    final callColor = missed && !out ? DashUi.redText : fg;
-    return Align(
-      alignment: out ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        constraints: const BoxConstraints(maxWidth: 440),
-        margin: const EdgeInsets.symmetric(vertical: 5),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(color: out ? DashUi.ink : DashUi.line, borderRadius: BorderRadius.circular(14)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('${a['sender'] ?? ''}', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: sub)),
-            const SizedBox(height: 3),
-            if (isCall || hasBody || media.isEmpty)
-              Row(
-                mainAxisSize: MainAxisSize.min,
+            AnimatedContainer(
+              duration: still ? Duration.zero : const Duration(milliseconds: 160),
+              padding: const EdgeInsets.fromLTRB(14, 4, 6, 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: ready ? DashUi.ink.withValues(alpha: 0.35) : DashUi.line, width: ready ? 1.5 : 1),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  if (isCall)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: Icon(missed ? Icons.phone_missed_rounded : Icons.phone_rounded, size: 16, color: callColor),
+                  Expanded(
+                    // Enter starts a new line (texts are often several lines); Ctrl+Enter sends.
+                    child: CallbackShortcuts(
+                      bindings: {const SingleActivator(LogicalKeyboardKey.enter, control: true): send},
+                      child: TextField(
+                        controller: _text,
+                        minLines: 1,
+                        maxLines: 5,
+                        maxLength: 1600,
+                        enabled: !_sending,
+                        style: const TextStyle(fontSize: 14.5, color: DashUi.ink, height: 1.4),
+                        decoration: InputDecoration(
+                          hintText: 'Text ${number.isEmpty ? 'the customer' : number}',
+                          hintStyle: const TextStyle(color: DashUi.subtle),
+                          counterText: '',
+                          border: InputBorder.none,
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          filled: false,
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                      ),
                     ),
-                  Flexible(
-                    child: SelectableText(
-                      isCall ? _summaryOf(a) : (hasBody ? '${a['body']}' : '(no text)'),
-                      style: TextStyle(fontSize: 15, fontWeight: missed ? FontWeight.w800 : null, color: isCall ? callColor : (hasBody ? fg : sub)),
+                  ),
+                  const SizedBox(width: 8),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Tooltip(
+                      message: 'Send (Ctrl+Enter)',
+                      child: AnimatedScale(
+                        duration: still ? Duration.zero : const Duration(milliseconds: 220),
+                        curve: Curves.easeOutBack,
+                        scale: ready || _sending ? 1 : 0.94,
+                        child: FilledButton.icon(
+                          onPressed: ready ? send : null,
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          icon: _sending
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.send_rounded, size: 18),
+                          label: const Text('Send'),
+                        ),
+                      ),
                     ),
                   ),
                 ],
               ),
-            for (final (url, type) in media)
-              _LinkRow(
-                icon: type.startsWith('image/') ? Icons.image_outlined : Icons.attach_file_rounded,
-                label: type.startsWith('image/') ? 'Open picture' : 'Open attachment',
-                color: fg,
-                onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-              ),
-            if (summary != null && summary.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('Summary', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: sub)),
-              SelectableText(summary, style: TextStyle(fontSize: 14.5, height: 1.35, color: fg)),
-            ],
-            if (nextSteps.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Text('Next steps', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: sub)),
-              for (final n in nextSteps) SelectableText('•  $n', style: TextStyle(fontSize: 14.5, height: 1.35, color: fg)),
-            ],
-            if (isCall && a['has_transcript'] == true) _TranscriptToggle(quoId: '${a['quo_id']}', fg: fg, sub: sub),
-            const SizedBox(height: 4),
-            Wrap(
-              spacing: 6,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                Text(stamp, style: TextStyle(fontSize: 12.5, color: sub)),
-                Tooltip(
-                  message: 'Change which job this belongs to',
-                  child: InkWell(
-                    onTap: () => _pickJob(a),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                      child: Text(
-                        _jobLabel(a),
-                        style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: sub, decoration: TextDecoration.underline, decorationColor: sub),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 6, 4, 0),
+              child: Row(
+                children: [
+                  const Icon(Icons.keyboard_rounded, size: 14, color: DashUi.subtle),
+                  const SizedBox(width: 6),
+                  const Text('Ctrl+Enter to send, Enter for a new line', style: TextStyle(fontSize: 12, color: DashUi.subtle)),
+                  const Spacer(),
+                  if (len > 0)
+                    Text(
+                      '$len / 1600${parts > 1 ? '  ·  sends as $parts texts' : ''}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: len > 1500 ? DashUi.amberText : DashUi.subtle,
+                        fontFeatures: const [FontFeature.tabularFigures()],
                       ),
                     ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  static DateTime? _at(Map<String, dynamic> a) => DateTime.tryParse('${a['occurred_at'] ?? ''}')?.toLocal();
+
+  static bool _sameDay(DateTime? a, DateTime? b) => a != null && b != null && a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// Two texts in a row from the same person, a few minutes apart: shown as one group (calls always stand alone).
+  static bool _grouped(Map<String, dynamic> a, Map<String, dynamic> b) {
+    if (a['kind'] == 'call' || b['kind'] == 'call') return false;
+    if (a['direction'] != b['direction'] || '${a['sender']}' != '${b['sender']}') return false;
+    final x = _at(a), y = _at(b);
+    return x != null && y != null && _sameDay(x, y) && y.difference(x).inMinutes.abs() <= 10;
+  }
+
+  String _jobLabel(Map<String, dynamic> a) {
+    final id = a['job_id']?.toString();
+    if (id == null || id.isEmpty) return 'No job';
+    return _labelFor(widget.jobs, id);
+  }
+
+  /// Which job or estimate does this call/text belong to? Lists the customer's jobs and "No job".
+  Future<void> _pickJob(Map<String, dynamic> a) async {
+    final picked = await _showJobPicker(context, widget.jobs, current: a['job_id']?.toString(), allowNone: true);
+    if (picked == null) return;
+    await widget.onAssign('${a['quo_id']}', picked.$1);
+  }
+
+  /// Under each call or text: its time, the job it is on (a pill that moves it), and why it is there when the server
+  /// worked that out itself.
+  Widget _meta(Map<String, dynamic> a, {required bool dark}) {
+    final when = _at(a);
+    final sub = dark ? Colors.white.withValues(alpha: 0.72) : DashUi.subtle;
+    final pillFg = dark ? Colors.white.withValues(alpha: 0.9) : DashUi.slate;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          when == null ? '' : DateFormat('h:mm a').format(when),
+          style: TextStyle(fontSize: 11.5, color: sub, fontFeatures: const [FontFeature.tabularFigures()]),
         ),
+        Tooltip(
+          message: 'Change which job this belongs to',
+          child: Material(
+            color: dark ? Colors.white.withValues(alpha: 0.12) : DashUi.faint,
+            shape: StadiumBorder(side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.18) : DashUi.line)),
+            child: InkWell(
+              onTap: () => _pickJob(a),
+              customBorder: const StadiumBorder(),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.link_rounded, size: 13, color: pillFg),
+                    const SizedBox(width: 4),
+                    Text(_jobLabel(a), style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: pillFg)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (_matchNote(a) case final note?)
+          Tooltip(
+            message: note,
+            triggerMode: TooltipTriggerMode.tap, // hover on a computer, tap on a touch screen
+            waitDuration: const Duration(milliseconds: 150),
+            child: Padding(padding: const EdgeInsets.all(2), child: Icon(Icons.info_outline_rounded, size: 14, color: sub)),
+          ),
+      ],
+    );
+  }
+
+  Widget _bubble(Map<String, dynamic> a, {required bool startsGroup, required bool endsGroup}) {
+    final out = a['direction'] == 'outgoing';
+    final sender = '${a['sender'] ?? ''}';
+    final isCall = a['kind'] == 'call';
+    // An avatar beside the first of a group (and the same room kept beside the rest, so they line up).
+    final avatar = startsGroup ? _Initials(sender, ours: out) : const SizedBox(width: 30);
+    final content = isCall ? _callCard(a, out: out) : _textBubble(a, out: out, startsGroup: startsGroup, endsGroup: endsGroup);
+    return Padding(
+      padding: EdgeInsets.only(top: startsGroup ? 12 : 3),
+      child: Row(
+        mainAxisAlignment: out ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!out) ...[avatar, const SizedBox(width: 8)],
+          Flexible(
+            child: Column(
+              crossAxisAlignment: out ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (startsGroup && !isCall)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4, right: 4, bottom: 4),
+                    child: Text(sender, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.slate)),
+                  ),
+                ConstrainedBox(constraints: const BoxConstraints(maxWidth: 460), child: content),
+              ],
+            ),
+          ),
+          if (out) ...[const SizedBox(width: 8), avatar],
+        ],
       ),
     );
   }
+
+  Widget _textBubble(Map<String, dynamic> a, {required bool out, required bool startsGroup, required bool endsGroup}) {
+    final media = _mediaOf(a);
+    final hasBody = '${a['body'] ?? ''}'.trim().isNotEmpty;
+    final fg = out ? Colors.white : DashUi.ink;
+    final sub = out ? Colors.white.withValues(alpha: 0.72) : DashUi.slate;
+    // The corner next to the sender is tucked in at the start of a group, rounded again inside it.
+    const big = Radius.circular(16), small = Radius.circular(5);
+    final radius = BorderRadius.only(
+      topLeft: !out && startsGroup ? small : big,
+      topRight: out && startsGroup ? small : big,
+      bottomLeft: !out && !endsGroup ? small : big,
+      bottomRight: out && !endsGroup ? small : big,
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
+      decoration: BoxDecoration(
+        gradient: out
+            ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.ink, Color.lerp(DashUi.ink, DashUi.blue, 0.38)!])
+            : null,
+        color: out ? null : Colors.white,
+        borderRadius: radius,
+        border: out ? null : Border.all(color: DashUi.line),
+        boxShadow: [BoxShadow(color: DashUi.ink.withValues(alpha: out ? 0.12 : 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasBody || media.isEmpty)
+            SelectableText(
+              hasBody ? '${a['body']}' : '(no text)',
+              style: TextStyle(fontSize: 14.5, height: 1.4, color: hasBody ? fg : sub, fontStyle: hasBody ? null : FontStyle.italic),
+            ),
+          for (final (url, type) in media) ...[
+            if (type.startsWith('image/'))
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: _MediaThumb(url: url, onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)),
+              ),
+            _LinkRow(
+              icon: type.startsWith('image/') ? Icons.open_in_new_rounded : Icons.attach_file_rounded,
+              label: type.startsWith('image/') ? 'Open picture' : 'Open attachment',
+              color: out ? Colors.white : DashUi.blue,
+              onTap: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+            ),
+          ],
+          const SizedBox(height: 6),
+          _meta(a, dark: out),
+        ],
+      ),
+    );
+  }
+
+  /// A call stands out from the texts: a card with a round icon (green when answered, red when missed), who it was,
+  /// its AI summary and next steps when Quo has them, and the transcript behind a button.
+  Widget _callCard(Map<String, dynamic> a, {required bool out}) {
+    final missed = _missed(a);
+    final summary = (a['ai_summary'] is Map ? (a['ai_summary']['summary'] as List?) : null)?.map((e) => '$e').join(' ');
+    final nextSteps = (a['ai_summary'] is Map ? (a['ai_summary']['nextSteps'] as List?) : null)?.map((e) => '$e').toList() ?? const <String>[];
+    final tone = missed ? DashUi.red : DashUi.emerald;
+    final icon = missed ? Icons.phone_missed_rounded : (out ? Icons.call_made_rounded : Icons.call_received_rounded);
+    Widget heading(IconData i, String text, Color c) => Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(i, size: 15, color: c),
+        const SizedBox(width: 6),
+        Text(text, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.slate)),
+      ],
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 14, 10),
+      decoration: BoxDecoration(
+        color: missed ? Color.alphaBlend(DashUi.red.withValues(alpha: 0.05), Colors.white) : Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: missed ? DashUi.red.withValues(alpha: 0.35) : DashUi.line),
+        boxShadow: [BoxShadow(color: DashUi.ink.withValues(alpha: 0.04), blurRadius: 6, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(color: missed ? DashUi.red : tone.withValues(alpha: 0.14), shape: BoxShape.circle),
+                child: Icon(icon, size: 17, color: missed ? Colors.white : DashUi.emeraldText),
+              ),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SelectableText(
+                      _summaryOf(a),
+                      style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: missed ? DashUi.redText : DashUi.ink),
+                    ),
+                    Text('${a['sender'] ?? ''}', style: const TextStyle(fontSize: 12.5, color: DashUi.slate)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if ((summary != null && summary.isNotEmpty) || nextSteps.isNotEmpty)
+            Container(
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+              decoration: BoxDecoration(
+                color: DashUi.indigo.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: DashUi.indigo.withValues(alpha: 0.14)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (summary != null && summary.isNotEmpty) ...[
+                    heading(Icons.auto_awesome_rounded, 'Summary', DashUi.indigo),
+                    const SizedBox(height: 4),
+                    SelectableText(summary, style: const TextStyle(fontSize: 14, height: 1.4, color: DashUi.ink)),
+                  ],
+                  if (nextSteps.isNotEmpty) ...[
+                    if (summary != null && summary.isNotEmpty) const SizedBox(height: 10),
+                    heading(Icons.checklist_rounded, 'Next steps', DashUi.indigo),
+                    for (final n in nextSteps)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 5),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Padding(
+                              padding: EdgeInsets.only(top: 2),
+                              child: Icon(Icons.check_circle_outline_rounded, size: 15, color: DashUi.emeraldText),
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(child: SelectableText(n, style: const TextStyle(fontSize: 14, height: 1.35, color: DashUi.ink))),
+                          ],
+                        ),
+                      ),
+                  ],
+                ],
+              ),
+            ),
+          if (a['has_transcript'] == true) _TranscriptToggle(quoId: '${a['quo_id']}', fg: DashUi.ink, sub: DashUi.slate),
+          const SizedBox(height: 8),
+          _meta(a, dark: false),
+        ],
+      ),
+    );
+  }
+
+  /// Why the server put this call/text on a job, when it worked that out itself (a person's own choice needs no note).
+  String? _matchNote(Map<String, dynamic> a) => switch (a['match']) {
+    'address' => 'Matched by address',
+    'visit_day' => 'A technician worked this job that day',
+    'same_day' => 'Same day it was created',
+    'thread' => 'Same conversation as the job',
+    'lead_in' => 'Before it was created, same customer',
+    'recent' => 'After it was created, same customer',
+    'recent_guess' => 'Newest job at the time',
+    'only_job' => 'The only job or estimate this customer had',
+    _ => null,
+  };
 }
 
 /// A small icon + underlined label link inside a bubble.
@@ -731,11 +1136,11 @@ class _LinkRow extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: const EdgeInsets.symmetric(vertical: 3),
         child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 18, color: color),
+          Icon(icon, size: 15, color: color),
           const SizedBox(width: 6),
-          Text(label, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color, decoration: TextDecoration.underline, decorationColor: color)),
+          Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: color)),
         ]),
       ),
     );
@@ -801,26 +1206,37 @@ class _TranscriptToggleState extends State<_TranscriptToggle> {
   @override
   Widget build(BuildContext context) {
     final lines = _lines;
+    // Each speaker keeps one colour down the transcript, in the order they first speak.
+    const tones = [DashUi.blue, DashUi.emeraldText, DashUi.amberText, DashUi.slate];
+    final speakers = <String>[];
+    for (final t in lines ?? const <Map<String, dynamic>>[]) {
+      final who = '${t['speaker'] ?? ''}';
+      if (!speakers.contains(who)) speakers.add(who);
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const SizedBox(height: 6),
-        InkWell(
-          onTap: _toggle,
-          borderRadius: BorderRadius.circular(6),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              Icon(_open ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 20, color: widget.fg),
-              const SizedBox(width: 4),
-              Text(_open ? 'Hide transcript' : 'Show transcript', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: widget.fg)),
-            ]),
+        const SizedBox(height: 10),
+        Material(
+          color: _open ? DashUi.faint : Colors.white,
+          shape: const StadiumBorder(side: BorderSide(color: DashUi.line)),
+          child: InkWell(
+            onTap: _toggle,
+            customBorder: const StadiumBorder(),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(10, 5, 12, 5),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(_open ? Icons.expand_less_rounded : Icons.notes_rounded, size: 16, color: widget.fg),
+                const SizedBox(width: 6),
+                Text(_open ? 'Hide transcript' : 'Show transcript', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: widget.fg)),
+              ]),
+            ),
           ),
         ),
         if (_open && _loading)
           Padding(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(top: 10),
             child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: widget.fg)),
           ),
         if (_open && _error != null)
@@ -836,21 +1252,31 @@ class _TranscriptToggleState extends State<_TranscriptToggle> {
         // Headed and ruled down the left so the word-for-word transcript never reads as part of the summary above it.
         if (_open && lines != null && lines.isNotEmpty)
           Container(
-            margin: const EdgeInsets.only(top: 8),
-            padding: const EdgeInsets.only(left: 10),
-            decoration: BoxDecoration(border: Border(left: BorderSide(color: widget.sub, width: 2))),
+            margin: const EdgeInsets.only(top: 10),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: DashUi.faint,
+              borderRadius: BorderRadius.circular(10),
+              border: const Border(left: BorderSide(color: DashUi.line, width: 3)),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text('Transcript', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: widget.sub)),
+                Text('Transcript', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: widget.sub)),
                 for (final t in lines)
                   Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: SelectableText.rich(TextSpan(children: [
-                      TextSpan(text: '${t['speaker'] ?? ''}:  ', style: TextStyle(fontWeight: FontWeight.w800, color: widget.sub)),
-                      TextSpan(text: '${t['content'] ?? ''}', style: TextStyle(color: widget.fg)),
-                    ]), style: const TextStyle(fontSize: 14.5, height: 1.35)),
+                    padding: const EdgeInsets.only(top: 7),
+                    child: SelectableText.rich(
+                      TextSpan(children: [
+                        TextSpan(
+                          text: '${t['speaker'] ?? ''}:  ',
+                          style: TextStyle(fontWeight: FontWeight.w800, color: tones[speakers.indexOf('${t['speaker'] ?? ''}') % tones.length]),
+                        ),
+                        TextSpan(text: '${t['content'] ?? ''}', style: TextStyle(color: widget.fg)),
+                      ]),
+                      style: const TextStyle(fontSize: 14, height: 1.4),
+                    ),
                   ),
               ],
             ),
@@ -858,4 +1284,207 @@ class _TranscriptToggleState extends State<_TranscriptToggle> {
       ],
     );
   }
+}
+
+/// A conversation's last activity, short: the time today, "Yesterday", the day this year, the full date before that.
+String _when(DateTime? t) {
+  if (t == null) return '';
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(t.year, t.month, t.day);
+  if (day == today) return DateFormat('h:mm a').format(t);
+  if (day == today.subtract(const Duration(days: 1))) return 'Yesterday';
+  return t.year == now.year ? DateFormat('MMM d').format(t) : DateFormat('MMM d, y').format(t);
+}
+
+/// No conversations to show: the icon in a tinted circle, what is missing and why.
+class _QuoEmpty extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+  const _QuoEmpty({required this.icon, required this.title, required this.message});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+    child: Column(
+      children: [
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: DashUi.blue.withValues(alpha: 0.1),
+            border: Border.all(color: DashUi.blue.withValues(alpha: 0.18), width: 6),
+          ),
+          child: Icon(icon, size: 26, color: DashUi.blue),
+        ),
+        const SizedBox(height: 16),
+        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: DashUi.ink)),
+        const SizedBox(height: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Text(message, textAlign: TextAlign.center, style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45)),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Three conversation-shaped placeholders while the list loads.
+class _ThreadSkeleton extends StatelessWidget {
+  const _ThreadSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    Widget bar(double w, double h) => Container(
+      width: w,
+      height: h,
+      decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(6)),
+    );
+    return Column(
+      children: [
+        for (var i = 0; i < 3; i++)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Row(
+              children: [
+                Container(width: 40, height: 40, decoration: const BoxDecoration(color: DashUi.line, shape: BoxShape.circle)),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [bar(180, 12), const SizedBox(height: 8), bar(double.infinity, 10)],
+                  ),
+                ),
+                const SizedBox(width: 24),
+                bar(48, 10),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// "Today", "Yesterday" or the date, on a pill between hairlines, where a new day starts in a conversation.
+class _DaySeparator extends StatelessWidget {
+  final DateTime? day;
+  const _DaySeparator(this.day);
+
+  @override
+  Widget build(BuildContext context) {
+    final d = day;
+    String label = '';
+    if (d != null) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final that = DateTime(d.year, d.month, d.day);
+      label = that == today
+          ? 'Today'
+          : that == today.subtract(const Duration(days: 1))
+          ? 'Yesterday'
+          : DateFormat(d.year == now.year ? 'EEEE, MMM d' : 'EEEE, MMM d, y').format(d);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 16, bottom: 2),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(height: 1, color: DashUi.line)),
+          Container(
+            margin: const EdgeInsets.symmetric(horizontal: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(999), border: Border.all(color: DashUi.line)),
+            child: Text(label, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: DashUi.slate)),
+          ),
+          const Expanded(child: Divider(height: 1, color: DashUi.line)),
+        ],
+      ),
+    );
+  }
+}
+
+/// Rises and fades in the first time it is shown: the newest messages first when the popup opens ([delay] counts back
+/// from the newest), and a message just sent slides in straight away.
+class _BubbleIn extends StatelessWidget {
+  final int delay;
+  final Widget child;
+  const _BubbleIn({super.key, required this.delay, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    final wait = 30 * delay;
+    final total = 280 + wait;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: total),
+      curve: Interval(wait / total, 1, curve: Curves.easeOutCubic),
+      child: child,
+      builder: (context, t, child) => Opacity(
+        opacity: t,
+        child: Transform.translate(offset: Offset(0, (1 - t) * 10), child: child),
+      ),
+    );
+  }
+}
+
+/// Someone's initials in a small circle: blue for the customer, ink for us.
+class _Initials extends StatelessWidget {
+  final String name;
+  final bool ours;
+  const _Initials(this.name, {required this.ours});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final text = parts.isEmpty ? '?' : (parts.length == 1 ? parts.first[0] : '${parts.first[0]}${parts.last[0]}').toUpperCase();
+    return Tooltip(
+      message: name,
+      child: Container(
+        width: 30,
+        height: 30,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: ours ? DashUi.ink : DashUi.blue.withValues(alpha: 0.12),
+          border: Border.all(color: ours ? DashUi.ink : DashUi.blue.withValues(alpha: 0.25)),
+        ),
+        child: Text(text, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: ours ? Colors.white : DashUi.blue)),
+      ),
+    );
+  }
+}
+
+/// A picture sent by text, as a thumbnail that opens it; if it can't be shown, a quiet placeholder.
+class _MediaThumb extends StatelessWidget {
+  final String url;
+  final VoidCallback onTap;
+  const _MediaThumb({required this.url, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+    cursor: SystemMouseCursors.click,
+    child: GestureDetector(
+      onTap: onTap,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: SizedBox(
+          width: 240,
+          height: 170,
+          child: Image.network(
+            url,
+            fit: BoxFit.cover,
+            webHtmlElementStrategy: WebHtmlElementStrategy.fallback,
+            loadingBuilder: (_, child, p) => p == null ? child : const ColoredBox(color: DashUi.faint),
+            errorBuilder: (_, _, _) => Container(
+              color: DashUi.faint,
+              alignment: Alignment.center,
+              child: const Icon(Icons.image_outlined, size: 32, color: DashUi.subtle),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }

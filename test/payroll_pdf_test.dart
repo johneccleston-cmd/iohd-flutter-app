@@ -55,6 +55,36 @@ void main() {
     expect(bytes.length, greaterThan(1000));
   });
 
+  test('advance shortfall owed from an earlier week, recovered by this week\'s run', () async {
+    final r = report(1);
+    // The run only recovers from pay it can cover, so put the balance on someone with cash pay.
+    final t = (r['techs'] as List).cast<Map>().firstWhere(
+      (t) => ((t['weeks'] as List).first as Map)['cashPay'] as num > 100,
+    );
+    final w = (t['weeks'] as List).first as Map;
+    final cash = (w['cashPay'] as num).toDouble();
+    w['carryIn'] = 33.83;
+    w['carryRecovered'] = 33.83;
+    w['carryProjected'] = true;
+    final totals = t['totals'] as Map;
+    totals['totalDue'] = ((totals['totalDue'] as num?)?.toDouble() ?? cash) - 33.83;
+    final bytes = await build('carry_recovered', r, status: {'2026-10-12': (label: 'Not run yet', paid: false)});
+    expect(utf8.decode(bytes.take(5).toList()), '%PDF-');
+  });
+
+  test('the export is saved under a name that says what it is and which weeks', () {
+    expect(payrollPdfFileName('2026-10-12', '2026-10-18'), 'IOHD Payroll Commission Report Oct 12-18, 2026.pdf');
+    expect(payrollPdfFileName('2026-10-26', '2026-11-01'), 'IOHD Payroll Commission Report Oct 26 - Nov 1, 2026.pdf');
+    expect(
+      payrollPdfFileName('2026-12-28', '2027-01-03'),
+      'IOHD Payroll Commission Report Dec 28, 2026 - Jan 3, 2027.pdf',
+    );
+    expect(payrollPdfFileName('', ''), 'IOHD Payroll Commission Report.pdf');
+    for (final n in [payrollPdfFileName('2026-10-12', '2026-10-18'), payrollPdfFileName('2026-12-28', '2027-01-03')]) {
+      expect(n.contains(RegExp(r'[<>:"/\\|?*]')), isFalse, reason: n);
+    }
+  });
+
   test('a person with nothing in range, and an empty report', () async {
     final r = report(1);
     final t = (r['techs'] as List).first as Map;

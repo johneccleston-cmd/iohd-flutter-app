@@ -19,30 +19,48 @@ Future<void> _loadFont(String family, List<String> paths) async {
   await loader.load();
 }
 
-const _cust = ['Schuber Mitchell Homes', 'Quality Building Systems Inc.', 'Lennar', 'Moser Construction LLC', 'Trinitas', 'OZ Homes, LLC', 'Heather & Tom Whitfield'];
-const _st = ['Scheduled - Full Day', 'Need To Schedule', 'Complete', 'Partially Complete', 'Estimate Provided', 'Need Deposit'];
+const _cust = [
+  'Schuber Mitchell Homes',
+  'Quality Building Systems Inc.',
+  'Lennar',
+  'Moser Construction LLC',
+  'Trinitas',
+  'OZ Homes, LLC',
+  'Heather & Tom Whitfield',
+];
+const _st = [
+  'Scheduled - Full Day',
+  'Need To Schedule',
+  'Complete',
+  'Partially Complete',
+  'Estimate Provided',
+  'Need Deposit',
+];
 const _tech = ['Brett Hall', 'Marcus Lee', 'Dan Ruiz', ''];
 
 http.Client _mock() => MockClient((req) async {
-      final now = DateTime.now();
-      final events = <Map<String, dynamic>>[];
-      for (var d = 1; d <= 28; d++) {
-        final n = (d * 7) % 6; // 0..5 events per day
-        for (var i = 0; i < n; i++) {
-          final k = d + i;
-          events.add({
-            'event_date': '${now.year}-${now.month.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}',
-            'job_number': '${1099000000 + k}',
-            'customer_name': _cust[k % _cust.length],
-            'status': _st[k % _st.length],
-            if (k % 3 == 1) ...{'time_start': '${8 + k % 6}:${k % 2 == 0 ? '00' : '30'}:00', 'time_end': '${10 + k % 6}:00:00'},
-            'techs': k % 3 == 0 ? 'Brett Hall, Marcus Lee' : _tech[k % _tech.length],
-            'is_estimate': k % 4 == 0,
-          });
-        }
-      }
-      return http.Response(jsonEncode({'events': events}), 200);
-    });
+  final now = DateTime.now();
+  final events = <Map<String, dynamic>>[];
+  for (var d = 1; d <= 28; d++) {
+    final n = (d * 7) % 6; // 0..5 events per day
+    for (var i = 0; i < n; i++) {
+      final k = d + i;
+      events.add({
+        'event_date': '${now.year}-${now.month.toString().padLeft(2, '0')}-${d.toString().padLeft(2, '0')}',
+        'job_number': '${1099000000 + k}',
+        'customer_name': _cust[k % _cust.length],
+        'status': _st[k % _st.length],
+        if (k % 3 == 1) ...{
+          'time_start': '${8 + k % 6}:${k % 2 == 0 ? '00' : '30'}:00',
+          'time_end': '${10 + k % 6}:00:00',
+        },
+        'techs': k % 3 == 0 ? 'Brett Hall, Marcus Lee' : _tech[k % _tech.length],
+        'is_estimate': k % 4 == 0,
+      });
+    }
+  }
+  return http.Response(jsonEncode({'events': events}), 200);
+});
 
 void main() {
   setUpAll(() async {
@@ -68,7 +86,7 @@ void main() {
     // One chip per event: the mock puts (day * 7) % 6 events on each of days 1-28.
     final expected = [for (var d = 1; d <= 28; d++) (d * 7) % 6].fold<int>(0, (a, b) => a + b);
     final chips = find.byWidgetPredicate((w) {
-      final m = w is Tooltip ? (w.message ?? '') : '';
+      final m = w is Tooltip ? (w.message ?? w.richMessage?.toPlainText() ?? '') : '';
       return m.contains('Techs: ') || m.contains('No tech assigned');
     });
     expect(chips, findsNWidgets(expected));
@@ -128,10 +146,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(RepaintBoundary(
-        key: const ValueKey('shot'),
-        child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
-      ));
+      await t.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('shot'),
+          child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+        ),
+      );
       await t.pumpAndSettle();
       await t.tap(find.text('All techs'));
       await t.pumpAndSettle();
@@ -149,10 +169,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(RepaintBoundary(
-        key: const ValueKey('shot'),
-        child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
-      ));
+      await t.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('shot'),
+          child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+        ),
+      );
       await t.pumpAndSettle();
       await t.tap(find.text('All techs'));
       await t.pumpAndSettle();
@@ -168,10 +190,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(RepaintBoundary(
-        key: const ValueKey('shot'),
-        child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
-      ));
+      await t.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('shot'),
+          child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+        ),
+      );
       await t.pumpAndSettle();
       await t.tap(find.text('All statuses'));
       await t.pumpAndSettle();
@@ -207,19 +231,23 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     // The app's own accent, which is what the picker would otherwise be painted in.
-    final red = _theme().copyWith(colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFCC0007), primary: const Color(0xFFCC0007)));
+    final red = _theme().copyWith(
+      colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFFCC0007), primary: const Color(0xFFCC0007)),
+    );
     await http.runWithClient(() async {
-      await t.pumpWidget(RepaintBoundary(
-        key: const ValueKey('shot'),
-        child: MaterialApp(theme: red, home: const CalendarScreen()),
-      ));
+      await t.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('shot'),
+          child: MaterialApp(theme: red, home: const CalendarScreen()),
+        ),
+      );
       await t.pumpAndSettle();
       await t.tap(find.text('October 2026'));
       await t.pumpAndSettle();
       expect(find.text('JUMP TO DATE'), findsOneWidget);
       final picker = t.element(find.text('JUMP TO DATE'));
       expect(Theme.of(picker).colorScheme.primary, isNot(const Color(0xFFCC0007)));
-      expect(Theme.of(picker).colorScheme.primary, const Color(0xFF1A1C1E));
+      expect(Theme.of(picker).colorScheme.primary, const Color(0xFF17233F)); // the calendar's navy
     }, _mock);
     expect(t.takeException(), isNull);
     await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/calendar_date_picker_1280.png'));
@@ -231,6 +259,9 @@ void main() {
     final empty = find.bySemanticsLabel(RegExp(r'October 6, nothing scheduled'));
     final handle = t.ensureSemantics();
     expect(empty, findsOneWidget);
+    // The month opens on today's week, so the first week may be scrolled out of sight.
+    await t.ensureVisible(empty);
+    await t.pumpAndSettle();
     await t.tapAt(t.getTopLeft(empty) + const Offset(40, 14));
     await t.pumpAndSettle();
     expect(find.byType(Dialog), findsNothing, reason: 'nothing to show, so no popup');
@@ -247,10 +278,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(RepaintBoundary(
-        key: const ValueKey('shot'),
-        child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
-      ));
+      await t.pumpWidget(
+        RepaintBoundary(
+          key: const ValueKey('shot'),
+          child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+        ),
+      );
       await t.pumpAndSettle();
       await t.tap(find.text('Week'));
       await t.pumpAndSettle();
@@ -264,14 +297,19 @@ void main() {
       t.view.physicalSize = Size(s.$1, s.$2);
       t.view.devicePixelRatio = 1;
       await http.runWithClient(() async {
-        await t.pumpWidget(RepaintBoundary(
-          key: const ValueKey('shot'),
-          child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
-        ));
+        await t.pumpWidget(
+          RepaintBoundary(
+            key: const ValueKey('shot'),
+            child: MaterialApp(theme: _theme(), home: const CalendarScreen()),
+          ),
+        );
         await t.pumpAndSettle();
       }, _mock);
       expect(t.takeException(), isNull);
-      await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/calendar_month_${s.$1.toInt()}.png'));
+      await expectLater(
+        find.byKey(const ValueKey('shot')),
+        matchesGoldenFile('shots/calendar_month_${s.$1.toInt()}.png'),
+      );
     });
   }
 }

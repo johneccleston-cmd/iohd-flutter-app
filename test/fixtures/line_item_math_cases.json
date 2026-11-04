@@ -1,0 +1,58 @@
+{
+  "_note": "Shared by scripts/smoke_line_items.js (backend) and test/line_item_math_test.dart (app). Keep both copies identical.",
+  "cases": [
+    {
+      "name": "SF estimate 1093839956: products taxed at 10.5%, install not taxed",
+      "taxRate": 10.5,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 527.72, "cost": 507.16, "taxable": true },
+        { "kind": "item", "quantity": 1, "rate": 3.16, "cost": 3.16, "taxable": true },
+        { "kind": "item", "quantity": 1, "rate": 10.2, "cost": 10.2, "taxable": true },
+        { "kind": "item", "quantity": 2, "rate": 4.46, "cost": 4.46, "taxable": true },
+        { "kind": "item", "quantity": 1, "rate": 300, "cost": 0, "taxable": false }
+      ],
+      "expect": { "itemsCents": 85000, "discountCents": 0, "taxableCents": 55000, "taxCents": 5775, "totalCents": 90775, "costCents": 52944, "profitCents": 32056, "marginPct": 37.7, "unpricedLines": 0, "missingCostLines": 0 }
+    },
+    {
+      "name": "SF job 1087520135: 9.75% on the door, two discounts off the install (not taxable)",
+      "taxRate": 9.75,
+      "items": [
+        { "kind": "item", "quantity": 0, "rate": 0, "cost": 0, "taxable": true },
+        { "kind": "item", "quantity": 1, "rate": 19027.67, "cost": null, "taxable": true },
+        { "kind": "item", "quantity": 1, "rate": 22000, "cost": null, "taxable": false },
+        { "kind": "discount", "rate": 4400, "taxable": false },
+        { "kind": "discount", "rate": 3080, "taxable": false }
+      ],
+      "expect": { "itemsCents": 4102767, "discountCents": 748000, "taxableCents": 1902767, "taxCents": 185520, "totalCents": 3540287, "costCents": 0, "profitCents": 3354767, "marginPct": 100, "unpricedLines": 0, "missingCostLines": 2 }
+    },
+    {
+      "name": "half cents round away from zero; fractional quantity",
+      "taxRate": 8.25,
+      "items": [
+        { "kind": "item", "quantity": 1.5, "rate": 0.33, "cost": 0.11, "taxable": true },
+        { "kind": "item", "quantity": 2.125, "rate": 19.99, "cost": 7.5, "taxable": true },
+        { "kind": "item", "quantity": 3, "rate": -10, "cost": null, "taxable": false }
+      ],
+      "expect": { "itemsCents": 1298, "discountCents": 0, "taxableCents": 4298, "taxCents": 355, "totalCents": 1653, "costCents": 1611, "profitCents": -313, "marginPct": -24.1, "unpricedLines": 0, "missingCostLines": 1 }
+    },
+    {
+      "name": "a taxable discount lowers the taxed amount; an unpriced line counts $0 and is flagged",
+      "taxRate": 10,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 1000, "cost": 600, "taxable": true },
+        { "kind": "item", "quantity": 2, "rate": null, "cost": 50, "taxable": true },
+        { "kind": "discount", "rate": 100, "taxable": true }
+      ],
+      "expect": { "itemsCents": 100000, "discountCents": 10000, "taxableCents": 90000, "taxCents": 9000, "totalCents": 99000, "costCents": 70000, "profitCents": 20000, "marginPct": 22.2, "unpricedLines": 1, "missingCostLines": 0 }
+    },
+    {
+      "name": "no tax rate, and a discount bigger than the taxable items never makes tax negative",
+      "taxRate": null,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 50, "cost": 20, "taxable": true },
+        { "kind": "discount", "rate": 80, "taxable": true }
+      ],
+      "expect": { "itemsCents": 5000, "discountCents": 8000, "taxableCents": 0, "taxCents": 0, "totalCents": -3000, "costCents": 2000, "profitCents": -5000, "marginPct": null, "unpricedLines": 0, "missingCostLines": 0 }
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 // The Jobs dashboard (redesigned like Collections): it fits the window with no scrolling at desktop sizes, the chart's
-// four views, the quick insights (with the splits hidden when too few jobs carry the data), active jobs by status with
+// four views, the job mix (with a split hidden when too few jobs carry its data), active jobs by status with
 // every status a click away, and the loading, empty, error and reduced-motion states. Uses
 // test/fixtures/dashboards/jobs.json and the clock pinned to Oct 22, 2026.
 // Screenshots go to build/dash_shots/jobs_*.png (not goldens).
@@ -52,8 +52,8 @@ void main() {
       mustShow: [
         'Completed jobs',
         'New customers',
-        'Quick insights',
-        'Res / commercial',
+        'Job mix',
+        'Residential / commercial revenue',
         'Active jobs by status',
         statuses.first['status'] as String,
         'Install vs service',
@@ -100,7 +100,7 @@ void main() {
       });
     });
 
-    testWidgets('"All 239" and the Active open jobs card open every active job', (t) async {
+    testWidgets('"All 239" and the Active jobs card open every active job', (t) async {
       final api = _api();
       await pumpDashboard(t, const JobsDashboardScreen(), api: api, body: () async {
         await t.tap(find.text('All 239'));
@@ -109,7 +109,7 @@ void main() {
         expect(find.text('All active jobs'), findsOneWidget);
         await t.tap(find.byTooltip('Close'));
         await settleDashboard(t, frames: 5);
-        await t.tap(find.text('Active open jobs'));
+        await t.tap(find.text('Active jobs'));
         await settleDashboard(t, frames: 5);
         expect(find.text('All active jobs'), findsOneWidget);
       });
@@ -128,12 +128,19 @@ void main() {
   group('chart and insights', () {
     testWidgets('four views by hand, compared Sep with Aug and never the month in progress', (t) async {
       final handle = t.ensureSemantics();
-      await pumpDashboard(t, const JobsDashboardScreen(), api: _api(), body: () async {
-        expect(find.text('Completed jobs · 1,506 in 2026'), findsOneWidget);
+      // 1500x800: room for the change chip beside the title (a narrower window leaves it to the headline).
+      await pumpDashboard(t, const JobsDashboardScreen(), api: _api(), size: const Size(1500, 800), body: () async {
+        expect(find.text('Completed jobs · by start month'), findsOneWidget);
         expect(find.textContaining('Sep vs Aug'), findsOneWidget);
+        // The dashed average and the callout use the same finished months (Jan-Sep, 1,498 jobs): Sep's 157 is under
+        // the 166 line, as the words say. October, still in progress, would have dragged the line down to 151.
+        expect(find.text('Average month 166'), findsOneWidget);
+        expect(find.textContaining('Sep was 6% under the average'), findsOneWidget);
+        expect(find.text('jobs completed so far'), findsOneWidget);
+        expect(find.textContaining('Busiest month: '), findsOneWidget);
         expect(find.textContaining('Oct vs Sep'), findsNothing);
         for (final (tab, title) in const [
-          ('Avg value', 'Average job value · '),
+          ('Per job', 'Revenue and profit per job · '),
           ('Res vs Com', 'Residential vs commercial · '),
           ('Install vs service', 'Install vs service · '),
         ]) {
@@ -141,18 +148,30 @@ void main() {
           await settleDashboard(t, frames: 10);
           expect(find.textContaining(title), findsOneWidget);
         }
+        await t.tap(find.bySemanticsLabel('Chart view: Per job'));
+        await settleDashboard(t, frames: 10);
+        expect(find.text('profit per completed job'), findsOneWidget, reason: 'profit sits beside revenue per job');
+        expect(find.text('revenue per completed job'), findsOneWidget);
+        await saveDashShot(t, 'jobs_view_per_job');
+        await t.tap(find.bySemanticsLabel('Chart view: Install vs service'));
+        await settleDashboard(t, frames: 10);
         await saveDashShot(t, 'jobs_view_install');
       });
       handle.dispose();
     });
 
-    testWidgets('insights: busiest month, jobs a month, and the two splits', (t) async {
+    testWidgets("job mix: the two splits, and not the busiest month or average the chart's first view already gives",
+        (t) async {
       await pumpDashboard(t, const JobsDashboardScreen(), api: _api());
-      expect(find.text('Jun · 196'), findsOneWidget);
-      expect(find.text('150.6'), findsOneWidget);
-      expect(find.text('Install / service'), findsOneWidget);
-      expect(find.byTooltip('74% Install, 26% Service'), findsOneWidget);
-      expect(find.byTooltip('64% Residential, 36% Commercial'), findsOneWidget);
+      expect(find.text('Job mix · completed jobs, 2026'), findsOneWidget);
+      expect(find.text('Jun · 196'), findsNothing);
+      expect(find.text('Busiest month'), findsNothing);
+      expect(find.textContaining('Busiest month: Jun, 196 jobs'), findsOneWidget, reason: "the chart's callout");
+      expect(find.text('Average month 166'), findsOneWidget, reason: "the chart's key");
+      expect(find.text('Install / service jobs'), findsOneWidget);
+      expect(find.text('Residential / commercial revenue'), findsOneWidget);
+      expect(find.byTooltip('74% Install, 26% Service (share of completed jobs)'), findsOneWidget);
+      expect(find.byTooltip('64% Residential, 36% Commercial (share of completed-job revenue)'), findsOneWidget);
     });
 
     testWidgets('a split most jobs have no data for is hidden, and says why', (t) async {
@@ -165,8 +184,9 @@ void main() {
         });
       await pumpDashboard(t, const JobsDashboardScreen(), api: api);
       expect(find.text('Not enough data'), findsOneWidget);
-      expect(find.byTooltip('Only 120 of 1506 completed jobs this year have install/service data.'), findsOneWidget);
-      expect(find.byTooltip('64% Residential, 36% Commercial'), findsOneWidget, reason: 'the other split is covered');
+      expect(find.byTooltip('Only 120 of 1,506 completed jobs in 2026 have install/service data.'), findsOneWidget);
+      expect(find.byTooltip('64% Residential, 36% Commercial (share of completed-job revenue)'), findsOneWidget,
+          reason: 'the other split is covered');
     });
   });
 
@@ -189,11 +209,32 @@ void main() {
       final api = _api()..fixture[_path] = 'jobs_empty';
       final errors = await pumpDashboard(t, const JobsDashboardScreen(), api: api, body: () async {
         expect(find.text('No job data for 2026 yet.'), findsOneWidget);
-        expect(find.text('Not enough job history yet for insights.'), findsOneWidget);
-        expect(find.text('Status breakdown not available.'), findsOneWidget);
+        expect(find.text('No completed jobs in 2026 yet.'), findsOneWidget);
+        expect(find.text('No active jobs today.'), findsOneWidget, reason: 'no active jobs is a fact, not missing data');
         await saveDashShot(t, 'jobs_empty');
       });
       expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+    });
+
+    testWidgets('a past year: the definitions say "in 2025", the today figures stay today, and nothing says "yet"',
+        (t) async {
+      final handle = t.ensureSemantics();
+      final api = _api()..yearFixture['$_path?year=2025'] = 'jobs_empty';
+      await pumpDashboard(t, const JobsDashboardScreen(), api: api, body: () async {
+        expect(find.bySemanticsLabel(RegExp(r'^Completed jobs: 1,506\. Jobs that started between Jan 1 and today and')),
+            findsOneWidget);
+        await t.tap(dashYearArrow('Previous year'));
+        await settleDashboard(t);
+        expect(api.to(_path).last.url.queryParameters['year'], '2025');
+        expect(find.bySemanticsLabel(RegExp(r'^Completed jobs: 0\. Jobs that started in 2025 and')), findsOneWidget);
+        expect(find.bySemanticsLabel(RegExp(r'^New customers: 0\. Customers \(matched by name\) whose first-ever job started in 2025\.')),
+            findsOneWidget);
+        expect(find.text('By start date · all of 2025'), findsOneWidget);
+        expect(find.text('From any year · today'), findsOneWidget);
+        expect(find.text('No job data for 2025.'), findsOneWidget);
+        expect(find.text('No completed jobs in 2025.'), findsOneWidget);
+      });
+      handle.dispose();
     });
 
     testWidgets('reduced motion: the first frame after the data arrives is already final', (t) async {

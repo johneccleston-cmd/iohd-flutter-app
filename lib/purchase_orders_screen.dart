@@ -44,7 +44,10 @@ class _PurchaseOrder {
 }
 
 class PurchaseOrdersScreen extends StatefulWidget {
-  const PurchaseOrdersScreen({super.key});
+  /// A search to start with (the nav bar search sends `?q=` with a PO number or vendor).
+  final String? initialQuery;
+
+  const PurchaseOrdersScreen({super.key, this.initialQuery});
 
   @override
   State<PurchaseOrdersScreen> createState() => _PurchaseOrdersScreenState();
@@ -56,7 +59,8 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
   String? _error;
   int _requestId = 0;
 
-  String _query = '';
+  late final _searchController = TextEditingController(text: _query);
+  late String _query = (widget.initialQuery ?? '').trim();
   String? _status; // null = all
 
   final _session = AuthSession.instance;
@@ -68,6 +72,22 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void didUpdateWidget(PurchaseOrdersScreen old) {
+    super.didUpdateWidget(old);
+    final q = (widget.initialQuery ?? '').trim();
+    if (q.isEmpty || q == (old.initialQuery ?? '').trim()) return;
+    _query = q;
+    _searchController.text = q;
+    _status = null; // the order asked for may not be in the filter left on
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   /// One API call. Returns the decoded body; throws an Exception with a message fit to show the person.
@@ -171,6 +191,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
         children: [
           PageBanner(
             title: 'Purchase Orders',
+            icon: accessIcon('purchase_orders'),
             actions: [
               if (_canCreate) PageBanner.button(icon: Icons.add_rounded, label: 'Create PO', onPressed: _loading ? null : () => _edit(null)),
               PageBanner.refresh(onPressed: _loading ? null : _load),
@@ -228,6 +249,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
                 SizedBox(
                   width: 340,
                   child: TextField(
+                    controller: _searchController,
                     style: const TextStyle(fontSize: 14),
                     decoration: flatSearchDecoration('Search PO number or vendor...'),
                     onChanged: (v) => setState(() => _query = v),

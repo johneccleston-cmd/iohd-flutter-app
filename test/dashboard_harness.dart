@@ -115,6 +115,12 @@ Future<void> loadDashFonts() async {
     '$root/bin/cache/artifacts/material_fonts/roboto-bold.ttf',
   ]);
   await _loadFont('MaterialIcons', ['$root/bin/cache/artifacts/material_fonts/materialicons-regular.otf']);
+  // Brand marks (the Stripe "S" on the job Payment tab) come from font_awesome_flutter's bundled font.
+  try {
+    final brands = FontLoader('packages/font_awesome_flutter/FontAwesomeBrands')
+      ..addFont(rootBundle.load('packages/font_awesome_flutter/lib/fonts/Font-Awesome-7-Brands-Regular-400.otf'));
+    await brands.load();
+  } catch (_) {}
 }
 
 final _shotKey = GlobalKey();
@@ -189,6 +195,14 @@ Future<void> settleDashboard(WidgetTester tester, {int frames = 30}) async {
     await tester.pump(const Duration(milliseconds: 100));
   }
 }
+
+/// The ribbon's year arrows ('Previous year', 'Next year'). They have no hover text, only a screen-reader label, so they
+/// are found by that label (without needing the semantics tree switched on).
+Finder dashYearArrow(String label) =>
+    find.byWidgetPredicate((w) => w is Semantics && w.properties.label == label && w.properties.button == true);
+
+/// The ribbon's Refresh button at a desktop width (on a phone its hover text also says how old the figures are).
+Finder get dashRefreshButton => find.byTooltip('Refresh');
 
 /// Saves what is on screen to build/dash_shots/[name].png for review (not a golden).
 Future<void> saveDashShot(WidgetTester tester, String name) async {

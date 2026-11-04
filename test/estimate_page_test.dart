@@ -167,7 +167,7 @@ void main() {
       router.go('/jobs/$_estimateId'); // e.g. a calendar click: it doesn't know this number is an estimate
       await t.pumpAndSettle();
       expect(_where(router), '/estimates/$_estimateId', reason: 'moved to the Estimates section once loaded');
-      expect(find.text('Estimate # $_estimateId'), findsOneWidget);
+      expect(find.text('ESTIMATE # $_estimateId'), findsOneWidget);
       expect(find.text('Estimate Info'), findsOneWidget);
       expect(find.text('Sales Data'), findsOneWidget); // an estimate's first tab mirrors Service Fusion's Sales Data block
       expect(find.text('Opportunity Owner'), findsOneWidget);
@@ -176,12 +176,12 @@ void main() {
       expect(find.text('Zac Clemens'), findsWidgets); // sales owner (Details and Sales Data)
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/estimate_page.png'));
 
-      // "(Became job #...)" opens the job, which links back with "(Matching estimate #...)".
-      await t.tap(find.text('#$_jobId'));
+      // The banner's "Became job #..." button opens the job, which links back with "Matching estimate #...".
+      await t.tap(find.textContaining('#$_jobId'));
       await t.pumpAndSettle();
       expect(_where(router), '/jobs/$_jobId');
-      expect(find.text('Job # $_jobId'), findsOneWidget);
-      await t.tap(find.text('#$_estimateId'));
+      expect(find.text('JOB # $_jobId'), findsOneWidget);
+      await t.tap(find.textContaining('#$_estimateId'));
       await t.pumpAndSettle();
       expect(_where(router), '/estimates/$_estimateId');
 
@@ -219,7 +219,7 @@ void main() {
       await t.tap(find.text('Quality Building Systems Inc.').first);
       await t.pumpAndSettle();
       expect(_where(router), '/estimates/$_estimateId');
-      expect(find.text('Estimate # $_estimateId'), findsOneWidget);
+      expect(find.text('ESTIMATE # $_estimateId'), findsOneWidget);
       expect(t.takeException(), isNull);
     }, () => _mock(log));
   });

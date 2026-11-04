@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'config/app_info.dart';
 import 'config/auth_session.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_dialog.dart';
@@ -571,7 +572,7 @@ class _BrandPanel extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(
-                    '© ${DateTime.now().year} IOHD Office',
+                    '${copyrightLine()}  ·  $kAppName v$kAppVersion',
                     style: const TextStyle(
                       fontSize: 12.5,
                       color: Color(0xFF64748B),

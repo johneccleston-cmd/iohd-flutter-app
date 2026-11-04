@@ -173,5 +173,47 @@
       "totalPenalties": "$0.00"
     }
   ],
-  "generatedAt": "2026-10-22T19:30:00.000Z"
+  "generatedAt": "2026-10-22T19:30:00.000Z",
+  "paceMonthly": [
+    {
+      "month": 1,
+      "workDays": 62
+    },
+    {
+      "month": 2,
+      "workDays": 68
+    },
+    {
+      "month": 3,
+      "workDays": 78
+    },
+    {
+      "month": 4,
+      "workDays": 74
+    },
+    {
+      "month": 5,
+      "workDays": 81
+    },
+    {
+      "month": 6,
+      "workDays": 84
+    },
+    {
+      "month": 7,
+      "workDays": 79
+    },
+    {
+      "month": 8,
+      "workDays": 77
+    },
+    {
+      "month": 9,
+      "workDays": 72
+    },
+    {
+      "month": 10,
+      "workDays": 52
+    }
+  ]
 }

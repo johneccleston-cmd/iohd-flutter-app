@@ -28,8 +28,24 @@ String _today(int day) {
 
 List<Map<String, dynamic>> _events() => [
   for (var d = 1; d <= 20; d++) ...[
-    {'event_date': _today(d), 'job_number': '10$d', 'customer_name': 'Customer number $d with a long name', 'status': 'Scheduled', 'techs': 'Brett Hall, Marcus Lee', 'is_estimate': false, 'time_start': '09:00:00', 'time_end': '11:00:00'},
-    {'event_date': _today(d), 'job_number': '20$d', 'customer_name': 'Estimate customer $d', 'status': 'Scheduled', 'techs': '', 'is_estimate': true},
+    {
+      'event_date': _today(d),
+      'job_number': '10$d',
+      'customer_name': 'Customer number $d with a long name',
+      'status': 'Scheduled',
+      'techs': 'Brett Hall, Marcus Lee',
+      'is_estimate': false,
+      'time_start': '09:00:00',
+      'time_end': '11:00:00',
+    },
+    {
+      'event_date': _today(d),
+      'job_number': '20$d',
+      'customer_name': 'Estimate customer $d',
+      'status': 'Scheduled',
+      'techs': '',
+      'is_estimate': true,
+    },
   ],
 ];
 
@@ -41,7 +57,10 @@ Future<void> _pump(WidgetTester t, Size size, http.Client Function() client, {do
     await t.pumpWidget(
       MaterialApp(
         theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
-        builder: (context, child) => MediaQuery(data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)), child: child!),
+        builder: (context, child) => MediaQuery(
+          data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+          child: child!,
+        ),
         home: const CalendarScreen(),
       ),
     );
@@ -70,7 +89,11 @@ void main() {
   }
 
   testWidgets('a dropped connection shows a plain message, not the raw exception', (t) async {
-    await _pump(t, const Size(1280, 720), () => MockClient((r) async => throw http.ClientException('Failed to fetch', r.url)));
+    await _pump(
+      t,
+      const Size(1280, 720),
+      () => MockClient((r) async => throw http.ClientException('Failed to fetch', r.url)),
+    );
     expect(find.textContaining('ClientException'), findsNothing);
     expect(find.textContaining('http'), findsNothing);
     expect(find.textContaining('connection'), findsWidgets);
@@ -85,7 +108,11 @@ void main() {
   });
 
   testWidgets('no events at all shows the empty note and no filter legend', (t) async {
-    await _pump(t, const Size(1280, 720), () => MockClient((r) async => http.Response(jsonEncode({'events': <dynamic>[]}), 200)));
+    await _pump(
+      t,
+      const Size(1280, 720),
+      () => MockClient((r) async => http.Response(jsonEncode({'events': <dynamic>[]}), 200)),
+    );
     expect(find.text('Nothing scheduled this month'), findsOneWidget);
     expect(find.text('JOB STATUS'), findsNothing);
   });
@@ -98,8 +125,16 @@ void main() {
     expect(find.text('ESTIMATE STATUS'), findsOneWidget);
     final scheduledChips = find.widgetWithText(CheckboxMenuButton, 'Scheduled');
     expect(scheduledChips, findsNWidgets(2));
-    int chipCount() => find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').contains('Techs: ')).evaluate().length;
-    int estimateCount() => find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').contains('(estimate)')).evaluate().length;
+    int chipCount() => find
+        .byWidgetPredicate((w) => w is Tooltip && (w.message ?? w.richMessage?.toPlainText() ?? '').contains('Techs: '))
+        .evaluate()
+        .length;
+    int estimateCount() => find
+        .byWidgetPredicate(
+          (w) => w is Tooltip && (w.message ?? w.richMessage?.toPlainText() ?? '').contains('(estimate)'),
+        )
+        .evaluate()
+        .length;
     final jobsBefore = chipCount(), estBefore = estimateCount();
     expect(estBefore, greaterThan(0));
     await t.tap(scheduledChips.first); // the job one (listed first)
@@ -116,7 +151,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI'), home: const CalendarScreen()));
+      await t.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(fontFamily: 'Segoe UI'),
+          home: const CalendarScreen(),
+        ),
+      );
       await t.pump(const Duration(seconds: 3));
       expect(find.textContaining('Waking up'), findsNothing);
       await t.pump(const Duration(seconds: 6));
@@ -136,7 +176,12 @@ void main() {
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI'), home: const CalendarScreen()));
+      await t.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(fontFamily: 'Segoe UI'),
+          home: const CalendarScreen(),
+        ),
+      );
       await t.pump(const Duration(seconds: 1));
       expect(find.text('Loading schedule…'), findsNothing);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
@@ -166,12 +211,16 @@ void main() {
 
   testWidgets('a background refresh picks up new events without a spinner or an error', (t) async {
     var calls = 0;
-    await _pump(t, const Size(1280, 720), () => MockClient((r) async {
-      calls++;
-      if (calls == 1) return http.Response(jsonEncode({'events': _events().take(2).toList()}), 200);
-      if (calls == 2) return http.Response('{}', 500); // a failed background refresh must stay silent
-      return http.Response(jsonEncode({'events': _events()}), 200);
-    }));
+    await _pump(
+      t,
+      const Size(1280, 720),
+      () => MockClient((r) async {
+        calls++;
+        if (calls == 1) return http.Response(jsonEncode({'events': _events().take(2).toList()}), 200);
+        if (calls == 2) return http.Response('{}', 500); // a failed background refresh must stay silent
+        return http.Response(jsonEncode({'events': _events()}), 200);
+      }),
+    );
     expect(find.text('Customer number 3 with a long name'), findsNothing);
     await t.pump(const Duration(minutes: 5, seconds: 1)); // refresh #1 fails quietly
     await t.pump();
@@ -183,10 +232,31 @@ void main() {
   });
 
   testWidgets('the details dialog for an event with no job number hides ids and raw field names', (t) async {
-    await _pump(t, const Size(1280, 720), () => MockClient((r) async => http.Response(jsonEncode({'events': [
-      {'event_date': _today(10), 'customer_name': 'No Number Co', 'status': 'Scheduled', 'techs': 'Brett Hall', 'is_estimate': false,
-       'time_start': '09:00:00', 'time_end': '11:00:00', 'visit_id': 991, 'created_at': '2026-01-01', 'crew_notes': 'Gate code 4411'},
-    ]}), 200)));
+    await _pump(
+      t,
+      const Size(1280, 720),
+      () => MockClient(
+        (r) async => http.Response(
+          jsonEncode({
+            'events': [
+              {
+                'event_date': _today(10),
+                'customer_name': 'No Number Co',
+                'status': 'Scheduled',
+                'techs': 'Brett Hall',
+                'is_estimate': false,
+                'time_start': '09:00:00',
+                'time_end': '11:00:00',
+                'visit_id': 991,
+                'created_at': '2026-01-01',
+                'crew_notes': 'Gate code 4411',
+              },
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
     await t.tap(find.text('No Number Co'));
     await t.pumpAndSettle();
     expect(find.text('9:00–11:00 AM'), findsOneWidget);
@@ -219,11 +289,43 @@ void _layoutTests() {
 
   testWidgets('two techs with the same first name are told apart on the month chips', (t) async {
     SharedPreferences.setMockInitialValues({});
-    await _pump(t, const Size(1920, 1000), () => MockClient((r) async => http.Response(jsonEncode({'events': [
-      {'event_date': _today(10), 'job_number': '1', 'customer_name': 'Alpha Co', 'status': 'Scheduled', 'techs': 'Brett Hall', 'is_estimate': false},
-      {'event_date': _today(10), 'job_number': '2', 'customer_name': 'Beta Co', 'status': 'Scheduled', 'techs': 'Brett Young', 'is_estimate': false},
-      {'event_date': _today(11), 'job_number': '3', 'customer_name': 'Gamma Co', 'status': 'Scheduled', 'techs': 'Marcus Lee', 'is_estimate': false},
-    ]}), 200)));
+    await _pump(
+      t,
+      const Size(1920, 1000),
+      () => MockClient(
+        (r) async => http.Response(
+          jsonEncode({
+            'events': [
+              {
+                'event_date': _today(10),
+                'job_number': '1',
+                'customer_name': 'Alpha Co',
+                'status': 'Scheduled',
+                'techs': 'Brett Hall',
+                'is_estimate': false,
+              },
+              {
+                'event_date': _today(10),
+                'job_number': '2',
+                'customer_name': 'Beta Co',
+                'status': 'Scheduled',
+                'techs': 'Brett Young',
+                'is_estimate': false,
+              },
+              {
+                'event_date': _today(11),
+                'job_number': '3',
+                'customer_name': 'Gamma Co',
+                'status': 'Scheduled',
+                'techs': 'Marcus Lee',
+                'is_estimate': false,
+              },
+            ],
+          }),
+          200,
+        ),
+      ),
+    );
     expect(find.textContaining('Brett H.'), findsOneWidget);
     expect(find.textContaining('Brett Y.'), findsOneWidget);
     expect(find.textContaining('Marcus Lee'), findsNothing, reason: 'a first name nobody else shares stays short');
@@ -235,18 +337,26 @@ void _layoutTests() {
     t.view.physicalSize = const Size(1280, 720);
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
-    await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true), home: const CalendarScreen()));
-      await t.pumpAndSettle();
-      expect(find.textContaining('in the background'), findsNothing);
-      await t.pump(const Duration(minutes: 5, seconds: 1)); // the timer fires, and the server is now down
-      await t.pumpAndSettle();
-      expect(find.textContaining("Couldn't refresh in the background"), findsOneWidget);
-      expect(find.textContaining('Customer number 1 '), findsWidgets, reason: 'what was loaded stays on screen');
-    }, () => MockClient((r) async {
-      if (++calls > 1) throw http.ClientException('offline');
-      return http.Response(jsonEncode({'events': _events()}), 200);
-    }));
+    await http.runWithClient(
+      () async {
+        await t.pumpWidget(
+          MaterialApp(
+            theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
+            home: const CalendarScreen(),
+          ),
+        );
+        await t.pumpAndSettle();
+        expect(find.textContaining('in the background'), findsNothing);
+        await t.pump(const Duration(minutes: 5, seconds: 1)); // the timer fires, and the server is now down
+        await t.pumpAndSettle();
+        expect(find.textContaining("Couldn't refresh in the background"), findsOneWidget);
+        expect(find.textContaining('Customer number 1 '), findsWidgets, reason: 'what was loaded stays on screen');
+      },
+      () => MockClient((r) async {
+        if (++calls > 1) throw http.ClientException('offline');
+        return http.Response(jsonEncode({'events': _events()}), 200);
+      }),
+    );
   });
 }
 
@@ -279,5 +389,19 @@ void _techTests() {
   });
 }
 
-String _weekday(DateTime d) => const ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][d.weekday - 1];
-String _month(int m) => const ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1];
+String _weekday(DateTime d) =>
+    const ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'][d.weekday - 1];
+String _month(int m) => const [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+][m - 1];

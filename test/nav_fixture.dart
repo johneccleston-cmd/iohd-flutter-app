@@ -105,7 +105,7 @@ GoRouter navTestRouter({String initial = '/calendar'}) => GoRouter(
               for (final p in ['/office', '/statuses', '/payments', '/invoices', '/documents', '/site-checks', '/takeoffs'])
                 _stub(p),
             ]),
-            StatefulShellBranch(routes: [_stub('/customers')]),
+            StatefulShellBranch(routes: [_stub('/customers', routes: [_stub(':id')])]),
             StatefulShellBranch(routes: [_stub('/projects')]),
             StatefulShellBranch(routes: [_stub('/estimates', routes: [_stub(':id')])]),
             StatefulShellBranch(routes: [_stub('/jobs', routes: [_stub(':id')])]),

@@ -5,46 +5,35 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'widgets/app_ribbon.dart';
+import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 
-// ---------------------------------------------------------------------------
-// Design tokens
-// ---------------------------------------------------------------------------
-class _C {
-  static const surface = Colors.white;
-  static const ink = Color(0xFF111827);
-  static const muted = Color(0xFF6B7280);
-  static const line = Color(0xFFE5E7EB);
-  static const subtle = Color(0xFFF9FAFB);
-  static const primary = Color(0xFF2563EB);
-  static const primarySoft = Color(0xFFEFF4FF);
+/// Initials tints, so the list is easier to scan. A name always gets the same one.
+const _avatarTones = [DashUi.blue, DashUi.indigo, DashUi.sky, DashUi.amber, DashUi.emeraldDeep, DashUi.red];
+
+/// A load failure whose message is already fit to show.
+class _LoadError implements Exception {
+  final String message;
+
+  /// No access (403): trying again cannot help, so no Try again is offered.
+  final bool forbidden;
+  const _LoadError(this.message, {this.forbidden = false});
 }
 
-const _baseUrl = kApiBaseUrl;
-const _avatarPalette = [
-  Color(0xFF2563EB),
-  Color(0xFF7C3AED),
-  Color(0xFF0891B2),
-  Color(0xFFD97706),
-  Color(0xFFDB2777),
-  Color(0xFF059669),
-  Color(0xFF4F46E5),
-  Color(0xFFDC2626),
-];
-
-class _PageResult {
-  final List<Map<String, dynamic>> rows;
-  final int total;
-  final int totalPages;
-  const _PageResult(this.rows, this.total, this.totalPages);
+/// A 401: the app is already on its way to the sign-in screen, so there is nothing to show here.
+class _SignedOut implements Exception {
+  const _SignedOut();
 }
 
-// ---------------------------------------------------------------------------
-// Screen
-// ---------------------------------------------------------------------------
+typedef _Page = ({List<Map<String, dynamic>> rows, int total, int totalPages, DateTime at});
+
+/// Every customer, searchable and sortable, with how many jobs each has had. Read-only: a row opens the customer's page.
 class CustomersScreen extends StatefulWidget {
   /// A search to start with (the nav bar search and a job page's customer link open /customers?q=...).
   final String? initialQuery;
@@ -55,28 +44,46 @@ class CustomersScreen extends StatefulWidget {
   State<CustomersScreen> createState() => _CustomersScreenState();
 }
 
-class _CustomersScreenState extends State<CustomersScreen>
-    with AutomaticKeepAliveClientMixin {
+class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
   @override
   bool get wantKeepAlive => true;
 
+  static const _flex = [6, 6, 6, 2]; // the columns, also what the first-load skeleton is shaped like
+  static const _tableWidth = 900.0; // below this the rows stack
+  static const _cacheFor = Duration(minutes: 2); // customers sync from Service Fusion, so a page does not stay right for long
+  static const _sorts = [('name', 'Name'), ('city', 'City'), ('jobs', 'Number of jobs')];
+
   final _searchController = TextEditingController();
+  final _scroll = ScrollController();
+  final _activity = RibbonActivity();
+  late final _rowsIn = AnimationController(vsync: this, duration: const Duration(milliseconds: 460), value: 1);
+  final _count = NumberFormat.decimalPattern();
   Timer? _debounce;
+  Timer? _slowTimer;
 
-  List<Map<String, dynamic>> _customers = [];
-  bool _loading = true;
-  String? _error;
-
+  List<Map<String, dynamic>> _customers = const [];
   int _page = 1;
+  int _wantedPage = 1; // the page last asked for: Try again and Refresh ask for it again
   int _totalPages = 1;
   int _total = 0;
+  int _firstRow = 1;
   int _pageSize = 50;
-
   String _sortBy = 'name';
-  String _sortDir = 'asc';
+  bool _ascending = true;
 
+  bool _loading = true;
+  bool _slow = false; // the first load has taken long enough to say the server may be waking up
+  String? _error; // nothing to show: takes the place of the table
+  String? _stale; // a reload failed: said above the rows it could not replace
+  bool _forbidden = false;
   int _requestId = 0; // guards against out-of-order responses
-  final Map<String, _PageResult> _cache = {};
+
+  // What the rows on screen were loaded for. The search box can already say something else while a load is out.
+  String? _shownView;
+  String _shownQuery = '';
+
+  // Pages already fetched (and the next one, fetched ahead), so Next is instant.
+  final Map<String, _Page> _cache = {};
 
   @override
   void initState() {
@@ -100,100 +107,163 @@ class _CustomersScreenState extends State<CustomersScreen>
   @override
   void dispose() {
     _debounce?.cancel();
+    _slowTimer?.cancel();
     _searchController.dispose();
+    _scroll.dispose();
+    _rowsIn.dispose();
+    _activity.dispose();
     super.dispose();
   }
 
   // ---- data ---------------------------------------------------------------
-  String _key(String q, int page) => '$q|$page|$_pageSize|$_sortBy|$_sortDir';
 
-  Future<_PageResult> _request(String q, int page) async {
-    final uri = Uri.parse('$_baseUrl/api/customers').replace(queryParameters: {
+  String _view(String q) => '$q|$_pageSize|$_sortBy|$_ascending';
+
+  Future<_Page> _request(String q, int page) async {
+    final uri = Uri.parse('$kApiBaseUrl/api/customers').replace(queryParameters: {
       'q': q,
       'page': '$page',
       'limit': '$_pageSize',
       'sort': _sortBy,
-      'dir': _sortDir,
+      'dir': _ascending ? 'asc' : 'desc',
     });
     // Generous timeout: Render free instances can take a while to wake up.
     // Customer details need the signed-in user's token, not just the app's shared key.
     final res = await http.get(uri, headers: AuthSession.instance.headers()).timeout(const Duration(seconds: 40));
     if (res.statusCode == 401) {
       AuthSession.instance.logout(); // sends the app back to the sign-in screen
-      throw Exception('Your session expired. Please sign in again.');
+      throw const _SignedOut();
     }
-    if (res.statusCode == 403) {
-      throw Exception('Your account does not have access to customer data.');
-    }
-    if (res.statusCode != 200) {
-      throw Exception('Server error (${res.statusCode})');
-    }
+    if (res.statusCode == 403) throw const _LoadError("Your account doesn't have access to customers.", forbidden: true);
+    if (res.statusCode != 200) throw _LoadError('Could not load customers (server error ${res.statusCode}).');
     final data = json.decode(res.body) as Map<String, dynamic>;
-    return _PageResult(
-      List<Map<String, dynamic>>.from(data['data'] ?? const []),
-      (data['total'] as num?)?.toInt() ?? 0,
-      (data['totalPages'] as num?)?.toInt() ?? 1,
+    return (
+      rows: List<Map<String, dynamic>>.from((data['data'] as List? ?? const []).whereType<Map>().map(Map<String, dynamic>.from)),
+      total: (data['total'] as num?)?.toInt() ?? 0,
+      totalPages: (data['totalPages'] as num?)?.toInt() ?? 1,
+      at: DateTime.now(),
     );
+  }
+
+  _Page? _cached(String key) {
+    final page = _cache[key];
+    return page != null && DateTime.now().difference(page.at) < _cacheFor ? page : null;
+  }
+
+  void _show(_Page r, int page, String view, String q) {
+    // A reload of the same page just updates it; anything else is a new list, read from its top.
+    final newList = view != _shownView || page != _page;
+    _activity.setRefreshing(false);
+    setState(() {
+      _customers = r.rows;
+      _total = r.total;
+      _totalPages = r.totalPages;
+      _firstRow = (page - 1) * _pageSize + 1;
+      _page = page;
+      _shownView = view;
+      _shownQuery = q;
+      _loading = false;
+      _slow = false;
+      _error = null;
+      _stale = null;
+      _forbidden = false;
+    });
+    _prefetch(q, page + 1, r.totalPages);
+    if (!newList) {
+      _activity.landed();
+      return;
+    }
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    if (MediaQuery.disableAnimationsOf(context)) {
+      _rowsIn.value = 1;
+    } else {
+      _rowsIn.forward(from: 0);
+    }
   }
 
   Future<void> _load(int page) async {
     final q = _searchController.text.trim();
-    final key = _key(q, page);
+    final view = _view(q);
     final id = ++_requestId;
+    _wantedPage = page;
+    _slowTimer?.cancel();
 
-    final cached = _cache[key];
+    final cached = _cached('$view|$page');
     if (cached != null) {
-      _apply(cached, page);
-      _prefetch(q, page + 1, cached.totalPages);
+      _show(cached, page, view, q);
       return;
     }
-
+    if (_customers.isEmpty) {
+      _slowTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && _loading) setState(() => _slow = true);
+      });
+    } else {
+      _activity.setRefreshing(true);
+    }
     setState(() {
       _loading = true;
+      _slow = false;
       _error = null;
+      _forbidden = false;
     });
 
     try {
       final result = await _request(q, page);
       if (!mounted || id != _requestId) return;
+      _slowTimer?.cancel();
+      // Past the end: the list got shorter since this page was opened. Show the last page rather than "no customers".
+      if (result.rows.isEmpty && page > 1) {
+        unawaited(_load(result.total > 0 ? result.totalPages : 1));
+        return;
+      }
       if (_cache.length > 60) _cache.clear();
-      _cache[key] = result;
-      _apply(result, page);
-      _prefetch(q, page + 1, result.totalPages);
+      _cache['$view|$page'] = result;
+      _show(result, page, view, q);
+    } on _SignedOut {
+      _slowTimer?.cancel();
     } catch (e) {
       if (!mounted || id != _requestId) return;
+      _slowTimer?.cancel();
+      _activity.setRefreshing(false);
+      // Never the raw exception: it can carry the request URL.
+      final message = switch (e) {
+        _LoadError(:final message) => message,
+        TimeoutException() => 'The server is taking too long to respond. It may be waking up. Try again in a moment.',
+        http.ClientException() => "Couldn't reach the server. Check your connection and try again.",
+        _ => 'Could not load customers. The server sent a reply the app could not read.',
+      };
+      final forbidden = e is _LoadError && e.forbidden;
       setState(() {
         _loading = false;
-        _error = e is TimeoutException
-            ? 'The server is taking too long to respond. It may be waking up — try again in a moment.'
-            : e.toString().replaceFirst('Exception: ', '');
+        _slow = false;
+        _forbidden = forbidden;
+        // The rows on screen are still the list that was asked for, so they stay. Rows from another search would pass
+        // for the answer to this one.
+        if (view == _shownView && _customers.isNotEmpty && !forbidden) {
+          _stale = message;
+        } else {
+          _error = message;
+          _stale = null;
+        }
       });
     }
   }
 
-  void _apply(_PageResult r, int page) {
-    setState(() {
-      _customers = r.rows;
-      _total = r.total;
-      _totalPages = r.totalPages;
-      _page = page;
-      _loading = false;
-      _error = null;
-    });
-  }
-
   Future<void> _prefetch(String q, int next, int totalPages) async {
-    if (next > totalPages) return;
-    final key = _key(q, next);
-    if (_cache.containsKey(key)) return;
+    final key = '${_view(q)}|$next';
+    if (next > totalPages || _cached(key) != null) return;
     try {
-      _cache[key] = await _request(q, next);
-    } catch (_) {}
+      final result = await _request(q, next);
+      if (mounted) _cache[key] = result;
+    } catch (_) {
+      // Best effort: Next just loads normally if this didn't work.
+    }
   }
 
   // ---- actions ------------------------------------------------------------
+
   void _onSearchChanged(String _) {
-    setState(() {}); // refresh clear button
+    setState(() {}); // the clear button comes and goes with the text
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () => _load(1));
   }
@@ -209,31 +279,21 @@ class _CustomersScreenState extends State<CustomersScreen>
   }
 
   void _setSort(String key) {
-    setState(() {
-      if (_sortBy == key) {
-        _sortDir = _sortDir == 'asc' ? 'desc' : 'asc';
-      } else {
-        _sortBy = key;
-        _sortDir = key == 'jobs' ? 'desc' : 'asc';
-      }
-    });
+    // Names and cities read A to Z first; job counts biggest first.
+    _ascending = _sortBy == key ? !_ascending : key != 'jobs';
+    _sortBy = key;
     _load(1);
   }
 
-  void _changePage(int p) {
-    if (p < 1 || p > _totalPages || p == _page) return;
-    _load(p);
-  }
-
-  void _changePageSize(int size) {
+  void _setPageSize(int size) {
     if (size == _pageSize) return;
-    setState(() => _pageSize = size);
+    _pageSize = size;
     _load(1);
   }
 
   void _refresh() {
     _cache.clear();
-    _load(_page);
+    _load(_wantedPage);
   }
 
   Future<void> _copy(String value, String label) async {
@@ -249,365 +309,329 @@ class _CustomersScreenState extends State<CustomersScreen>
       ));
   }
 
+  /// Opens the customer's own page; the row rides along so the name shows before the full record loads.
+  void _open(Map<String, dynamic> c) => context.go('/customers/${c['id']}', extra: c);
+
   // ---- build --------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
-
     return Scaffold(
       backgroundColor: Colors.white,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildHeader(),
-          SizedBox(
-            height: 3,
-            child: _loading
-                ? const LinearProgressIndicator(
-                    minHeight: 3,
-                    color: _C.ink,
-                    backgroundColor: _C.line)
-                : null,
-          ),
-          _buildToolbar(),
-          const Divider(height: 1, thickness: 1, color: _C.line),
-          Expanded(child: _buildBody()),
-          _buildFooter(),
-        ],
+      body: LayoutBuilder(
+        builder: (context, c) {
+          // Larger text needs the room too, so the columns give way sooner.
+          final compact = c.maxWidth < MediaQuery.textScalerOf(context).scale(_tableWidth);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageBanner(
+                title: 'Customers',
+                icon: accessIcon('customers'),
+                activity: _activity,
+                actions: [PageBanner.refresh(onPressed: _loading ? null : _refresh)],
+              ),
+              Expanded(
+                child: CustomScrollView(
+                  controller: _scroll,
+                  slivers: [
+                    SliverToBoxAdapter(child: _toolbar(compact)),
+                    if (_stale != null)
+                      SliverToBoxAdapter(
+                        child: FlatStaleNotice(
+                          message: '$_stale Showing the last loaded customers.',
+                          busy: _loading,
+                          onRetry: _refresh,
+                        ),
+                      ),
+                    ..._content(compact),
+                  ],
+                ),
+              ),
+              if (_error == null && _customers.isNotEmpty)
+                FlatPager(
+                  page: _page,
+                  totalPages: _totalPages,
+                  total: _total,
+                  firstRow: _firstRow,
+                  rowsShown: _customers.length,
+                  pageSize: _pageSize,
+                  busy: _loading,
+                  compact: compact,
+                  onPage: _load,
+                  onPageSize: _setPageSize,
+                ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildHeader() {
-    return PageBanner(
-      title: 'Customers',
-      actions: [
-        if (!(_loading && _customers.isEmpty))
-          Text('${_fmtInt(_total)} ${_searchController.text.trim().isEmpty ? 'total' : 'matching'}',
-              style: const TextStyle(
-                  fontSize: 12.5,
-                  color: Colors.white70,
-                  fontWeight: FontWeight.w500)),
-        PageBanner.refresh(onPressed: _loading ? null : _refresh),
-      ],
-    );
+  String get _countLabel {
+    if (_shownQuery.isNotEmpty) return '${_count.format(_total)} matching';
+    return _total == 1 ? '1 customer' : '${_count.format(_total)} customers';
   }
 
-  Widget _buildToolbar() {
+  Widget _toolbar(bool compact) {
     return Padding(
       padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-      child: Row(
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          Expanded(
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
             child: TextField(
               controller: _searchController,
               onChanged: _onSearchChanged,
               onSubmitted: (_) => _searchNow(),
               textInputAction: TextInputAction.search,
-              decoration: InputDecoration(
-                hintText: 'Search name, contact, phone, email, or city…',
-                hintStyle: const TextStyle(color: _C.muted, fontSize: 14),
-                prefixIcon:
-                    const Icon(Icons.search_rounded, color: _C.muted, size: 22),
-                suffixIcon: _searchController.text.isEmpty
-                    ? null
-                    : IconButton(
-                        tooltip: 'Clear',
-                        icon: const Icon(Icons.close_rounded,
-                            color: _C.muted, size: 20),
-                        onPressed: _clearSearch,
-                      ),
-                filled: true,
-                fillColor: _C.subtle,
-                isDense: true,
-                contentPadding:
-                    const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: _C.line),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: _C.primary, width: 1.6),
-                ),
+              style: const TextStyle(fontSize: 14),
+              decoration: flatSearchDecoration(
+                'Search name, phone, email, city...', // contacts and addresses match too; a longer hint cuts off
+                onClear: _searchController.text.isEmpty ? null : _clearSearch,
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          PopupMenuButton<String>(
-            tooltip: 'Sort',
-            onSelected: _setSort,
-            offset: const Offset(0, 48),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            itemBuilder: (_) => [
-              _sortItem('name', 'Name'),
-              _sortItem('city', 'City'),
-              _sortItem('jobs', 'Number of jobs'),
-            ],
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-              decoration: BoxDecoration(
-                color: _C.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: _C.line),
-              ),
+          // The table's headers sort it; stacked rows have none, so the sort is a menu there.
+          if (compact) _sortMenu(),
+          // No count without rows: a failed load has nothing to count, and an empty list says so itself.
+          if (_error == null && _customers.isNotEmpty) Semantics(liveRegion: true, child: Text(_countLabel, style: flatCellMuted)),
+        ],
+      ),
+    );
+  }
+
+  Widget _sortMenu() {
+    final label = _sorts.firstWhere((s) => s.$1 == _sortBy, orElse: () => _sorts.first).$2;
+    return SelectionContainer.disabled(
+      child: PopupMenuButton<String>(
+        tooltip: 'Sort',
+        position: PopupMenuPosition.under,
+        onSelected: _setSort,
+        itemBuilder: (_) => [
+          for (final (key, name) in _sorts)
+            PopupMenuItem(
+              value: key,
               child: Row(
-                mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.swap_vert_rounded, size: 18, color: _C.muted),
-                  const SizedBox(width: 6),
-                  Text(_sortLabel(),
-                      style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: _C.ink)),
+                  Expanded(
+                    child: Text(name, style: TextStyle(fontWeight: _sortBy == key ? FontWeight.w700 : FontWeight.w500, color: DashUi.ink)),
+                  ),
+                  if (_sortBy == key)
+                    Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 16, color: DashUi.ink),
                 ],
               ),
             ),
-          ),
         ],
-      ),
-    );
-  }
-
-  PopupMenuItem<String> _sortItem(String key, String label) {
-    final active = _sortBy == key;
-    return PopupMenuItem(
-      value: key,
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(label,
-                style: TextStyle(
-                    fontWeight: active ? FontWeight.w700 : FontWeight.w500,
-                    color: active ? _C.primary : _C.ink)),
+        child: Container(
+          height: 42,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: DashUi.line),
           ),
-          if (active)
-            Icon(
-                _sortDir == 'asc'
-                    ? Icons.arrow_upward_rounded
-                    : Icons.arrow_downward_rounded,
-                size: 16,
-                color: _C.primary),
-        ],
-      ),
-    );
-  }
-
-  String _sortLabel() {
-    const names = {
-      'name': 'Name',
-      'city': 'City',
-      'jobs': 'Jobs',
-      'contact': 'Contact',
-    };
-    return '${names[_sortBy] ?? 'Name'} ${_sortDir == 'asc' ? '↑' : '↓'}';
-  }
-
-  Widget _buildBody() {
-    if (_error != null && _customers.isEmpty) {
-      return _StateMessage(
-        icon: Icons.cloud_off_rounded,
-        iconColor: Colors.redAccent,
-        title: "Couldn't load customers",
-        message: _error!,
-        actionLabel: 'Try again',
-        onAction: () => _load(_page),
-      );
-    }
-    if (_loading && _customers.isEmpty) {
-      return const Center(child: CircularProgressIndicator(color: _C.primary));
-    }
-    if (_customers.isEmpty) {
-      final searching = _searchController.text.trim().isNotEmpty;
-      return _StateMessage(
-        icon: Icons.person_search_rounded,
-        iconColor: _C.muted,
-        title: searching ? 'No matches found' : 'No customers yet',
-        message: searching
-            ? 'Try a different name, phone number, email, or city.'
-            : 'Customers will show up here once they are added.',
-        actionLabel: searching ? 'Clear search' : null,
-        onAction: searching ? _clearSearch : null,
-      );
-    }
-
-    return LayoutBuilder(builder: (context, constraints) {
-      final wide = constraints.maxWidth >= 900;
-      return AnimatedOpacity(
-        duration: const Duration(milliseconds: 150),
-        opacity: _loading ? 0.5 : 1,
-        child: wide ? _buildTable() : _buildCardList(),
-      );
-    });
-  }
-
-  // ---- wide layout: table ---------------------------------------------------
-  Widget _buildTable() {
-    return Column(
-      children: [
-        Container(
-          color: _C.subtle,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              _headerCell('Customer', 'name', flex: 30),
-              _headerCell('Contact Info', null, flex: 30),
-              _headerCell('Service Location', 'city', flex: 30),
-              _headerCell('Jobs', 'jobs', flex: 10, align: MainAxisAlignment.center),
+              const Icon(Icons.swap_vert_rounded, size: 18, color: DashUi.slate),
+              const SizedBox(width: 8),
+              Text(label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+              const SizedBox(width: 4),
+              Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: DashUi.slate),
             ],
           ),
         ),
-        const Divider(height: 1, thickness: 1, color: _C.line),
+      ),
+    );
+  }
+
+  /// What sits under the toolbar, as slivers so the table's header can stay pinned while the rows scroll under it.
+  List<Widget> _content(bool compact) {
+    if (_error != null) return [SliverToBoxAdapter(child: _errorState())];
+    if (_customers.isEmpty) {
+      return [
+        SliverToBoxAdapter(
+          child: _loading ? FlatLoading(label: 'Loading customers', flex: _flex, compact: compact, slow: _slow) : _emptyState(),
+        ),
+      ];
+    }
+    final columns = _columns;
+    return [
+      if (!compact)
+        PinnedHeaderSliver(
+          child: FlatTableHeader(columns: columns, striped: true, sortKey: _sortBy, ascending: _ascending, onSort: _setSort),
+        ),
+      // Rows being replaced fade back a little, so a slow search does not look finished.
+      SliverAnimatedOpacity(
+        opacity: _loading ? 0.55 : 1,
+        duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 160),
+        sliver: SliverList.builder(
+          itemCount: _customers.length,
+          itemBuilder: (_, i) => flatRowEntrance(_rowsIn, i, _row(_customers[i], i, compact, columns)),
+        ),
+      ),
+    ];
+  }
+
+  Widget _errorState() {
+    return FlatEmpty(
+      icon: _forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+      title: _forbidden ? 'No access to customers' : "Customers didn't load",
+      message: _error!,
+      action: _forbidden
+          ? null
+          : FilledButton.icon(
+              onPressed: _loading ? null : _refresh,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Try again'),
+            ),
+    );
+  }
+
+  Widget _emptyState() {
+    if (_shownQuery.isNotEmpty) {
+      return FlatEmpty(
+        icon: Icons.person_search_rounded,
+        title: 'No matching customers',
+        message: 'Nothing matches "$_shownQuery". Try a different name, phone number, email or city.',
+        action: OutlinedButton(onPressed: _clearSearch, child: const Text('Clear search')),
+      );
+    }
+    return const FlatEmpty(
+      icon: Icons.people_outline_rounded,
+      title: 'No customers yet',
+      message: 'Customers show here once they sync from Service Fusion.',
+    );
+  }
+
+  List<FlatCol> get _columns => [
+    FlatCol('Customer', flex: _flex[0], sortKey: 'name'),
+    FlatCol('Contact info', flex: _flex[1]),
+    FlatCol('Service location', flex: _flex[2], sortKey: 'city'),
+    FlatCol('Jobs', flex: _flex[3], right: true, sortKey: 'jobs'),
+  ];
+
+  Widget _row(Map<String, dynamic> c, int index, bool compact, List<FlatCol> columns) {
+    final name = _clean(c['customer_name']) ?? 'Unknown customer';
+    return Semantics(
+      button: true,
+      label: 'Customer $name',
+      // Not selectable text: the app-wide selection's I-beam would replace the click cursor. Phone and email copy on click.
+      child: SelectionContainer.disabled(
+        child: compact
+            ? _compactRow(c, index)
+            : FlatTableRow(
+                columns: columns,
+                cells: [_customerCell(c), _contactCell(c), _locationCell(c), _jobsCell(c)],
+                index: index,
+                striped: true,
+                onTap: () => _open(c),
+              ),
+      ),
+    );
+  }
+
+  Widget _customerCell(Map<String, dynamic> c) {
+    final name = _clean(c['customer_name']) ?? 'Unknown customer';
+    final contact = _clean(c['primary_contact']);
+    return Row(
+      children: [
+        DashAvatar(name: name, imageUrl: '', size: 36, accent: _avatarTones[name.hashCode.abs() % _avatarTones.length]),
+        const SizedBox(width: 12),
         Expanded(
-          child: ListView.separated(
-            itemCount: _customers.length,
-            separatorBuilder: (_, __) =>
-                const Divider(height: 1, thickness: 1, color: _C.line),
-            itemBuilder: (_, i) => _tableRow(_customers[i]),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _tip(name, Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: flatCellBold)),
+              if (contact != null && contact.toLowerCase() != name.toLowerCase())
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(contact, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: DashUi.slate)),
+                ),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _headerCell(String label, String? sortKey,
-      {required int flex, MainAxisAlignment align = MainAxisAlignment.start}) {
-    final active = sortKey != null && _sortBy == sortKey;
-    final text = Text(
-      label,
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w700,
-        color: _C.ink,
-      ),
-    );
-    return Expanded(
-      flex: flex,
-      child: sortKey == null
-          ? Align(alignment: Alignment.centerLeft, child: text)
-          : InkWell(
-              onTap: () => _setSort(sortKey),
-              borderRadius: BorderRadius.circular(6),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  mainAxisAlignment: align,
-                  children: [
-                    Flexible(child: text),
-                    if (active) ...[
-                      const SizedBox(width: 4),
-                      Icon(
-                        _sortDir == 'asc'
-                            ? Icons.arrow_upward_rounded
-                            : Icons.arrow_downward_rounded,
-                        size: 14,
-                        color: _C.ink,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+  Widget _contactCell(Map<String, dynamic> c) {
+    final phone = _phone(_clean(c['phone']));
+    final email = _clean(c['email']);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ContactLine(icon: Icons.phone_outlined, text: phone, label: 'phone', onCopy: phone == null ? null : () => _copy(phone, 'Phone')),
+        const SizedBox(height: 4),
+        _ContactLine(icon: Icons.mail_outline_rounded, text: email, label: 'email', onCopy: email == null ? null : () => _copy(email, 'Email')),
+      ],
     );
   }
 
-  Widget _tableRow(Map<String, dynamic> c) {
-    final name = _clean(c['customer_name']) ?? 'Unknown';
-    final contact = _clean(c['primary_contact']);
-    final phone = _clean(c['phone']);
-    final email = _clean(c['email']);
+  Widget _locationCell(Map<String, dynamic> c) {
     final location = _clean(c['service_location']);
     final cityState = _cityState(c);
+    if (location == null && cityState == null) return const Text('No address', style: flatCellMuted);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (location != null) _tip(location, Text(location, maxLines: 1, overflow: TextOverflow.ellipsis, style: flatCellStyle)),
+        if (cityState != null)
+          Padding(
+            padding: EdgeInsets.only(top: location == null ? 0 : 2),
+            child: Text(cityState, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, color: DashUi.slate)),
+          ),
+      ],
+    );
+  }
 
+  Widget _jobsCell(Map<String, dynamic> c) {
+    final jobs = _toInt(c['total_jobs']);
+    return Text(_count.format(jobs), style: (jobs > 0 ? flatCellBold : flatCellMuted).copyWith(fontFeatures: flatFigures));
+  }
+
+  /// A row too narrow for the columns: who and how many jobs first, then how to reach them and where.
+  Widget _compactRow(Map<String, dynamic> c, int index) {
+    final jobs = _toInt(c['total_jobs']);
+    final address = [_clean(c['service_location']), _cityState(c)].whereType<String>().join(' · ');
     return InkWell(
-      hoverColor: _C.primarySoft.withOpacity(0.5),
       onTap: () => _open(c),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
+      hoverColor: DashUi.line,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(
+          color: index.isOdd ? DashUi.faint : null,
+          border: const Border(top: BorderSide(color: DashUi.line)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              flex: 30,
-              child: Row(
-                children: [
-                  _Avatar(name: name),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 14.5,
-                                fontWeight: FontWeight.w700,
-                                color: _C.ink)),
-                        if (contact != null)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(contact,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    fontSize: 13, color: _C.muted)),
-                          ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              flex: 30,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _ContactLine(
-                      icon: Icons.phone_outlined,
-                      text: phone,
-                      onCopy: phone == null ? null : () => _copy(phone, 'Phone'),
-                    ),
-                    const SizedBox(height: 4),
-                    _ContactLine(
-                      icon: Icons.mail_outline_rounded,
-                      text: email,
-                      onCopy: email == null ? null : () => _copy(email, 'Email'),
-                    ),
-                  ],
+            Row(
+              children: [
+                Expanded(child: _customerCell(c)),
+                const SizedBox(width: 12),
+                Text(
+                  '${_count.format(jobs)} ${jobs == 1 ? 'job' : 'jobs'}',
+                  style: (jobs > 0 ? flatCellBold : flatCellMuted).copyWith(fontFeatures: flatFigures),
                 ),
-              ),
+              ],
             ),
-            Expanded(
-              flex: 30,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(location ?? '—',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 13.5, color: _C.ink)),
-                    if (cityState != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Text(cityState,
-                            style: const TextStyle(
-                                fontSize: 12.5, color: _C.muted)),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-              flex: 10,
-              child: Center(child: _JobsChip(count: _toInt(c['total_jobs']))),
+            const SizedBox(height: 8),
+            _contactCell(c),
+            const SizedBox(height: 4),
+            _ContactLine(
+              icon: Icons.place_outlined,
+              text: address.isEmpty ? null : address,
+              label: 'address',
+              onCopy: address.isEmpty ? null : () => _copy(address, 'Address'),
             ),
           ],
         ),
@@ -615,170 +639,24 @@ class _CustomersScreenState extends State<CustomersScreen>
     );
   }
 
-  // ---- narrow layout: cards -------------------------------------------------
-  Widget _buildCardList() {
-    return ListView.separated(
-      itemCount: _customers.length,
-      separatorBuilder: (_, __) =>
-          const Divider(height: 1, thickness: 1, color: _C.line),
-      itemBuilder: (_, i) => _card(_customers[i]),
-    );
-  }
-
-  Widget _card(Map<String, dynamic> c) {
-    final name = _clean(c['customer_name']) ?? 'Unknown';
-    final contact = _clean(c['primary_contact']);
-    final phone = _clean(c['phone']);
-    final email = _clean(c['email']);
-    final location = _clean(c['service_location']);
-    final cityState = _cityState(c);
-    final address = [location, cityState].whereType<String>().join(' · ');
-
-    return InkWell(
-      onTap: () => _open(c),
-      child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              _Avatar(name: name),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w700,
-                            color: _C.ink)),
-                    if (contact != null)
-                      Text(contact,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13, color: _C.muted)),
-                  ],
-                ),
-              ),
-              _JobsChip(count: _toInt(c['total_jobs']), expanded: true),
-            ],
-          ),
-          const SizedBox(height: 12),
-          _ContactLine(
-            icon: Icons.phone_outlined,
-            text: phone,
-            onCopy: phone == null ? null : () => _copy(phone, 'Phone'),
-          ),
-          const SizedBox(height: 4),
-          _ContactLine(
-            icon: Icons.mail_outline_rounded,
-            text: email,
-            onCopy: email == null ? null : () => _copy(email, 'Email'),
-          ),
-          const SizedBox(height: 4),
-          _ContactLine(
-            icon: Icons.place_outlined,
-            text: address.isEmpty ? null : address,
-            onCopy: address.isEmpty ? null : () => _copy(address, 'Address'),
-          ),
-        ],
-      ),
-    ),
-    );
-  }
-
-  /// Opens the customer's own page; the row rides along so the name shows before the full record loads.
-  void _open(Map<String, dynamic> c) => context.go('/customers/${c['id']}', extra: c);
-
-  // ---- footer ---------------------------------------------------------------
-  Widget _buildFooter() {
-    final start = _total == 0 ? 0 : (_page - 1) * _pageSize + 1;
-    final end = (_page * _pageSize) > _total ? _total : _page * _pageSize;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-      decoration: const BoxDecoration(
-        color: _C.subtle,
-        border: Border(top: BorderSide(color: _C.line)),
-      ),
-      child: Wrap(
-        alignment: WrapAlignment.spaceBetween,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        runSpacing: 8,
-        spacing: 24,
-        children: [
-          Wrap(
-            crossAxisAlignment: WrapCrossAlignment.center,
-            spacing: 12,
-            children: [
-              const Text('Rows',
-                  style: TextStyle(
-                      color: _C.muted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
-              SegmentedButton<int>(
-                showSelectedIcon: false,
-                segments: const [
-                  ButtonSegment(value: 50, label: Text('50')),
-                  ButtonSegment(value: 100, label: Text('100')),
-                ],
-                selected: {_pageSize},
-                onSelectionChanged: (s) => _changePageSize(s.first),
-                style: ButtonStyle(
-                  visualDensity: VisualDensity.compact,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  textStyle: const WidgetStatePropertyAll(
-                      TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                ),
-              ),
-              Text('${_fmtInt(start)}–${_fmtInt(end)} of ${_fmtInt(_total)}',
-                  style: const TextStyle(
-                      color: _C.muted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500)),
-            ],
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              IconButton.outlined(
-                tooltip: 'Previous page',
-                onPressed: _page > 1 && !_loading ? () => _changePage(_page - 1) : null,
-                icon: const Icon(Icons.chevron_left_rounded),
-                visualDensity: VisualDensity.compact,
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14),
-                child: Text('Page $_page of $_totalPages',
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 13,
-                        color: _C.ink)),
-              ),
-              IconButton.outlined(
-                tooltip: 'Next page',
-                onPressed: _page < _totalPages && !_loading
-                    ? () => _changePage(_page + 1)
-                    : null,
-                icon: const Icon(Icons.chevron_right_rounded),
-                visualDensity: VisualDensity.compact,
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   // ---- helpers --------------------------------------------------------------
+
+  Widget _tip(String message, Widget child) => Tooltip(message: message, waitDuration: const Duration(milliseconds: 400), child: child);
+
   String? _clean(dynamic v) {
     final s = v?.toString().trim();
     if (s == null || s.isEmpty || s == '--') return null;
     return s;
+  }
+
+  /// Service Fusion keeps phones as typed ("4795550199", "479-555-0199"): a 10-digit US number is shown one way,
+  /// (479) 555-0199. Anything else (extensions, two numbers) is left as typed rather than guessed at.
+  String? _phone(String? raw) {
+    if (raw == null) return null;
+    var digits = raw.replaceAll(RegExp(r'[\s().\-+]'), '');
+    if (digits.length == 11 && digits.startsWith('1')) digits = digits.substring(1);
+    if (!RegExp(r'^\d{10}$').hasMatch(digits)) return raw;
+    return '(${digits.substring(0, 3)}) ${digits.substring(3, 6)}-${digits.substring(6)}';
   }
 
   String? _cityState(Map<String, dynamic> c) {
@@ -789,154 +667,39 @@ class _CustomersScreenState extends State<CustomersScreen>
   }
 }
 
-num _toNum(dynamic v) => v is num ? v : (num.tryParse('${v ?? ''}') ?? 0);
-int _toInt(dynamic v) => _toNum(v).toInt();
+int _toInt(dynamic v) => v is num ? v.toInt() : (num.tryParse('${v ?? ''}') ?? 0).toInt();
 
-String _fmtInt(int n) => n.toString().replaceAllMapped(
-    RegExp(r'\B(?=(\d{3})+(?!\d))'), (m) => ',');
-
-// ---------------------------------------------------------------------------
-// Small widgets
-// ---------------------------------------------------------------------------
-class _Avatar extends StatelessWidget {
-  final String name;
-  const _Avatar({required this.name});
-
-  @override
-  Widget build(BuildContext context) {
-    final parts =
-        name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
-    final initials = parts.isEmpty
-        ? '?'
-        : parts.length == 1
-            ? parts.first.characters.first.toUpperCase()
-            : (parts.first.characters.first + parts.last.characters.first)
-                .toUpperCase();
-    final color = _avatarPalette[name.hashCode.abs() % _avatarPalette.length];
-
-    return CircleAvatar(
-      radius: 20,
-      backgroundColor: color.withOpacity(0.12),
-      child: Text(initials,
-          style: TextStyle(
-              color: color, fontWeight: FontWeight.w800, fontSize: 13.5)),
-    );
-  }
-}
-
+/// A phone, email or address with its icon. Clicking it copies it (not opening the customer).
 class _ContactLine extends StatelessWidget {
   final IconData icon;
   final String? text;
+  final String label; // "phone", for "No phone"
   final VoidCallback? onCopy;
-  const _ContactLine({required this.icon, required this.text, this.onCopy});
+  const _ContactLine({required this.icon, required this.text, required this.label, this.onCopy});
 
   @override
   Widget build(BuildContext context) {
     final empty = text == null;
     final row = Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 15, color: empty ? _C.line : _C.muted),
+        Icon(icon, size: 16, color: empty ? DashUi.muted : DashUi.slate),
         const SizedBox(width: 8),
-        Expanded(
+        Flexible(
           child: Text(
-            empty ? '—' : text!,
+            empty ? 'No $label' : text!,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                fontSize: 13, color: empty ? _C.muted : _C.ink),
+            style: TextStyle(fontSize: 14, color: empty ? DashUi.slate : DashUi.ink),
           ),
         ),
       ],
     );
     if (onCopy == null) return row;
     return Tooltip(
-      message: 'Click to copy',
-      child: InkWell(
-        onTap: onCopy,
-        borderRadius: BorderRadius.circular(4),
-        child: row,
-      ),
-    );
-  }
-}
-
-class _JobsChip extends StatelessWidget {
-  final int count;
-  final bool expanded;
-  const _JobsChip({required this.count, this.expanded = false});
-
-  @override
-  Widget build(BuildContext context) {
-    final has = count > 0;
-    final label = expanded ? '$count ${count == 1 ? 'job' : 'jobs'}' : '$count';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-      decoration: BoxDecoration(
-        color: has ? _C.primarySoft : _C.subtle,
-        borderRadius: BorderRadius.circular(20),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.work_outline_rounded,
-              size: 13, color: has ? _C.primary : _C.muted),
-          const SizedBox(width: 4),
-          Text(label,
-              style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w700,
-                  color: has ? _C.primary : _C.muted)),
-        ],
-      ),
-    );
-  }
-}
-
-class _StateMessage extends StatelessWidget {
-  final IconData icon;
-  final Color iconColor;
-  final String title;
-  final String message;
-  final String? actionLabel;
-  final VoidCallback? onAction;
-
-  const _StateMessage({
-    required this.icon,
-    required this.iconColor,
-    required this.title,
-    required this.message,
-    this.actionLabel,
-    this.onAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 360),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 44, color: iconColor),
-              const SizedBox(height: 16),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w700, color: _C.ink)),
-              const SizedBox(height: 6),
-              Text(message,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                      fontSize: 13.5, color: _C.muted, height: 1.4)),
-              if (actionLabel != null) ...[
-                const SizedBox(height: 16),
-                FilledButton.tonal(onPressed: onAction, child: Text(actionLabel!)),
-              ],
-            ],
-          ),
-        ),
-      ),
+      message: 'Copy $label: $text',
+      waitDuration: const Duration(milliseconds: 400),
+      child: InkWell(onTap: onCopy, borderRadius: BorderRadius.circular(4), child: row),
     );
   }
 }

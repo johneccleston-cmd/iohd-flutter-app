@@ -1,11 +1,10 @@
-// Renders the per-employee KPI page for Zac (sales rep) with fake API data -> test/shots/zac_kpi_*.png
+// Renders the KPI list with fake API data -> test/shots/kpi_main.png
 // Run:  flutter test test/zac_kpi_render_test.dart --update-goldens
 
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/gestures.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -211,82 +210,6 @@ void main() {
     await _loadFont('MaterialIcons', ['$flutterRoot/bin/cache/artifacts/material_fonts/materialicons-regular.otf']);
   });
 
-  testWidgets('renders heather 1500x720', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_1500x720', id: 'heather'));
-  testWidgets('renders heather 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'heather_kpi_1366x688', id: 'heather'));
-
-  testWidgets('renders zac preview', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_preview', preview: true));
-
-  testWidgets('renders zac hover', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_hover', hoverCards: true));
-
-  testWidgets('late dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_late', tapText: 'Late to send estimates'));
-
-  testWidgets('stale dialog', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_stale', tapText: 'ESTIMATE PIPELINE'));
-
-  testWidgets('type chart', (tester) async => _shot(tester, const Size(1500, 720), 'zac_kpi_typechart', tapText: 'Hard bids'));
-
-  testWidgets('type chart 1366x688', (tester) async => _shot(tester, const Size(1366, 688), 'zac_kpi_typechart_1366', tapText: 'Hard bids'));
-
-  testWidgets('chart steps to the next tab every 8 seconds, and holds under the cursor', (tester) async {
-    tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(1500, 720);
-    addTearDown(tester.view.reset);
-    await http.runWithClient(() async {
-      await tester.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true), home: const EmployeeKpiScreen(employeeId: 'zac')));
-      for (var i = 0; i < 30; i++) {
-        await tester.pump(const Duration(milliseconds: 100));
-      }
-      expect(find.text('Revenue'), findsOneWidget); // tab 1, hard bids: the revenue and profit lines (legend)
-      for (var i = 0; i < 80; i++) {
-        await tester.pump(const Duration(milliseconds: 100)); // 11s in: past the first 8s tick, before the second
-      }
-      expect(find.text('Revenue'), findsOneWidget); // tab 2, commercial: still lines
-      for (var i = 0; i < 70; i++) {
-        await tester.pump(const Duration(milliseconds: 100)); // 18s in: past the second tick
-      }
-      expect(find.text('Revenue'), findsNothing); // tab 3, close rate: no revenue legend
-      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await g.addPointer(location: const Offset(800, 220));
-      await g.moveTo(const Offset(820, 230));
-      await tester.pump(const Duration(milliseconds: 100));
-      for (var i = 0; i < 200; i++) {
-        await tester.pump(const Duration(milliseconds: 100)); // 20s under the cursor: it must not move on to tab 1
-      }
-      expect(find.text('Revenue'), findsNothing);
-    }, () => MockClient((r) async => _handle(r)));
-  });
-
-  testWidgets('chart tab labels show a pointer, not a text cursor', (tester) async {
-    tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(1500, 720);
-    addTearDown(tester.view.reset);
-    await http.runWithClient(() async {
-      await tester.pumpWidget(MaterialApp(theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true), home: const SelectionArea(child: EmployeeKpiScreen(employeeId: 'zac'))));
-      for (var i = 0; i < 30; i++) { await tester.pump(const Duration(milliseconds: 100)); }
-      final g = await tester.createGesture(kind: PointerDeviceKind.mouse);
-      await g.addPointer(location: Offset.zero);
-      for (final label in const ['Hard bids', 'Close rate']) {
-        await g.moveTo(tester.getCenter(find.text(label)));
-        await tester.pump();
-        expect(RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1), SystemMouseCursors.click, reason: label);
-      }
-      await g.moveTo(tester.getCenter(find.text('ESTIMATE PIPELINE')));
-      await tester.pump();
-      expect(RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1), SystemMouseCursors.click, reason: 'pipeline card');
-    }, () => MockClient((r) async => _handle(r)));
-  });
-
-  testWidgets('heather close rate', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_closerate', id: 'heather', tapText: 'Close rate'));
-
-  testWidgets('heather type chart', (tester) async => _shot(tester, const Size(1500, 720), 'heather_kpi_typechart', id: 'heather', tapText: 'Sales'));
-
+  // The salespeople's own pages are covered by test/sales_kpi_page_test.dart (lib/employee_kpi_sales.dart).
   testWidgets('main kpi page', (tester) async => _shot(tester, const Size(1500, 720), 'kpi_main', main: true));
-
-  for (final s in const [
-    (Size(1280, 600), 'zac_kpi_1280x600'),
-    (Size(1366, 688), 'zac_kpi_1366x688'),
-    (Size(1500, 720), 'zac_kpi_1500x720'),
-    (Size(1920, 940), 'zac_kpi_1920x940'),
-  ]) {
-    testWidgets('renders ${s.$2}', (tester) async => _shot(tester, s.$1, s.$2));
-  }
 }

@@ -1,9 +1,11 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/dash_story.dart';
 import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
 import 'widgets/dashboard_layout.dart';
@@ -13,7 +15,8 @@ import 'widgets/dashboard_layout.dart';
 //   scorecards  won revenue, win rate, deals won, largest deal won
 //   left        each person's figures (every one opens the estimates behind it) over won revenue by month
 //   right       door styles by win rate or won revenue; each opens the estimates with that style
-// The page fits the window without scrolling and without shrinking text (see _Grid).
+// (In a short window, or when the door styles are few, the people move over the door styles; see _Grid.)
+// The page fits the window without scrolling and without shrinking text.
 
 class SalesDashboardScreen extends StatelessWidget {
   const SalesDashboardScreen({super.key});
@@ -22,6 +25,7 @@ class SalesDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashboardLayout(
       title: 'Sales',
+      icon: accessIcon('dash_sales'),
       builder: (context, selectedYear) => SalesDashboardContent(selectedYear: selectedYear),
     );
   }
@@ -55,6 +59,9 @@ String _compactMoney(num v) {
   if (a >= 1000) return '$sign\$${_trimZero(a / 1000)}k';
   return '$sign\$${a.round()}';
 }
+
+/// "dated Jan 1 – today" this year, "dated in 2025" for a past one (for the hover definitions).
+String _dated(int year) => year < DashClock.now().year ? 'dated in $year' : 'dated ${dashPeriodLabel(year)}';
 
 double _d(dynamic v) => v == null ? 0.0 : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
 int _i(dynamic v) => v == null ? 0 : (v is num ? v.toInt() : int.tryParse(v.toString()) ?? 0);
@@ -126,7 +133,6 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
   int _wonCount = 0;
   double _winRate = 0;
   double _largestDeal = 0;
-  double _priorWonValue = 0;
 
   /// Always 12 entries, January first.
   List<_Month> _months = [];
@@ -176,7 +182,6 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
       _wonCount = _i(s['wonCount']);
       _winRate = _d(s['winRate']);
       _largestDeal = _d(s['largestDeal']);
-      _priorWonValue = _d(s['priorWonValue']);
       _months = months;
       _priorMonths = prior;
       _people = people;
@@ -196,10 +201,16 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
 
     final year = widget.selectedYear;
     final period = dashPeriodLabel(year);
+    final dated = _dated(year);
     final g = DashGeo.of(context);
     // Only the sales team's estimates count here (the people below), dated by the estimate date.
     final team = _people.isEmpty ? 'the sales team' : _people.map((p) => p.name.split(' ').first).join(' + ');
-    final wonCaption = 'Sales team estimates won · $period';
+    final wonCaption = 'Sales team · $period';
+    // With nothing won or lost yet the win rate is a dash, not a 0% that reads as "everything was lost". The people
+    // add up to the team, so their won + lost is the team's.
+    final undecided = _winRate == 0 && _people.every((p) => p.wonCount + p.lostCount == 0);
+    // Whose estimate the largest deal is (each person's largest is theirs, so the team's is one of them).
+    final biggest = _largestDeal > 0 ? _people.where((p) => p.largestDeal == _largestDeal).firstOrNull : null;
 
     final tiles = <Widget>[
       AnimatedMetricCard(
@@ -207,7 +218,7 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
         value: _wonValue,
         format: _money,
         caption: wonCaption,
-        definition: 'Value of won estimates owned by $team, dated $period (by estimate date). The line '
+        definition: 'Value of won estimates owned by $team, $dated (by estimate date). The line '
             'shows it by finished month.',
         valueColor: DashUi.sky,
         index: 0,
@@ -217,11 +228,11 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
       AnimatedMetricCard(
         title: 'Win rate',
         value: _winRate,
-        format: (v) => '${v.toStringAsFixed(1)}%',
-        caption: 'Won ÷ (won + lost) · sales team',
-        definition: 'Of the estimates owned by $team and dated $period that have been decided, the share '
-            "that were won. Open estimates aren't counted. The Estimates dashboard's win rate covers "
-            'every estimate, so it can differ.',
+        format: (v) => undecided ? '—' : '${v.toStringAsFixed(1)}%',
+        caption: 'Won ÷ (won + lost) · $period',
+        definition: 'Of the estimates owned by $team and $dated that have been decided, the share '
+            "that were won. Open estimates aren't counted${undecided ? ', and none has been won or lost yet' : ''}. "
+            "The Estimates dashboard's win rate covers every estimate, so it can differ.",
         valueColor: DashUi.emeraldDeep,
         index: 1,
       ),
@@ -230,7 +241,7 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
         value: _wonCount.toDouble(),
         format: (v) => _whole.format(v.round()),
         caption: 'Estimates won · $period',
-        definition: 'Number of estimates owned by $team, dated $period, that were won.',
+        definition: 'Number of estimates owned by $team, $dated, that were won.',
         valueColor: DashUi.ink,
         index: 2,
       ),
@@ -238,8 +249,9 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
         title: 'Largest deal won',
         value: _largestDeal,
         format: _money,
-        caption: 'Single biggest won estimate · $period',
-        definition: 'The highest-value estimate owned by $team, dated $period, that was won.',
+        caption: biggest == null ? 'Sales team · $period' : 'Won by ${biggest.name.split(' ').first} · $period',
+        definition: 'The highest-value estimate owned by $team, $dated, that was won'
+            '${biggest == null ? '' : ' (${biggest.name}\'s)'}.',
         valueColor: DashUi.blue,
         index: 3,
       ),
@@ -248,8 +260,9 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
     return _Grid(
       tiles: tiles,
       people: _people.length,
+      doorStyles: _doorSlices(_doors, _DoorView.winRate).length,
       team: (oneLine, fill) => _TeamPanel(g: g, people: _people, year: year, oneLine: oneLine, fill: fill),
-      chart: _WonChart(months: _months, prior: _priorMonths, people: _people, year: year, total: _wonValue, priorTotal: _priorWonValue),
+      chart: _WonChart(months: _months, prior: _priorMonths, people: _people, year: year, total: _wonValue),
       doors: (maxRows, fill) => _DoorPanel(g: g, doors: _doors, year: year, maxRows: maxRows, fill: fill),
     );
   }
@@ -261,10 +274,14 @@ class _SalesDashboardContentState extends State<SalesDashboardContent> with Dash
 
 /// Lays the page out to fit the window:
 ///   two columns   scorecards; the sales team over won revenue by month | door styles   (1280x600 and up)
+///                 or won revenue by month | the sales team over door styles   (a short window, or few door styles)
 ///   one column    a window narrower than a desktop one: everything in one column that scrolls
 class _Grid extends StatelessWidget {
   final List<Widget> tiles;
   final int people;
+
+  /// How many door styles there are to list.
+  final int doorStyles;
 
   /// `oneLine`: each person's figures in columns on one row (or under the name, a narrow column). `fill`: the panel
   /// is given a height to fill.
@@ -274,10 +291,20 @@ class _Grid extends StatelessWidget {
   /// `maxRows`: door styles that fit (the rest are a click away).
   final Widget Function(int maxRows, bool fill) doors;
 
-  const _Grid({required this.tiles, required this.people, required this.team, required this.chart, required this.doors});
+  const _Grid({
+    required this.tiles,
+    required this.people,
+    required this.doorStyles,
+    required this.team,
+    required this.chart,
+    required this.doors,
+  });
 
   static const _twoColumnsFrom = 1000.0;
   static const _minChart = 190.0;
+
+  /// Below this the chart under the team panel is too short to read; see the short-window arrangement.
+  static const _roomyChart = 300.0;
 
   @override
   Widget build(BuildContext context) {
@@ -290,8 +317,51 @@ class _Grid extends StatelessWidget {
         final oneLine = leftInner >= _TeamPanel.oneLineWidth(g);
         final teamH = _TeamPanel.height(g, people, oneLine);
         final doorRows = ((bodyH - g.panelTop - _DoorPanel.subtitleH(g)) / g.rowWide).floor();
+        // The team moves over the door styles in a right column widened to 12 parts of 23 (so each person still fits
+        // on one line) and the chart gets the whole left column when
+        //   - a short window would leave the chart a sliver under the team (about 90 px of plot at 1280x600), as long
+        //     as the door styles keep at least three rows there, or
+        //   - every door style fits under the team anyway: a full-height column of a few styles is mostly empty.
+        // Two-line rows would wrap there, so not with those.
+        final rightInner = (w - dashGap) * 12 / 23 - 40;
+        final oneLineRight = rightInner >= _TeamPanel.oneLineWidth(g);
+        final teamRightH = _TeamPanel.height(g, people, true);
+        final doorRowsUnder =
+            ((bodyH - teamRightH - dashGap - g.panelTop - _DoorPanel.subtitleH(g)) / g.rowWide).floor();
+        final squeezed = bodyH - teamH - dashGap < _roomyChart;
         final Widget content;
-        if (w >= _twoColumnsFrom && bodyH - teamH - dashGap >= _minChart && doorRows >= 3) {
+        if (w >= _twoColumnsFrom &&
+            oneLineRight &&
+            bodyH >= _roomyChart &&
+            doorRowsUnder >= (squeezed ? 3 : math.max(3, doorStyles))) {
+          content = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              SizedBox(height: g.tile, child: _tileRow(tiles)),
+              const SizedBox(height: dashGap),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 11, child: chart),
+                    const SizedBox(width: dashGap),
+                    Expanded(
+                      flex: 12,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: teamRightH, child: team(true, true)),
+                          const SizedBox(height: dashGap),
+                          Expanded(child: doors(doorRowsUnder, true)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        } else if (w >= _twoColumnsFrom && bodyH - teamH - dashGap >= _minChart && doorRows >= 3) {
           content = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -365,14 +435,15 @@ class _TeamPanel extends StatelessWidget {
   final bool fill;
   const _TeamPanel({required this.g, required this.people, required this.year, required this.oneLine, required this.fill});
 
-  // Column widths at 100% text (they grow with the text).
+  // Column widths at 100% text (they grow with the text). Both money columns show whole dollars ("$38,608"), so
+  // Largest is nearly as wide as Won; Lost only ever holds a short count.
   static const _avatar = 40.0;
   static const _nameMin = 128.0;
   static const _cols = <_Drill, double>{
-    _Drill.won: 92,
+    _Drill.won: 90,
     _Drill.sent: 62,
-    _Drill.largest: 70,
-    _Drill.lost: 44,
+    _Drill.largest: 80,
+    _Drill.lost: 36,
     _Drill.closed: 84,
   };
 
@@ -488,7 +559,7 @@ class _TeamPanel extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         decoration: BoxDecoration(
-          color: hover ? d.color.withValues(alpha: 0.08) : Colors.transparent,
+          color: hover ? d.color.withValues(alpha: 0.08) : d.color.withValues(alpha: 0),
           borderRadius: BorderRadius.circular(6),
         ),
         child: Column(
@@ -539,10 +610,10 @@ class _TeamPanel extends StatelessWidget {
           _figure(context, p, _Drill.sent, value: _whole.format(p.sentCount), detail: '${_whole.format(p.wonCount)} won',
               width: _cols[_Drill.sent]),
           const SizedBox(width: 8),
-          _figure(context, p, _Drill.largest, value: _compactMoney(p.largestDeal), color: DashUi.blue, width: _cols[_Drill.largest]),
+          _figure(context, p, _Drill.largest, value: _money(p.largestDeal), color: DashUi.blue, width: _cols[_Drill.largest]),
           const SizedBox(width: 8),
-          _figure(context, p, _Drill.lost, value: _whole.format(p.lostCount), color: p.lostCount > 0 ? DashUi.redText : DashUi.ink,
-              width: _cols[_Drill.lost]),
+          // Ink like Sent: losing some estimates is normal (the win rate beside it says how many), not a warning.
+          _figure(context, p, _Drill.lost, value: _whole.format(p.lostCount), width: _cols[_Drill.lost]),
           const SizedBox(width: 8),
           _figure(context, p, _Drill.closed, value: winRate, color: DashUi.emeraldText,
               detail: closed == 0 ? 'none closed' : '${p.wonCount} of $closed', width: _cols[_Drill.closed]),
@@ -577,7 +648,7 @@ class _TeamPanel extends StatelessWidget {
                   children: [
                     if (share != null) _chip(context, p, _Drill.won, share),
                     _chip(context, p, _Drill.sent, '${_whole.format(p.sentCount)} sent'),
-                    _chip(context, p, _Drill.largest, '${_compactMoney(p.largestDeal)} largest'),
+                    _chip(context, p, _Drill.largest, '${_money(p.largestDeal)} largest'),
                     _chip(context, p, _Drill.lost, '${_whole.format(p.lostCount)} lost'),
                     _chip(context, p, _Drill.closed, closed == 0 ? 'no closed' : '$winRate win · ${p.wonCount} of $closed'),
                   ],
@@ -623,16 +694,12 @@ class _WonChart extends StatelessWidget {
   final List<_Person> people;
   final int year;
   final double total;
-
-  /// The same dates a year earlier (all of the year before, for a past year).
-  final double priorTotal;
   const _WonChart({
     required this.months,
     required this.prior,
     required this.people,
     required this.year,
     required this.total,
-    required this.priorTotal,
   });
 
   @override
@@ -642,37 +709,35 @@ class _WonChart extends StatelessWidget {
     final thisYear = year == DashClock.now().year;
     String list(List<double> v, int last) => [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(v[i])}'].join(', ');
 
-    Widget? vsPrior;
-    if (priorTotal > 0 && total > 0) {
-      final pct = (total - priorTotal) / priorTotal * 100;
-      vsPrior = DashChangeChip(
-        pct: pct,
-        text: '${pct.abs().round()}% vs ${year - 1}${thisYear ? ' to date' : ''}',
-        tooltip: thisYear
-            ? '${_money(total)} won so far in $year, against ${_money(priorTotal)} over the same dates in ${year - 1}.'
-            : '${_money(total)} won in $year, against ${_money(priorTotal)} in ${year - 1}.',
-        semanticsLabel: '${pct >= 0 ? 'Up' : 'Down'} ${pct.abs().round()}% on ${thisYear ? 'the same dates in ' : ''}${year - 1}',
-      );
-    }
-
     return DashMonthChart(
       year: year,
       views: [
         DashChartView(
           tab: 'Team',
           title: 'Won revenue',
-          note: '${_compactMoney(total)} in $year',
+          note: 'by estimate date',
+          story: dashMonthStory(
+            values: won,
+            year: year,
+            prior: priorMonths,
+            figure: total,
+            figureFormat: dashWholeMoney,
+            figureLabel: thisYear ? 'won so far' : 'won in $year',
+            figureColor: DashUi.sky,
+            format: _compactMoney,
+            unit: ' won',
+          ),
           series: [DashSeries('$year', won, DashUi.sky)],
           prior: priorMonths,
           priorLabel: '${year - 1}',
           axis: _compactMoney,
           barLabel: _compactMoney,
-          badge: vsPrior,
           tip: (i) {
             final m = i < months.length ? months[i] : null;
             return [
               DashTipRow('Won', _money(won[i]), color: DashUi.sky),
-              if (m != null) DashTipRow('Deals', '${m.wonCount} · ${m.winRate.toStringAsFixed(0)}% win'),
+              if (m != null)
+                DashTipRow('Deals', m.closedCount > 0 ? '${m.wonCount} · ${m.winRate.toStringAsFixed(0)}% win' : 'None decided'),
               DashTipRow('${year - 1}', _money(priorMonths[i])),
             ];
           },
@@ -684,7 +749,20 @@ class _WonChart extends StatelessWidget {
           DashChartView(
             tab: p.name.split(' ').first,
             title: p.name,
-            note: '${_compactMoney(p.wonValue)} won in $year',
+            note: 'won revenue, by estimate date',
+            story: dashMonthStory(
+              values: [for (var i = 0; i < 12; i++) i < p.monthlyWon.length ? p.monthlyWon[i] : 0.0],
+              year: year,
+              figure: p.wonValue,
+              figureFormat: dashWholeMoney,
+              figureLabel: thisYear ? 'won so far' : 'won in $year',
+              figureColor: DashUi.sky,
+              format: _compactMoney,
+              unit: ' won',
+              extra: [
+                if (total > 0) DashStoryStat(p.wonValue / total * 100, (v) => '${v.round()}%', "of the team's sales", DashUi.ink),
+              ],
+            ),
             series: [
               DashSeries(p.name.split(' ').first, [for (var i = 0; i < 12; i++) i < p.monthlyWon.length ? p.monthlyWon[i] : 0.0], DashUi.sky),
             ],
@@ -729,9 +807,10 @@ class _DoorPanelState extends State<_DoorPanel> {
     final w = widget;
     final g = w.g;
     final rate = _view == _DoorView.winRate;
-    final slices = _doorSlices(w.doors, _view, 10);
+    final slices = _doorSlices(w.doors, _view);
     final all = slices.length <= maxRows;
-    final shown = all ? slices : slices.take(math.max(1, maxRows - 1)).toList();
+    // The "All N" link sits in the finding's line, not in a row of its own, so every row that fits shows a style.
+    final shown = all ? slices : slices.take(math.max(1, maxRows)).toList();
     final totalRevenue = slices.fold<double>(0, (s, d) => s + d.revenue);
     final maxRevenue = slices.fold<double>(0, (m, d) => math.max(m, d.revenue));
 
@@ -740,9 +819,9 @@ class _DoorPanelState extends State<_DoorPanel> {
       title: 'Door styles',
       note: '${w.year}',
       tooltip: rate
-          ? 'The top Clopay styles on the sales team\'s estimates in ${w.year}, most deals won first, with the share of '
+          ? 'The Clopay styles on the sales team\'s estimates in ${w.year}, most deals won first, with the share of '
               'closed estimates that were won. An estimate counts once per style it contains.'
-          : 'The top Clopay styles by won revenue in ${w.year}: the door lines\' own totals on won estimates, not the '
+          : 'The Clopay styles by won revenue in ${w.year}: the door lines\' own totals on won estimates, not the '
               'whole estimate.',
       trailing: w.doors.isEmpty || inDialog
           ? null
@@ -761,16 +840,28 @@ class _DoorPanelState extends State<_DoorPanel> {
       );
     }
 
+    // The finding: the style that wins most often (of those with a few closed estimates), or the one that brings in most.
+    final rated = slices.where((d) => d.closed >= 3).toList();
+    final bestRate = rated.isEmpty ? null : rated.reduce((a, b) => b.winRate > a.winRate ? b : a);
+    final topRevenue = slices.reduce((a, b) => b.revenue > a.revenue ? b : a);
+    final finding = rate
+        ? (bestRate == null ? 'Too few closed estimates to compare yet' : 'Wins most often: ${bestRate.label}, ${bestRate.winRate.toStringAsFixed(0)}% (${bestRate.won} of ${bestRate.closed})')
+        : 'Brings in most: ${topRevenue.label}, ${_compactMoney(topRevenue.revenue)} (${dashShare(topRevenue.revenue, totalRevenue)})';
     final subtitle = SizedBox(
       height: _DoorPanel.subtitleH(g),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              rate ? 'Top ${slices.length} Clopay styles · most deals won first' : 'Top ${slices.length} Clopay styles · door lines on won estimates',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: DashText.legend,
+            child: Tooltip(
+              message: rate
+                  ? '${slices.length} Clopay styles, most deals won first'
+                  : '${slices.length} Clopay styles, door lines on won estimates',
+              child: Text(
+                finding,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: rate && bestRate == null ? DashUi.slate : DashUi.emeraldText),
+              ),
             ),
           ),
           if (!all)
@@ -786,7 +877,7 @@ class _DoorPanelState extends State<_DoorPanel> {
     final rows = DashRows(
       count: shown.length,
       base: g.rowWide,
-      give: 16,
+      give: 28,
       row: (i) {
         final s = shown[i];
         final winRate = s.closed == 0 ? '—' : '${s.winRate.toStringAsFixed(0)}%';
@@ -794,7 +885,9 @@ class _DoorPanelState extends State<_DoorPanel> {
           g: g,
           label: s.label,
           fraction: rate ? s.winRate / 100 : (maxRevenue > 0 ? s.revenue / maxRevenue : 0),
-          color: s.color,
+          // One colour per view, the bar's length and the figure beside it the story: there is no target win rate,
+          // so a style below an arbitrary line isn't a problem to flag (and a style can be a handful of estimates).
+          color: rate ? DashUi.emeraldDeep : DashUi.sky,
           amount: rate ? winRate : _compactMoney(s.revenue),
           detail: rate ? '${s.won}/${s.closed}' : dashShare(s.revenue, totalRevenue),
           tall: false,
@@ -809,7 +902,7 @@ class _DoorPanelState extends State<_DoorPanel> {
           semanticsLabel: rate
               ? '${s.label}: ${s.closed == 0 ? 'no closed estimates' : '$winRate win rate, ${s.won} won of ${s.closed} closed'}, '
                   '${s.sent} sent'
-              : '${s.label}: ${_money(s.revenue)} won in door lines, ${dashShare(s.revenue, totalRevenue)} of the top styles',
+              : '${s.label}: ${_money(s.revenue)} won in door lines, ${dashShare(s.revenue, totalRevenue)} of all styles',
         );
       },
     );
@@ -865,6 +958,8 @@ class _SalesSkeleton extends StatelessWidget {
           child: _Grid(
             tiles: List.generate(4, (_) => const DashSkeletonTile()),
             people: 2,
+            // Not known until the data arrives; this keeps the skeleton on the arrangement for a full list of styles.
+            doorStyles: 10,
             team: (oneLine, fill) => DashSkeletonPanel(rows: 2, rowH: _TeamPanel.rowH(g, oneLine) - 8),
             chart: const DashSkeletonPanel(fill: true),
             doors: (maxRows, fill) => DashSkeletonPanel(rows: math.min(6, maxRows), rowH: g.rowWide),
@@ -941,7 +1036,7 @@ EstimateListDialog _personListDialog({required _Person person, required int year
   );
 }
 
-/// The estimates containing one door style from the pie chart.
+/// The estimates containing one door style (a row of the door styles panel).
 EstimateListDialog _doorListDialog({
   required String doorType,
   required int year,
@@ -964,7 +1059,7 @@ EstimateListDialog _doorListDialog({
   );
 }
 // =============================================================================
-// DOOR TYPES (pie chart that cycles between win rate and revenue every 8 seconds)
+// DOOR TYPES (the door styles panel's data: win rate or won revenue per style)
 // =============================================================================
 
 class _DoorType {
@@ -1024,12 +1119,13 @@ class _DoorSlice {
   int get closed => won + lost;
   double get winRate => closed > 0 ? won / closed * 100 : 0;
 
-  /// What the slice's size means in each view: deals won, or won revenue.
+  /// What orders the styles in each view: deals won, or won revenue.
   double sizeFor(_DoorView v) => v == _DoorView.winRate ? won.toDouble() : revenue;
 }
 
-/// The top [limit] styles for [view], biggest first. Lines with no style ("Unspecified") are left out.
-List<_DoorSlice> _doorSlices(List<_DoorType> allDoors, _DoorView view, int limit) {
+/// Every style for [view], biggest first (the server knows about a dozen). Lines with no style ("Unspecified") are
+/// left out.
+List<_DoorSlice> _doorSlices(List<_DoorType> allDoors, _DoorView view) {
   final doors = allDoors.where((d) => d.type != 'Unspecified').toList();
 
   // Colors follow revenue rank, so a style keeps its color in both views.
@@ -1047,5 +1143,5 @@ List<_DoorSlice> _doorSlices(List<_DoorType> allDoors, _DoorView view, int limit
       return c != 0 ? c : b.sent.compareTo(a.sent);
     });
 
-  return all.take(limit).toList();
+  return all;
 }

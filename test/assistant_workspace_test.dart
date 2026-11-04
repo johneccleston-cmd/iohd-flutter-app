@@ -124,6 +124,9 @@ Future<void> _close(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 5));
 }
 
+/// The daily briefing's question (the welcome screen no longer has a button for it, so tests type it).
+const String _briefingQuestion = "Give me today's priorities and tell me why each one matters.";
+
 final Finder _composer = find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Ask Jarvis'));
 
 Future<void> _ask(WidgetTester tester, String q) async {
@@ -158,15 +161,12 @@ void main() {
     AssistantChat.instance.pageContext = '';
   });
 
-  testWidgets('the welcome screen leads with the briefing, then this page\'s questions, then what else Jarvis can look up', (
-    tester,
-  ) async {
+  testWidgets('the welcome screen shows this page\'s questions, then what else Jarvis can look up', (tester) async {
     _reply = _transcript('inventory');
     await http.runWithClient(() async {
       await _open(tester, at: '/dashboards/collections');
       expect(find.text('Good morning'), findsOneWidget);
-      expect(find.text('Today’s priorities'), findsOneWidget);
-      expect(find.textContaining('what changed since yesterday'), findsOneWidget, reason: 'a Tuesday looks back one day');
+      expect(find.text('Run briefing'), findsNothing, reason: 'the briefing card is gone from the welcome screen');
       expect(find.text('For the Collections dashboard'), findsOneWidget);
       expect(find.text('Over 90 days'), findsOneWidget);
       expect(find.text('Explore what Jarvis can look up'), findsOneWidget);
@@ -201,7 +201,7 @@ void main() {
       _reply = live;
       await http.runWithClient(() async {
         await _open(tester);
-        await tester.tap(find.text('Today’s priorities'));
+        await _ask(tester, _briefingQuestion);
         await _pump(tester, 300);
         expect(
           (_asked.single['messages'] as List).last['content'],
@@ -376,7 +376,7 @@ void main() {
       await _pump(tester, 300);
       expect(tester.widget<TextField>(_composer).controller!.text, 'Everything about every job ever');
       expect(find.text('No answer in time'), findsNothing);
-      expect(find.text('Today’s priorities'), findsOneWidget, reason: 'the failed question left the thread');
+      expect(find.text('Explore what Jarvis can look up'), findsOneWidget, reason: 'the failed question left the thread');
 
       _reply = (429, {'success': false, 'error': 'Too many questions. Please wait a minute.'});
       await tester.tap(find.byTooltip('Send'));
@@ -403,7 +403,7 @@ void main() {
     _reply = live;
     await http.runWithClient(() async {
       await _open(tester);
-      await tester.tap(find.text('Today’s priorities'));
+      await _ask(tester, _briefingQuestion);
       await _pump(tester, 300);
       for (final e in events.take(12)) {
         live.send(e);
@@ -437,48 +437,51 @@ void main() {
     }, _server);
   });
 
-  testWidgets('the page chip shows which page goes with the question, and switches it off and on', (tester) async {
+  testWidgets('a question asked from a page is sent with that page, without a chip in the message box', (tester) async {
     _reply = (200, {'success': true, 'answer': 'Okay.', 'toolsUsed': <String>[]});
     await http.runWithClient(() async {
       await _open(tester, at: '/dashboards/collections');
-      expect(find.text('Using: Collections dashboard'), findsOneWidget);
+      expect(find.textContaining('Using:'), findsNothing);
+      expect(find.text('Use this page'), findsNothing);
       await _ask(tester, 'What is over 90 days here?');
       await _pump(tester, 800);
-      expect(_asked.last['context'], 'Collections dashboard');
-      await tester.tap(find.text('Using: Collections dashboard'));
-      await _pump(tester, 200);
-      expect(find.text('Use this page'), findsOneWidget);
-      await _ask(tester, 'And in total?');
-      await _pump(tester, 800);
-      expect(_asked.last.containsKey('context'), isFalse);
-      await tester.tap(find.text('Use this page'));
-      await _pump(tester, 200);
-      await _ask(tester, 'And this week?');
-      await _pump(tester, 800);
-      expect(_asked.last['context'], 'Collections dashboard');
+      expect(_asked.last['context'], 'Collections dashboard', reason: 'so "here" and "this job" still work');
       await _close(tester);
     }, _server);
   });
 
-  testWidgets('a briefing run earlier today is offered again on the welcome screen, and Open it goes back to it', (tester) async {
+  testWidgets('after a briefing, a new chat\'s welcome screen still has no briefing card, and the briefing chat is kept', (
+    tester,
+  ) async {
     _reply = _transcript('priorities');
     await http.runWithClient(() async {
       await _open(tester);
-      expect(find.text('Run briefing'), findsOneWidget);
-      await tester.tap(find.text('Today’s priorities'));
+      await _ask(tester, _briefingQuestion);
       await _settle(tester);
+      expect(AssistantChat.instance.lastBriefing, isNotNull, reason: 'the briefing itself is unchanged');
       await tester.tap(find.byTooltip('New chat'));
       await _pump(tester, 300);
-      expect(find.text('Last run 9:05 AM'), findsOneWidget);
-      expect(find.text('Run again'), findsOneWidget);
-      await tester.tap(find.text('Open it'));
-      await _pump(tester, 500);
-      expect(find.text('Dates and definitions'), findsOneWidget, reason: 'back on the briefing chat');
+      expect(find.text('Explore what Jarvis can look up'), findsOneWidget);
+      for (final gone in ['Run briefing', 'Run again', 'Last run 9:05 AM', 'Open it']) {
+        expect(find.text(gone), findsNothing, reason: gone);
+      }
       await _close(tester);
     }, _server);
   });
 
-  testWidgets('keyboard: Tab reaches the briefing and Enter runs it; a link opens with Enter; Ctrl+J and Esc close the panel', (
+  testWidgets('the Today’s priorities quick action in the left column asks for the daily briefing', (tester) async {
+    _reply = _transcript('priorities');
+    await http.runWithClient(() async {
+      await _open(tester);
+      await tester.tap(find.text('Today’s priorities'));
+      await _settle(tester);
+      expect((_asked.single['messages'] as List).last['content'], _briefingQuestion);
+      expect(find.text('Dates and definitions'), findsOneWidget, reason: 'the briefing answer is drawn as before');
+      await _close(tester);
+    }, _server);
+  });
+
+  testWidgets('keyboard: Tab reaches a question and Enter asks it; a link opens with Enter; Ctrl+J and Esc close the panel', (
     tester,
   ) async {
     _reply = _transcript('estimates');
@@ -498,20 +501,24 @@ void main() {
 
       await tester.tap(find.text('open'));
       await _pump(tester, 500);
-      // Tab from the message box until the briefing card has focus, then Enter
+      await tester.tap(find.text('Money')); // the group last looked at is remembered from earlier tests
+      await _pump(tester, 200);
+      // Tab from the message box until a question has focus, then Enter
       var found = false;
       for (var n = 0; n < 40 && !found; n++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pump();
         final f = FocusManager.instance.primaryFocus?.context;
         found =
-            f != null &&
-            find.descendant(of: find.byWidget(f.widget), matching: find.text('Today’s priorities')).evaluate().isNotEmpty;
+            f != null && find.descendant(of: find.byWidget(f.widget), matching: find.text('Who owes us')).evaluate().isNotEmpty;
       }
-      expect(found, isTrue, reason: 'the briefing card is a tab stop');
+      expect(found, isTrue, reason: 'each question is a tab stop');
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await _settle(tester);
-      expect((_asked.single['messages'] as List).last['content'], "Give me today's priorities and tell me why each one matters.");
+      expect(
+        (_asked.single['messages'] as List).last['content'],
+        'Which customers owe us the most money, especially overdue balances?',
+      );
 
       // a link is a tab stop too, and Enter follows it
       var onLink = false;
@@ -534,7 +541,7 @@ void main() {
     _reply = _transcript('priorities');
     await http.runWithClient(() async {
       await _open(tester);
-      await tester.tap(find.text('Today’s priorities'));
+      await _ask(tester, _briefingQuestion);
       await _settle(tester);
       await _close(tester);
     }, _server);
@@ -562,7 +569,7 @@ void main() {
         await http.runWithClient(() async {
           await _open(tester, textScale: scale, size: const Size(1100, 760));
           _reply = _transcript('priorities');
-          await tester.tap(find.text('Today’s priorities'));
+          await _ask(tester, _briefingQuestion);
           await _settle(tester);
           _reply = _transcript('compare');
           await _ask(tester, 'Compare this month with last month');

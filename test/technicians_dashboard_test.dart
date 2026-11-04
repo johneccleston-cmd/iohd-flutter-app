@@ -1,6 +1,7 @@
 // The Technicians dashboard (redesigned like Collections): it fits the window with no scrolling at desktop sizes,
-// every technician is on screen ranked by callbacks with their jobs and revenue, the chart's four views against last
-// year, the callback period wording, and the loading, empty, error and reduced-motion states. Uses
+// every technician is on screen ranked by callbacks with their jobs and revenue, the Work pace view (each tech against
+// their targets, on pace or off, sample or from the server), the chart's four views against last year, the callback
+// period wording, and the loading, empty, error and reduced-motion states. Uses
 // test/fixtures/dashboards/technicians.json and the clock pinned to Oct 22, 2026.
 // Screenshots go to build/dash_shots/technicians_*.png (not goldens).
 //
@@ -89,11 +90,40 @@ void main() {
       expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
     });
 
-    testWidgets('nothing cycles on its own: after the entrance the page stands still', (t) async {
-      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi());
-      await t.pumpAndSettle(const Duration(milliseconds: 100), EnginePhase.sendSemanticsUpdate, const Duration(seconds: 5));
-      await t.pump(const Duration(seconds: 12));
-      expect(find.textContaining('Profit per tech per day · '), findsOneWidget);
+    testWidgets('nothing cycles on its own: after the entrance only the fire on the streak card moves', (t) async {
+      // The fire around the streak leader's photo burns on purpose; everything else must settle.
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), body: () async {
+        await t.pump(const Duration(seconds: 12));
+        expect(find.textContaining('Profit per tech per day · '), findsOneWidget);
+      });
+    });
+
+    testWidgets('without the streak card (an older server), the page settles completely', (t) async {
+      final api = DashFakeApi()
+        ..extra.add((req) async {
+          if (req.url.path != _path) return null;
+          final f = dashFixture('technicians');
+          for (final tech in (f['techs'] as List).cast<Map<String, dynamic>>()) {
+            tech.remove('jobsSinceCallback');
+          }
+          return http.Response(json.encode(f), 200);
+        });
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, body: () async {
+        expect(find.text('Longest callback-free streak'), findsNothing);
+        await t.pumpAndSettle(const Duration(milliseconds: 100), EnginePhase.sendSemanticsUpdate, const Duration(seconds: 5));
+      });
+    });
+
+    testWidgets('the longest callback-free streak: the leader, their number, and the fire only this year', (t) async {
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
+        // Sam Carter 7, Alex Rivera 5, Jordan Lee 1, Casey Morgan 0.
+        expect(find.text('Longest callback-free streak'), findsOneWidget);
+        expect(find.text('7'), findsOneWidget);
+        expect(find.text('jobs in a row'), findsOneWidget);
+        expect(find.text('Sam Carter · no callbacks'), findsOneWidget);
+        expect(find.bySemanticsLabel(RegExp(r'^Longest callback-free streak: Sam Carter, 7 jobs in a row.*Next: Alex 5, Jordan 1, Casey 0\.')), findsOneWidget);
+        await saveDashShot(t, 'technicians_streak');
+      });
     });
   });
 
@@ -127,12 +157,12 @@ void main() {
         final first = withJobs.first;
         expect(
           find.bySemanticsLabel(RegExp('^Number 1\\. ${first['name']}, .*: ${first['completedJobsYtd']} completed jobs and '
-              '${RegExp.escape(dashMoney((first['revenue'] as num).toDouble()))} revenue in 2026\\. ${first['callbackCount']} '
+              '${RegExp.escape(_wholeUsd((first['revenue'] as num).toDouble()))} revenue in 2026\\. ${first['callbackCount']} '
               'callbacks? on ${first['callbackJobs']} completed jobs since Oct 5')),
           findsOneWidget,
         );
         for (final x in techs) {
-          expect(find.textContaining(dashMoney((x['revenue'] as num).toDouble())), findsOneWidget, reason: '${x['name']} revenue');
+          expect(find.textContaining(_wholeUsd((x['revenue'] as num).toDouble())), findsOneWidget, reason: '${x['name']} revenue');
         }
         expect(find.text('AR'), findsWidgets, reason: 'initials, never an outside avatar service');
         await saveDashShot(t, 'technicians_ranked');
@@ -141,21 +171,300 @@ void main() {
     });
   });
 
+  group('a year before callback tracking', () {
+    // What the server really sends for 2025: no callback figures at all, and no period to count them in.
+    DashFakeApi past() => DashFakeApi()
+      ..extra.add((req) async {
+        if (req.url.path != _path || req.url.queryParameters['year'] != '2025') return null;
+        final f = dashFixture('technicians');
+        final m = f['summary']['metrics'] as Map<String, dynamic>;
+        m.addAll({'year': 2025, 'callbackRatePct': null, 'callbacks': 0, 'callbackJobs': 0, 'callbackPeriod': null});
+        for (final tech in (f['techs'] as List).cast<Map<String, dynamic>>()) {
+          tech.addAll({'callbackJobs': 0, 'callbackCount': 0});
+        }
+        return http.Response(json.encode(f), 200);
+      });
+
+    testWidgets('says callbacks start in 2026, not that nothing was completed, and lists by revenue', (t) async {
+      final handle = t.ensureSemantics();
+      final errors = await pumpDashboard(t, const TechniciansDashboardScreen(), api: past(), size: const Size(1500, 800),
+          body: () async {
+        await t.tap(find.byIcon(Icons.chevron_left_rounded)); // the ribbon's previous-year arrow
+        await settleDashboard(t, frames: 25);
+        expect(find.text('Counted from Oct 5, 2026'), findsOneWidget);
+        expect(find.textContaining('No completed jobs since'), findsNothing);
+        expect(find.text('Callbacks are counted from Oct 5, 2026, so 2025 has no callback ranking'), findsOneWidget);
+        expect(find.text('Technicians · by revenue'), findsOneWidget);
+        expect(find.text('Revenue 2025'), findsOneWidget);
+        expect(find.text('Longest callback-free streak'), findsNothing);
+        final byRevenue = [...techs]..sort((a, b) => (b['revenue'] as num).compareTo(a['revenue'] as num));
+        final tops = [for (final x in byRevenue) t.getRect(find.text(x['name'] as String)).top];
+        expect(tops, orderedEquals([...tops]..sort()), reason: 'highest revenue first');
+        await saveDashShot(t, 'technicians_2025_callbacks');
+        // A finished year has nothing "still to work".
+        await t.tap(find.bySemanticsLabel('Chart view: Work days'));
+        await settleDashboard(t, frames: 10);
+        expect(find.textContaining('still to work'), findsNothing);
+        expect(find.textContaining('days short of the 1,013-day target'), findsOneWidget);
+      });
+      expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+      handle.dispose();
+    });
+  });
+
+  group('work pace', () {
+    // The office's targets (240 work days, $1,900 a day, $456k with a $600k fire goal; Dennis 53 days, $99k, $130k
+    // fire goal) against sample figures, by roster place (ids sorted, Dennis last): Alex ahead on both, Casey behind
+    // on both, Jordan short on profit a day but ahead for the year, Sam the other way round. On Oct 22, 211 of 2026's
+    // 261 weekdays have gone by.
+    Future<void> openPace(WidgetTester t) async {
+      await t.tap(find.text('Work pace'));
+      await settleDashboard(t, frames: 25);
+    }
+
+    for (final (size, scale, tag) in dashFitSizes) {
+      testWidgets('$tag: every tech on screen, nothing scrolls, no overflow', (t) async {
+        late List<String> scrollers;
+        late List<String> truncated;
+        final errors = await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: size, textScale: scale,
+            body: () async {
+          await openPace(t);
+          await saveDashShot(t, 'technicians_pace_$tag');
+          scrollers = dashVerticalScrollers(t);
+          truncated = dashTruncatedTexts(t);
+          final window = Offset.zero & size;
+          final all = find.text('All 5').evaluate().isNotEmpty;
+          for (final name in [for (final x in techs) x['name'] as String, 'Dennis Gray']) {
+            final f = find.text(name);
+            if (all && f.evaluate().isEmpty) continue;
+            final r = t.getRect(f.first);
+            expect(window.contains(r.topLeft) && window.contains(r.bottomRight - const Offset(0.01, 0.01)), isTrue,
+                reason: '$name is on screen at $tag');
+          }
+          if (scale == 1.0) expect(all, isFalse, reason: 'at normal text size every tech fits at $tag');
+        });
+        expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+        expect(t.takeException(), isNull);
+        expect(scrollers, isEmpty, reason: 'nothing scrolls at $tag');
+        if (scale == 1.0) expect(truncated, isEmpty, reason: 'no text is cut short at $tag');
+      });
+    }
+
+    testWidgets('the story first, then every tech best first with all three goals against their pace', (t) async {
+      final handle = t.ensureSemantics();
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
+        expect(find.text('Technicians · fewest callbacks first'), findsOneWidget, reason: 'the callback podium comes first');
+        await openPace(t);
+        expect(find.text('Technicians · fewest callbacks first'), findsNothing);
+        // The panel says these are sample figures; the headline answers "are they on pace?" and names who is behind.
+        expect(find.bySemanticsLabel('Technicians, sample figures'), findsOneWidget);
+        expect(find.text('3 of 5'), findsOneWidget);
+        expect(find.text('on pace for their profit target'), findsOneWidget);
+        expect(find.text('▼ 1%'), findsOneWidget);
+        expect(find.text('Furthest behind: Casey Morgan, \$39k short of pace on profit'), findsOneWidget);
+        // Best against their profit pace first.
+        final order = ['Dennis Gray', 'Alex Rivera', 'Jordan Lee', 'Sam Carter', 'Casey Morgan'];
+        final tops = [for (final n in order) t.getRect(find.text(n)).top];
+        expect(tops, orderedEquals([...tops]..sort()));
+        expect(find.text('On pace'), findsNWidgets(3));
+        expect(find.text('Off pace'), findsNWidgets(2));
+        // Each goal: done / target, and the gap to where they should be by today, in words.
+        for (final s in ['198 / 240', '\$2,014 / \$1,900', '\$399k / \$456k', '▲ 4 ahead', '▲ \$114 over', '▲ \$30k ahead',
+            '▼ \$57 under', '▼ 15.5 short', '▼ \$39k short',
+            // Dennis: his own targets.
+            '43 / 53', '\$90k / \$99k']) {
+          expect(find.text(s, findRichText: true), findsOneWidget, reason: s);
+        }
+        for (final s in ['Team work days', 'Team profit a day', 'Team profit', "Today's pace", 'Ahead', 'Short',
+            'Main goal', 'Fire goal']) {
+          expect(find.text(s), findsOneWidget, reason: s);
+        }
+        // The fire goal is read out with the year's profit.
+        expect(
+          find.bySemanticsLabel(RegExp(r'^Number 2\. Alex Rivera: on pace\. Work days 198 of 240, 4 ahead\. '
+              r'Profit a day \$2,014 of \$1,900, \$114 over\. Profit for the year \$399k of \$456k, fire goal \$600k, \$30k ahead\. Sample figures\.$')),
+          findsOneWidget,
+        );
+        expect(find.bySemanticsLabel(RegExp(r'^Number 1\. Dennis Gray: .*Profit for the year \$90k of \$99k, fire goal \$130k,')), findsOneWidget);
+      });
+      handle.dispose();
+    });
+
+    testWidgets('a bar explains itself in the hover card', (t) async {
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
+        await openPace(t);
+        final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
+        await mouse.addPointer(location: Offset.zero);
+        await mouse.moveTo(t.getCenter(find.text('198 / 240', findRichText: true)));
+        await settleDashboard(t, frames: 8);
+        expect(find.textContaining('Alex has worked 198 days of a 240-day target for 2026. By today they should be on 194'), findsOneWidget);
+        expect(find.textContaining('Sample figures until the real ones are sent.'), findsOneWidget);
+        await saveDashShot(t, 'technicians_pace_hover');
+        await mouse.removePointer();
+      });
+    });
+
+    testWidgets('the view stays on Work pace through a change of year, and a past year speaks of targets hit or missed', (t) async {
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
+        await openPace(t);
+        await t.tap(find.byIcon(Icons.chevron_left_rounded)); // the ribbon's previous-year arrow
+        await settleDashboard(t, frames: 25);
+        expect(find.text('hit their profit target'), findsOneWidget);
+        expect(find.text('Target'), findsOneWidget, reason: 'the line on a finished year is the target');
+        expect(find.text('On pace'), findsNothing);
+        expect(find.text('Hit target').evaluate().length + find.text('Missed').evaluate().length, 5);
+        await saveDashShot(t, 'technicians_pace_2025');
+      });
+    });
+
+    testWidgets("the server's work days and profit (the commission work days) are measured against the office's targets", (t) async {
+      final api = DashFakeApi()
+        ..extra.add((req) async {
+          if (req.url.path != _path) return null;
+          final f = dashFixture('technicians');
+          // Work days to the half day, and profit so far; Dennis is not in the technicians list.
+          f['pace'] = [
+            {'id': 'alex.rivera', 'name': 'Alex Rivera', 'jobTitle': 'Lead Technician', 'avatarUrl': '', 'workDays': 215, 'profit': 400000},
+            {'id': 'sam.carter', 'name': 'Sam Carter', 'jobTitle': 'Technician', 'avatarUrl': '', 'workDays': 144.5, 'profit': 296000},
+            {'id': 'jordan.lee', 'name': 'Jordan Lee', 'jobTitle': 'Technician', 'avatarUrl': '', 'workDays': 52, 'profit': 52000},
+            {'id': 'casey.morgan', 'name': 'Casey Morgan', 'jobTitle': 'Technician', 'avatarUrl': '', 'workDays': 190, 'profit': 370000},
+            {'id': 'dgray', 'name': 'Dennis Gray', 'jobTitle': 'Warehouse Technician', 'avatarUrl': '', 'workDays': 29, 'profit': 27905},
+          ];
+          return http.Response(json.encode(f), 200);
+        });
+      final handle = t.ensureSemantics();
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
+        await openPace(t);
+        expect(find.bySemanticsLabel('Technicians, against their targets'), findsOneWidget, reason: 'real figures, no sample note');
+        // 240 days and $456k for the techs; Dennis 53 days and $99k. By Oct 22 that is 194 days and $369k (Dennis 43, $80k).
+        for (final s in ['215 / 240', '144.5 / 240', '52 / 240', '190 / 240', '29 / 53', '\$400k / \$456k', '\$28k / \$99k']) {
+          expect(find.text(s, findRichText: true), findsOneWidget, reason: s);
+        }
+        expect(find.text('▲ 21 ahead', findRichText: true), findsOneWidget, reason: 'Alex: 215 days against 194');
+        expect(find.text('▼ 14 short', findRichText: true), findsOneWidget, reason: 'Dennis: 29 days against 43');
+        expect(find.bySemanticsLabel(RegExp('Sample figures')), findsNothing);
+      });
+      handle.dispose();
+    });
+
+    testWidgets('targets from the server replace the sample ones', (t) async {
+      final api = DashFakeApi()
+        ..extra.add((req) async {
+          if (req.url.path != _path) return null;
+          final f = dashFixture('technicians');
+          final list = (f['techs'] as List).cast<Map<String, dynamic>>();
+          // Dennis comes from the server too (no fire goal for him here), so nobody is a sample.
+          list.add({...list.first, 'id': 'dgray', 'name': 'Dennis Gray', 'jobTitle': 'Warehouse Technician'});
+          for (final tech in list) {
+            tech['pace'] = {'workDayTarget': 200, 'dayProfitTarget': 1000, 'yearProfitTarget': 200000, 'workDays': 150, 'profit': 180000};
+          }
+          return http.Response(json.encode(f), 200);
+        });
+      final handle = t.ensureSemantics();
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
+        await openPace(t);
+        expect(find.bySemanticsLabel('Technicians, against their targets'), findsOneWidget);
+        expect(find.text('5 of 5'), findsOneWidget);
+        expect(find.text('150 / 200', findRichText: true), findsNWidgets(5));
+        expect(find.text('\$1,200 / \$1,000', findRichText: true), findsNWidgets(5));
+        expect(find.text('Fire goal'), findsNothing, reason: 'no fire goal sent, none drawn');
+        expect(find.bySemanticsLabel(RegExp('Sample figures')), findsNothing);
+      });
+      handle.dispose();
+    });
+
+    testWidgets('ten technicians at 1280x600: the rest of the pace board a click away', (t) async {
+      final errors = await pumpDashboard(t, const TechniciansDashboardScreen(), api: _withTechs(10), body: () async {
+        await openPace(t);
+        await saveDashShot(t, 'technicians_pace_10_techs');
+        expect(find.text('All 11'), findsOneWidget, reason: 'ten technicians and Dennis');
+        await t.tap(find.text('All 11'));
+        await settleDashboard(t, frames: 15);
+        expect(find.text('All technicians · work pace · 2026'), findsOneWidget);
+        expect(find.text('Technician 10'), findsWidgets);
+        await saveDashShot(t, 'technicians_pace_all_dialog');
+        await t.tap(find.byTooltip('Close'));
+        await settleDashboard(t, frames: 5);
+      });
+      expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+    });
+
+    testWidgets('reduced motion: the board is final on the first frame', (t) async {
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), reduceMotion: true,
+          body: () async {
+        await t.tap(find.text('Work pace'));
+        await t.pump();
+        await t.pump();
+        expect(find.text('3 of 5'), findsOneWidget);
+        expect(find.text('Off pace'), findsNWidgets(2));
+      });
+    });
+  });
+
   group('chart', () {
     testWidgets('four views by hand; the average line is the scorecard figure', (t) async {
       final handle = t.ensureSemantics();
-      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), body: () async {
-        expect(find.text('Profit per tech per day · average \$1,127'), findsOneWidget);
-        expect(find.text('Average \$1,127'), findsOneWidget);
+      // 1500x800: room for the change chip beside the title (a narrower window leaves it to the headline).
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: DashFakeApi(), size: const Size(1500, 800), body: () async {
+        expect(find.text('Profit per tech per day · by start month'), findsOneWidget);
+        expect(find.text('Year average \$1,127'), findsOneWidget);
         expect(find.textContaining('Sep vs Aug'), findsOneWidget, reason: 'never the October in progress');
-        for (final (tab, title) in const [('Total', 'Total profit · '), ('Jobs', 'Jobs completed · '), ('Per job', 'Profit per job · ')]) {
+        for (final (tab, title) in const [('Work days', 'Work days against target · '), ('Actual / day', 'Actual profit per work day · ')]) {
           await t.tap(find.bySemanticsLabel('Chart view: $tab'));
           await settleDashboard(t, frames: 10);
           expect(find.textContaining(title), findsOneWidget);
         }
-        await saveDashShot(t, 'technicians_view_per_job');
+        expect(find.bySemanticsLabel('Chart view: Jobs'), findsNothing);
+        expect(find.bySemanticsLabel('Chart view: Total'), findsNothing);
+        expect(find.bySemanticsLabel('Chart view: Per job'), findsNothing);
+        await t.tap(find.bySemanticsLabel('Chart view: Work days'));
+        await settleDashboard(t, frames: 10);
+        // The targets of every tech and Dennis added up (1,013 days) against the fixture's work days.
+        expect(find.textContaining('target days still to work'), findsOneWidget);
+        await saveDashShot(t, 'technicians_view_work_days');
+        await t.tap(find.bySemanticsLabel('Chart view: Actual / day'));
+        await settleDashboard(t, frames: 10);
+        expect(find.textContaining('under the \$1,900 target'), findsOneWidget);
+        // The finding reads finished months only: October is in progress, its open jobs' profit still to come.
+        expect(find.textContaining('Oct was'), findsNothing);
+        expect(find.textContaining('Sep was'), findsOneWidget);
+        await saveDashShot(t, 'technicians_view_actual_per_day');
       });
       handle.dispose();
+    });
+
+    // The fixture: $874,320 of profit Jan-Oct over the roster's 727 days is $1,203 a day. With ten more field days a
+    // month (Zac's install days, say) it is $874,320 over 827 days, $1,057; the Work days view keeps the roster's 727.
+    Future<void> actualPerDay(WidgetTester t, DashFakeApi api, String perDay) async {
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
+        await t.tap(find.bySemanticsLabel('Chart view: Actual / day'));
+        await settleDashboard(t, frames: 10);
+        expect(find.text(perDay), findsOneWidget);
+        await t.tap(find.bySemanticsLabel('Chart view: Work days'));
+        await settleDashboard(t, frames: 10);
+        expect(find.textContaining('727 of '), findsOneWidget);
+      });
+    }
+
+    testWidgets("Actual / day: an older server without field days divides by the roster's work days", (t) async {
+      await actualPerDay(t, DashFakeApi(), r'$1,203');
+    });
+
+    testWidgets("Actual / day divides by the server's field days (Zac's installs, former techs) when it sends them", (t) async {
+      await actualPerDay(
+        t,
+        DashFakeApi()
+          ..extra.add((req) async {
+            if (req.url.path != _path) return null;
+            final f = dashFixture('technicians');
+            f['fieldDaysMonthly'] = [
+              for (final m in (f['paceMonthly'] as List).cast<Map<String, dynamic>>())
+                {'month': m['month'], 'workDays': (m['workDays'] as num) + 10},
+            ];
+            return http.Response(json.encode(f), 200);
+          }),
+        r'$1,057',
+      );
     });
 
     testWidgets('hovering a month compares it with the same month last year', (t) async {
@@ -191,7 +500,7 @@ void main() {
         await saveDashShot(t, 'technicians_loading');
         held.complete(http.Response(json.encode(dashFixture('technicians')), 200));
         await settleDashboard(t);
-        expect(find.text('Callback rate'), findsOneWidget);
+        expect(find.text('Callback rate'), findsWidgets, reason: "the scorecard and the list's column");
       });
       expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
     });
@@ -243,3 +552,7 @@ void main() {
     });
   });
 }
+
+/// "$388,910": whole dollars, as the technicians list shows revenue.
+String _wholeUsd(double v) =>
+    '\$${v.round().toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},')}';

@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'utils/status_colors.dart';
@@ -40,7 +41,7 @@ class CustomerDetailScreen extends StatefulWidget {
 }
 
 class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
-  static const _tabs = ['Account Info', 'Financial Data', 'Service Locations', 'Jobs & Estimates', 'Calls & Texts'];
+  static const _tabs = ['Account Info', 'Financial Data', 'Service Locations', 'Jobs & Estimates', 'Communications'];
   static const double _maxWidth = 1100;
 
   Map<String, dynamic>? _customer;
@@ -63,7 +64,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
       _loading = true;
       _error = null;
     });
-    unawaited(QuoActivityPanel.prefetch(customerId: widget.customerId)); // so the Calls & Texts tab opens with them
+    unawaited(QuoActivityPanel.prefetch(customerId: widget.customerId)); // so the Communications tab opens with them
     try {
       final res = await http
           .get(Uri.parse('$kApiBaseUrl/api/customers/${Uri.encodeComponent(widget.customerId)}'), headers: AuthSession.instance.headers())
@@ -118,6 +119,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
         children: [
           PageBanner(
             title: name,
+            icon: accessIcon('customers'),
             actions: [
               PageBanner.button(icon: Icons.arrow_back_rounded, label: 'All customers', onPressed: () => context.go('/customers')),
               PageBanner.refresh(onPressed: _loading ? null : _load),

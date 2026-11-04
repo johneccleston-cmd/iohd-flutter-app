@@ -30,6 +30,7 @@ List<Map<String, dynamic>> _rows(String prefix, int n) => [
 class _Server {
   final List<Uri> urls = [];
   bool empty = false;
+  bool sorts = true;
   int? failCode;
 
   http.Client client() => MockClient((req) async {
@@ -44,7 +45,16 @@ class _Server {
         }
         final q = req.url.queryParameters['q'] ?? '';
         final rows = (empty || q == 'nothing') ? <Map<String, dynamic>>[] : _rows(q.isEmpty ? 'Row' : q, 3);
-        return http.Response(jsonEncode({'data': rows, 'total': rows.isEmpty ? 0 : 130, 'page': 1, 'totalPages': rows.isEmpty ? 1 : 3}), 200);
+        return http.Response(
+          jsonEncode({
+            'data': rows,
+            'total': rows.isEmpty ? 0 : 130,
+            'page': 1,
+            'totalPages': rows.isEmpty ? 1 : 3,
+            if (sorts) 'sorts': ['date', 'id', 'customer', 'amount', 'status'],
+          }),
+          200,
+        );
       });
 
   List<Uri> lists() => urls.where((u) => !u.path.endsWith('status-counts')).toList();
@@ -81,8 +91,9 @@ void main() {
       expect(s.lists().first.queryParameters, {'status': 'All', 'q': '', 'page': '1', 'limit': '50'});
       expect(find.text('Row customer 0'), findsOneWidget);
       expect(find.text('Need To Schedule'), findsOneWidget); // sidebar entry
-      expect(find.text('3 jobs'), findsNothing); // header shows the real total, not the page count
-      expect(find.text('30 jobs'), findsOneWidget);
+      expect(find.text('3 jobs'), findsNothing); // the real total, not the page count
+      expect(find.text('130 jobs'), findsOneWidget);
+      expect(find.text('30'), findsOneWidget); // All, in the status sidebar
     }, () => s.client());
   });
 
@@ -118,8 +129,8 @@ void main() {
       await t.pumpAndSettle();
       expect(s.firstPages().length, before + 1, reason: 'one request after the pause');
       expect(s.firstPages().last.queryParameters['q'], 'schuber');
-      expect(find.text('30 jobs'), findsNothing);
-      expect(find.textContaining('matching "schuber"'), findsOneWidget);
+      expect(find.text('130 jobs'), findsNothing);
+      expect(find.text('130 matching'), findsOneWidget);
 
       await t.tap(find.byTooltip('Clear search'));
       await t.pumpAndSettle();
@@ -147,7 +158,7 @@ void main() {
       await t.tap(find.text('Clear search and filter'));
       await t.pumpAndSettle();
       expect(find.text('Row customer 0'), findsOneWidget); // the unfiltered list is back
-      expect(find.text('30 jobs'), findsOneWidget);
+      expect(find.text('130 jobs'), findsOneWidget);
       expect(find.text('No jobs found'), findsNothing);
     }, () => s.client());
   });
@@ -187,8 +198,8 @@ void main() {
     final s = _Server()..failCode = 500;
     await http.runWithClient(() async {
       await _pump(t, s);
-      expect(find.text('Could not load jobs'), findsOneWidget);
-      expect(find.text('The server returned status 500.'), findsOneWidget);
+      expect(find.text("Jobs didn't load"), findsOneWidget);
+      expect(find.text('Could not load jobs (server error 500).'), findsOneWidget);
       expect(find.textContaining('Page 1 of'), findsNothing); // no paging controls on an error
 
       s.failCode = null;
@@ -213,6 +224,60 @@ void main() {
 
       await _pump(t, s, size: const Size(420, 700)); // phone-ish: rows become two lines
       expect(t.takeException(), isNull);
+    }, () => s.client());
+  });
+
+  testWidgets('a column header sorts on the server, and clicking it again flips the order', (t) async {
+    final s = _Server();
+    await http.runWithClient(() async {
+      await _pump(t, s);
+      expect(s.lists().first.queryParameters.containsKey('sort'), isFalse, reason: 'the default order sends nothing');
+      await t.tap(find.text('Revenue'));
+      await t.pumpAndSettle();
+      expect(s.firstPages().last.queryParameters, containsPair('sort', 'amount'));
+      expect(s.firstPages().last.queryParameters, containsPair('dir', 'desc'));
+      await t.tap(find.text('Revenue'));
+      await t.pumpAndSettle();
+      expect(s.firstPages().last.queryParameters, containsPair('dir', 'asc'));
+      await t.tap(find.text('Customer'));
+      await t.pumpAndSettle();
+      expect(s.firstPages().last.queryParameters, containsPair('sort', 'customer'));
+      expect(s.firstPages().last.queryParameters, containsPair('dir', 'asc')); // names read A to Z first
+    }, () => s.client());
+  });
+
+  testWidgets('a server that cannot sort gets no sort buttons', (t) async {
+    final s = _Server()..sorts = false;
+    await http.runWithClient(() async {
+      await _pump(t, s);
+      await t.tap(find.text('Revenue'));
+      await t.pumpAndSettle();
+      expect(s.lists().every((u) => !u.queryParameters.containsKey('sort')), isTrue);
+    }, () => s.client());
+  });
+
+  testWidgets('a failed refresh keeps the rows and says they may be out of date', (t) async {
+    final s = _Server();
+    await http.runWithClient(() async {
+      await _pump(t, s);
+      s.failCode = 500;
+      await t.tap(find.byTooltip('Refresh'));
+      await t.pumpAndSettle();
+      expect(find.text('Row customer 0'), findsOneWidget);
+      expect(find.textContaining('Showing the last loaded jobs.'), findsOneWidget);
+      s.failCode = null;
+      await t.tap(find.text('Try again'));
+      await t.pumpAndSettle();
+      expect(find.textContaining('Showing the last loaded'), findsNothing);
+    }, () => s.client());
+  });
+
+  testWidgets('no access says so, with nothing to retry', (t) async {
+    final s = _Server()..failCode = 403;
+    await http.runWithClient(() async {
+      await _pump(t, s);
+      expect(find.text('No access to jobs'), findsOneWidget);
+      expect(find.text('Try again'), findsNothing);
     }, () => s.client());
   });
 }

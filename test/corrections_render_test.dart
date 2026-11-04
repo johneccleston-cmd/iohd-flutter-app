@@ -27,6 +27,38 @@ void main() {
   setUpAll(loadCorrFonts);
 
   testWidgets('empty + recent', (t) => _shot(t, 'corr_empty'));
+  testWidgets('missed: rail with counts', (t) => _shot(t, 'corr_missed_rail'));
+  testWidgets('missed: rail with none yet', (t) => _shot(t, 'corr_missed_none', api: FakeCorrApi()..missed = []));
+  testWidgets('missed: rail at 130% and 1024', (t) =>
+      _shot(t, 'corr_missed_rail_130', size: const Size(1024, 700), textScale: 1.3));
+  testWidgets('missed: fix dialog counting it', (t) => _shot(t, 'corr_missed_dialog',
+      size: const Size(1440, 1100), then: () async {
+    await openJob(t, 'Farmington Fire Department');
+    await t.tap(find.text('Fix').at(1));
+    await pumpN(t);
+    await t.tap(find.text('Tech did not mark complete'));
+    await pumpN(t, 3);
+  }));
+  testWidgets('missed: flagged visit after saving', (t) => _shot(t, 'corr_missed_saved',
+      size: const Size(1440, 1100), then: () async {
+    await openJob(t, 'Farmington Fire Department');
+    await t.tap(find.text('Fix').at(1));
+    await pumpN(t);
+    await t.tap(find.text('Tech did not mark complete'));
+    await pumpN(t, 3);
+    await t.tap(find.text('Save correction'));
+    await pumpN(t, 30);
+  }));
+  testWidgets('missed: flagged visit stacked at 700', (t) => _shot(t, 'corr_missed_saved_narrow',
+      size: const Size(700, 1000), then: () async {
+    await openJob(t, 'Farmington Fire Department');
+    await t.tap(find.text('Fix').at(1));
+    await pumpN(t);
+    await t.tap(find.text('Tech did not mark complete'));
+    await pumpN(t, 3);
+    await t.tap(find.text('Save correction'));
+    await pumpN(t, 30);
+  }));
   testWidgets('search results', (t) => _shot(t, 'corr_search', then: () async {
     await t.enterText(find.byType(TextField).first, 'farm');
     await pumpN(t);

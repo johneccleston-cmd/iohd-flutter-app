@@ -398,7 +398,11 @@ class _Glance {
     if (tech != null) {
       final perDay = n(tech['laborPerDay']);
       final team = tech['team'] is Map ? tech['team'] as Map : const {};
-      final teamPerDay = n(team['laborPerDay']);
+      // The rest of the team over the same months this tech worked (a tech who started mid-year isn't measured against
+      // the team's whole year); the KPI page uses the same figure. An older server only has the whole year's.
+      final same = team['sameMonths'] is Map ? team['sameMonths'] as Map : null;
+      final teamPerDay = n(same?['laborPerDay']) ?? n(team['laborPerDay']);
+      final partYear = same != null && same['allMonths'] == false;
       final months = [
         for (final m in (tech['monthly'] is List ? tech['monthly'] as List : const []))
           if (m is Map) m,
@@ -408,13 +412,14 @@ class _Glance {
       var caption = 'Labor credited to them for each day on a job';
       if (perDay != null && teamPerDay != null && teamPerDay > 0) {
         final pct = (perDay - teamPerDay) / teamPerDay * 100;
-        if (pct.abs() < 5) {
+        // Within 5% either way is on par, the KPI page's rule.
+        if (pct.abs().round() <= 5) {
           delta = 'On par';
         } else {
           delta = '${pct.abs().round()}% ${pct > 0 ? 'ahead' : 'behind'}';
           good = pct > 0;
         }
-        caption = 'vs ${_money0(teamPerDay)} a day for the rest of the team';
+        caption = 'vs ${_money0(teamPerDay)} a day for the rest of the team${partYear ? ' over the same months' : ''}';
       }
       stats.add(
         _Stat(
@@ -432,7 +437,7 @@ class _Glance {
           ]),
           tip:
               'Their share of labor on jobs completed this year, divided by the calendar days they worked a labor job. '
-              'The team figure pools every other current tech.',
+              'The team figure pools every other current tech${partYear ? ', over only the months this tech worked' : ''}.',
         ),
       );
       final jobs = i(tech['laborJobs']);
@@ -483,9 +488,9 @@ class _Glance {
             value: strikes.toDouble(),
             format: _whole,
             caption: teamAvg == null
-                ? (strikes == 0 ? 'A clean record' : 'All time, from the morning stock audit')
+                ? (strikes == 0 ? 'A clean record' : 'All time, from the 4 PM stock audit')
                 : '${strikes == 0 ? 'A clean record. ' : ''}The rest of the team averages ${teamAvg.toStringAsFixed(1)}',
-            tip: 'Added by the 8:30 AM inventory audit when stock is missing. All time.',
+            tip: 'Added at 4 PM when none of the day\'s job materials were checked out (8:30 AM before November 2026). All time.',
           ),
         );
       }
@@ -510,14 +515,14 @@ class _Glance {
       ];
       stats.add(
         _Stat(
-          label: 'Won this year',
+          label: 'Sales won',
           icon: Icons.emoji_events_outlined,
           color: DashUi.emeraldDeep,
           value: n(sales['wonValue']) ?? 0,
           format: _money0,
-          caption: '$wonN ${wonN == 1 ? 'estimate' : 'estimates'} won',
+          caption: '$wonN ${wonN == 1 ? 'estimate' : 'estimates'} won this year',
           trend: mbt.isEmpty ? null : trend(revenue.sublist(0, monthsSoFar)),
-          tip: 'Total of the estimates they own that were marked Won this year.',
+          tip: 'The value of the estimates they own, dated this year, that were won (sold, not yet invoiced or collected).',
         ),
       );
       stats.add(
@@ -559,7 +564,7 @@ class _Glance {
             value: (n(req['value']) ?? 0) + (n(sent['value']) ?? 0),
             format: _money0,
             caption: '$count open ${count == 1 ? 'estimate' : 'estimates'}, not yet won or lost',
-            tip: 'Open estimates they own, requested or sent, that are not yet won or lost.',
+            tip: 'Every estimate they own that is open today, whatever its date: not sent yet, or sent and waiting on an answer.',
           ),
         );
       } else {
@@ -734,9 +739,11 @@ class _StatTileState extends State<_StatTile> with SingleTickerProviderStateMixi
           '${s.delta == null ? '' : '${s.delta}. '}${s.caption}',
       child: ExcludeSemantics(
         // The full definition shows on hover anywhere on the tile, so the header keeps its room for the name.
-        child: Tooltip(
-          message: s.tip,
-          waitDuration: const Duration(milliseconds: 450),
+        child: DashHoverCard(
+          title: s.label,
+          value: s.value == null ? '—' : '${s.format(s.value!)}${s.unit.isEmpty ? '' : ' ${s.unit}'}',
+          body: s.tip,
+          color: s.color,
           child: MouseRegion(
             onEnter: (_) => setState(() => _hover = true),
             onExit: (_) => setState(() => _hover = false),

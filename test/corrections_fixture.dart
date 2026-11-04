@@ -126,9 +126,18 @@ final corrRuns = [
   {'id': 7, 'week_start': '2026-10-12', 'week_end': '2026-10-18', 'run_type': 'regular', 'status': 'voided', 'run_by_name': 'Heather Vera', 'created_at': '2026-10-20T15:00:00Z'},
 ];
 
+/// GET /missed-completions: this year's count per tech, most first.
+final corrMissed = [
+  {'tech_name': 'Andrew Johnson', 'missed': 3, 'last_at': '2026-10-30T14:00:00Z'},
+  {'tech_name': 'Brett Miller', 'missed': 1, 'last_at': '2026-10-21T16:20:00Z'},
+];
+
 /// A fake backend. Override a piece of it per test; [posts] records every POST body.
 class FakeCorrApi {
   int runsStatus = 200;
+  int missedStatus = 200;
+  List<Map<String, dynamic>> missed = corrMissed;
+  List<Map<String, dynamic>> recent = corrRecent;
   int detailStatus = 200;
   List<Map<String, dynamic>>? farmHistoryOverride;
 
@@ -151,7 +160,12 @@ class FakeCorrApi {
           ? http.Response(jsonEncode({'success': true, 'runs': corrRuns}), 200)
           : http.Response(jsonEncode({'success': false, 'error': 'Payroll run history failed.'}), runsStatus);
     }
-    if (p.endsWith('/corrections')) return http.Response(jsonEncode({'success': true, 'corrections': corrRecent}), 200);
+    if (p.endsWith('/missed-completions')) {
+      return missedStatus == 200
+          ? http.Response(jsonEncode({'success': true, 'year': 2026, 'total': missed.fold<int>(0, (n, r) => n + (r['missed'] as int)), 'techs': missed}), 200)
+          : http.Response(jsonEncode({'success': false, 'error': 'Failed to load missed completions.'}), missedStatus);
+    }
+    if (p.endsWith('/corrections')) return http.Response(jsonEncode({'success': true, 'corrections': recent}), 200);
     if (p.endsWith('/jobs')) {
       final q = (r.url.queryParameters['q'] ?? '').toLowerCase();
       final jobs = q == 'zzz' ? [] : corrJobs;
@@ -186,6 +200,7 @@ class FakeCorrApi {
       if (body.containsKey('verified')) {
         day['override_verified'] = body['verified'];
         if (body['verified'] != null) day['is_verified'] = body['verified'];
+        day['missed_completion'] = body['missedCompletion'] == true;
       }
       if (body.containsKey('callback')) {
         day['override_callback'] = body['callback'];

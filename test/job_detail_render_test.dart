@@ -241,7 +241,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('Payment'));
       await t.pumpAndSettle();
-      await t.tap(find.text('Request payment'));
+      await t.tap(find.textContaining('Request '));
       await t.pumpAndSettle();
       // Starts on the balance due (950.00).
       expect(find.widgetWithText(TextField, '950.00'), findsOneWidget);
@@ -273,7 +273,7 @@ void main() {
       ));
       await t.pumpAndSettle();
       // Default tabs: Summary (Details) and Scheduling (Job Info).
-      expect(find.text('Primary Contact'), findsOneWidget);
+      expect(find.text('Primary contact'), findsOneWidget);
       expect(find.text('Arrival Time Window'), findsOneWidget);
 
       await t.tap(find.text('Payment'));
@@ -283,7 +283,7 @@ void main() {
       await t.tap(find.textContaining('Pics'));
       await t.pumpAndSettle();
       expect(find.text('front-of-house.jpg'), findsOneWidget);
-      expect(find.text('Primary Contact'), findsNothing);
+      expect(find.text('Primary contact'), findsNothing);
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/job_detail_tab_payment_pics.png'));
 
       await t.tap(find.text('Communications'));
@@ -303,7 +303,7 @@ void main() {
       await t.tap(find.text('Summary'));
       await t.tap(find.text('Scheduling'));
       await t.pumpAndSettle();
-      expect(find.text('Primary Contact'), findsOneWidget);
+      expect(find.text('Primary contact'), findsOneWidget);
       expect(find.text('Arrival Time Window'), findsOneWidget);
       expect(t.takeException(), isNull);
     }, () => _mock());
@@ -341,7 +341,7 @@ void main() {
       await t.tap(find.byTooltip('Remove').first);
       await t.pumpAndSettle();
       expect(find.text('Remove this file?'), findsOneWidget);
-      await t.tap(find.text('Remove'));
+      await t.tap(find.text('Remove file'));
       await t.pumpAndSettle();
       expect(_requests, contains('DELETE /api/jobs/1096183137/files/8'));
       expect(t.takeException(), isNull);
@@ -370,7 +370,7 @@ void main() {
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/file_viewer_picture.png'));
       await t.tap(find.byTooltip('Next'));
       await t.pumpAndSettle();
-      expect(find.textContaining('2 of 3'), findsOneWidget);
+      expect(find.text('2 of 3'), findsOneWidget);
       await t.tap(find.byTooltip('Close'));
       await t.pumpAndSettle();
       expect(find.text('Download'), findsNothing);
@@ -412,22 +412,22 @@ void main() {
       // Add Notes: an empty save is refused inside the dialog; a real one is saved and shown with the author.
       await t.tap(find.text('Add Notes'));
       await t.pumpAndSettle();
-      await t.tap(find.text('Save'));
+      await t.tap(find.text('Save note'));
       await t.pumpAndSettle();
       expect(find.text('Type something first.'), findsOneWidget);
       await t.enterText(find.byType(TextField), 'Customer wants the grays to match.');
-      await t.tap(find.text('Save'));
+      await t.tap(find.text('Save note'));
       await t.pumpAndSettle();
       expect(_requests, contains('POST /api/jobs/1096183137/notes'));
       expect(find.text('Customer wants the grays to match.'), findsOneWidget);
-      expect(find.textContaining('by Dana Whitfield'), findsWidgets);
+      expect(find.text('Dana Whitfield'), findsWidgets); // the note's author, beside its date
       expect(find.textContaining('Service Fusion'), findsWidgets); // the synced notes are labelled as such
 
       // Add Task, then tick it off: who added and who finished it is shown.
       await t.tap(find.text('Add Task'));
       await t.pumpAndSettle();
       await t.enterText(find.byType(TextField), 'Order the forklift for day two');
-      await t.tap(find.text('Save'));
+      await t.tap(find.text('Save task'));
       await t.pumpAndSettle();
       expect(find.text('Order the forklift for day two'), findsOneWidget);
       expect(find.textContaining('Added by Dana Whitfield'), findsOneWidget);
@@ -449,7 +449,7 @@ void main() {
       await t.tap(find.byTooltip('Remove note'));
       await t.pumpAndSettle();
       expect(find.text('Remove this note?'), findsOneWidget);
-      await t.tap(find.text('Remove'));
+      await t.tap(find.text('Remove note'));
       await t.pumpAndSettle();
       expect(find.text('Customer wants the grays to match.'), findsNothing);
       expect(t.takeException(), isNull);
@@ -604,7 +604,7 @@ void main() {
       await t.pumpAndSettle();
       expect(find.byType(QuoActivityPanel), findsOneWidget); // the Quo calls-and-texts panel replaced the old "not tracked" placeholder
       expect(find.text('No communications recorded'), findsNothing);
-      expect(find.text('Primary Contact'), findsNothing); // the Details card swapped to that tab
+      expect(find.text('Primary contact'), findsNothing); // the Details card swapped to that tab
       expect(find.text('Arrival Time Window'), findsOneWidget); // Job Info is untouched
     }, () => _mock());
   });
@@ -621,7 +621,7 @@ void main() {
       await t.tap(find.textContaining('Pics'));
       await t.pumpAndSettle();
       expect(find.textContaining('Uploads are not set up yet'), findsOneWidget);
-      expect(t.widget<FilledButton>(find.byType(FilledButton).first).onPressed, isNull);
+      expect(t.widget<ButtonStyleButton>(find.ancestor(of: find.text('Upload pictures'), matching: find.bySubtype<ButtonStyleButton>())).onPressed, isNull);
     }, () => _mock(filesStatus: 503));
   });
 

@@ -1,13 +1,15 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/dash_story.dart';
 import 'widgets/dashboard_layout.dart';
+import 'widgets/dashboard_panels.dart' show DashChangeChip, dashSparkRoom;
 import 'widgets/estimate_list_dialog.dart';
 
 // The Collections dashboard. Two kinds of figure share the page:
@@ -23,6 +25,7 @@ class CollectionsDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashboardLayout(
       title: 'Collections',
+      icon: accessIcon('dash_collections'),
       builder: (context, selectedYear) =>
           CollectionsDashboardContent(selectedYear: selectedYear),
     );
@@ -46,24 +49,6 @@ final _whole = NumberFormat('#,##0');
 
 String _money(num v) => '${v < 0 ? '-' : ''}\$${_whole.format(v.abs())}';
 
-String _trimZero(double v) {
-  final s = v.toStringAsFixed(1);
-  return s.endsWith('.0') ? s.substring(0, s.length - 2) : s;
-}
-
-String _compactMoney(num v) {
-  final a = v.abs();
-  final sign = v < 0 ? '-' : '';
-  if (a >= 1000000) return '$sign\$${_trimZero(a / 1000000)}M';
-  if (a >= 1000) return '$sign\$${_trimZero(a / 1000)}k';
-  return '$sign\$${a.round()}';
-}
-
-/// A bar's label: whole thousands from $10k up ("$396k"), so twelve of them stay easy to compare.
-String _barLabel(num v) => v.abs() >= 10000 && v.abs() < 1000000
-    ? '${v < 0 ? '-' : ''}\$${(v.abs() / 1000).round()}k'
-    : _compactMoney(v);
-
 double _d(dynamic v) => v == null
     ? 0.0
     : (v is num ? v.toDouble() : double.tryParse(v.toString()) ?? 0.0);
@@ -74,7 +59,7 @@ int _i(dynamic v) =>
 String _count(int n, String noun) => '${_whole.format(n)} $noun${n == 1 ? '' : 's'}';
 
 String _age(int days) {
-  if (days < 60) return '$days days';
+  if (days < 60) return _count(days, 'day');
   if (days < 730) return '${(days / 30.4).round()} months';
   return '${(days / 365).floor()} years';
 }
@@ -92,24 +77,13 @@ String _toDateRange() {
   return 'Jan 1 – ${dashMonthNames[now.month - 1]} ${now.day}';
 }
 
-class _Scale {
-  final double max;
-  final double step;
-  const _Scale(this.max, this.step);
-  int get ticks => (max / step).round();
-}
+/// The year's stretch inside a sentence: "between Jan 1 and today" this year, "in 2025" otherwise (dashPeriodLabel's
+/// "all of 2025" is for captions; "payments received all of 2025" doesn't read).
+String _within(int year) => year == DashClock.now().year ? 'between Jan 1 and today' : 'in $year';
 
-_Scale _niceScale(double maxV) {
-  if (maxV <= 0) return const _Scale(10000, 2500);
-  final raw = maxV / 4;
-  final mag = math.pow(10, (math.log(raw) / math.ln10).floor()).toDouble();
-  final norm = raw / mag;
-  final nice = norm <= 1 ? 1.0 : (norm <= 2 ? 2.0 : (norm <= 5 ? 5.0 : 10.0));
-  final step = nice * mag;
-  var top = (maxV / step).ceil() * step;
-  if (top < maxV * 1.08) top += step;
-  return _Scale(top, step);
-}
+/// A payment method inside a sentence: "check", "ACH", "other methods".
+String _methodWord(String method) =>
+    method == 'ACH' ? method : (method == 'Other' ? 'other methods' : method.toLowerCase());
 
 /// Opens the jobs behind an unpaid balance: one notice stage, or 'all'; [customer] narrows it to one customer.
 /// Same endpoint and rules as the dashboard, so the list adds up to the figure it was opened from.
@@ -174,7 +148,6 @@ abstract final class _T {
     fontFeatures: _tabular,
   );
   static const link = TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.blue);
-  static const legend = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.slate);
   static const empty = TextStyle(fontSize: 14, fontWeight: FontWeight.w500, height: 1.3, color: DashUi.slate);
 }
 
@@ -414,33 +387,44 @@ class _CollectionsPage extends StatelessWidget {
     final period = dashPeriodLabel(year);
     final g = _Geo.of(context);
 
+    // Every card says its period in its caption, the year ones ("Jan 1 – today", "all of 2025") and the today ones.
+    final collectedCaption = 'After refunds · $period';
+    final writtenOffCaption = '${_count(f.writeOffJobs, 'job')} · $period';
+    const outstandingCaption = 'Invoiced, unpaid · today';
+    const over90Caption = 'At 90 Day Notice · today';
+    // A card's trend line shows only when its words still fit beside it, so a period is never cut short.
+    double room(String title, double value, String caption) =>
+        dashSparkRoom(context, title: title, value: _money(value), caption: caption);
+
     return _Grid(
       stageRows: f.stages.length,
       owingRows: f.owing.length,
       periodTiles: [
         AnimatedMetricCard(
-          title: 'Collected $year',
+          title: 'Collected',
           value: f.collected,
           format: _money,
-          caption: 'Net of refunds · $period',
+          caption: collectedCaption,
           definition:
-              'Payments received $period, with refunds taken off (${_count(f.paymentCount, 'payment')}). '
+              'Payments received ${_within(year)}, with refunds taken off (${_count(f.paymentCount, 'payment')}). '
               'The line shows it by finished month.',
           valueColor: DashUi.emeraldDeep,
           index: 0,
           trend: dashTrend(f.months, year),
+          sparkMinWidth: room('Collected', f.collected, collectedCaption),
         ),
         AnimatedMetricCard(
-          title: 'Written off $year',
+          title: 'Written off',
           value: f.writeOffBalance,
           format: _money,
-          caption: '${_count(f.writeOffJobs, 'job')} · by job date',
+          caption: writtenOffCaption,
           definition:
               'What was still owed on the ${_count(f.writeOffJobs, 'job')} at Write-Off dated in $year (by their '
               'end, close or start date). The line shows it by finished month.',
-          valueColor: DashUi.red,
+          valueColor: f.writeOffBalance > 0 ? DashUi.red : DashUi.ink,
           index: 1,
           trend: dashTrend(f.writeOffMonthly, year),
+          sparkMinWidth: room('Written off', f.writeOffBalance, writtenOffCaption),
         ),
       ],
       todayTiles: [
@@ -456,13 +440,14 @@ class _CollectionsPage extends StatelessWidget {
             title: 'Outstanding balance',
             value: f.outstanding,
             format: _money,
-            caption: 'Invoiced, not yet paid · today',
+            caption: outstandingCaption,
             definition:
                 'Unpaid balance on jobs at Final Invoice Sent or Check on Payment, as of today, whatever year '
                 'they are from (${_count(f.outstandingJobs, 'job')}). The line is one reading a day.',
-            valueColor: DashUi.amber,
+            valueColor: f.outstanding > 0 ? DashUi.amber : DashUi.ink,
             index: 2,
             trend: f.outstandingTrend.length >= 2 ? f.outstandingTrend : null,
+            sparkMinWidth: room('Outstanding balance', f.outstanding, outstandingCaption),
           ),
         ),
         _DrillCard(
@@ -477,33 +462,41 @@ class _CollectionsPage extends StatelessWidget {
             title: 'Over 90 days',
             value: f.over90,
             format: _money,
-            caption: 'At 90 Day Notice · today',
+            caption: over90Caption,
             definition:
                 'Unpaid balance on invoiced jobs that have reached the 90 Day Notice, as of today '
                 '(${_count(f.over90Jobs, 'job')}). The line is one reading a day.',
-            valueColor: DashUi.red,
+            valueColor: f.over90 > 0 ? DashUi.red : DashUi.ink,
             index: 3,
             trend: f.over90Trend.length >= 2 ? f.over90Trend : null,
+            sparkMinWidth: room('Over 90 days', f.over90, over90Caption),
           ),
         ),
       ],
-      chart: _MonthlyChart(
-        data: f.months,
-        prior: f.priorMonths,
-        year: year,
-        total: f.collected,
-        priorTotal: f.priorCollected,
+      chart: _Panel(
+        fill: true,
+        header: _PanelHeader(
+          g: g,
+          title: 'Cash collected',
+          note: 'by month',
+          trailing: f.priorCollected > 0 && f.collected > 0
+              ? _vsPrior(f.collected, f.priorCollected, year)
+              : null,
+        ),
+        child: DashCashByMonth(monthly: f.months, year: year, total: f.collected, prior: f.priorMonths),
       ),
       methods: _MethodsPanel(g: g, methods: f.methods, year: year),
-      stages: (tall, fill) => _StagesPanel(
+      stages: (g, tall, fill) => _StagesPanel(
         g: g,
         stages: f.stages,
         total: f.outstanding,
         jobs: f.outstandingJobs,
+        over90: f.over90,
+        over90Jobs: f.over90Jobs,
         tall: tall,
         fill: fill,
       ),
-      owing: (fill, max) => _OwingPanel(g: g, rows: f.owing.take(max).toList(), fill: fill),
+      owing: (g, fill, max) => _OwingPanel(g: g, rows: f.owing.take(max).toList(), outstanding: f.outstanding, fill: fill),
       ticker: f.overdue.isEmpty ? null : _OverdueTicker(g: g, rows: f.overdue),
     );
   }
@@ -520,9 +513,17 @@ const double _gap = 14;
 class _Geo {
   final TextScaler s;
   final double tile;
+
+  /// Whether the "today" panels have their line of finding under the title. They give it up only on a window too
+  /// short for any arrangement with it (the 130% text on 1280x600), rather than the page scrolling.
+  final bool callouts;
   _Geo.of(BuildContext context)
       : s = MediaQuery.textScalerOf(context),
-        tile = dashTileHeight(context);
+        tile = dashTileHeight(context),
+        callouts = true;
+  const _Geo._(this.s, this.tile, this.callouts);
+
+  _Geo get withoutCallouts => _Geo._(s, tile, false);
 
   double line(double size, [double height = 1.3]) => s.scale(size) * height;
 
@@ -538,9 +539,11 @@ class _Geo {
   double get stageRowWide => math.max(34.0, line(13.5) + 14);
   double get stageRowTall => math.max(42.0, line(13.5) + line(12) + 9);
   double get owingRow => math.max(44.0, line(13.5) + line(12) + 10);
+  /// The line under a panel's title that says what its figures show ("$22,577 is at the 90 Day Notice stage").
+  double get callout => callouts ? line(12) + 6 : 0;
   double stages(int rows, {required bool tall}) =>
-      panelTop + math.max(rows, 2) * (tall ? stageRowTall : stageRowWide);
-  double owing(int rows) => panelTop + math.max(rows, 2) * owingRow;
+      panelTop + callout + math.max(rows, 2) * (tall ? stageRowTall : stageRowWide);
+  double owing(int rows) => panelTop + callout + math.max(rows, 2) * owingRow;
 
   /// The +4 absorbs the half pixels text lines round up to.
   double get methods => panelTop + line(13) + 3 + line(15, 1.2) + 4;
@@ -557,8 +560,8 @@ class _Grid extends StatelessWidget {
   final Widget methods;
 
   /// `tall`: two-line stage rows for a narrow column. `fill`: spread the rows over the panel's height.
-  final Widget Function(bool tall, bool fill) stages;
-  final Widget Function(bool fill, int maxRows) owing;
+  final Widget Function(_Geo g, bool tall, bool fill) stages;
+  final Widget Function(_Geo g, bool fill, int maxRows) owing;
   final int stageRows;
   final int owingRows;
 
@@ -590,9 +593,17 @@ class _Grid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final g = _Geo.of(context);
+    final geo = _Geo.of(context);
     return LayoutBuilder(
       builder: (context, c) {
+        final content = _arrangement(geo, c) ?? _arrangement(geo.withoutCallouts, c) ?? SingleChildScrollView(child: _oneColumn(geo));
+        return SizedBox(width: c.maxWidth, height: c.maxHeight, child: content);
+      },
+    );
+  }
+
+  /// The first arrangement that fits at [g]'s heights, or null when none does.
+  Widget? _arrangement(_Geo g, BoxConstraints c) {
         final w = c.maxWidth;
         final rowH = c.maxHeight - g.tile - _gap;
         final chartFits = rowH - _gap - g.methods >= _minChart;
@@ -611,25 +622,15 @@ class _Grid extends StatelessWidget {
           return null;
         }
 
-        final Widget content;
         final stacked = chartFits && w >= _stackedFrom;
         final side = chartFits && w >= _sideBySideFrom;
         final stackedN = stacked ? withTicker(stackedH) : null;
         final sideN = side ? withTicker(sideH) : null;
-        if (stackedN != null) {
-          content = _stacked(g, stackedN, true);
-        } else if (stacked && rowH >= stackedH(owingRows)) {
-          content = _stacked(g, owingRows, false);
-        } else if (sideN != null) {
-          content = _sideBySide(g, sideN, true);
-        } else if (side && rowH >= sideH(owingRows)) {
-          content = _sideBySide(g, owingRows, false);
-        } else {
-          content = SingleChildScrollView(child: _oneColumn(g));
-        }
-        return SizedBox(width: w, height: c.maxHeight, child: content);
-      },
-    );
+        if (stackedN != null) return _stacked(g, stackedN, true);
+        if (stacked && rowH >= stackedH(owingRows)) return _stacked(g, owingRows, false);
+        if (sideN != null) return _sideBySide(g, sideN, true);
+        if (side && rowH >= sideH(owingRows)) return _sideBySide(g, owingRows, false);
+        return null;
   }
 
   Widget _pair(List<Widget> tiles) => Row(
@@ -698,9 +699,9 @@ class _Grid extends StatelessWidget {
       Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(height: g.stages(stageRows, tall: false), child: stages(false, false)),
+          SizedBox(height: g.stages(stageRows, tall: false), child: stages(g, false, false)),
           const SizedBox(height: _gap),
-          Expanded(child: owing(true, owingN)),
+          Expanded(child: owing(g, true, owingN)),
         ],
       ),
     ),
@@ -716,9 +717,9 @@ class _Grid extends StatelessWidget {
       Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(child: stages(true, true)),
+          Expanded(child: stages(g, true, true)),
           const SizedBox(width: _gap),
-          Expanded(child: owing(true, owingN)),
+          Expanded(child: owing(g, true, owingN)),
         ],
       ),
     ),
@@ -735,9 +736,9 @@ class _Grid extends StatelessWidget {
       const SizedBox(height: _gap),
       SizedBox(height: g.methods, child: methods),
       const SizedBox(height: _gap),
-      SizedBox(height: g.stages(stageRows, tall: false), child: stages(false, false)),
+      SizedBox(height: g.stages(stageRows, tall: false), child: stages(g, false, false)),
       const SizedBox(height: _gap),
-      owing(false, owingRows),
+      owing(g, false, owingRows),
       if (ticker != null) ...[
         const SizedBox(height: _gap),
         SizedBox(height: g.methods, child: ticker),
@@ -812,6 +813,23 @@ class _PanelHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The line under a panel's title that names what its figures show, in words: the finding first, the rows after.
+class _Callout extends StatelessWidget {
+  final _Geo g;
+  final String text;
+  final Color color;
+  const _Callout({required this.g, required this.text, required this.color});
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    height: g.callout,
+    child: Align(
+      alignment: Alignment.topLeft,
+      child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: _T.meta.copyWith(fontWeight: FontWeight.w700, color: color)),
+    ),
+  );
 }
 
 class _EmptyNote extends StatelessWidget {
@@ -901,7 +919,7 @@ class _PressableState extends State<_Pressable> {
   }
 }
 
-/// "All 209 jobs ›": a small text link in a panel's title row.
+/// "All 209 ›": a small text link in a panel's title row.
 class _Link extends StatelessWidget {
   final String text;
   final String label;
@@ -1031,475 +1049,24 @@ class _Rows extends StatelessWidget {
 }
 
 // =============================================================================
-// MONTHLY CHART (bars = the selected year, tick = the same month a year earlier)
+// CASH COLLECTED (the story chart from dash_story.dart, with this year against last in the title row)
 // =============================================================================
 
-class _MonthIntent extends Intent {
-  final int delta;
-  const _MonthIntent(this.delta);
-}
-
-class _MonthlyChart extends StatefulWidget {
-  final List<double> data;
-  final List<double> prior;
-  final int year;
-  final double total;
-  final double priorTotal;
-  const _MonthlyChart({
-    required this.data,
-    required this.prior,
-    required this.year,
-    required this.total,
-    required this.priorTotal,
-  });
-
-  @override
-  State<_MonthlyChart> createState() => _MonthlyChartState();
-}
-
-class _MonthlyChartState extends State<_MonthlyChart> with SingleTickerProviderStateMixin {
-  late final AnimationController _intro = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 900),
+/// "↓ 6% on 2025, same dates": the year so far against the same dates a year earlier (a past year: the whole year
+/// before). The words match the charts' "on 2025, same months"; "vs 2025 to date" read as all of 2025.
+Widget _vsPrior(double total, double priorTotal, int year) {
+  final pct = (total - priorTotal) / priorTotal * 100;
+  final change = pct.abs().round();
+  final thisYear = year == DashClock.now().year;
+  return DashChangeChip(
+    pct: pct,
+    text: '$change% on ${year - 1}${thisYear ? ', same dates' : ''}',
+    tooltip: thisYear
+        ? '${_money(total)} collected ${_toDateRange()}, $year, against ${_money(priorTotal)} '
+            'over the same dates in ${year - 1}.'
+        : '${_money(total)} collected in $year, against ${_money(priorTotal)} in ${year - 1}.',
+    semanticsLabel: '${pct >= 0 ? 'Up' : 'Down'} $change% on ${thisYear ? 'the same dates in ' : ''}${year - 1}',
   );
-
-  /// The month under the pointer, or picked with the arrow keys.
-  int? _index;
-  bool _focused = false;
-
-  bool get _reduceMotion => MediaQuery.disableAnimationsOf(context);
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_reduceMotion) {
-      _intro.value = 1;
-    } else if (_intro.isDismissed) {
-      _intro.forward();
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant _MonthlyChart old) {
-    super.didUpdateWidget(old);
-    if (!identical(old.data, widget.data)) {
-      _index = null;
-      if (_reduceMotion) {
-        _intro.value = 1;
-      } else {
-        _intro.forward(from: 0);
-      }
-    }
-  }
-
-  @override
-  void dispose() {
-    _intro.dispose();
-    super.dispose();
-  }
-
-  /// This year's month in progress (its bar is drawn lighter: it isn't a whole month yet). Null for a past year.
-  int? get _inProgress {
-    final now = DashClock.now();
-    return widget.year == now.year ? now.month - 1 : null;
-  }
-
-  int? _indexFor(double dx, double width) {
-    final plotW = width - _ChartPainter.left - _ChartPainter.right;
-    if (plotW <= 0) return null;
-    final i = ((dx - _ChartPainter.left) / (plotW / 12)).floor();
-    return (i < 0 || i >= 12) ? null : i;
-  }
-
-  void _step(int delta) {
-    final start = _index ?? (_inProgress ?? 11);
-    setState(() => _index = (start + (_index == null ? 0 : delta)).clamp(0, 11));
-  }
-
-  /// One month in words, for the tooltip's screen-reader twin.
-  String _describe(int i) {
-    final w = widget;
-    final month = dashMonthNames[i];
-    final ip = _inProgress;
-    if (ip != null && i > ip) return '$month ${w.year}: not here yet. ${w.year - 1}: ${_money(w.prior[i])}';
-    final partial = i == ip;
-    return '$month ${w.year}${partial ? ' so far' : ''}: ${_money(w.data[i])}. '
-        '${w.year - 1}${partial ? ', whole month' : ''}: ${_money(w.prior[i])}';
-  }
-
-  String _summary() {
-    final last = _inProgress ?? 11;
-    return [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${_compactMoney(widget.data[i])}'].join(', ');
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final w = widget;
-    final maxV = [...w.data, ...w.prior].fold<double>(0, math.max);
-    final scale = _niceScale(maxV);
-    final inProgress = _inProgress;
-    final empty = maxV <= 0;
-    final font = DefaultTextStyle.of(context).style.fontFamily;
-
-    final header = Wrap(
-      alignment: WrapAlignment.spaceBetween,
-      crossAxisAlignment: WrapCrossAlignment.center,
-      spacing: 16,
-      runSpacing: 6,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Semantics(header: true, child: const Text('Cash collected', style: _T.panelTitle)),
-            if (w.priorTotal > 0 && w.total > 0) ...[const SizedBox(width: 10), _vsPrior()],
-          ],
-        ),
-        if (!empty)
-          ExcludeSemantics(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _legendSwatch(DashUi.emeraldDeep, '${w.year}'),
-                if (inProgress != null && w.data[inProgress] > 0) ...[
-                  const SizedBox(width: 14),
-                  _legendSwatch(DashUi.emeraldDeep.withValues(alpha: 0.4), '${dashMonthNames[inProgress]} so far'),
-                ],
-                const SizedBox(width: 14),
-                _legendSwatch(DashUi.slate, '${w.year - 1}', tick: true),
-              ],
-            ),
-          ),
-      ],
-    );
-
-    return _Panel(
-      fill: true,
-      header: header,
-      child: empty
-          ? _EmptyNote('No payments recorded in ${w.year}.')
-          : Semantics(
-              container: true,
-              label: 'Cash collected by month, ${w.year}, with the same month of ${w.year - 1} for comparison',
-              value: _index == null ? _summary() : _describe(_index!),
-              hint: 'Left and right arrow keys move between months',
-              child: FocusableActionDetector(
-                shortcuts: const {
-                  SingleActivator(LogicalKeyboardKey.arrowLeft): _MonthIntent(-1),
-                  SingleActivator(LogicalKeyboardKey.arrowRight): _MonthIntent(1),
-                  SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
-                },
-                actions: {
-                  _MonthIntent: CallbackAction<_MonthIntent>(onInvoke: (i) {
-                    _step(i.delta);
-                    return null;
-                  }),
-                  DismissIntent: CallbackAction<DismissIntent>(onInvoke: (_) {
-                    setState(() => _index = null);
-                    return null;
-                  }),
-                },
-                onShowFocusHighlight: (v) => setState(() {
-                  _focused = v;
-                  // Keyboard focus starts on the latest month; leaving clears the pick.
-                  _index = v ? (_index ?? inProgress ?? 11) : null;
-                }),
-                child: ExcludeSemantics(
-                  child: LayoutBuilder(
-                    builder: (context, c) {
-                      return MouseRegion(
-                        onHover: (e) {
-                          final i = _indexFor(e.localPosition.dx, c.maxWidth);
-                          if (i != _index) setState(() => _index = i);
-                        },
-                        onExit: (_) {
-                          if (!_focused) setState(() => _index = null);
-                        },
-                        child: Container(
-                          foregroundDecoration: _focusRing(_focused, BorderRadius.circular(8)),
-                          child: Stack(
-                            children: [
-                              RepaintBoundary(
-                                child: AnimatedBuilder(
-                                  animation: _intro,
-                                  builder: (context, _) => CustomPaint(
-                                    size: Size(c.maxWidth, c.maxHeight),
-                                    painter: _ChartPainter(
-                                      data: w.data,
-                                      prior: w.prior,
-                                      scale: scale,
-                                      hover: _index,
-                                      inProgress: inProgress,
-                                      intro: Curves.easeOutCubic.transform(_intro.value),
-                                      fontFamily: font,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              if (_index != null) _tooltip(c, _index!),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-    );
-  }
-
-  Widget _tooltip(BoxConstraints c, int i) {
-    final w = widget;
-    final plotW = c.maxWidth - _ChartPainter.left - _ChartPainter.right;
-    final slot = plotW / 12;
-    final cx = _ChartPainter.left + slot * i + slot / 2;
-    const tipW = 196.0;
-    // Beside the month rather than over it, so the bar and its label stay visible.
-    final rightSide = cx + slot / 2 + 8 + tipW <= c.maxWidth;
-    final left = rightSide ? cx + slot / 2 + 4 : math.max(0.0, cx - slot / 2 - 4 - tipW);
-    final ip = _inProgress;
-    final future = ip != null && i > ip;
-    final partial = i == ip;
-    final cur = w.data[i];
-    final pri = w.prior[i];
-    final change = !future && !partial && pri > 0 && cur > 0 ? (cur - pri) / pri * 100 : null;
-
-    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFCBD5E1));
-    return Positioned(
-      left: left,
-      top: 4,
-      width: tipW,
-      child: IgnorePointer(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          decoration: BoxDecoration(color: DashUi.ink, borderRadius: BorderRadius.circular(10)),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('${dashMonthNames[i]} ${w.year}${partial ? ' so far' : ''}', style: dim),
-              const SizedBox(height: 2),
-              Text(
-                future ? 'Not here yet' : _money(cur),
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w800,
-                  height: 1.25,
-                  color: Colors.white,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text('${w.year - 1}${partial ? ' (whole month)' : ''}: ${_money(pri)}', style: dim),
-              if (change != null)
-                Text(
-                  '${change >= 0 ? '+' : '−'}${change.abs().round()}% on ${w.year - 1}',
-                  style: dim.copyWith(color: change >= 0 ? const Color(0xFF6EE7B7) : const Color(0xFFFCA5A5)),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _legendSwatch(Color color, String text, {bool tick = false}) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [
-      Container(
-        width: tick ? 14 : 11,
-        height: tick ? 3 : 11,
-        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(tick ? 1.5 : 3)),
-      ),
-      const SizedBox(width: 6),
-      Text(text, style: _T.legend),
-    ],
-  );
-
-  /// "↓ 6% vs 2025 to date": the selected stretch against the same dates a year earlier.
-  Widget _vsPrior() {
-    final w = widget;
-    final pct = (w.total - w.priorTotal) / w.priorTotal * 100;
-    final up = pct >= 0;
-    final color = up ? DashUi.emeraldText : DashUi.redText;
-    final thisYear = w.year == DashClock.now().year;
-    return Tooltip(
-      message: thisYear
-          ? '${_money(w.total)} collected ${_toDateRange()}, ${w.year}, against ${_money(w.priorTotal)} '
-              'over the same dates in ${w.year - 1}.'
-          : '${_money(w.total)} collected in ${w.year}, against ${_money(w.priorTotal)} in ${w.year - 1}.',
-      child: Semantics(
-        label: '${up ? 'Up' : 'Down'} ${pct.abs().round()}% on ${thisYear ? 'the same dates in ' : ''}${w.year - 1}',
-        child: ExcludeSemantics(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 13, color: color),
-                const SizedBox(width: 3),
-                Text(
-                  '${pct.abs().round()}% vs ${w.year - 1}${thisYear ? ' to date' : ''}',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, height: 1.3, color: color),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ChartPainter extends CustomPainter {
-  /// Room for the axis labels on the left, the month labels below, and the value labels above the tallest bar.
-  static const left = 54.0;
-  static const right = 4.0;
-  static const bottom = 22.0;
-  static const top = 18.0;
-
-  final List<double> data;
-  final List<double> prior;
-  final _Scale scale;
-  final int? hover;
-  final int? inProgress;
-  final double intro;
-  final String? fontFamily;
-
-  const _ChartPainter({
-    required this.data,
-    required this.prior,
-    required this.scale,
-    required this.hover,
-    required this.inProgress,
-    required this.intro,
-    required this.fontFamily,
-  });
-
-  void _text(Canvas canvas, String s, Offset at, TextStyle style, {TextAlign align = TextAlign.left}) {
-    final tp = TextPainter(
-      text: TextSpan(text: s, style: style.copyWith(fontFamily: fontFamily)),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final dx = align == TextAlign.right
-        ? at.dx - tp.width
-        : (align == TextAlign.center ? at.dx - tp.width / 2 : at.dx);
-    tp.paint(canvas, Offset(dx, at.dy - tp.height / 2));
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final plot = Rect.fromLTRB(left, top, size.width - right, size.height - bottom);
-    if (plot.width <= 0 || plot.height <= 0) return;
-    const axis = TextStyle(
-      fontSize: 11.5,
-      color: DashUi.subtle,
-      fontWeight: FontWeight.w500,
-      fontFeatures: [FontFeature.tabularFigures()],
-    );
-
-    for (var t = 0; t <= scale.ticks; t++) {
-      final y = plot.bottom - plot.height * (t * scale.step / scale.max);
-      canvas.drawLine(
-        Offset(plot.left, y),
-        Offset(plot.right, y),
-        Paint()
-          ..color = t == 0 ? DashUi.line : DashUi.faint
-          ..strokeWidth = 1,
-      );
-      _text(canvas, _compactMoney(t * scale.step), Offset(plot.left - 10, y), axis, align: TextAlign.right);
-    }
-
-    final slot = plot.width / 12;
-    final barW = math.min(slot * 0.54, 42.0);
-    // Value labels only when each month has room for "$396k" without touching its neighbours.
-    final labels = slot >= 34;
-    final labelAlpha = ((intro - 0.6) / 0.4).clamp(0.0, 1.0);
-
-    for (var i = 0; i < 12; i++) {
-      final cx = plot.left + slot * i + slot / 2;
-      final focus = hover == i;
-      final dim = hover != null && !focus;
-      _text(
-        canvas,
-        dashMonthNames[i],
-        Offset(cx, plot.bottom + 12),
-        TextStyle(
-          fontSize: 11.5,
-          fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
-          color: focus ? DashUi.ink : DashUi.subtle,
-        ),
-        align: TextAlign.center,
-      );
-
-      // Months that haven't happened yet draw nothing, not a zero-height bar.
-      final ip = inProgress;
-      final future = ip != null && i > ip;
-      final partial = i == ip;
-      final barTop = plot.bottom - plot.height * (data[i] / scale.max);
-      if (!future && data[i] > 0) {
-        final h = plot.height * (data[i] / scale.max) * intro;
-        final rect = RRect.fromRectAndCorners(
-          Rect.fromLTWH(cx - barW / 2, plot.bottom - h, barW, h),
-          topLeft: const Radius.circular(5),
-          topRight: const Radius.circular(5),
-        );
-        // The month in progress is lighter with an outline: a part month, not a collapse.
-        final alpha = partial ? 0.4 : 1.0;
-        canvas.drawRRect(rect, Paint()..color = DashUi.emeraldDeep.withValues(alpha: dim ? alpha * 0.35 : alpha));
-        if (partial) {
-          canvas.drawRRect(
-            rect.deflate(0.75),
-            Paint()
-              ..style = PaintingStyle.stroke
-              ..strokeWidth = 1.5
-              ..color = DashUi.emeraldDeep.withValues(alpha: dim ? 0.35 : 1),
-          );
-        }
-      }
-
-      // The label sits on its own bar; only when last year's tick would cross it does it move above the tick.
-      var labelY = barTop - 10;
-      if (prior[i] > 0) {
-        final y = plot.bottom - plot.height * (prior[i] / scale.max);
-        canvas.drawLine(
-          Offset(cx - barW / 2 - 4, y),
-          Offset(cx + barW / 2 + 4, y),
-          Paint()
-            ..color = DashUi.slate.withValues(alpha: dim ? 0.3 : 0.9)
-            ..strokeWidth = 2.5
-            ..strokeCap = StrokeCap.round,
-        );
-        if (y > labelY - 11 && y < barTop + 2) labelY = y - 11;
-      }
-
-      if (labels && labelAlpha > 0 && !future && data[i] > 0) {
-        _text(
-          canvas,
-          _barLabel(data[i]),
-          Offset(cx, labelY),
-          TextStyle(
-            fontSize: 11.5,
-            fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
-            color: (focus ? DashUi.ink : DashUi.slate).withValues(alpha: labelAlpha * (dim ? 0.45 : 1)),
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-          align: TextAlign.center,
-        );
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _ChartPainter old) =>
-      old.data != data ||
-      old.prior != prior ||
-      old.hover != hover ||
-      old.intro != intro ||
-      old.inProgress != inProgress ||
-      old.fontFamily != fontFamily ||
-      old.scale.max != scale.max;
 }
 
 // =============================================================================
@@ -1523,6 +1090,10 @@ class _MethodsPanel extends StatelessWidget {
         child: Row(
           children: [
             Semantics(header: true, child: const Text('How customers paid', style: _T.panelTitle)),
+            if (total > 0) ...[
+              const SizedBox(width: 4),
+              Text(_finding(total), maxLines: 1, style: _T.meta.copyWith(fontWeight: FontWeight.w700, color: DashUi.slate)),
+            ],
             const SizedBox(width: 16),
             Expanded(child: total <= 0 ? const SizedBox.shrink() : _splitBar(total)),
           ],
@@ -1548,6 +1119,16 @@ class _MethodsPanel extends StatelessWidget {
     );
   }
 
+  /// "· mostly by check (69%)" when the biggest method is the majority, "· led by check (41%)" when it isn't (the same
+  /// rule as DashSplitPanel).
+  String _finding(double total) {
+    final top = methods.reduce((a, b) => b.amount > a.amount ? b : a);
+    final how = top.method == 'Other' ? 'another way' : 'by ${_methodWord(top.method)}';
+    if (methods.length == 1) return '· all $how';
+    final share = _share(top.amount, total);
+    return top.amount * 2 > total ? '· mostly $how ($share)' : '· led by ${_methodWord(top.method)} ($share)';
+  }
+
   /// Repeats the figures listed under it, so screen readers skip it.
   Widget _splitBar(double total) => ExcludeSemantics(
     child: ClipRRect(
@@ -1571,7 +1152,7 @@ class _MethodsPanel extends StatelessWidget {
   );
 
   Widget _method(_Method m, double total) => Tooltip(
-    message: '${_count(m.count, 'payment')} by ${m.method.toLowerCase()}',
+    message: '${_count(m.count, 'payment')} by ${_methodWord(m.method)}',
     waitDuration: const Duration(milliseconds: 400),
     child: Semantics(
       container: true,
@@ -1612,6 +1193,8 @@ class _StagesPanel extends StatelessWidget {
   final List<_Stage> stages;
   final double total;
   final int jobs;
+  final double over90;
+  final int over90Jobs;
 
   /// Two-line rows, for a narrow column.
   final bool tall;
@@ -1621,6 +1204,8 @@ class _StagesPanel extends StatelessWidget {
     required this.stages,
     required this.total,
     required this.jobs,
+    required this.over90,
+    required this.over90Jobs,
     required this.tall,
     required this.fill,
   });
@@ -1638,7 +1223,8 @@ class _StagesPanel extends StatelessWidget {
         note: 'today',
         trailing: jobs > 0
             ? _Link(
-                text: 'All ${_count(jobs, 'job')}',
+                // The number alone, as on Jobs: at 130% text the word cut the title short ("Unpaid by sta…").
+                text: 'All ${_whole.format(jobs)}',
                 label: 'See all ${_count(jobs, 'unpaid job')}',
                 onTap: () => _openUnpaidJobs(
                   context,
@@ -1650,15 +1236,35 @@ class _StagesPanel extends StatelessWidget {
             : null,
       ),
       child: total <= 0
-          ? SizedBox(height: math.max(stages.length, 2) * base, child: const _EmptyNote('Nothing is owed today.'))
-          : _Rows(
-              count: stages.length,
-              base: base,
-              give: 28,
-              row: (i) => _row(context, stages[i], maxV),
+          ? SizedBox(height: g.callout + math.max(stages.length, 2) * base, child: const _EmptyNote('Nothing is owed today.'))
+          : Column(
+              mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (!g.callouts)
+                  const SizedBox.shrink()
+                else if (over90 > 0)
+                  _Callout(
+                        g: g,
+                        text: '${_money(over90)} is at the 90 Day Notice stage (${_share(over90, total)})',
+                    color: DashUi.redText,
+                  )
+                else
+                  _Callout(g: g, text: 'Nothing has reached the 90 Day Notice', color: DashUi.emeraldText),
+                _wrapFill(
+                  _Rows(
+                    count: stages.length,
+                    base: base,
+                    give: 28,
+                    row: (i) => _row(context, stages[i], maxV),
+                  ),
+                ),
+              ],
             ),
     );
   }
+
+  Widget _wrapFill(Widget rows) => fill ? Expanded(child: rows) : rows;
 
   Widget _row(BuildContext context, _Stage s, double maxV) {
     final open = s.jobCount > 0;
@@ -1683,7 +1289,7 @@ class _StagesPanel extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: hover ? s.color.withValues(alpha: 0.08) : Colors.transparent,
+          color: hover ? s.color.withValues(alpha: 0.08) : s.color.withValues(alpha: 0),
           borderRadius: BorderRadius.circular(8),
         ),
         child: Row(
@@ -1737,8 +1343,9 @@ class _StagesPanel extends StatelessWidget {
 class _OwingPanel extends StatelessWidget {
   final _Geo g;
   final List<_Owing> rows;
+  final double outstanding;
   final bool fill;
-  const _OwingPanel({required this.g, required this.rows, required this.fill});
+  const _OwingPanel({required this.g, required this.rows, required this.outstanding, required this.fill});
 
   @override
   Widget build(BuildContext context) {
@@ -1751,19 +1358,39 @@ class _OwingPanel extends StatelessWidget {
         trailing: rows.isEmpty ? null : Text('Top ${rows.length}', style: _T.meta),
       ),
       child: rows.isEmpty
-          ? SizedBox(height: 2 * g.owingRow, child: const _EmptyNote('No customer owes a balance today.'))
-          : _Rows(
-              count: rows.length,
-              base: g.owingRow,
-              give: 36,
-              row: (i) => _row(context, rows[i], last: i == rows.length - 1),
+          ? SizedBox(height: g.callout + 2 * g.owingRow, child: const _EmptyNote('No customer owes a balance today.'))
+          : Column(
+              mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (g.callouts) _Callout(g: g, text: _finding(), color: DashUi.slate),
+                if (fill)
+                  Expanded(child: _list(context))
+                else
+                  _list(context),
+              ],
             ),
     );
   }
 
+  Widget _list(BuildContext context) => _Rows(
+    count: rows.length,
+    base: g.owingRow,
+    give: 36,
+    row: (i) => _row(context, rows[i], last: i == rows.length - 1),
+  );
+
+  /// "$164,036 · 69% of what is owed": how much of the balance these few customers hold.
+  String _finding() {
+    final sum = rows.fold<double>(0, (t, r) => t + r.amount);
+    return outstanding > 0 ? '${_money(sum)} · ${_share(sum, outstanding)} of what is owed' : _money(sum);
+  }
+
   Widget _row(BuildContext context, _Owing r, {required bool last}) {
     final old = (r.oldestDays ?? 0) > 90;
-    final meta = '${_count(r.jobCount, 'job')}${r.oldestDays == null ? '' : ' · oldest ${_age(r.oldestDays!)}'}';
+    // "Oldest" needs more than one job to compare.
+    final age = r.oldestDays == null ? null : _age(r.oldestDays!);
+    final meta = '${_count(r.jobCount, 'job')}${age == null ? '' : (r.jobCount == 1 ? ' · $age old' : ' · oldest $age')}';
     return _Pressable(
       onTap: () => _openUnpaidJobs(
         context,
@@ -1779,7 +1406,7 @@ class _OwingPanel extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: hover ? DashUi.faint : Colors.transparent,
+          color: hover ? DashUi.faint : DashUi.faint.withValues(alpha: 0),
           borderRadius: BorderRadius.circular(8),
           border: last || hover ? null : const Border(bottom: BorderSide(color: DashUi.faint)),
         ),
@@ -1928,7 +1555,6 @@ class _CollectionsSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final g = _Geo.of(context);
     return Semantics(
       label: 'Loading collections',
       child: ExcludeSemantics(
@@ -1940,8 +1566,8 @@ class _CollectionsSkeleton extends StatelessWidget {
             todayTiles: [_tile(), _tile()],
             chart: _panel(fill: true),
             methods: _panel(rows: 1, rowH: 24),
-            stages: (tall, fill) => _panel(rows: 6, rowH: tall ? g.stageRowTall : g.stageRowWide),
-            owing: (fill, max) => _panel(rows: 5, rowH: g.owingRow),
+            stages: (g, tall, fill) => _panel(rows: 6, rowH: tall ? g.stageRowTall : g.stageRowWide),
+            owing: (g, fill, max) => _panel(rows: 5, rowH: g.owingRow),
           ),
         ),
       ),

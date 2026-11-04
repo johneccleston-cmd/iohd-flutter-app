@@ -5,7 +5,7 @@
     "display": "standalone",
     "background_color": "#F5F5F5",
     "theme_color": "#2196F3",
-    "description": "Enterprise Field Management and Payroll Hub",
+    "description": "IOHD Office, the back-office app for Integrity Overhead Door",
     "orientation": "any",
     "icons": [
         {

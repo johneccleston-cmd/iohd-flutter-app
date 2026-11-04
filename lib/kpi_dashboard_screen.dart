@@ -8,13 +8,25 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'theme/app_theme.dart';
+import 'widgets/dashboard_data.dart';
+import 'widgets/dash_hover_card.dart';
+import 'widgets/dash_story.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/dashboard_layout.dart';
+import 'widgets/dashboard_panels.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/main_navigation_shell.dart' show NavOverhang;
 import 'widgets/status_pill.dart';
 
 part 'employee_kpi_screen.dart';
+part 'employee_kpi_tech.dart';
+part 'employee_kpi_warehouse.dart';
+part 'employee_kpi_office.dart';
+part 'employee_kpi_sales.dart';
 
 class KPIDashboardScreen extends StatelessWidget {
   const KPIDashboardScreen({super.key});
@@ -109,8 +121,16 @@ class _EmployeeUser {
   final String name;
   final String jobTitle; // the raw role: colours and layouts key off it
   final String displayTitle; // what to print ("Commercial Estimator"); falls back to the role
+
+  /// The role as stored ("Technician", "warehouse"), never a display title: which KPI page someone gets follows the
+  /// server's own test on it (a role containing "tech" is a technician). /users sends it as `jobTitle`.
+  final String role;
   final String avatarUrl;
   final double? integrityScore; // null = no score recorded
+
+  /// Visits this year the office had to mark complete for them (each costs integrity points); null from an older
+  /// server.
+  final int? missedCompletions;
   final double? yearsWorked; // null = unknown
   final double? moraleScore; // 1-5, null until morale is tracked (the API doesn't send it yet)
 
@@ -119,8 +139,10 @@ class _EmployeeUser {
     required this.name,
     required this.jobTitle,
     required this.displayTitle,
+    required this.role,
     required this.avatarUrl,
     required this.integrityScore,
+    this.missedCompletions,
     required this.yearsWorked,
     required this.moraleScore,
   });
@@ -148,17 +170,19 @@ class _EmployeeUser {
     ], 'Unnamed');
 
     final jobTitle = _prettyRole(firstNonEmpty([json['jobTitle'], json['job_title'], json['title'], json['role']], 'Employee'));
-    final display = _str(json['displayTitle']);
+    // With no job title set, the server sends the raw role as the display title ("ADMIN"): print it like the role.
+    final rawDisplay = _str(json['displayTitle']);
+    final display = rawDisplay.toLowerCase() == _str(json['jobTitle'] ?? json['role']).toLowerCase() ? '' : rawDisplay;
     return _EmployeeUser(
       id: firstNonEmpty([json['id'], json['user_id']], name),
       name: name,
       jobTitle: jobTitle,
       displayTitle: display.isEmpty ? jobTitle : display,
-      avatarUrl: firstNonEmpty(
-        [json['avatarUrl'], json['avatar_url'], json['profile_image']],
-        'https://ui-avatars.com/api/?name=${Uri.encodeQueryComponent(name)}&background=E2E8F0&color=475569&size=512',
-      ),
+      role: firstNonEmpty([json['role'], json['jobTitle']], ''),
+      // No third-party avatar fallback: names are never sent to an outside service; the pages draw initials instead.
+      avatarUrl: _ownPhoto(firstNonEmpty([json['avatarUrl'], json['avatar_url'], json['profile_image']], '')),
       integrityScore: _num(json['integrityScore'] ?? json['integrity_score'] ?? json['score']),
+      missedCompletions: _num(json['missedCompletions'])?.round(),
       yearsWorked: _num(json['yearsWorked'] ?? json['years_worked'] ?? json['tenure']),
       moraleScore: _num(json['moraleScore'] ?? json['morale_score']),
     );
@@ -191,7 +215,7 @@ Future<List<_Entry>> _loadEntries() async {
     throw const _KpiLoadError('Your session expired. Please sign in again.');
   }
   if (response.statusCode != 200) {
-    throw _KpiLoadError('The server had a problem loading employees (code ${response.statusCode}).');
+    throw _KpiLoadError('The server had a problem (error ${response.statusCode}). Try again in a moment.');
   }
 
   final dynamic body = json.decode(response.body);
@@ -277,11 +301,15 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
     if (mounted) setState(() {});
   }
 
-  bool get _canLeft => _scroll.hasClients && _scroll.offset > 4;
-  bool get _canRight => _scroll.hasClients && _scroll.offset < _scroll.position.maxScrollExtent - 4;
+  /// Whether the list has been laid out. It is built but not laid out while an employee's page covers it (the KPI
+  /// pages are its child routes), and reading its size then throws.
+  bool get _measured => _scroll.hasClients && _scroll.position.hasContentDimensions && _scroll.position.hasViewportDimension;
+
+  bool get _canLeft => _measured && _scroll.offset > 4;
+  bool get _canRight => _measured && _scroll.offset < _scroll.position.maxScrollExtent - 4;
 
   void _page(int dir) {
-    if (!_scroll.hasClients) return;
+    if (!_measured) return;
     final pos = _scroll.position;
     final target = (pos.pixels + dir * _slot * 2).clamp(pos.minScrollExtent, pos.maxScrollExtent);
     _scroll.animateTo(
@@ -294,7 +322,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
   /// "1–4 of 9", from what is actually on screen.
   String get _rangeLabel {
     final n = _entries.length;
-    if (!_scroll.hasClients) return '$n employees';
+    if (!_measured) return '$n employees';
     final pos = _scroll.position;
     final first = (pos.pixels / _slot).floor() + 1;
     final last = ((pos.pixels + pos.viewportDimension) / _slot).floor().clamp(first, n);
@@ -355,6 +383,7 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
         children: [
           PageBanner(
             title: 'Team KPIs',
+            icon: accessIcon('hr_kpis'),
             actions: [
               if (loaded) ...[
                 Text(_rangeLabel, style: const TextStyle(color: Colors.white70, fontSize: 12.5, fontWeight: FontWeight.w600)),
@@ -388,6 +417,8 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
       return DashErrorPanel(
         title: "Couldn't load the team",
         message: _errorMessage!,
+        // The connection hint only when the connection is what failed (a server error already says what to do).
+        hint: _errorMessage!.startsWith('The server had a problem') ? null : 'Check your connection, then try again.',
         onRetry: _fetchAndSortUsers,
       );
     }
@@ -403,10 +434,12 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
             const SizedBox(height: 4),
             const Text('Add people in Team admin and they will show up here.', style: TextStyle(fontSize: 13, color: _slate)),
             const SizedBox(height: 14),
-            OutlinedButton.icon(
+            // The same green button as the error panel's, not the default Material purple.
+            FilledButton.icon(
               onPressed: _fetchAndSortUsers,
               icon: const Icon(Icons.refresh_rounded, size: 18),
               label: const Text('Refresh'),
+              style: FilledButton.styleFrom(backgroundColor: DashUi.emeraldDeep),
             ),
           ],
         ),
@@ -414,8 +447,10 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
     }
 
     final integrity = _teamAvgScore;
+    final n = _entries.length;
     final moraleColor = _avgMorale == null ? _muted : (_avgMorale! >= 4 ? DashUi.emerald : (_avgMorale! >= 3 ? DashUi.amber : DashUi.red));
-    final integrityColor = integrity == null ? _muted : (integrity >= 90 ? DashUi.emerald : (integrity >= 75 ? DashUi.amber : DashUi.red));
+    // The same colours as each person's score on the cards below and in their page's title bar.
+    final integrityColor = _scoreColor(integrity);
     final cards = <Widget>[
       _HeroCard(
         index: 0,
@@ -424,6 +459,9 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
         label: 'Team integrity',
         value: integrity,
         format: (v) => '${_fmtNum(v)}%',
+        // The same explanation as each person's page.
+        definition: 'The average integrity score of the ${dashCount(n, 'employee')} below. Everyone starts the year at 100 and loses '
+            'points each time the office has to mark one of their visits complete for them.',
         visual: _RingVisual(progress: (integrity ?? 0) / 100, color: integrityColor, icon: Icons.shield_rounded),
       ),
       _HeroCard(
@@ -434,6 +472,9 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
         value: _avgMorale,
         format: (v) => '${_fmtNum(v)} / 5',
         emptyText: 'Not tracked yet',
+        definition: _avgMorale == null
+            ? 'How the team feels, 1 to 5, averaged over everyone with a score. Nothing records morale yet.'
+            : 'How the team feels, 1 to 5: the average of the morale scores recorded for the employees below.',
         visual: _avgMorale == null ? null : _StarsVisual(score: _avgMorale!, color: moraleColor),
       ),
       _HeroCard(
@@ -441,17 +482,20 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
         icon: Icons.groups_rounded,
         color: DashUi.blue,
         label: 'Employees',
-        value: _entries.length.toDouble(),
+        value: n.toDouble(),
         format: (v) => v.round().toString(),
+        definition: 'Active employees, each with a card below: everyone but the owner and the shared warehouse login.',
         visual: _FacesVisual(names: [for (final e in _entries) e.user.name], color: DashUi.blue),
       ),
       _HeroCard(
         index: 3,
         icon: Icons.hourglass_bottom_rounded,
         color: DashUi.indigo,
-        label: 'Avg tenure',
+        label: 'Average tenure',
         value: _avgTenure,
-        format: (v) => '${_fmtNum(v)} yrs',
+        // Written like each card's company tenure ("2 yrs 3 mo"), so the two read the same way.
+        format: _fmtTenure,
+        definition: 'The average time with the company of the employees below, from their hire dates.',
         visual: Icon(Icons.workspace_premium_rounded, size: 46, color: DashUi.indigo.withValues(alpha: 0.22)),
       ),
     ];
@@ -574,7 +618,7 @@ class _KpiSkeleton extends StatelessWidget {
               children: [
                 for (var i = 0; i < 4; i++) ...[
                   if (i > 0) const SizedBox(width: 14),
-                  const Expanded(child: SkeletonBox(h: 82, r: 18)),
+                  Expanded(child: SkeletonBox(h: _HeroCard.heightOf(context), r: 18)),
                 ],
               ],
             ),
@@ -608,7 +652,8 @@ class _KpiSkeleton extends StatelessWidget {
 // =============================================================================
 
 /// A scorecard with some life in it: it slides up and fades in one after another, lifts under the cursor, and a soft
-/// shine sweeps across every few seconds (staggered, so the row ripples). All of it stops under reduced motion.
+/// shine sweeps across every few seconds (staggered, so the row ripples). All of it stops under reduced motion. On
+/// hover or keyboard focus its [definition] rises in on the dark card every scorecard uses.
 class _HeroCard extends StatefulWidget {
   final int index; // position in the row: sets the entrance delay and the shine offset
   final IconData icon;
@@ -617,6 +662,7 @@ class _HeroCard extends StatefulWidget {
   final double? value;
   final String Function(double) format;
   final String emptyText;
+  final String definition;
   final Widget? visual;
 
   const _HeroCard({
@@ -627,8 +673,13 @@ class _HeroCard extends StatefulWidget {
     required this.value,
     required this.format,
     this.emptyText = '—',
+    required this.definition,
     this.visual,
   });
+
+  /// The card's height: room for the label row and the value at the current text size (and the half pixels text
+  /// lines round up to).
+  static double heightOf(BuildContext context) => math.max(82.0, 26 + 4 + MediaQuery.textScalerOf(context).scale(30) * 1.05 + 20);
 
   @override
   State<_HeroCard> createState() => _HeroCardState();
@@ -677,7 +728,13 @@ class _HeroCardState extends State<_HeroCard> with TickerProviderStateMixin {
       emptyText: widget.emptyText,
       visual: widget.visual,
     );
-    return MouseRegion(
+    final v = widget.value;
+    return DashHoverCard(
+      title: widget.label,
+      value: v == null ? widget.emptyText : widget.format(v),
+      body: widget.definition,
+      color: widget.color,
+      child: MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
       child: AnimatedBuilder(
@@ -712,6 +769,7 @@ class _HeroCardState extends State<_HeroCard> with TickerProviderStateMixin {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -787,7 +845,7 @@ class _HeroCardBody extends StatelessWidget {
       label: '$label: ${v == null ? emptyText : format(v)}',
       excludeSemantics: true,
       child: Container(
-        height: 82,
+        height: _HeroCard.heightOf(context),
         padding: const EdgeInsets.fromLTRB(16, 8, 14, 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
@@ -820,11 +878,12 @@ class _HeroCardBody extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Flexible(
+                        // Sentence case, like the scorecard titles on each person's page.
                         child: Text(
-                          label.toUpperCase(),
+                          label,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, letterSpacing: 0.8, color: _slate),
+                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _slate),
                         ),
                       ),
                     ],
@@ -1239,6 +1298,17 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
     );
   }
 
+  /// The photo area for someone with no photo: their initials, large, on the page tint.
+  Widget _initialsCover() {
+    final parts = widget.user.name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    final initials = parts.isEmpty ? '?' : (parts.first[0] + (parts.length > 1 ? parts.last[0] : '')).toUpperCase();
+    final color = _roleColor(widget.user.jobTitle);
+    return ColoredBox(
+      color: color.withValues(alpha: 0.10),
+      child: Center(child: Text(initials, style: TextStyle(fontSize: 64, fontWeight: FontWeight.w800, color: color.withValues(alpha: 0.55)))),
+    );
+  }
+
   Widget _content(BuildContext context) {
     final score = widget.user.integrityScore;
     final scoreColor = _scoreColor(score);
@@ -1251,12 +1321,22 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
     double? delta;
     if (score != null && widget.teamAvg != null) delta = score - widget.teamAvg!;
 
+    return LayoutBuilder(builder: (context, card) {
+    // What the name, title, tenure and score need at the current text size: in full, and compact (tenure on one line, a
+    // smaller ring). The words get 5/9 of the card, more when they need it (a short window at large text), and the photo
+    // takes what is left.
+    final s = MediaQuery.textScalerOf(context);
+    double line(double size) => s.scale(size) * 1.34;
+    final scoreText = line(12) + s.scale(26) * 1.1 + line(11.5);
+    final full = 32 + line(22) + 4 + line(13.5) + 6 + 1 + (20 + line(12) + 2 + line(16)) + (22 + math.max(58.0, scoreText)) + 8;
+    final squeezed = 20 + line(22) + 4 + line(13.5) + 6 + (12 + math.max(line(12), line(16))) + (14 + math.max(46.0, scoreText)) + 10;
+    final infoH = math.min(card.maxHeight, math.max(card.maxHeight * 5 / 9, squeezed));
+    final compact = infoH < full;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         // HEADER PHOTO
         Expanded(
-          flex: 4,
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -1265,7 +1345,9 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                 scale: _hovered && !reduce ? 1.06 : 1.0,
                 duration: reduce ? Duration.zero : const Duration(milliseconds: 300),
                 curve: Curves.easeOutCubic,
-                child: Image.network(
+                child: widget.user.avatarUrl.isEmpty
+                    ? _initialsCover()
+                    : Image.network(
                   widget.user.avatarUrl,
                   fit: BoxFit.cover,
                   alignment: const Alignment(0.0, -0.4), // Focal alignment shifted down for face visibility
@@ -1372,11 +1454,13 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
           ),
         ),
 
-        // INFO & METRICS
-        Expanded(
-          flex: 5,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(24, 14, 24, 18),
+        // INFO & METRICS. In a short window (1280x600) the full blocks don't fit under the photo, so tenure goes on one
+        // line and the score ring shrinks; nothing is dropped and the text keeps its size.
+        SizedBox(
+          height: infoH,
+          child: Builder(builder: (context) {
+            return Padding(
+            padding: EdgeInsets.fromLTRB(24, compact ? 10 : 14, 24, compact ? 10 : 18),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1406,18 +1490,20 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                     ),
                   ],
                 ),
-                const Divider(color: _faint, height: 1),
+                if (!compact) const Divider(color: _faint, height: 1),
                 Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 18),
+                  padding: EdgeInsets.symmetric(vertical: compact ? 6 : 10, horizontal: compact ? 14 : 18),
                   decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
-                  child: Column(
+                  child: Flex(
+                    direction: compact ? Axis.horizontal : Axis.vertical,
+                    mainAxisAlignment: compact ? MainAxisAlignment.spaceBetween : MainAxisAlignment.start,
                     children: [
                       const Text(
-                        'COMPANY TENURE',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _muted, letterSpacing: 0.6),
+                        'Company tenure',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
                       ),
-                      const SizedBox(height: 2),
+                      if (!compact) const SizedBox(height: 2),
                       Text(
                         _fmtTenure(widget.user.yearsWorked),
                         style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
@@ -1434,7 +1520,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                   builder: (context, t, _) {
                     return Container(
                       width: double.infinity,
-                      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                      padding: EdgeInsets.symmetric(vertical: compact ? 6 : 10, horizontal: 16),
                       decoration: BoxDecoration(
                         color: scoreColor.withValues(alpha: 0.08),
                         borderRadius: BorderRadius.circular(14),
@@ -1443,8 +1529,8 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                       child: Row(
                         children: [
                           SizedBox(
-                            width: 58,
-                            height: 58,
+                            width: compact ? 46 : 58,
+                            height: compact ? 46 : 58,
                             child: CustomPaint(
                               painter: _RingPainter(
                                 progress: score == null ? 0 : (score / 100).clamp(0.0, 1.0) * t,
@@ -1460,8 +1546,8 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                               mainAxisSize: MainAxisSize.min,
                               children: [
                                 const Text(
-                                  'INTEGRITY SCORE',
-                                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _slate, letterSpacing: 0.8),
+                                  'Integrity score',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
                                 ),
                                 Text(
                                   score == null ? '—' : '${_fmtNum(score * t)}%',
@@ -1490,9 +1576,11 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                 ),
               ],
             ),
-          ),
+          );
+          }),
         ),
       ],
     );
+    });
   }
 }

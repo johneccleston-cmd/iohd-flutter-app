@@ -363,7 +363,7 @@ void main() {
       expect(find.text('HR'), findsNothing);
     });
 
-    testWidgets('search sends a name to Customers and a number to Jobs', (t) async {
+    testWidgets('with nothing in the dropdown, search sends a name to Customers and a number to Jobs', (t) async {
       final router = await pumpNav(t, _wide);
       await t.enterText(find.byType(TextField), 'Smith');
       await t.testTextInput.receiveAction(TextInputAction.search);
@@ -383,7 +383,7 @@ void main() {
       await t.pumpAndSettle();
       expect(router.state.uri.toString(), '/jobs?q=Smith');
 
-      await navSignIn(admin: false, denied: denyViews(['customers', 'jobs']));
+      await navSignIn(admin: false, denied: denyViews(['customers', 'jobs', 'estimates']));
       await pumpNav(t, _wide);
       expect(find.byType(TextField), findsNothing);
     });

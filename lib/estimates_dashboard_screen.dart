@@ -1,10 +1,12 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 import 'widgets/dashboard_layout.dart';
+import 'widgets/dash_story.dart';
 import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
 
@@ -22,6 +24,7 @@ class EstimatesDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return DashboardLayout(
       title: 'Estimates',
+      icon: accessIcon('dash_estimates'),
       builder: (context, selectedYear) {
         return EstimatesDashboardContent(selectedYear: selectedYear);
       },
@@ -64,13 +67,19 @@ class _MonthlyValueData {
   final double wonValue;
   final int sentCount;
   final int wonCount;
+
+  /// Won or lost (decided), the win rate's denominator.
+  final int closedCount;
   final bool hasData;
   final double lostValue;
 
-  const _MonthlyValueData(this.month, this.sentValue, this.wonValue, this.sentCount, this.wonCount, this.hasData, [this.lostValue = 0.0]);
+  const _MonthlyValueData(this.month, this.sentValue, this.wonValue, this.sentCount, this.wonCount, this.closedCount,
+      this.hasData, [this.lostValue = 0.0]);
 
   double get avgSentValue => sentCount > 0 ? sentValue / sentCount : 0.0;
-  double get winRate => sentCount > 0 ? (wonCount / sentCount) * 100 : 0.0;
+
+  /// Won ÷ (won + lost), as the Win rate scorecard counts it (not won ÷ sent, which counts open quotes as not won).
+  double get winRate => closedCount > 0 ? (wonCount / closedCount) * 100 : 0.0;
 }
 
 class _LostReason {
@@ -98,15 +107,6 @@ class _StaleEstimate {
 
   const _StaleEstimate(this.jobId, this.customerName, this.value, this.daysOld);
 }
-
-const _categoricalPalette = [
-  DashUi.sky,
-  DashUi.amber,
-  DashUi.emeraldDeep,
-  DashUi.indigo,
-  DashUi.red,
-  DashUi.blue,
-];
 
 // =============================================================================
 // SCREEN STATE
@@ -206,6 +206,7 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
             'won_value': _parseDouble(item['won_value']),
             'sent_count': _parseInt(item['sent_count']),
             'won_count': _parseInt(item['won_count']),
+            'closed_count': _parseInt(item['closed_count']),
             'lost_value': _parseDouble(item['lost_value']),
           };
         }
@@ -217,20 +218,24 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
           double wv = monthlyMap[mNum]?['won_value'] ?? 0.0;
           int sc = monthlyMap[mNum]?['sent_count'] ?? 0;
           int wc = monthlyMap[mNum]?['won_count'] ?? 0;
+          int cc = monthlyMap[mNum]?['closed_count'] ?? 0;
           final lv = monthlyMap[mNum]?['lost_value'] ?? 0.0;
-          return _MonthlyValueData(monthNames[i], sv, wv, sc, wc, sv > 0 || wv > 0 || sc > 0, lv);
+          return _MonthlyValueData(monthNames[i], sv, wv, sc, wc, cc, sv > 0 || wv > 0 || sc > 0, lv);
         });
 
-        // Parse Lost Reasons
+        // Parse Lost Reasons. The server lists all five reasons, lost or not; one with nothing lost would only add a
+        // "$0, 0 lost" row (Timing usually: the standard statuses have no "Lost - Timing").
         final List<dynamic> rawReasons = body['lostReasons'] ?? [];
         _lostReasons = [];
-        for (int i = 0; i < rawReasons.length; i++) {
-          final r = rawReasons[i];
+        for (final r in rawReasons) {
+          final value = _parseDouble(r['lost_value']);
+          final count = _parseInt(r['count']);
+          if (count <= 0 && value <= 0) continue;
           _lostReasons.add(_LostReason(
             r['reason']?.toString() ?? 'Unknown',
-            _parseDouble(r['lost_value']),
-            _parseInt(r['count']),
-            _reasonColors[i % _reasonColors.length],
+            value,
+            count,
+            _reasonColors[_lostReasons.length % _reasonColors.length],
           ));
         }
 
@@ -251,21 +256,25 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
 
     final year = widget.selectedYear;
     final period = dashPeriodLabel(year);
+    final dated = year < DashClock.now().year ? 'dated in $year' : 'dated $period';
     final g = DashGeo.of(context);
 
     // Lost value, win rate and estimates sent count estimates dated in the year shown. Open value is the whole
     // pipeline as of today, every year included, so it reads the same whichever year is picked.
     final openCaption = _openPriorCount > 0
-        ? 'All years · $_openPriorCount before ${_priorYearLabel()}'
+        ? 'All years · ${dashCount(_openPriorCount, 'estimate')} pre-${_priorYearLabel()}'
         : 'All open estimates · today';
-    final lostCaption = 'Estimates marked lost · $period';
-    final winCaption = 'Won ÷ (won + lost) · all estimates';
-    final sentCaption = 'Quoted, dated $period';
+    final lostCaption = 'Marked lost · $period';
+    final winCaption = 'Won ÷ (won + lost) · $period';
+    final sentCaption = 'Quoted · $period';
+    // With nothing won or lost yet the win rate is a dash, not a 0% that reads as "everything was lost".
+    final undecided = _winRate == 0 && _valueData.every((m) => m.closedCount == 0);
+    String rate(double v) => undecided ? '—' : '${v.toStringAsFixed(1)}%';
     // The trend lines show together, only when every card still has room for its words beside one.
     final sparkRoom = [
       dashSparkRoom(context, title: 'Open value', value: _money(_openValue), caption: openCaption),
       dashSparkRoom(context, title: 'Lost value', value: _money(_lostValue), caption: lostCaption),
-      dashSparkRoom(context, title: 'Win rate', value: '${_winRate.toStringAsFixed(1)}%', caption: winCaption),
+      dashSparkRoom(context, title: 'Win rate', value: rate(_winRate), caption: winCaption),
       dashSparkRoom(context, title: 'Estimates sent', value: _fmt(_sentYtd), caption: sentCaption),
     ].reduce(math.max);
 
@@ -278,9 +287,9 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
         caption: openCaption,
         definition: 'Every estimate still at Estimate Provided or Estimate Follow Up today, whatever year '
             'it is dated, so this is the same whichever year is shown. '
-            '${_openPriorCount > 0 ? '${_money(_openPriorValue)} of it ($_openPriorCount estimates) is dated '
-                'before ${_priorYearLabel()}; the oldest are first in the stale list. ' : ''}'
-            'Nothing is closed or changed here. The line is one reading a day.',
+            '${_openPriorCount > 0 ? '${_money(_openPriorValue)} of it (${dashCount(_openPriorCount, 'estimate')}) is '
+                'dated before ${_priorYearLabel()}; the oldest are first in the stale list. ' : ''}'
+            'The line shows one reading a day.',
         valueColor: DashUi.indigo,
         index: 0,
         trend: _openHistory.length >= 2 ? _openHistory : null,
@@ -291,9 +300,10 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
         value: _lostValue,
         format: (v) => _money(v),
         caption: lostCaption,
-        definition: 'Value of estimates dated $period that are marked lost. The line shows it by '
+        definition: 'Value of estimates $dated that are marked lost. The line shows it by '
             'finished month.',
-        valueColor: DashUi.red,
+        // Nothing lost is not a problem, so only a real loss is red.
+        valueColor: _lostValue > 0 ? DashUi.red : DashUi.ink,
         index: 1,
         trend: dashTrend([for (final m in _valueData) m.lostValue], year),
         sparkMinWidth: sparkRoom,
@@ -301,11 +311,12 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
       AnimatedMetricCard(
         title: 'Win rate',
         value: _winRate,
-        format: (v) => '${v.toStringAsFixed(1)}%',
+        format: rate,
         caption: winCaption,
-        definition: "Of the estimates dated $period that have been decided, the share that were won. Open "
-            "estimates aren't counted. This covers every estimate, so it can differ from the Sales "
-            "dashboard's win rate (sales team only).",
+        definition: "Of the estimates $dated that have been decided (won or lost), the share that were won. Open "
+            "estimates aren't counted${undecided ? ', and none has been won or lost yet' : ''}. The line shows it by "
+            "finished month. This covers every estimate, so it can differ from the Sales dashboard's win rate "
+            "(sales team only).",
         valueColor: DashUi.emeraldDeep,
         index: 2,
         trend: dashTrend([for (final m in _valueData) m.winRate], year),
@@ -316,7 +327,7 @@ class _EstimatesDashboardContentState extends State<EstimatesDashboardContent> w
         value: _sentYtd.toDouble(),
         format: (v) => _fmt(v.toInt()),
         caption: sentCaption,
-        definition: 'Estimates dated $period that got past Estimate Requested, so a quote was given. The '
+        definition: 'Estimates $dated that got past Estimate Requested, so a quote was given. The '
             'line shows them by finished month.',
         valueColor: DashUi.sky,
         index: 3,
@@ -382,13 +393,13 @@ class _Grid extends StatelessWidget {
         // of its two panels has room for a customer's name.
         final rightInner = (w - dashGap) * 10 / 23 - 40;
         final tall = rightInner < _LostReasonsPanel.oneLineWidth(g);
-        final lostH = g.rows(lostRows, tall ? g.rowTall : g.rowWide);
+        final lostH = g.rows(lostRows, tall ? g.rowTall : g.rowWide) + g.callout;
         // Stacked, the stale list gets what the lost reasons leave; side by side, the whole height in half the width.
-        final stackedFit = ((bodyH - lostH - dashGap - g.panelTop) / g.listRow).floor();
-        final sideFit = ((bodyH - g.panelTop) / g.listRow).floor();
+        final stackedFit = ((bodyH - lostH - dashGap - g.panelTop - g.callout) / g.listRow).floor();
+        final sideFit = ((bodyH - g.panelTop - g.callout) / g.listRow).floor();
         final chartFits = w >= _twoColumnsFrom && bodyH - dashGap - g.strip >= _minChart;
         final stacked = chartFits && stackedFit >= 3;
-        final side = chartFits && !stacked && bodyH >= g.rows(lostRows, g.rowTall) && sideFit >= 2;
+        final side = chartFits && !stacked && bodyH >= g.rows(lostRows, g.rowTall) + g.callout && sideFit >= 2;
         final Widget content;
         if (stacked || side) {
           final right = stacked
@@ -448,7 +459,7 @@ class _Grid extends StatelessWidget {
                 const SizedBox(height: dashGap),
                 SizedBox(height: g.strip, child: aging),
                 const SizedBox(height: dashGap),
-                SizedBox(height: g.rows(lostRows, g.rowTall), child: lost(true)),
+                SizedBox(height: g.rows(lostRows, g.rowTall) + g.callout, child: lost(true)),
                 const SizedBox(height: dashGap),
                 stale(10, false),
               ],
@@ -497,6 +508,10 @@ class _EstimatesChart extends StatelessWidget {
     final overallAvg = totalCount > 0 ? totalSent / totalCount : 0.0;
     String months(List<double> v, int last, String Function(double) f) =>
         [for (var i = 0; i <= last; i++) '${dashMonthNames[i]} ${f(v[i])}'].join(', ');
+    final totalWon = wonValue.fold<double>(0, (a, b) => a + b);
+    final totalWonCount = wonCount.fold<double>(0, (a, b) => a + b);
+    final thisYear = year == DashClock.now().year;
+    String count(double v) => fmt.format(v.round());
 
     return DashMonthChart(
       year: year,
@@ -504,10 +519,28 @@ class _EstimatesChart extends StatelessWidget {
         DashChartView(
           tab: 'Value',
           title: 'Sent and won',
-          note: '${_compactMoney(totalSent)} sent in $year',
+          note: 'by estimate date',
+          story: dashMonthStory(
+            values: wonValue,
+            year: year,
+            figure: totalSent,
+            figureFormat: dashWholeMoney,
+            figureLabel: thisYear ? 'quoted so far' : 'quoted',
+            figureColor: DashUi.ink,
+            format: _compactMoney,
+            unit: ' won',
+            bestWord: 'Best month for wins',
+            // The value won, not a share of the value quoted: that share counts open quotes as not won, so beside
+            // the Win rate scorecard (won ÷ decided) it read as a second, much lower win rate.
+            extra: [
+              if (totalSent > 0)
+                DashStoryStat(totalWon, dashWholeMoney, thisYear ? 'won so far' : 'won', DashUi.emeraldText),
+            ],
+          ),
           series: [DashSeries('Sent', sentValue, DashUi.slate), DashSeries('Won', wonValue, DashUi.emeraldDeep)],
           axis: _compactMoney,
-          badge: DashChangeChip.monthOverMonth(sentValue, year, what: 'Value sent'),
+          // No month-on-month chip here or on Count: with sent and won side by side a bare "↑ 4% Sep vs Aug" can't say
+          // which of the two it is, and the headline already answers the chart.
           tip: (i) => [
             DashTipRow('Sent', '\$${fmt.format(sentValue[i])}', color: DashUi.slate),
             DashTipRow('Won', '\$${fmt.format(wonValue[i])}', color: DashUi.emeraldDeep),
@@ -520,10 +553,23 @@ class _EstimatesChart extends StatelessWidget {
         DashChartView(
           tab: 'Count',
           title: 'Sent and won',
-          note: '${fmt.format(totalCount)} sent in $year',
+          note: 'by estimate date',
+          story: dashMonthStory(
+            values: sentCount,
+            year: year,
+            figure: totalCount.toDouble(),
+            figureFormat: count,
+            figureLabel: thisYear ? 'estimates sent so far' : 'estimates sent',
+            figureColor: DashUi.ink,
+            format: count,
+            unit: ' sent',
+            bestWord: 'Busiest month',
+            extra: [
+              if (totalCount > 0) DashStoryStat(totalWonCount, count, thisYear ? 'won so far' : 'won', DashUi.emeraldText),
+            ],
+          ),
           series: [DashSeries('Sent', sentCount, DashUi.slate), DashSeries('Won', wonCount, DashUi.emeraldDeep)],
           axis: (v) => fmt.format(v),
-          badge: DashChangeChip.monthOverMonth(sentCount, year, what: 'Estimates sent'),
           tip: (i) => [
             DashTipRow('Sent', fmt.format(sentCount[i]), color: DashUi.slate),
             DashTipRow('Won', fmt.format(wonCount[i]), color: DashUi.emeraldDeep),
@@ -536,15 +582,29 @@ class _EstimatesChart extends StatelessWidget {
         DashChartView(
           tab: 'Avg value',
           title: 'Average estimate',
-          note: '\$${fmt.format(overallAvg)} average sent in $year',
-          series: [DashSeries('Average sent', avgValue, DashUi.amber)],
+          // As short as the other views' note, so the view toggle keeps the title's row (the key says "Average sent").
+          note: 'by estimate date',
+          story: dashMonthStory(
+            values: avgValue,
+            year: year,
+            figure: overallAvg,
+            figureFormat: dashWholeMoney,
+            figureLabel: 'the average estimate',
+            figureColor: DashUi.ink,
+            // The dashed line's figure (every estimate counts once), so "under the average" means under that line.
+            average: overallAvg > 0 ? overallAvg : null,
+            format: _compactMoney,
+            bestWord: 'Biggest month',
+            unit: ' on average',
+          ),
+          series: [DashSeries('Average sent', avgValue, DashUi.slate)],
           average: overallAvg > 0 ? overallAvg : null,
           averageLabel: overallAvg > 0 ? 'Year average ${_compactMoney(overallAvg)}' : null,
           axis: _compactMoney,
           barLabel: _compactMoney,
           badge: DashChangeChip.monthOverMonth(avgValue, year, what: 'Average estimate value'),
           tip: (i) => [
-            DashTipRow('Average', '\$${fmt.format(avgValue[i])}', color: DashUi.amber),
+            DashTipRow('Average', '\$${fmt.format(avgValue[i])}', color: DashUi.slate),
             DashTipRow('Sent', fmt.format(sentCount[i])),
           ],
           summary: (last) => 'Average estimate by month: ${months(avgValue, last, _compactMoney)}',
@@ -574,9 +634,13 @@ class _AgingStrip extends StatelessWidget {
     return DashSplitPanel(
       g: g,
       title: 'Open pipeline by age',
-      note: 'today',
-      tooltip: 'Every open estimate, by how long ago it was dated. Click an age to see its estimates.',
+      tooltip: 'Every open estimate as of today, by how long ago it was dated. Click an age to see its estimates.',
       emptyText: 'No open estimates.',
+      // "today" opens the finding rather than sitting in a note, so the title row has one "·", not two.
+      finding: () {
+        final old = buckets.where((b) => b.label.contains('31')).fold<double>(0, (t, b) => t + b.value);
+        return old > 0 ? 'today, ${dashShare(old, total)} is over 30 days old' : 'today, none is over 30 days old';
+      }(),
       items: [
         for (var i = 0; i < buckets.length; i++)
           DashSplitItem(
@@ -602,6 +666,8 @@ class _AgingStrip extends StatelessWidget {
       context: context,
       builder: (_) => EstimateListDialog(
         year: year,
+        // These are open today whatever year they are dated, so the list isn't headed with the year picked.
+        periodLabel: 'As of today',
         heading: 'Open estimates · ${b.label}',
         totalLabel: 'open',
         color: b.label.contains('31') ? DashUi.red : DashUi.blue,
@@ -637,6 +703,16 @@ class _LostReasonsPanel extends StatelessWidget {
     final maxV = reasons.fold<double>(0, (m, r) => math.max(m, r.lostValue));
     final total = reasons.fold<double>(0, (s, r) => s + r.lostValue);
     final base = tall ? g.rowTall : g.rowWide;
+    final top = reasons.isEmpty ? null : reasons.reduce((a, b) => b.lostValue > a.lostValue ? b : a);
+    final String finding;
+    if (top == null || total <= 0) {
+      finding = 'Nothing lost by value in $year';
+    } else if (top.reason.toLowerCase() == 'other') {
+      // "Other" is every lost status that names none of the four reasons, plain "Lost" included.
+      finding = '${dashShare(top.lostValue, total)} of lost value has no specific reason';
+    } else {
+      finding = 'Lost most to ${top.reason.toLowerCase()}: ${_usd(top.lostValue)} (${dashShare(top.lostValue, total)})';
+    }
     return DashPanel(
       fill: true,
       header: DashPanelHeader(
@@ -647,17 +723,22 @@ class _LostReasonsPanel extends StatelessWidget {
       ),
       child: reasons.every((r) => r.count == 0 && r.lostValue <= 0)
           ? DashEmptyNote('No estimates dated $year were lost.')
-          : DashRows(
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DashCallout(g: g, text: finding, color: top != null && top.reason.toLowerCase() == 'other' ? DashUi.amberText : DashUi.redText),
+                Expanded(
+                  child: DashRows(
               count: reasons.length,
               base: base,
-              give: 12,
+              give: 36,
               row: (i) {
                 final r = reasons[i];
                 return DashBarRow(
                   g: g,
                   label: r.reason,
                   fraction: maxV > 0 ? r.lostValue / maxV : 0,
-                  color: r.color,
+                  color: DashUi.red,
                   amount: _usd(r.lostValue),
                   detail: '${r.count} lost',
                   tall: tall,
@@ -670,6 +751,9 @@ class _LostReasonsPanel extends StatelessWidget {
                       '${dashShare(r.lostValue, total)} of the lost value',
                 );
               },
+                  ),
+                ),
+              ],
             ),
     );
   }
@@ -682,7 +766,7 @@ class _LostReasonsPanel extends StatelessWidget {
         year: year,
         heading: 'Lost estimates · ${r.reason}',
         totalLabel: 'lost',
-        color: r.color,
+        color: DashUi.red,
         icon: Icons.highlight_off_rounded,
         uri: Uri.parse(
           '$kApiBaseUrl/api/dashboards/estimates/drill'
@@ -722,7 +806,9 @@ class _StalePanel extends StatelessWidget {
       header: DashPanelHeader(
         g: g,
         title: 'Stale estimates',
-        note: 'oldest first',
+        // The value floor, so the count here isn't read against the open pipeline's ages, which count every estimate.
+        // The order needs no note: each row says how old it is.
+        note: '\$1,000+',
         tooltip: 'Open estimates 14 days old or more and worth \$1,000 or more, as of today, oldest first.',
         trailing: rows.isEmpty
             ? null
@@ -736,17 +822,30 @@ class _StalePanel extends StatelessWidget {
       ),
       child: rows.isEmpty
           ? SizedBox(height: 2 * g.listRow, child: const DashEmptyNote('No stale estimates today.'))
-          : Align(
-              alignment: Alignment.topCenter,
-              child: DashRows(
-                count: shown.length,
-                base: g.listRow,
-                give: 14,
-                row: (i) => _row(context, shown[i], last: i == shown.length - 1),
-              ),
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: fill ? MainAxisSize.max : MainAxisSize.min,
+              children: [
+                DashCallout(
+                  g: g,
+                  text: '${_usd(rows.fold<double>(0, (t, e) => t + e.value))} waiting on ${dashCount(rows.length, 'quote')} 14+ days old',
+                  color: DashUi.amberText,
+                ),
+                _fill(Align(
+                  alignment: Alignment.topCenter,
+                  child: DashRows(
+                    count: shown.length,
+                    base: g.listRow,
+                    give: 14,
+                    row: (i) => _row(context, shown[i], last: i == shown.length - 1),
+                  ),
+                )),
+              ],
             ),
     );
   }
+
+  Widget _fill(Widget child) => fill ? Expanded(child: child) : child;
 
   Widget _row(BuildContext context, _StaleEstimate e, {required bool last}) {
     final old = e.daysOld > 90;
@@ -760,7 +859,7 @@ class _StalePanel extends StatelessWidget {
         duration: const Duration(milliseconds: 120),
         padding: const EdgeInsets.symmetric(horizontal: 8),
         decoration: BoxDecoration(
-          color: hover ? DashUi.faint : Colors.transparent,
+          color: hover ? DashUi.faint : DashUi.faint.withValues(alpha: 0),
           borderRadius: BorderRadius.circular(8),
           border: last || hover ? null : const Border(bottom: BorderSide(color: DashUi.faint)),
         ),
@@ -851,8 +950,8 @@ class _EstimatesSkeleton extends StatelessWidget {
             tiles: List.generate(4, (_) => const DashSkeletonTile()),
             chart: const DashSkeletonPanel(fill: true),
             aging: DashSkeletonPanel(rows: 1, rowH: g.line(15) + 6),
-            lost: (tall) => DashSkeletonPanel(rows: 5, rowH: tall ? g.rowTall : g.rowWide),
-            lostRows: 5,
+            lost: (tall) => DashSkeletonPanel(rows: 4, rowH: tall ? g.rowTall : g.rowWide),
+            lostRows: 4,
             stale: (maxRows, fill) => DashSkeletonPanel(rows: math.min(3, maxRows), rowH: g.listRow),
             staleRows: 3,
           ),

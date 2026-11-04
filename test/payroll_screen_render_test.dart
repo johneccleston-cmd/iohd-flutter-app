@@ -308,7 +308,7 @@ void main() {
         expect(reached, isTrue, reason: 'Tab never reached the Total Due card');
         await t.sendKeyEvent(LogicalKeyboardKey.enter);
         await _pumpN(t, 4);
-        expect(find.textContaining('Weekly cash pay and retainage released'), findsOneWidget);
+        expect(find.textContaining('Cash pay and retainage released, less recoveries'), findsOneWidget);
       });
       semantics.dispose();
     });

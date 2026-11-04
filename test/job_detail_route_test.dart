@@ -93,7 +93,7 @@ void main() {
       await t.tap(find.text('OPEN JOB FROM CALENDAR'));
       await t.pumpAndSettle();
       expect(router.routerDelegate.currentConfiguration.uri.path, '/jobs/1096183137');
-      expect(find.text('Job # 1096183137'), findsOneWidget);
+      expect(find.text('JOB # 1096183137'), findsOneWidget);
       expect(find.byType(MainNavigationShell), findsOneWidget); // the top nav is still there
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/job_detail_in_shell.png'));
       expect(find.textContaining('Back to'), findsNothing); // no Back button: the nav bar is the way out
@@ -118,19 +118,19 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('OPEN JOB FROM CALENDAR'));
       await t.pumpAndSettle();
-      expect(find.text('Job # 1096183137'), findsOneWidget);
+      expect(find.text('JOB # 1096183137'), findsOneWidget);
       router.go('/calendar');
       await t.pumpAndSettle();
       await t.tap(find.text('OPEN OTHER JOB FROM CALENDAR'));
       await t.pumpAndSettle();
-      expect(find.text('Job # 1099999999'), findsOneWidget, reason: 'second job should replace the first');
-      expect(find.text('Job # 1096183137'), findsNothing);
+      expect(find.text('JOB # 1099999999'), findsOneWidget, reason: 'second job should replace the first');
+      expect(find.text('JOB # 1096183137'), findsNothing);
       expect(_requested, contains('/api/jobs/1099999999'), reason: 'and it loads that job from the server');
 
       // Same section, different job (e.g. the matching-estimate link): also switches.
       router.go('/jobs/1096183137');
       await t.pumpAndSettle();
-      expect(find.text('Job # 1096183137'), findsOneWidget);
+      expect(find.text('JOB # 1096183137'), findsOneWidget);
       expect(t.takeException(), isNull);
     }, () => MockClient((req) async {
           _requested.add(req.url.path);

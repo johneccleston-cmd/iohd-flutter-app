@@ -9,15 +9,19 @@ import 'package:http/http.dart' as http;
 
 import '../config/access.dart';
 import '../config/api_config.dart';
+import '../config/app_info.dart';
 import '../config/auth_session.dart';
 import '../theme/app_theme.dart';
+import 'app_about_dialog.dart';
 import 'app_dialog.dart';
 import 'assistant_panel.dart';
 import 'dashboard_kit.dart';
+import 'global_search.dart';
 
 // --- Design tokens ---------------------------------------------------------
-// The bar is white and its menus are white panels, like the dashboards' pop-ups. Red marks the page you are on
-// (and Ask Jarvis, the one branded action); everything else is ink and slate, so that mark is easy to find.
+// The bar is white and its menus are white panels, like the dashboards' pop-ups. Red marks the page you are on;
+// everything else is ink and slate, so that mark is easy to find. Ask Jarvis is the one filled button: navy, the app's
+// primary-button colour, with Jarvis's own mark.
 const Color _brandRed = AppTheme.brandRed;
 const Color _activeTint = Color(0xFFFCEEEE); // the current page's row in a menu
 const Color _focusRing = DashUi.blue; // keyboard focus, the same ring the payroll screen uses
@@ -64,10 +68,12 @@ class _M {
   static const double chevronSize = 16;
   static const double chevronGap = 2;
   static const double logoWidth = 84; // the 600x330 logo at 46 high
-  static const double askPad = 13;
+  static const double askPad = 12; // before the mark; after the label it is askPad + 2
+  static const double askMark = 18;
+  static const double askGap = 8;
 
   static const tabText = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, letterSpacing: -0.1);
-  static const askText = TextStyle(fontSize: 13, fontWeight: FontWeight.w700);
+  static const askText = TextStyle(fontSize: 13, fontWeight: FontWeight.w700, letterSpacing: -0.1);
 
   static double tab(double labelWidth, {required bool chevron, bool compact = false, bool showLabel = true}) =>
       (compact ? tabPadCompact : tabPad) * 2 +
@@ -257,7 +263,7 @@ _Fit _fitBar(
       _M.tabGap * math.max(0, modules.length - 1);
   final full = tabs(compact: false);
   final compact = tabs(compact: true);
-  final ask = _M.askPad * 2 + 16 + 7 + _textWidth(context, 'Ask Jarvis', _M.askText);
+  final ask = _M.askPad * 2 + 2 + _M.askMark + _M.askGap + _textWidth(context, 'Ask Jarvis', _M.askText);
 
   double needed(_Fit f) {
     final gap = f.dense ? 8.0 : 10.0;
@@ -281,6 +287,21 @@ _Fit _fitBar(
 
 // --- The shell ----------------------------------------------------------------
 
+/// A layer the shell paints above the navigation bar and the page (below menus, tooltips, dialogs, and hidden while
+/// the drawer is open), for something on a page that breaks out over the bar's bottom edge, such as the photo in a
+/// person's KPI title bar. A page sets [layer] after a frame (to a [Positioned] that follows the page with a
+/// [CompositedTransformFollower], showWhenUnlinked false, so it hides with the page) and clears it when it goes.
+class NavOverhang extends InheritedWidget {
+  final ValueNotifier<Widget?> layer;
+  const NavOverhang({super.key, required this.layer, required super.child});
+
+  /// The shell's layer, or null outside the shell (the page then keeps the thing inside itself).
+  static ValueNotifier<Widget?>? maybeOf(BuildContext context) => context.dependOnInheritedWidgetOfExactType<NavOverhang>()?.layer;
+
+  @override
+  bool updateShouldNotify(NavOverhang old) => layer != old.layer;
+}
+
 class MainNavigationShell extends StatefulWidget {
   final StatefulNavigationShell navigationShell;
 
@@ -295,12 +316,18 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
   final FocusNode _searchFocus = FocusNode();
   final FocusNode _menuButtonFocus = FocusNode(debugLabel: 'All pages');
   final GlobalKey<ScaffoldState> _scaffold = GlobalKey<ScaffoldState>();
+  final _overhang = ValueNotifier<Widget?>(null);
+  bool _drawerOpen = false;
 
   @override
   void dispose() {
     _searchController.dispose();
     _searchFocus.dispose();
     _menuButtonFocus.dispose();
+    // Pages take their things off the layer a frame after they go (they go first, and their clean-up is queued
+    // first), so it is disposed after that.
+    final overhang = _overhang;
+    WidgetsBinding.instance.addPostFrameCallback((_) => overhang.dispose());
     super.dispose();
   }
 
@@ -311,11 +338,12 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     );
   }
 
-  /// Where a search goes: a number is a job, anything else a customer. When the account can't open that list it
-  /// searches the other one; null when it can open neither (and the search control is left out).
+  /// The list a search opens when nothing in the dropdown was chosen: a number is a job, anything else a customer.
+  /// When the account can't open that list it tries the others; null when it can open none (and the search control
+  /// is left out).
   String? _searchPath(String query) {
     final session = AuthSession.instance;
-    final lists = int.tryParse(query) != null ? ['jobs', 'customers'] : ['customers', 'jobs'];
+    final lists = int.tryParse(query) != null ? ['jobs', 'customers', 'estimates'] : ['customers', 'jobs', 'estimates'];
     for (final key in lists) {
       if (session.canView(key)) return '/$key';
     }
@@ -332,24 +360,31 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     context.go('$path?q=${Uri.encodeQueryComponent(query)}');
   }
 
+  void _openPick(SearchPick pick) {
+    final route = pick.route;
+    if (route == null) {
+      _handleSearch(pick.query);
+    } else {
+      context.go(route, extra: pick.extra);
+    }
+  }
+
   Future<void> _showSearchDialog() async {
-    final session = AuthSession.instance;
-    final subtitle = session.canView('jobs') && session.canView('customers')
-        ? 'A job number opens Jobs. Anything else searches Customers.'
-        : session.canView('jobs')
-            ? 'Searches Jobs.'
-            : 'Searches Customers.';
-    final query = await showDialog<String>(context: context, builder: (_) => _SearchDialog(subtitle: subtitle));
-    if (query != null && mounted) _handleSearch(query);
+    final pick = await showDialog<SearchPick>(context: context, builder: (_) => const _SearchDialog());
+    if (pick != null && mounted) _openPick(pick);
   }
 
   bool _assistantOpen = false;
+  final GlobalKey _askKey = GlobalKey(debugLabel: 'Ask Jarvis');
 
-  /// Ctrl+J / Cmd+J and the Ask Jarvis button. Ignored while the panel is already open.
+  /// Ctrl+J / Cmd+J and the Ask Jarvis button. Ignored while the panel is already open. Either way the panel grows out
+  /// of the button, so it is clear where Jarvis lives.
   void _openAssistant() {
     if (_assistantOpen) return;
     _assistantOpen = true;
-    showAssistantPanel(context).whenComplete(() => _assistantOpen = false);
+    final box = _askKey.currentContext?.findRenderObject();
+    final from = box is RenderBox && box.hasSize ? box.localToGlobal(Offset.zero) & box.size : null;
+    showAssistantPanel(context, from: from).whenComplete(() => _assistantOpen = false);
   }
 
   @override
@@ -373,30 +408,50 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
             event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.escape && _NavMenuState.dismissShown()
                 ? KeyEventResult.handled
                 : KeyEventResult.ignored,
-        child: Scaffold(
-          key: _scaffold,
-          drawerEnableOpenDragGesture: false,
-          onDrawerChanged: (open) {
-            if (!open) _menuButtonFocus.requestFocus();
-          },
-          drawer: _NavDrawer(
-            modules: modules,
-            active: active,
-            here: here,
-            onGo: (route) => context.go(route),
-            onGoBranch: _goBranch,
-          ),
-          appBar: PreferredSize(
-            preferredSize: const Size.fromHeight(_M.bar),
-            child: SelectionContainer.disabled(
-              child: LayoutBuilder(
-                builder: (context, constraints) => _buildBar(context, constraints.maxWidth, modules, active, here),
+        child: NavOverhang(
+          layer: _overhang,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              _scaffoldWith(context, modules, active, here),
+              ValueListenableBuilder<Widget?>(
+                valueListenable: _overhang,
+                // Transparent Material: the app's text style (it is outside the Scaffold), and clicks still pass.
+                builder: (context, over, _) => over == null || _drawerOpen
+                    ? const SizedBox.shrink()
+                    : Material(type: MaterialType.transparency, child: Stack(fit: StackFit.expand, children: [over])),
               ),
-            ),
+            ],
           ),
-          body: widget.navigationShell,
         ),
       ),
+    );
+  }
+
+  Widget _scaffoldWith(BuildContext context, List<_NavModule> modules, _NavModule? active, String? here) {
+    return Scaffold(
+      key: _scaffold,
+      drawerEnableOpenDragGesture: false,
+      onDrawerChanged: (open) {
+        if (!open) _menuButtonFocus.requestFocus();
+        setState(() => _drawerOpen = open);
+      },
+      drawer: _NavDrawer(
+        modules: modules,
+        active: active,
+        here: here,
+        onGo: (route) => context.go(route),
+        onGoBranch: _goBranch,
+      ),
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(_M.bar),
+        child: SelectionContainer.disabled(
+          child: LayoutBuilder(
+            builder: (context, constraints) => _buildBar(context, constraints.maxWidth, modules, active, here),
+          ),
+        ),
+      ),
+      body: widget.navigationShell,
     );
   }
 
@@ -499,7 +554,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                   _searchField(context, fit.search!),
                 SizedBox(width: gap),
               ],
-              _AskButton(showLabel: fit.askLabel, onTap: _openAssistant),
+              _AskButton(key: _askKey, showLabel: fit.askLabel, onTap: _openAssistant),
               SizedBox(width: fit.dense ? 8 : 12),
               const _AccountMenu(),
             ],
@@ -515,48 +570,49 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
           borderSide: BorderSide(color: c, width: w),
         );
 
-    // The long hint shows only when it fits at this text size.
-    const longHint = 'Search jobs or customers';
-    const shortHint = 'Search…';
-    final inner = width - 36 - 12 - 8; // icon, left padding, right padding
-    final hint = _textWidth(context, longHint, _searchText) <= inner ? longHint : shortHint;
-
     return SizedBox(
       width: width,
       height: _M.control,
-      child: TextField(
+      child: GlobalSearchDropdown(
         controller: _searchController,
         focusNode: _searchFocus,
-        onSubmitted: _handleSearch,
-        textInputAction: TextInputAction.search,
-        cursorColor: _Bar.fieldText,
-        style: _searchText.copyWith(color: _Bar.fieldText),
-        decoration: InputDecoration(
-          hintText: hint,
-          hintStyle: _searchText.copyWith(color: _Bar.fieldHint),
-          prefixIcon: const Icon(Icons.search_rounded, size: 18, color: _Bar.fieldIcon),
-          prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: _M.control),
-          suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
-          suffixIcon: ListenableBuilder(
-            listenable: _searchController,
-            builder: (context, _) {
-              if (_searchController.text.isEmpty) return const SizedBox.shrink();
-              return IconButton(
-                tooltip: 'Clear',
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-                padding: EdgeInsets.zero,
-                icon: const Icon(Icons.close_rounded, size: 16, color: _Bar.fieldIcon),
-                onPressed: _searchController.clear,
-              );
-            },
+        onPick: _openPick,
+        builder: (context, submit) => TextField(
+          controller: _searchController,
+          focusNode: _searchFocus,
+          onSubmitted: (_) => submit(),
+          onEditingComplete: () {}, // Enter keeps focus: the dropdown stays up until the search has its answer
+          onTapOutside: (_) => _searchFocus.unfocus(),
+          textInputAction: TextInputAction.search,
+          cursorColor: _Bar.fieldText,
+          style: _searchText.copyWith(color: _Bar.fieldText),
+          decoration: InputDecoration(
+            hintText: 'Search',
+            hintStyle: _searchText.copyWith(color: _Bar.fieldHint),
+            prefixIcon: const Icon(Icons.search_rounded, size: 18, color: _Bar.fieldIcon),
+            prefixIconConstraints: const BoxConstraints(minWidth: 36, minHeight: _M.control),
+            suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+            suffixIcon: ListenableBuilder(
+              listenable: _searchController,
+              builder: (context, _) {
+                if (_searchController.text.isEmpty) return const SizedBox.shrink();
+                return IconButton(
+                  tooltip: 'Clear',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+                  padding: EdgeInsets.zero,
+                  icon: const Icon(Icons.close_rounded, size: 16, color: _Bar.fieldIcon),
+                  onPressed: _searchController.clear,
+                );
+              },
+            ),
+            filled: true,
+            fillColor: _Bar.field,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            border: border(_Bar.fieldBorder),
+            enabledBorder: border(_Bar.fieldBorder),
+            focusedBorder: border(_brandRed, 1.5),
           ),
-          filled: true,
-          fillColor: _Bar.field,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12),
-          border: border(_Bar.fieldBorder),
-          enabledBorder: border(_Bar.fieldBorder),
-          focusedBorder: border(_brandRed, 1.5),
         ),
       ),
     );
@@ -565,10 +621,9 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
 
 const TextStyle _searchText = TextStyle(fontSize: 13);
 
-/// The search box the search icon opens when the bar has no room for the field.
+/// The search box the search icon opens when the bar has no room for the field, with the matches under it.
 class _SearchDialog extends StatefulWidget {
-  final String subtitle;
-  const _SearchDialog({required this.subtitle});
+  const _SearchDialog();
 
   @override
   State<_SearchDialog> createState() => _SearchDialogState();
@@ -577,30 +632,75 @@ class _SearchDialog extends StatefulWidget {
 class _SearchDialogState extends State<_SearchDialog> {
   // Owned here rather than by the caller, so it lives until the dialog has finished animating away.
   final TextEditingController _controller = TextEditingController();
+  final GlobalSearch _search = GlobalSearch();
+
+  @override
+  void initState() {
+    super.initState();
+    _controller.addListener(() => _search.update(_controller.text));
+  }
 
   @override
   void dispose() {
     _controller.dispose();
+    _search.dispose();
     super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final query = _controller.text.trim();
+    if (query.isEmpty) return Navigator.pop(context);
+    final row = await _search.submit();
+    if (!mounted || _controller.text.trim() != query) return;
+    Navigator.pop(context, SearchPick(query, route: row?.route, extra: row?.extra));
   }
 
   @override
   Widget build(BuildContext context) {
     return AppDialog(
       title: 'Search',
-      subtitle: widget.subtitle,
       icon: Icons.search_rounded,
       width: 440,
-      body: TextField(
-        controller: _controller,
-        autofocus: true,
-        textInputAction: TextInputAction.search,
-        decoration: appFieldDecoration(hint: 'Search jobs or customers'),
-        onSubmitted: (v) => Navigator.pop(context, v),
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: (_, event) => _search.handleArrows(event),
+            child: TextField(
+              controller: _controller,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              decoration: appFieldDecoration(hint: 'Search'),
+              onSubmitted: (_) => _submit(),
+              onEditingComplete: () {},
+            ),
+          ),
+          ListenableBuilder(
+            listenable: _search,
+            builder: (context, _) => !_search.active
+                ? const SizedBox.shrink()
+                : Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: math.max(160, MediaQuery.sizeOf(context).height * 0.5)),
+                      child: GlobalSearchResults(
+                        search: _search,
+                        onPick: (row) => Navigator.pop(
+                          context,
+                          SearchPick(_search.query, route: row.route, extra: row.extra),
+                        ),
+                      ),
+                    ),
+                  ),
+          ),
+        ],
       ),
       actions: [
         AppButton.ghost('Cancel', () => Navigator.pop(context)),
-        AppButton.ink('Search', () => Navigator.pop(context, _controller.text), icon: Icons.search_rounded),
+        AppButton.ink('Search', _submit, icon: Icons.search_rounded),
       ],
     );
   }
@@ -1346,15 +1446,22 @@ class _NavDrawerState extends State<_NavDrawer> {
   }
 }
 
-/// Opens the read-only AI assistant panel. The bar's one branded action, so it keeps the red tint.
+/// Opens Jarvis, the read-only AI assistant: the bar's one filled button, navy with Jarvis's own mark, so it reads as a
+/// different kind of thing from the pages beside it. On hover it lifts and the red star turns; the panel then grows out
+/// of it (see [showAssistantPanel]).
 class _AskButton extends StatelessWidget {
   final bool showLabel;
   final VoidCallback onTap;
-  const _AskButton({required this.showLabel, required this.onTap});
+  const _AskButton({super.key, required this.showLabel, required this.onTap});
+
+  // a little light at the top edge, as if lit from above; more of it under the pointer
+  static final _top = Color.lerp(DashUi.ink, Colors.white, 0.12)!;
+  static final _topHover = Color.lerp(DashUi.ink, Colors.white, 0.2)!;
+  static final _bottomHover = Color.lerp(DashUi.ink, Colors.white, 0.07)!;
 
   @override
   Widget build(BuildContext context) {
-    final motion = _motion(context, 120);
+    final motion = _motion(context, 160);
     // No hover tooltip, but screen readers still name the icon-only button.
     return _Tap(
       label: 'Ask Jarvis',
@@ -1363,17 +1470,46 @@ class _AskButton extends StatelessWidget {
         final radius = BorderRadius.circular(10);
         return AnimatedContainer(
           duration: motion,
+          curve: Curves.easeOut,
           height: _M.control,
-          padding: EdgeInsets.symmetric(horizontal: showLabel ? _M.askPad : 11),
-          decoration: BoxDecoration(color: _brandRed.withValues(alpha: hover ? 0.12 : 0.07), borderRadius: radius),
-          foregroundDecoration: _ring(focus, radius: radius),
+          width: showLabel ? null : _M.control,
+          padding: showLabel ? const EdgeInsets.only(left: _M.askPad, right: _M.askPad + 2) : EdgeInsets.zero,
+          // lifts a pixel under the pointer, its shadow spreading with it
+          transform: Matrix4.translationValues(0, hover ? -1 : 0, 0),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: hover ? [_topHover, _bottomHover] : [_top, DashUi.ink],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: DashUi.ink.withValues(alpha: hover ? 0.3 : 0.16),
+                blurRadius: hover ? 14 : 5,
+                offset: Offset(0, hover ? 5 : 2),
+              ),
+              // Keyboard focus: the usual blue ring, but outside the button with a white gap, since a ring drawn on
+              // the navy itself is hard to see. Hard-edged shadows, so it takes no room from the bar.
+              if (focus) ...[
+                const BoxShadow(color: _focusRing, spreadRadius: 4),
+                const BoxShadow(color: Colors.white, spreadRadius: 2),
+              ],
+            ],
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.auto_awesome_rounded, size: 16, color: _brandRed),
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0, end: hover ? 1 : 0),
+                duration: _motion(context, 520),
+                curve: Curves.easeOutBack,
+                builder: (_, v, _) => JarvisMark(size: _M.askMark, color: Colors.white, twinkle: v),
+              ),
               if (showLabel) ...[
-                const SizedBox(width: 7),
-                Text('Ask Jarvis', style: _M.askText.copyWith(color: _brandRed)),
+                const SizedBox(width: _M.askGap),
+                Text('Ask Jarvis', style: _M.askText.copyWith(color: Colors.white)),
               ],
             ],
           ),
@@ -1545,6 +1681,14 @@ class _AccountMenuState extends State<_AccountMenu> with _MenuKeys {
                 style: _menuRowStyle(here: GoRouterState.of(context).uri.path == '/profile'),
                 leadingIcon: const Icon(Icons.person_outline_rounded, size: 18, color: DashUi.slate),
                 child: const Text('My Profile',
+                    style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+              ),
+              MenuItemButton(
+                requestFocusOnHover: false,
+                onPressed: () => showAppAboutDialog(context),
+                style: _menuRowStyle(here: false),
+                leadingIcon: const Icon(Icons.info_outline_rounded, size: 18, color: DashUi.slate),
+                child: const Text('About $kAppName',
                     style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
               ),
               MenuItemButton(

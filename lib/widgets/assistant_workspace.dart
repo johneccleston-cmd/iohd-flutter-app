@@ -10,7 +10,8 @@ part of 'assistant_panel.dart';
 const String _briefingQuestion = "Give me today's priorities and tell me why each one matters.";
 
 /// Questions grouped by what they are about, so the welcome screen shows what Jarvis can look up. Each one maps to a
-/// lookup the server has (see the tool guide in the backend prompt).
+/// lookup the server has (see the tool guide in the backend prompt). After each group's first three come the questions
+/// the dashboards already offer on that subject (see [_pageSuggestions]), word for word, so no group asks anything new.
 class _Area {
   final String name;
   final IconData icon;
@@ -27,11 +28,20 @@ const List<_Area> _areas = [
     ),
     _Suggestion(Icons.request_quote_outlined, 'Unpaid jobs', 'Which jobs from the last 30 days are not paid in full?'),
     _Suggestion(Icons.show_chart_rounded, 'Monthly trend', 'Show completed revenue and profit by month this year.'),
+    _Suggestion(Icons.warning_amber_rounded, 'Over 90 days', 'Which customers have balances over 90 days, and how much?'),
+    _Suggestion(Icons.trending_up_rounded, 'Balance trend', 'How has our outstanding balance changed over the last 30 days?'),
+    _Suggestion(
+      Icons.pie_chart_outline_rounded,
+      'Revenue mix',
+      'What is our revenue mix between residential and commercial this year?',
+    ),
   ]),
   _Area('Jobs', Icons.handyman_outlined, [
     _Suggestion(Icons.hourglass_bottom_rounded, 'Stuck jobs', 'Which jobs are stuck, and what is holding them up?'),
     _Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?'),
     _Suggestion(Icons.update_rounded, 'Since yesterday', 'What changed in our business since yesterday?'),
+    _Suggestion(Icons.list_alt_rounded, 'Open by status', 'How many open jobs are in each status right now?'),
+    _Suggestion(Icons.undo_rounded, 'Callbacks', 'How many callbacks have we had this month and who were they on?'),
   ]),
   _Area('Sales', Icons.handshake_outlined, [
     _Suggestion(Icons.mark_email_unread_outlined, 'Follow-ups', 'Which estimates need follow-up first?'),
@@ -41,6 +51,9 @@ const List<_Area> _areas = [
       'Compare this month with last month and explain the major differences.',
     ),
     _Suggestion(Icons.filter_alt_outlined, 'Pipeline', 'What is our open estimate pipeline and win rate this year?'),
+    _Suggestion(Icons.handshake_outlined, 'Win rate', 'What is our estimate win rate by month this year?'),
+    _Suggestion(Icons.leaderboard_outlined, 'By salesperson', 'How are the salespeople doing on estimates this year?'),
+    _Suggestion(Icons.door_front_door_outlined, 'Door types', 'Which door styles do we win the most revenue on this year?'),
   ]),
   _Area('Team', Icons.engineering_outlined, [
     _Suggestion(
@@ -50,6 +63,7 @@ const List<_Area> _areas = [
     ),
     _Suggestion(Icons.star_outline_rounded, 'Reviews', 'How are our Google reviews doing, and which techs are mentioned most?'),
     _Suggestion(Icons.receipt_long_outlined, 'This week’s pay', 'What does payroll look like for this week?'),
+    _Suggestion(Icons.savings_outlined, 'Pool balance', 'What is in the retainage and company pool right now?'),
   ]),
   _Area('Stock', Icons.inventory_2_outlined, [
     _Suggestion(Icons.report_gmailerrorred_outlined, 'Upcoming shortages', 'What inventory issues could affect upcoming jobs?'),
@@ -59,6 +73,7 @@ const List<_Area> _areas = [
       'Doors on upcoming jobs',
       'How many Clopay doors are on upcoming jobs, by model?',
     ),
+    _Suggestion(Icons.fact_check_outlined, 'Cycle counts', 'Where are we on this month’s cycle counts?'),
   ]),
 ];
 
@@ -168,9 +183,6 @@ String _pageHeading(String pageName) {
   if (pageName.isEmpty || pageName.endsWith(' page')) return 'For this page';
   return 'For the $pageName';
 }
-
-/// "yesterday", or "Friday" on a weekend or a Monday: how far back the briefing's "what changed" looks.
-String _sinceWords(DateTime now) => (now.weekday == DateTime.monday || now.weekday >= DateTime.saturday) ? 'Friday' : 'yesterday';
 
 /// "2:41 PM" today, "Yesterday 2:41 PM", else "Oct 24, 2:41 PM": when an answer's figures were looked up.
 String _answerTime(DateTime at, DateTime now) {
@@ -310,17 +322,13 @@ class _JarvisHome extends StatefulWidget {
   final bool canAsk;
   final String pagePath;
   final String pageName; // "Collections dashboard", or '' when the panel was not opened from a known page
-  final ({int chat, DateTime at})? lastBriefing;
   final ValueChanged<String> onAsk;
-  final ValueChanged<int> onOpenChat;
   const _JarvisHome({
     required this.greeting,
     required this.canAsk,
     required this.pagePath,
     required this.pageName,
-    required this.lastBriefing,
     required this.onAsk,
-    required this.onOpenChat,
   });
 
   @override
@@ -334,76 +342,228 @@ class _JarvisHomeState extends State<_JarvisHome> {
   Widget build(BuildContext context) {
     final here = widget.canAsk ? _pageSuggestions(widget.pagePath) : const <_Suggestion>[];
     final area = _areas[_area.clamp(0, _areas.length - 1)];
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(28, 24, 28, 16),
-      children: [
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 680),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 40,
-                      height: 40,
-                      decoration: BoxDecoration(color: _tint, shape: BoxShape.circle),
-                      child: const Icon(Icons.auto_awesome_rounded, size: 21, color: _brandRed),
-                    ),
-                    const SizedBox(width: 12),
-                    Flexible(
-                      child: Semantics(
-                        header: true,
-                        child: Text(
-                          widget.greeting,
-                          textAlign: TextAlign.center,
-                          style: _serifStyle.copyWith(
-                            fontSize: 28,
-                            fontWeight: FontWeight.w600,
-                            letterSpacing: -0.6,
-                            height: 1.15,
-                          ),
+    // a question already offered for this page is not repeated in its group
+    final asked = {for (final s in here) s.question};
+    final questions = [for (final s in area.questions) if (!asked.contains(s.question)) s];
+    // Layout decisions use the width in "unscaled" pixels, so large text gets fewer columns instead of clipped cards.
+    final scale = MediaQuery.textScalerOf(context).scale(14) / 14;
+    return LayoutBuilder(
+      builder: (context, view) {
+        // the same side padding and width as the message box under it, so their edges line up
+        const side = 20.0;
+        final room = (view.maxWidth - side * 2).clamp(0.0, _homeWidth) / scale;
+        final tabs = _AreaTabs(selected: _area, onSelect: (i) => setState(() => _area = i));
+        const explore = Text(
+          'Explore what Jarvis can look up',
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _navy),
+        );
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(side, view.maxHeight < 640 ? 20 : 36, side, 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: _homeWidth),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _HomeHeader(greeting: widget.greeting, canAsk: widget.canAsk),
+                  if (widget.canAsk) ...[
+                    if (here.isNotEmpty) ...[
+                      const SizedBox(height: 24),
+                      _Arrive(
+                        begin: 0.34,
+                        end: 0.76,
+                        child: _PageQuestions(
+                          heading: _pageHeading(widget.pageName),
+                          questions: here,
+                          onAsk: widget.onAsk,
                         ),
+                      ),
+                    ],
+                    const SizedBox(height: 28),
+                    // the heading and the group switcher share a row when there is room for both
+                    _Arrive(
+                      begin: 0.38,
+                      end: 0.8,
+                      child: room >= 600
+                          ? Row(
+                              children: [
+                                Expanded(child: Semantics(header: true, child: explore)),
+                                tabs,
+                              ],
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Semantics(header: true, child: explore),
+                                const SizedBox(height: 10),
+                                tabs,
+                              ],
+                            ),
+                    ),
+                    const SizedBox(height: 14),
+                    _Arrive(
+                      begin: 0.42,
+                      end: 0.9,
+                      rise: 16,
+                      child: _QuestionGrid(
+                        questions: questions,
+                        columns: room >= 600 ? 3 : (room >= 380 ? 2 : 1),
+                        onAsk: widget.onAsk,
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  widget.canAsk
-                      ? 'Ask about money owed, jobs, estimates, the team or stock. I look it up in your live data, show how I '
-                            'got each answer, and can’t change anything.'
-                      : 'Jarvis is only for admin and owner accounts, because it can read pay, profit and every customer. Ask an admin if you need something looked up.',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 14.5, color: _slate, height: 1.5),
-                ),
-                if (widget.canAsk) ...[
-                  const SizedBox(height: 18),
-                  _BriefingCard(
-                    last: widget.lastBriefing,
-                    onRun: () => widget.onAsk(_briefingQuestion),
-                    onOpen: widget.lastBriefing == null ? null : () => widget.onOpenChat(widget.lastBriefing!.chat),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// How wide the welcome screen (and the message box under it) grows.
+const double _homeWidth = 880;
+
+/// Jarvis's mark: a four-point star (navy, or white on the nav bar's navy button) with a smaller red one over its right
+/// arm. [twinkle] runs 0 to 1 to turn the red star a quarter turn, swelling a little halfway, for the button's hover.
+class JarvisMark extends StatelessWidget {
+  final double size;
+  final Color color;
+  final double twinkle;
+  const JarvisMark({super.key, required this.size, this.color = _navy, this.twinkle = 0});
+
+  @override
+  Widget build(BuildContext context) =>
+      ExcludeSemantics(child: CustomPaint(size: Size.square(size), painter: _JarvisMarkPainter(color, twinkle)));
+}
+
+class _JarvisMarkPainter extends CustomPainter {
+  final Color color;
+  final double twinkle;
+  const _JarvisMarkPainter(this.color, this.twinkle);
+
+  static Path _star(Offset c, double r) {
+    final k = r * 0.24; // how far the waist sits from the centre: smaller for longer, sharper points
+    return Path()
+      ..moveTo(c.dx, c.dy - r)
+      ..lineTo(c.dx + k, c.dy - k)
+      ..lineTo(c.dx + r, c.dy)
+      ..lineTo(c.dx + k, c.dy + k)
+      ..lineTo(c.dx, c.dy + r)
+      ..lineTo(c.dx - k, c.dy + k)
+      ..lineTo(c.dx - r, c.dy)
+      ..lineTo(c.dx - k, c.dy - k)
+      ..close();
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide;
+    canvas.drawPath(_star(Offset(s * 0.42, s * 0.54), s * 0.42), Paint()..color = color);
+    // a quarter turn brings a four-point star back to where it started, so hovering in and out never leaves it askew
+    canvas
+      ..save()
+      ..translate(s * 0.66, s * 0.44)
+      ..rotate(twinkle * math.pi / 2)
+      ..drawPath(_star(Offset.zero, s * 0.3 * (1 + 0.2 * math.sin(math.pi * twinkle))), Paint()..color = _brandRed)
+      ..restore();
+  }
+
+  @override
+  bool shouldRepaint(_JarvisMarkPainter old) => old.color != color || old.twinkle != twinkle;
+}
+
+/// Fades [child] in over the [begin]..[end] stretch of the panel's opening (see [_JarvisRoute]), rising [rise] pixels,
+/// or, with [pop], swelling up from half size while turning a quarter turn; so the contents settle in once the panel
+/// has grown out of the Ask Jarvis button, and leave first on close. Outside that route it is just [child].
+class _Arrive extends StatelessWidget {
+  final double begin;
+  final double end;
+  final double rise;
+  final bool pop;
+  final Widget child;
+  const _Arrive({required this.begin, required this.end, this.rise = 10, this.pop = false, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final route = ModalRoute.of(context);
+    if (route is! _JarvisRoute) return child;
+    final anim = route.animation!;
+    final curve = Interval(begin, end, curve: pop ? Curves.easeOutBack : Curves.easeOutCubic);
+    // The same widgets at every value, even at rest, so nothing below loses its state when the motion ends.
+    return AnimatedBuilder(
+      animation: anim,
+      child: child,
+      builder: (context, child) {
+        final v = curve.transform(anim.value);
+        return Opacity(
+          opacity: v.clamp(0.0, 1.0),
+          child: Transform(
+            alignment: Alignment.center,
+            transform: pop
+                ? (Matrix4.identity()
+                  ..rotateZ(-(1 - v) * math.pi / 2)
+                  ..scaleByDouble(0.5 + 0.5 * v, 0.5 + 0.5 * v, 1, 1))
+                : Matrix4.translationValues(0, rise * (1 - v), 0),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// The mark, the greeting, and one line on what Jarvis does.
+class _HomeHeader extends StatelessWidget {
+  final String greeting;
+  final bool canAsk;
+  const _HomeHeader({required this.greeting, required this.canAsk});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _Arrive(
+          begin: 0.24,
+          end: 0.86,
+          pop: true,
+          child: Container(
+            width: 44,
+            height: 44,
+            decoration: const BoxDecoration(color: _fill, shape: BoxShape.circle),
+            alignment: Alignment.center,
+            child: const JarvisMark(size: 24),
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: _Arrive(
+            begin: 0.28,
+            end: 0.7,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Semantics(
+                  header: true,
+                  child: Text(
+                    greeting,
+                    style: _serifStyle.copyWith(
+                      fontSize: 24,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -0.5,
+                      height: 1.2,
+                      color: _navy,
+                    ),
                   ),
-                  if (here.isNotEmpty) ...[
-                    const SizedBox(height: 16),
-                    _HomeHeading(_pageHeading(widget.pageName)),
-                    for (final s in here) _QuestionRow(suggestion: s, onTap: () => widget.onAsk(s.question)),
-                  ],
-                  const SizedBox(height: 16),
-                  const _HomeHeading('Explore what Jarvis can look up'),
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < _areas.length; i++)
-                        _AreaChip(area: _areas[i], selected: i == _area, onTap: () => setState(() => _area = i)),
-                    ],
+                ),
+                if (!canAsk) ...[
+                  const SizedBox(height: 3),
+                  const Text(
+                    'Jarvis is only for admin and owner accounts, because it can read pay, profit and every customer. Ask an admin if you need something looked up.',
+                    style: TextStyle(fontSize: 14, color: _slate, height: 1.45),
                   ),
-                  const SizedBox(height: 8),
-                  for (final s in area.questions) _QuestionRow(suggestion: s, onTap: () => widget.onAsk(s.question)),
                 ],
               ],
             ),
@@ -414,155 +574,137 @@ class _JarvisHomeState extends State<_JarvisHome> {
   }
 }
 
-class _HomeHeading extends StatelessWidget {
-  final String text;
-  const _HomeHeading(this.text);
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(left: 4, bottom: 6),
-    child: Semantics(
-      header: true,
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _slate),
-      ),
-    ),
-  );
-}
-
-/// The daily briefing entry point: one click for today's priorities with the reasons behind them.
-class _BriefingCard extends StatelessWidget {
-  final ({int chat, DateTime at})? last;
-  final VoidCallback onRun;
-  final VoidCallback? onOpen;
-  const _BriefingCard({required this.last, required this.onRun, required this.onOpen});
+/// The questions for the page the panel was opened from, as a row of small buttons under the greeting. Each button shows
+/// the question's short name; the full wording is its tooltip and what a screen reader says.
+class _PageQuestions extends StatelessWidget {
+  final String heading;
+  final List<_Suggestion> questions;
+  final ValueChanged<String> onAsk;
+  const _PageQuestions({required this.heading, required this.questions, required this.onAsk});
 
   @override
   Widget build(BuildContext context) {
-    final now = AssistantChat.now();
-    final ran = last;
-    return Material(
-      color: Color.alphaBlend(_brandRed.withValues(alpha: 0.045), _paper),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(16),
-        side: BorderSide(color: _brandRed.withValues(alpha: 0.2)),
-      ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onRun,
-        hoverColor: _brandRed.withValues(alpha: 0.04),
-        focusColor: _brandRed.withValues(alpha: 0.08),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 14, 14, 14),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  shape: BoxShape.circle,
-                  border: Border.all(color: _brandRed.withValues(alpha: 0.2)),
-                ),
-                child: const Icon(Icons.wb_twilight_rounded, size: 22, color: _brandRed),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Today’s priorities',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _ink),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      'What to act on first and why: money owed, stuck jobs, quiet estimates, stock for booked jobs and what '
-                      'changed since ${_sinceWords(now)}.',
-                      style: const TextStyle(fontSize: 13.5, color: _slate, height: 1.4),
-                    ),
-                    if (ran != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 4),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.history_rounded, size: 14, color: _slate),
-                            const SizedBox(width: 4),
-                            Text('Last run ${_answerTime(ran.at, now)}', style: const TextStyle(fontSize: 12.5, color: _slate)),
-                            const SizedBox(width: 2),
-                            TextButton(
-                              onPressed: onOpen,
-                              style: TextButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                padding: const EdgeInsets.symmetric(horizontal: 6),
-                                minimumSize: const Size(32, 28),
-                              ),
-                              child: const Text('Open it', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600)),
-                            ),
-                          ],
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: Semantics(
+            header: true,
+            child: Text(
+              heading,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _slate),
+            ),
+          ),
+        ),
+        for (final s in questions)
+          Tooltip(
+            message: s.question,
+            waitDuration: const Duration(milliseconds: 400),
+            child: Semantics(
+              button: true,
+              label: 'Ask: ${s.question}',
+              excludeSemantics: true,
+              child: Material(
+                color: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: _stroke)),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () => onAsk(s.question),
+                  hoverColor: _fill,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(9, 6, 11, 6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(s.icon, size: 14, color: _navy),
+                        const SizedBox(width: 6),
+                        Text(
+                          s.title,
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _navy),
                         ),
-                      ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 12),
-              // Looks like a button, but the whole card is the one tab stop and click target.
-              ExcludeSemantics(
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 14, 8),
-                  decoration: BoxDecoration(color: _brandRed, borderRadius: BorderRadius.circular(20)),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.play_arrow_rounded, size: 18, color: Colors.white),
-                      const SizedBox(width: 4),
-                      Text(
-                        ran == null ? 'Run briefing' : 'Run again',
-                        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ],
+            ),
           ),
+      ],
+    );
+  }
+}
+
+/// The question groups (Money, Jobs, Sales, Team, Stock) as a small switcher; the open group is navy.
+class _AreaTabs extends StatelessWidget {
+  final int selected;
+  final ValueChanged<int> onSelect;
+  const _AreaTabs({required this.selected, required this.onSelect});
+
+  @override
+  Widget build(BuildContext context) {
+    // Not selectable text: the app-wide selection's I-beam would replace the click cursor over the labels.
+    return SelectionContainer.disabled(
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
+        child: Wrap(
+          spacing: 2,
+          runSpacing: 2,
+          children: [
+            for (var i = 0; i < _areas.length; i++)
+              _AreaChip(area: _areas[i], selected: i == selected, onTap: () => onSelect(i)),
+          ],
         ),
       ),
     );
   }
 }
 
-class _AreaChip extends StatelessWidget {
+class _AreaChip extends StatefulWidget {
   final _Area area;
   final bool selected;
   final VoidCallback onTap;
   const _AreaChip({required this.area, required this.selected, required this.onTap});
 
   @override
+  State<_AreaChip> createState() => _AreaChipState();
+}
+
+class _AreaChipState extends State<_AreaChip> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
+    final on = widget.selected;
+    final fg = on ? Colors.white : (_hover ? _navy : _slate);
     return Semantics(
       button: true,
-      selected: selected,
-      label: '${area.name} questions',
+      selected: on,
+      label: '${widget.area.name} questions',
       excludeSemantics: true,
       child: Material(
-        color: selected ? _tint : Colors.white,
-        shape: StadiumBorder(side: BorderSide(color: selected ? _brandRed.withValues(alpha: 0.45) : _stroke)),
+        color: on ? _navy : (_hover ? Colors.white : Colors.transparent),
+        borderRadius: BorderRadius.circular(7),
         child: InkWell(
-          customBorder: const StadiumBorder(),
-          onTap: onTap,
-          hoverColor: _fill,
+          borderRadius: BorderRadius.circular(7),
+          onTap: widget.onTap,
+          mouseCursor: SystemMouseCursors.click,
+          onHover: (v) => setState(() => _hover = v),
+          hoverColor: Colors.transparent,
+          focusColor: on ? Colors.white.withValues(alpha: 0.14) : _navy.withValues(alpha: 0.06),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 7, 14, 7),
+            padding: const EdgeInsets.fromLTRB(9, 5, 11, 5),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(area.icon, size: 16, color: selected ? _brandRed : _slate),
+                Icon(widget.area.icon, size: 15, color: fg),
                 const SizedBox(width: 6),
                 Text(
-                  area.name,
-                  style: TextStyle(fontSize: 13, fontWeight: selected ? FontWeight.w600 : FontWeight.w500, color: _ink),
+                  widget.area.name,
+                  style: TextStyle(fontSize: 13, fontWeight: on ? FontWeight.w600 : FontWeight.w500, color: fg, height: 1.3),
                 ),
               ],
             ),
@@ -573,55 +715,97 @@ class _AreaChip extends StatelessWidget {
   }
 }
 
-/// A question you can ask, with its short name over the full wording, so it is clear what it will look up.
-class _QuestionRow extends StatelessWidget {
-  final _Suggestion suggestion;
-  final VoidCallback onTap;
-  const _QuestionRow({required this.suggestion, required this.onTap});
+/// Questions as cards in rows of equal height, so the full wording of each is visible at a glance.
+class _QuestionGrid extends StatelessWidget {
+  final List<_Suggestion> questions;
+  final int columns;
+  final ValueChanged<String> onAsk;
+  const _QuestionGrid({required this.questions, required this.columns, required this.onAsk});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 1),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
-          hoverColor: _fill,
-          focusColor: _fill,
-          child: Semantics(
-            button: true,
-            label: 'Ask: ${suggestion.question}',
-            excludeSemantics: true,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var start = 0; start < questions.length; start += columns)
+          Padding(
+            padding: EdgeInsets.only(top: start == 0 ? 0 : 10),
+            child: IntrinsicHeight(
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(9)),
-                    child: Icon(suggestion.icon, size: 17, color: _slate),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          suggestion.title,
-                          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: _ink),
-                        ),
-                        const SizedBox(height: 1),
-                        Text(suggestion.question, style: const TextStyle(fontSize: 13, color: _slate, height: 1.35)),
-                      ],
+                  for (var i = start; i < start + columns; i++) ...[
+                    if (i > start) const SizedBox(width: 10),
+                    Expanded(
+                      child: i < questions.length
+                          ? _QuestionCard(suggestion: questions[i], onTap: () => onAsk(questions[i].question))
+                          : const SizedBox(),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.arrow_outward_rounded, size: 15, color: DashUi.subtle),
+                  ],
                 ],
               ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// A question you can ask, with its short name over the full wording, so it is clear what it will look up.
+class _QuestionCard extends StatefulWidget {
+  final _Suggestion suggestion;
+  final VoidCallback onTap;
+  const _QuestionCard({required this.suggestion, required this.onTap});
+
+  @override
+  State<_QuestionCard> createState() => _QuestionCardState();
+}
+
+class _QuestionCardState extends State<_QuestionCard> {
+  bool _lit = false; // hovered or focused
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.suggestion;
+    final radius = BorderRadius.circular(10);
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: radius,
+        side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.3) : _stroke),
+      ),
+      child: InkWell(
+        onTap: widget.onTap,
+        onHover: (v) => setState(() => _lit = v),
+        onFocusChange: (v) => setState(() => _lit = v),
+        borderRadius: radius,
+        hoverColor: _navy.withValues(alpha: 0.02),
+        focusColor: _navy.withValues(alpha: 0.04),
+        child: Semantics(
+          button: true,
+          label: 'Ask: ${s.question}',
+          excludeSemantics: true,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(s.icon, size: 16, color: _navy),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        s.title,
+                        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _navy, height: 1.3),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right_rounded, size: 17, color: _lit ? _brandRed : DashUi.muted),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(s.question, style: const TextStyle(fontSize: 13, color: _slate, height: 1.45)),
+              ],
             ),
           ),
         ),
@@ -1082,58 +1266,6 @@ class _BasisNote extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// Shows which page goes with each question ("Using: Collections dashboard"), and lets the person switch it off.
-class _ContextChip extends StatelessWidget {
-  final String page;
-  final bool on;
-  final VoidCallback onToggle;
-  const _ContextChip({required this.page, required this.on, required this.onToggle});
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: on
-          ? 'Questions are sent with the page you are on, so "this job" and "here" work. Click to stop.'
-          : 'Send the page you are on with your questions',
-      waitDuration: const Duration(milliseconds: 500),
-      child: Material(
-        color: on ? _fill : Colors.transparent,
-        shape: StadiumBorder(side: BorderSide(color: on ? Colors.transparent : _stroke)),
-        child: InkWell(
-          customBorder: const StadiumBorder(),
-          onTap: onToggle,
-          child: Semantics(
-            button: true,
-            toggled: on,
-            label: on ? 'Using this page: $page' : 'Use this page: $page',
-            excludeSemantics: true,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(on ? Icons.place_outlined : Icons.add_location_alt_outlined, size: 14, color: _slate),
-                  const SizedBox(width: 4),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 260),
-                    child: Text(
-                      on ? 'Using: $page' : 'Use this page',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _slate),
-                    ),
-                  ),
-                  if (on) ...[const SizedBox(width: 4), const Icon(Icons.close_rounded, size: 13, color: _slate)],
-                ],
-              ),
-            ),
-          ),
-        ),
       ),
     );
   }

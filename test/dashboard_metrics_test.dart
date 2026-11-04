@@ -84,22 +84,22 @@ void main() {
       expect(_inMeters('Alex Rivera'), findsOneWidget);
 
       final avg = (f['summary']['avgCommissionPerRecipient'] as num).toDouble();
-      expect(find.text('Avg commission per recipient'), findsOneWidget);
+      expect(find.text('Average per person'), findsOneWidget);
       expect(find.text(dashMoney(avg)), findsOneWidget);
-      expect(find.text('Paid ÷ 5 on the job pool'), findsOneWidget);
-      expect(_semantics(r'^Avg commission per recipient: .*the 5 people on the job pool'), findsOneWidget);
+      expect(find.text('5 on the job pool · 2026'), findsOneWidget);
+      expect(_semantics(r'^Average per person: .*the 5 people on the job pool'), findsOneWidget);
       expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
       await saveDashShot(t, 'metrics_commissions_1500');
     });
 
-    testWidgets('Commission % of revenue: payouts ÷ completed revenue over the same finalized weeks, at 1280x600',
+    testWidgets('Commission ÷ revenue: payouts ÷ completed revenue over the same finalized weeks, at 1280x600',
         (t) async {
       final errors = await pumpDashboard(t, const CommissionDashboardScreen(), api: _api());
-      expect(find.text('Commission % of revenue'), findsOneWidget);
+      expect(find.text('Commission ÷ revenue'), findsOneWidget);
       expect(find.text('4.8%'), findsOneWidget); // 4,622.40 ÷ 97,240
-      expect(find.text('Of completed revenue · Oct 5–18'), findsOneWidget);
+      expect(find.text('Jobs closed Oct 5–18'), findsOneWidget);
       expect(
-        _semantics(r'^Commission % of revenue: 4\.8%\. .*Oct 5 to Oct 18 \(\$4,622\.40\).*58 jobs.*\(\$97,240\.00\)'),
+        _semantics(r'^Commission ÷ revenue: 4\.8%\. .*Oct 5 to Oct 18 \(\$4,622\.40\).*58 jobs.*\(\$97,240\.00\)'),
         findsOneWidget,
       );
       expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
@@ -112,11 +112,15 @@ void main() {
         const CommissionDashboardScreen(),
         api: _api(_commissions, (b) => b['summary']['commissionRate'] = null),
       );
-      expect(find.text('Commission % of revenue'), findsNothing);
-      for (final title in ['Total payouts', 'Sales commission', 'Commercial retainage pool', 'Avg commission per recipient']) {
+      expect(find.text('Commission ÷ revenue'), findsNothing);
+      for (final title in ['Total payouts', 'Sales commission', 'Locked retainage', 'Average per person']) {
         expect(find.text(title), findsOneWidget, reason: title);
       }
-      expect(find.textContaining('%'), findsNothing, reason: 'no percentage anywhere in the scorecards');
+      expect(
+        find.descendant(of: find.byType(AnimatedMetricCard), matching: find.textContaining('%')),
+        findsNothing,
+        reason: 'no percentage anywhere in the scorecards',
+      );
       expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
       await saveDashShot(t, 'metrics_commissions_no_rate_1280');
     });
@@ -150,28 +154,31 @@ void main() {
         }),
       );
       expect(find.text('Sales'), findsOneWidget);
-      expect(find.text('Commission % of revenue'), findsNothing);
-      expect(find.text('Paid ÷ 4 on the job pool'), findsOneWidget, reason: 'headcount from the people marked on the pool');
+      expect(find.text('Commission ÷ revenue'), findsNothing);
+      expect(find.text('4 on the job pool · 2026'), findsOneWidget, reason: 'headcount from the people marked on the pool');
       expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
     });
   });
 
   group('Technicians', () {
-    testWidgets('callback rate: strikes ÷ completed jobs since Oct 5, and the leaderboard on the same jobs', (t) async {
+    testWidgets('callback rate: callbacks ÷ completed jobs since Oct 5, and the leaderboard on the same jobs', (t) async {
       final f = dashFixture('technicians');
       final m = f['summary']['metrics'] as Map<String, dynamic>;
       expect(m['callbackRatePct'], closeTo(5 / 72 * 100, 1e-9));
       final errors = await pumpDashboard(t, const TechniciansDashboardScreen(), api: _api(), size: const Size(1500, 800));
 
-      expect(find.text('6.9%'), findsOneWidget);
+      expect(find.text('6.9%'), findsWidgets);
       expect(find.text('5 ÷ 72 completed jobs since Oct 5'), findsOneWidget);
-      expect(_semantics(r'^Callback rate: 6\.9%\. Callback strikes divided by completed jobs.*5 strikes on 72 jobs'), findsOneWidget);
+      expect(
+        _semantics(r'^Callback rate: 6\.9%\. Callbacks divided by completed jobs.*5 callbacks on 72 jobs\. Each callback counts once'),
+        findsOneWidget,
+      );
       expect(find.text('Technicians · fewest callbacks first'), findsOneWidget);
-      expect(find.text('Callbacks since Oct 5'), findsOneWidget);
+      expect(find.textContaining('team 6.9% since Oct 5'), findsOneWidget);
       // Alex: 3 strikes on 38 jobs since Oct 5 (not 733 jobs all year).
-      expect(find.text('3 of 38'), findsOneWidget);
+      expect(_semantics(r'Alex Rivera.*\. 3 callbacks on 38 completed jobs since Oct 5, 7\.9%'), findsWidgets);
       expect(find.text('7.9%'), findsWidgets);
-      expect(find.text('3 of 733'), findsNothing);
+      expect(_semantics(r'3 callbacks on 733'), findsNothing);
       expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
       await saveDashShot(t, 'metrics_technicians_1500');
     });
@@ -202,7 +209,7 @@ void main() {
       final errors = await pumpDashboard(t, const EstimatesDashboardScreen(), api: _api());
 
       expect(find.text('\$12,055,908'), findsOneWidget);
-      expect(find.text('All years · 312 before 2026'), findsOneWidget);
+      expect(find.text('All years · 312 estimates pre-2026'), findsOneWidget);
       expect(_semantics(r'^Open value: \$12,055,908\. Every estimate .*whatever year.*\$5,312,640 of it \(312 estimates\) is dated before 2026'),
           findsOneWidget);
       // The oldest open estimates (from earlier years) lead the stale list.

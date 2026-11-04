@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
@@ -252,6 +253,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Widget _buildHeader() {
     return PageBanner(
       title: 'Stock Levels',
+      icon: accessIcon('stock'),
       actions: [
         if (_lastUpdated != null)
           Text(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'config/access.dart';
 import 'widgets/flat_page.dart';
 
 class SiteChecksScreen extends StatelessWidget {
@@ -14,6 +15,7 @@ class SiteChecksScreen extends StatelessWidget {
         children: [
           PageBanner(
             title: 'Site Checks',
+            icon: accessIcon('site_checks'),
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Site Check', onPressed: () {})],
           ),
           const Expanded(

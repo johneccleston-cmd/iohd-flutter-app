@@ -141,12 +141,13 @@ const int _pdfDenseAfter = 9;
 
 double _weeksSum(_Tech t, double Function(_Week) f) => t.weeks.fold<double>(0, (s, w) => s + f(w));
 
-/// The register's figure columns. Sales commission, retainage held and other adjustments only appear when someone
-/// has them; with them in, the parts of every row add up to its gross.
+/// The register's figure columns. Sales commission, retainage held, other adjustments and owed recovered only appear
+/// when someone has them; with them in, the parts of every row add up to its gross and its total due.
 List<_PdfCol> _pdfColumns(List<_Tech> techs) {
   bool any(double Function(_Tech) f) => techs.any((t) => f(t).abs() >= 0.005);
   double held(_Tech t) => _weeksSum(t, (w) => w.hurdleCredit);
   double other(_Tech t) => _weeksSum(t, (w) => w.otherAdjustments);
+  double recovered(_Tech t) => -_weeksSum(t, (w) => w.carryRecovered);
   return [
     _PdfCol('Closed-job net', (t) => t.jobNet),
     _PdfCol('Advances', (t) => t.totals.advancesPaid),
@@ -158,15 +159,36 @@ List<_PdfCol> _pdfColumns(List<_Tech> techs) {
     _PdfCol('Hurdle', (t) => -t.totals.hurdleApplied),
     _PdfCol('Cash pay', (t) => t.totals.cashPay),
     _PdfCol('Retainage released', (t) => t.totals.retainageReleased),
+    if (any(recovered)) _PdfCol('Owed recovered', recovered),
     _PdfCol('Total due', (t) => t.totals.totalDue),
   ];
 }
 
+/// The export's file name: what it is and which pay weeks, e.g. "IOHD Payroll Commission Report Oct 12-18, 2026.pdf",
+/// "... Oct 26 - Nov 1, 2026.pdf", "... Dec 28, 2026 - Jan 3, 2027.pdf". Only characters Windows allows in a file name.
+String payrollPdfFileName(String start, String end) {
+  final a = DateTime.tryParse(start);
+  final b = DateTime.tryParse(end);
+  const base = 'IOHD Payroll Commission Report';
+  if (a == null || b == null) return '$base.pdf';
+  final String dates;
+  if (a.year != b.year) {
+    dates = '${DateFormat('MMM d, yyyy').format(a)} - ${DateFormat('MMM d, yyyy').format(b)}';
+  } else if (a.month != b.month) {
+    dates = '${DateFormat('MMM d').format(a)} - ${DateFormat('MMM d, yyyy').format(b)}';
+  } else if (a.day != b.day) {
+    dates = '${DateFormat('MMM d').format(a)}-${b.day}, ${b.year}';
+  } else {
+    dates = DateFormat('MMM d, yyyy').format(a);
+  }
+  return '$base $dates.pdf';
+}
+
 Future<Uint8List> _buildPayrollPdf(_Report r, _PdfMeta meta) async {
   final doc = pw.Document(
-    title: 'Payroll commission report, ${r.start} to ${r.end}',
-    author: meta.generatedBy.trim().isEmpty ? 'IOHD' : meta.generatedBy.trim(),
-    creator: 'IOHD Office',
+    title: payrollPdfFileName(r.start, r.end).replaceAll(RegExp(r'\.pdf$'), ''),
+    author: meta.generatedBy.trim().isEmpty ? kCompanyName : meta.generatedBy.trim(),
+    creator: '$kAppName $kAppVersion',
   );
   final range = '${_day(r.start, year: true)} to ${_day(r.end, year: true)}';
   const margin = pw.EdgeInsets.fromLTRB(36, 30, 36, 30);
@@ -177,7 +199,8 @@ Future<Uint8List> _buildPayrollPdf(_Report r, _PdfMeta meta) async {
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         _pt('Payroll commission report  |  $range  |  ${meta.stamp}', size: 7.5, color: _pSubtle),
-        _pt('Page ${ctx.pageNumber} of ${ctx.pagesCount}', size: 7.5, color: _pSubtle),
+        _pt('${copyrightLine()}  |  Confidential  |  Page ${ctx.pageNumber} of ${ctx.pagesCount}',
+            size: 7.5, color: _pSubtle),
       ],
     ),
   );
@@ -276,7 +299,8 @@ List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
     pw.SizedBox(height: 12),
     _pt(
       'Each row adds up across: the parts make the gross, the gross less the weekly hurdle is the cash pay, and the cash '
-      'pay plus retainage released is the total due. Retainage held counts toward the hurdle but is not paid until it '
+      'pay plus retainage released, less any advance shortfall still owed from an earlier week, is the total due. '
+      'Retainage held counts toward the hurdle but is not paid until it '
       'is released. This report does not record or pay a payroll run; a job pays in the week it is closed. The '
       'following pages break down every technician: pay weeks, closed jobs, commission line items, advances, '
       'callbacks and retainage releases.',
@@ -449,6 +473,30 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
     ),
   );
 
+  // Advance shortfall still owed from earlier weeks comes out of this week's run, as on the screen.
+  if (w.carryIn > 0) {
+    out.add(pw.SizedBox(height: 6));
+    out.add(
+      pw.SizedBox(
+        width: 360,
+        child: _pdfTable(
+          const ['After earlier weeks', 'Amount'],
+          [
+            ['Still owed from earlier weeks', _fmt(w.carryIn)],
+            if (w.carryRecovered > 0)
+              [
+                w.carryProjected ? "Recovered by this week's run (projected until finalized)" : "Recovered in this week's run",
+                _fmt(-w.carryRecovered),
+              ],
+          ],
+          flex: const [3.4, 1.2],
+          right: const {1},
+          foot: ['Paid after recovery', _fmt(w.cashPay - w.carryRecovered)],
+        ),
+      ),
+    );
+  }
+
   for (final j in w.jobs) {
     out.add(pw.SizedBox(height: 10));
     out.add(_pdfJob(j, r));
@@ -503,7 +551,7 @@ pw.Widget _pdfJob(_Job j, _Report r) {
   final rows = <List<String>>[
     for (final l in j.lines)
       [
-        l.isPool ? 'Company pool (${_pct(r.companyPoolRate * 100)} of job commission)' : l.name,
+        l.isPool ? l.poolLabel(r.companyPoolRate) : l.name,
         l.isPool ? '' : l.category,
         _fmt(l.jobAmount),
         _pct(j.splitPct),

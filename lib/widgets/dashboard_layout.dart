@@ -1,16 +1,13 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_data.dart';
+import 'app_ribbon.dart';
+import 'dashboard_kit.dart';
 
-/// Design tokens in one place so the header, selector and body stay consistent.
+/// Design tokens in one place so the header, selector and body stay consistent (the ribbon's own are [RibbonColors]).
 abstract final class _DashTokens {
   static const background = AppTheme.bgColor; // one shared page colour for the whole app
-  static const header = Color(0xFF0F172A);
-  static const surface = Color(0xFF1E293B);
-  static const border = Color(0xFF334155);
-  static const muted = Color(0xFF94A3B8);
   static const maxContentWidth = 1600.0;
   static const compactBreakpoint = 600.0;
 }
@@ -39,6 +36,18 @@ class DashboardScope extends InheritedWidget {
 class DashboardLayout extends StatefulWidget {
   final String title;
   final String? subtitle;
+
+  /// The title bar's text as written, instead of "<TITLE> DASHBOARD" (a person's page uses their name).
+  final String? heading;
+
+  /// Shown at the start of the title bar, before the heading (a back button, a photo).
+  final Widget? leading;
+
+  /// The dashboard's menu icon, on a tile before the heading (not with [leading], nor on a phone).
+  final IconData? icon;
+
+  /// Shown right after the heading (badges about the person: rank, time with the company, a score).
+  final Widget? titleTrailing;
   final bool showYearSelector;
 
   /// Set false to drop the dark title bar entirely (the page then starts at the top).
@@ -64,6 +73,10 @@ class DashboardLayout extends StatefulWidget {
     super.key,
     required this.title,
     this.subtitle,
+    this.heading,
+    this.leading,
+    this.icon,
+    this.titleTrailing,
     this.showYearSelector = true,
     this.showHeader = true,
     this.years,
@@ -130,8 +143,12 @@ class _DashboardLayoutState extends State<DashboardLayout> {
         children: [
           if (widget.showHeader)
             _HeaderBar(
-            title: widget.title,
+            title: widget.heading ?? widget.title.toUpperCase(),
+            kind: widget.heading == null ? 'DASHBOARD' : null,
             subtitle: widget.subtitle,
+            leading: widget.leading,
+            icon: widget.icon,
+            titleTrailing: widget.titleTrailing,
             freshness: widget.showFreshness ? _freshness : null,
             actions: widget.actions,
             yearSelector: widget.showYearSelector
@@ -188,122 +205,106 @@ class _DashboardLayoutState extends State<DashboardLayout> {
   }
 }
 
-class _HeaderBar extends StatelessWidget {
+/// The ribbon along the top of every dashboard and KPI page (the app's standard [AppRibbon]), with the freshness,
+/// actions and year picker as its controls. A refresh the dashboard reports runs the ribbon's refresh light, and new
+/// figures landing send its band of light across again.
+class _HeaderBar extends StatefulWidget {
+  /// The heading as shown ("COLLECTIONS", or a person's name).
   final String title;
+
+  /// What the page is ("DASHBOARD"), after the heading in a quieter tone.
+  final String? kind;
   final String? subtitle;
+  final Widget? leading;
+  final IconData? icon;
+  final Widget? titleTrailing;
   final DashFreshness? freshness;
   final List<Widget> actions;
   final Widget? yearSelector;
 
   const _HeaderBar({
     required this.title,
+    this.kind,
     required this.subtitle,
+    this.leading,
+    this.icon,
+    this.titleTrailing,
     required this.freshness,
     required this.actions,
     required this.yearSelector,
   });
 
   @override
+  State<_HeaderBar> createState() => _HeaderBarState();
+}
+
+class _HeaderBarState extends State<_HeaderBar> {
+  final _activity = RibbonActivity();
+  bool _wasRefreshing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.freshness?.addListener(_onFreshness);
+  }
+
+  @override
+  void didUpdateWidget(_HeaderBar old) {
+    super.didUpdateWidget(old);
+    if (old.freshness != widget.freshness) {
+      old.freshness?.removeListener(_onFreshness);
+      widget.freshness?.addListener(_onFreshness);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.freshness?.removeListener(_onFreshness);
+    _activity.dispose();
+    super.dispose();
+  }
+
+  // Reports arrive while the dashboard below is building; the activity only drives the ribbon's animations.
+  void _onFreshness() {
+    final f = widget.freshness!;
+    final refreshing = f.busy && f.updatedAt != null;
+    if (_wasRefreshing && !refreshing && f.refreshFailure == null && f.updatedAt != null) _activity.landed();
+    _wasRefreshing = refreshing;
+    _activity.setRefreshing(refreshing);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final compact = MediaQuery.sizeOf(context).width < _DashTokens.compactBreakpoint;
-
-    final bar = Container(
-      decoration: const BoxDecoration(
-        color: _DashTokens.header,
-        border: Border(bottom: BorderSide(color: _DashTokens.border)),
-        boxShadow: [
-          BoxShadow(color: Color(0x33000000), blurRadius: 8, offset: Offset(0, 2)),
+    final compact = MediaQuery.sizeOf(context).width < AppRibbon.compactWidth;
+    return AppRibbon(
+      title: widget.title,
+      kind: widget.kind,
+      subtitle: widget.subtitle,
+      leading: widget.leading,
+      icon: widget.icon,
+      titleTrailing: widget.titleTrailing,
+      activity: _activity,
+      controls: [
+        if (widget.freshness != null) ...[
+          _FreshnessStatus(freshness: widget.freshness!, compact: compact),
+          const SizedBox(width: 8),
         ],
-      ),
-      child: SafeArea(
-        bottom: false,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 56),
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: compact ? 12 : 24, vertical: 8),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '${title.toUpperCase()} DASHBOARD',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            letterSpacing: 1.2,
-                          ),
-                        ),
-                        if (subtitle != null && !compact)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 2),
-                            child: Text(
-                              subtitle!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: _DashTokens.muted,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                if (freshness != null) ...[
-                  _FreshnessStatus(freshness: freshness!, compact: compact),
-                  const SizedBox(width: 8),
-                ],
-                if (actions.isNotEmpty) ...[
-                  IconTheme(
-                    data: const IconThemeData(color: Colors.white, size: 20),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: actions),
-                  ),
-                  const SizedBox(width: 8),
-                ],
-                ?yearSelector,
-              ],
-            ),
+        if (widget.actions.isNotEmpty) ...[
+          IconTheme(
+            data: const IconThemeData(color: Colors.white, size: 20),
+            child: Row(mainAxisSize: MainAxisSize.min, children: widget.actions),
           ),
-        ),
-      ),
-    );
-
-    if (freshness == null) return bar;
-    // A thin bar along the bottom edge while a refresh runs, drawn over the header so nothing below moves.
-    return Stack(
-      children: [
-        bar,
-        Positioned(
-          left: 0,
-          right: 0,
-          bottom: 0,
-          child: ListenableBuilder(
-            listenable: freshness!,
-            builder: (context, _) => freshness!.busy && freshness!.updatedAt != null
-                ? const LinearProgressIndicator(
-                    minHeight: 2,
-                    backgroundColor: Colors.transparent,
-                    color: Color(0xFF38BDF8),
-                  )
-                : const SizedBox.shrink(),
-          ),
-        ),
+          const SizedBox(width: 8),
+        ],
+        ?widget.yearSelector,
       ],
     );
   }
 }
 
-/// "Updated 3 min ago" and a Refresh button. The hover text says whether that is when the server computed the
-/// figures or only when they arrived (a server that doesn't report it yet).
+/// "Updated 3 min ago", a status dot and a Refresh button. The hover text says whether that is when the server
+/// computed the figures or only when they arrived (a server that doesn't report it yet). The dot is green when the
+/// figures are in (and sends out a ring as they land), blue while a refresh runs, amber when one failed.
 class _FreshnessStatus extends StatefulWidget {
   final DashFreshness freshness;
   final bool compact;
@@ -313,8 +314,10 @@ class _FreshnessStatus extends StatefulWidget {
   State<_FreshnessStatus> createState() => _FreshnessStatusState();
 }
 
-class _FreshnessStatusState extends State<_FreshnessStatus> {
+class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerProviderStateMixin {
   Timer? _tick;
+  late final _ripple = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  bool _wasBusy = false;
 
   @override
   void initState() {
@@ -323,12 +326,34 @@ class _FreshnessStatusState extends State<_FreshnessStatus> {
     _tick = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
+    _wasBusy = widget.freshness.busy;
+    widget.freshness.addListener(_onChange);
+  }
+
+  @override
+  void didUpdateWidget(_FreshnessStatus old) {
+    super.didUpdateWidget(old);
+    if (old.freshness != widget.freshness) {
+      old.freshness.removeListener(_onChange);
+      widget.freshness.addListener(_onChange);
+    }
   }
 
   @override
   void dispose() {
     _tick?.cancel();
+    widget.freshness.removeListener(_onChange);
+    _ripple.dispose();
     super.dispose();
+  }
+
+  /// Figures landing (a load or refresh that worked) send a ring out from the dot. Runs mid-build of the dashboard,
+  /// so it only starts the ring; its painter picks it up next frame.
+  void _onChange() {
+    final f = widget.freshness;
+    final landed = _wasBusy && !f.busy && f.updatedAt != null && f.refreshFailure == null;
+    _wasBusy = f.busy;
+    if (landed && mounted && !MediaQuery.disableAnimationsOf(context)) _ripple.forward(from: 0);
   }
 
   static String _ago(DateTime t) {
@@ -346,6 +371,7 @@ class _FreshnessStatusState extends State<_FreshnessStatus> {
 
   @override
   Widget build(BuildContext context) {
+    final still = MediaQuery.disableAnimationsOf(context);
     return ListenableBuilder(
       listenable: widget.freshness,
       builder: (context, _) {
@@ -355,42 +381,52 @@ class _FreshnessStatusState extends State<_FreshnessStatus> {
         if (at == null && !f.busy) return const SizedBox.shrink();
 
         final String label;
-        final String tip;
+        // Only a failed refresh has anything to explain on hover; "Updated 2m ago" speaks for itself.
+        String? tip;
         if (failed != null) {
           label = "Couldn't refresh";
           tip = '${failed.message}${at == null ? '' : '\nShowing figures from ${_clock(at)}.'}';
         } else if (f.busy) {
           label = at == null ? 'Loading…' : 'Refreshing…';
-          tip = at == null ? 'Loading the latest figures.' : 'Showing figures from ${_clock(at)} until the new ones arrive.';
         } else {
           label = 'Updated ${_ago(at!)}';
-          tip = f.isComputedTime ? 'Figures computed at ${_clock(at)}.' : 'Figures loaded at ${_clock(at)}.';
         }
+        final tone = failed != null
+            ? RibbonColors.warn
+            : f.busy
+                ? RibbonColors.live
+                : DashUi.emerald;
+
+        final status = TweenAnimationBuilder<double>(
+          key: ValueKey(label),
+          tween: Tween(begin: still ? 1 : 0, end: 1),
+          duration: still ? Duration.zero : const Duration(milliseconds: 240),
+          curve: Curves.easeOut,
+          builder: (context, v, child) => Opacity(
+            opacity: v,
+            child: Transform.translate(offset: Offset(0, 4 * (1 - v)), child: child),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: failed != null ? RibbonColors.warn : RibbonColors.quiet,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        );
 
         return Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (!widget.compact)
-              Tooltip(
-                message: tip,
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: failed != null ? const Color(0xFFFBBF24) : _DashTokens.muted,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            IconButton(
-              icon: const Icon(Icons.refresh_rounded),
-              tooltip: widget.compact ? '$label. Refresh now' : 'Refresh now',
-              iconSize: 20,
-              color: Colors.white,
-              disabledColor: _DashTokens.border,
-              visualDensity: VisualDensity.compact,
-              constraints: const BoxConstraints.tightFor(width: 36, height: 36),
-              padding: EdgeInsets.zero,
+            if (!widget.compact) ...[
+              CustomPaint(size: const Size.square(7), painter: _DotPainter(color: tone, ripple: _ripple)),
+              const SizedBox(width: 8),
+              // Each new wording rises into place (the old one goes at once, so there is never two).
+              if (tip == null) status else Tooltip(message: tip, child: status),
+            ],
+            RibbonRefreshButton(
+              tooltip: widget.compact ? '$label. Refresh now' : 'Refresh',
               onPressed: f.onRefresh,
             ),
           ],
@@ -400,7 +436,7 @@ class _FreshnessStatusState extends State<_FreshnessStatus> {
   }
 }
 
-class _YearSelector extends StatelessWidget {
+class _YearSelector extends StatefulWidget {
   final int value;
   final List<int> years; // newest first
   final ValueChanged<int> onChanged;
@@ -412,16 +448,59 @@ class _YearSelector extends StatelessWidget {
   });
 
   @override
+  State<_YearSelector> createState() => _YearSelectorState();
+}
+
+class _YearSelectorState extends State<_YearSelector> {
+  /// Which way the last change went: a newer year rolls up into place like a counter, an older one rolls down.
+  bool _newer = false;
+
+  @override
+  void didUpdateWidget(_YearSelector old) {
+    super.didUpdateWidget(old);
+    if (old.value != widget.value) _newer = widget.value > old.value;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final value = widget.value;
+    final years = widget.years;
     final i = years.indexOf(value);
     final hasNewer = i > 0;
     final hasOlder = i >= 0 && i < years.length - 1;
+    final still = MediaQuery.disableAnimationsOf(context);
+
+    final year = ClipRect(
+      child: AnimatedSwitcher(
+        duration: still ? Duration.zero : const Duration(milliseconds: 300),
+        switchInCurve: Curves.easeOutCubic,
+        switchOutCurve: Curves.easeInCubic,
+        transitionBuilder: (child, animation) {
+          // The outgoing year runs this backwards, so it leaves on the side opposite to where the new one came in.
+          final incoming = child.key == ValueKey(value);
+          final from = Offset(0, (incoming ? 0.9 : -0.9) * (_newer ? 1 : -1));
+          return SlideTransition(
+            position: Tween(begin: from, end: Offset.zero).animate(animation),
+            child: FadeTransition(opacity: animation, child: child),
+          );
+        },
+        child: Text(
+          '$value',
+          key: ValueKey(value),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.bold,
+            fontFeatures: [FontFeature.tabularFigures()],
+          ),
+        ),
+      ),
+    );
 
     return Container(
       decoration: BoxDecoration(
-        color: _DashTokens.surface,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: _DashTokens.border),
+        color: RibbonColors.glass,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: RibbonColors.glassEdge),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -429,23 +508,38 @@ class _YearSelector extends StatelessWidget {
           _StepButton(
             icon: Icons.chevron_left_rounded,
             tooltip: 'Previous year',
-            onPressed: hasOlder ? () => onChanged(years[i + 1]) : null,
+            onPressed: hasOlder ? () => widget.onChanged(years[i + 1]) : null,
           ),
           PopupMenuButton<int>(
-            tooltip: 'Select year',
+            // No hover text: the year and its arrow say what this is. Screen readers still get the label.
+            tooltip: '',
             initialValue: value,
-            color: _DashTokens.surface,
-            onSelected: onChanged,
+            color: RibbonColors.menu,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: BorderSide(color: RibbonColors.glassEdge),
+            ),
+            onSelected: widget.onChanged,
             itemBuilder: (_) => [
               for (final y in years)
                 PopupMenuItem<int>(
                   value: y,
-                  child: Text(
-                    '$y',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: y == value ? FontWeight.bold : FontWeight.normal,
-                    ),
+                  height: 40,
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 22,
+                        child: y == value ? const Icon(Icons.check_rounded, size: 16, color: RibbonColors.live) : null,
+                      ),
+                      Text(
+                        '$y',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: y == value ? FontWeight.bold : FontWeight.normal,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
             ],
@@ -454,17 +548,9 @@ class _YearSelector extends StatelessWidget {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '$value',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
+                  year,
                   const SizedBox(width: 2),
-                  const Icon(Icons.keyboard_arrow_down_rounded,
-                      color: Colors.white, size: 18),
+                  const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 18),
                 ],
               ),
             ),
@@ -472,7 +558,7 @@ class _YearSelector extends StatelessWidget {
           _StepButton(
             icon: Icons.chevron_right_rounded,
             tooltip: 'Next year',
-            onPressed: hasNewer ? () => onChanged(years[i - 1]) : null,
+            onPressed: hasNewer ? () => widget.onChanged(years[i - 1]) : null,
           ),
         ],
       ),
@@ -493,16 +579,52 @@ class _StepButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      icon: Icon(icon),
-      tooltip: tooltip,
-      iconSize: 20,
-      color: Colors.white,
-      disabledColor: _DashTokens.border,
-      visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints.tightFor(width: 32, height: 32),
-      padding: EdgeInsets.zero,
-      onPressed: onPressed,
+    // No hover popup (an arrow beside a year needs none); the label is for screen readers only.
+    return Semantics(
+      label: tooltip,
+      button: true,
+      excludeSemantics: true,
+      enabled: onPressed != null,
+      onTap: onPressed,
+      child: IconButton(
+        icon: Icon(icon),
+        iconSize: 20,
+        color: Colors.white,
+        disabledColor: RibbonColors.disabled,
+        visualDensity: VisualDensity.compact,
+        constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+        padding: EdgeInsets.zero,
+        onPressed: onPressed,
+      ),
     );
   }
+}
+
+/// The freshness dot, and the ring it sends out when figures land.
+class _DotPainter extends CustomPainter {
+  final Color color;
+  final Animation<double> ripple;
+  _DotPainter({required this.color, required this.ripple}) : super(repaint: ripple);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    final r = size.shortestSide / 2;
+    final v = ripple.value;
+    if (v > 0 && v < 1) {
+      // Stays inside the gap before the label.
+      canvas.drawCircle(
+        c,
+        r + 5 * Curves.easeOut.transform(v),
+        Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5
+          ..color = color.withValues(alpha: 0.75 * (1 - v) * (1 - v)),
+      );
+    }
+    canvas.drawCircle(c, r, Paint()..color = color);
+  }
+
+  @override
+  bool shouldRepaint(_DotPainter old) => old.color != color || old.ripple != ripple;
 }

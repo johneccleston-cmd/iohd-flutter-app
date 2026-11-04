@@ -94,6 +94,39 @@ DashChange? dashMonthChange(List<double> monthly, int year) {
   return DashChange((cur - prev) / prev * 100, '${dashMonthNames[n - 1]} vs ${dashMonthNames[n - 2]}');
 }
 
+/// The average of [year]'s finished months that have something in them ([monthly] is 12 values, January first). The
+/// month in progress is left out, as in dashMonthStory, so a chart's dashed average line and the words over the chart
+/// ("Sep was 6% under the average") compare against the same number. 0 when no finished month has a value.
+double dashFinishedAverage(List<double> monthly, int year) {
+  final n = math.min(dashCompleteMonths(year), monthly.length);
+  final values = [
+    for (var i = 0; i < n; i++)
+      if (monthly[i] != 0) monthly[i],
+  ];
+  return values.isEmpty ? 0 : values.fold<double>(0, (a, b) => a + b) / values.length;
+}
+
+/// Whole-number percentages of [values] that add up to exactly 100 (largest remainder: each share is rounded down,
+/// then the points left over go to the biggest remainders), so a list of shares never reads 99% or 101%. All zeros
+/// when the total is not above zero.
+List<int> dashShares(List<num> values) {
+  final total = values.fold<double>(0, (a, b) => a + (b > 0 ? b : 0));
+  if (total <= 0) return List<int>.filled(values.length, 0);
+  final exact = [for (final v in values) (v > 0 ? v : 0) / total * 100];
+  final out = [for (final e in exact) e.floor()];
+  var left = 100 - out.fold<int>(0, (a, b) => a + b);
+  final order = List<int>.generate(values.length, (i) => i)..sort((a, b) => (exact[b] - out[b]).compareTo(exact[a] - out[a]));
+  for (final i in order) {
+    if (left <= 0) break;
+    out[i]++;
+    left--;
+  }
+  return out;
+}
+
+/// A share for display: "<1%" for a share above zero that rounds to 0, so a small stage never reads as nothing.
+String dashShareLabel(int pct, num value) => pct == 0 && value > 0 ? '<1%' : '$pct%';
+
 // =============================================================================
 // FAILURES
 // =============================================================================

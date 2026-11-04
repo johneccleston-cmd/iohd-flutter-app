@@ -18,6 +18,7 @@ import 'package:http/http.dart' as http;
 import 'package:iohd_desktop/collections_dashboard_screen.dart';
 import 'package:iohd_desktop/widgets/dashboard_kit.dart';
 
+import 'dashboard_fit.dart' show dashTruncatedTexts;
 import 'dashboard_harness.dart';
 
 const _path = '/api/dashboards/collections';
@@ -51,7 +52,7 @@ http.Response _jobs(http.Request req) {
 DashFakeApi _api() => DashFakeApi()..extra.add((req) async => req.url.path == _jobsPath ? _jobs(req) : null);
 
 /// The monthly chart's plot.
-final _plot = find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_ChartPainter');
+final _plot = find.byWidgetPredicate((w) => w is CustomPaint && w.painter.runtimeType.toString() == '_BarsPainter');
 
 /// The panel (white box) a piece of text sits in.
 Rect _panelOf(WidgetTester t, String text) => t.getRect(
@@ -77,15 +78,22 @@ void main() {
       (Size(1500, 800), 1.3, '1500x800_text130'),
     ]) {
       testWidgets('$tag: everything on screen, nothing scrolls, no overflow', (t) async {
+        late List<String> cut;
         final errors = await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api(), size: size, textScale: scale,
-            body: () async => saveDashShot(t, 'collections_$tag'));
+            body: () async {
+          await saveDashShot(t, 'collections_$tag');
+          cut = dashTruncatedTexts(t);
+        });
         expect(errors.overflowed, isFalse, reason: errors.messages.toSet().join('\n'));
+        // Nothing is cut at normal text size, and at any size a card keeps its period: the trend line gives way first.
+        if (scale == 1) expect(cut, isEmpty, reason: 'no text is cut short at $tag');
+        expect(cut.where((s) => s.startsWith('After refunds') || s.startsWith('Invoiced, unpaid') || s.startsWith('At 90 Day')), isEmpty);
         expect(t.takeException(), isNull);
         expect(find.byType(SingleChildScrollView), findsNothing, reason: 'the dashboard never scrolls at $tag');
         final screen = Offset.zero & size;
         for (final text in [
-          'Collected 2026',
-          'Written off 2026',
+          'Collected',
+          'Written off',
           'Outstanding balance',
           'Over 90 days',
           'How customers paid',
@@ -97,10 +105,13 @@ void main() {
           expect(screen.contains(r.topLeft) && screen.contains(r.bottomRight), isTrue, reason: '$text is on screen');
         }
         // Larger text takes some of the chart's height, never the page's.
-        expect(t.getRect(_plot).height, greaterThan(scale == 1 ? 200 : 150), reason: 'the chart has room to read');
+        // The headline and the key sit above and below the bars now; the bars keep room to compare.
+        expect(t.getRect(_plot).height, greaterThan(scale == 1 ? 140 : 100), reason: 'the chart has room to read');
       });
     }
 
+    // With a line of finding under each title the stages and balances need more height to stack: 1500x800 now keeps
+    // them side by side, and a full HD window stacks them.
     testWidgets('a short window puts stages and balances side by side; a taller one stacks them', (t) async {
       await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api());
       var stages = _panelOf(t, 'Unpaid by stage · today');
@@ -108,10 +119,10 @@ void main() {
       expect(owing.top, stages.top, reason: '1280x600: side by side');
       expect(owing.left, greaterThan(stages.right));
 
-      await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api(), size: const Size(1500, 800));
+      await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api(), size: const Size(1920, 940));
       stages = _panelOf(t, 'Unpaid by stage · today');
       owing = _panelOf(t, 'Biggest balances · today');
-      expect(owing.top, greaterThan(stages.bottom), reason: '1500x800: stacked');
+      expect(owing.top, greaterThan(stages.bottom), reason: '1920x940: stacked');
       expect(owing.left, stages.left);
     });
 
@@ -142,22 +153,60 @@ void main() {
       final api = _api()..yearFixture['$_path?year=2025'] = 'collections_empty';
       await pumpDashboard(t, const CollectionsDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
         expect(find.text('2026 to date'), findsNothing, reason: 'no group labels');
-        expect(find.text('Net of refunds · Jan 1 – today'), findsOneWidget);
-        expect(find.text('Invoiced, not yet paid · today'), findsOneWidget);
+        expect(find.text('After refunds · Jan 1 – today'), findsOneWidget);
+        expect(find.text('4 jobs · Jan 1 – today'), findsOneWidget);
+        expect(find.text('Invoiced, unpaid · today'), findsOneWidget);
         expect(find.text('At 90 Day Notice · today'), findsOneWidget);
         expect(find.text('Unpaid by stage · today'), findsOneWidget);
         expect(find.text('Biggest balances · today'), findsOneWidget);
         expect(find.text('Oct so far'), findsOneWidget, reason: 'the month in progress is marked as a part month');
-        expect(find.text('6% vs 2025 to date'), findsOneWidget);
+        expect(find.text('6% on 2025, same dates'), findsOneWidget);
 
-        await t.tap(find.byTooltip('Previous year'));
+        await t.tap(dashYearArrow('Previous year'));
         await settleDashboard(t);
         expect(api.to(_path).last.url.queryParameters['year'], '2025');
-        expect(find.text('Collected 2025'), findsOneWidget);
-        expect(find.text('Net of refunds · all of 2025'), findsOneWidget);
-        expect(find.text('Invoiced, not yet paid · today'), findsOneWidget);
+        expect(find.text('After refunds · all of 2025'), findsOneWidget);
+        expect(find.text('0 jobs · all of 2025'), findsOneWidget);
+        expect(find.text('Invoiced, unpaid · today'), findsOneWidget);
         expect(find.text('Oct so far'), findsNothing, reason: 'a past year has no month in progress');
       });
+    });
+
+    testWidgets('a past year: the card definition reads as a sentence and the chip compares the whole year before',
+        (t) async {
+      final handle = t.ensureSemantics();
+      final api = _api();
+      await pumpDashboard(t, const CollectionsDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
+        expect(find.bySemanticsLabel(RegExp(r'^Collected: \$2,440,659\. Payments received between Jan 1 and today,')),
+            findsOneWidget);
+        await t.tap(dashYearArrow('Previous year'));
+        await settleDashboard(t);
+        expect(find.bySemanticsLabel(RegExp(r'^Collected: \$2,440,659\. Payments received in 2025,')), findsOneWidget);
+        expect(find.text('6% on 2024'), findsOneWidget);
+      });
+      handle.dispose();
+    });
+
+    testWidgets('how customers paid: a majority reads "mostly", and ACH stays in capitals', (t) async {
+      await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api());
+      expect(find.text('· mostly by check (69%)'), findsOneWidget);
+      expect(find.byTooltip('12 payments by ACH'), findsOneWidget);
+    });
+
+    testWidgets('how customers paid: a biggest method short of half reads "led by", never "mostly"', (t) async {
+      final api = _api()
+        ..extra.insert(0, (req) async {
+          if (req.url.path != _path) return null;
+          final body = dashFixture('collections');
+          body['methods'] = [
+            {'method': 'ACH', 'amount': 410, 'paymentCount': 4},
+            {'method': 'Card', 'amount': 350, 'paymentCount': 3},
+            {'method': 'Check', 'amount': 240, 'paymentCount': 2},
+          ];
+          return http.Response(json.encode(body), 200);
+        });
+      await pumpDashboard(t, const CollectionsDashboardScreen(), api: api);
+      expect(find.text('· led by ACH (41%)'), findsOneWidget);
     });
 
     testWidgets('payment methods show their amounts and shares, and read out their payment counts', (t) async {
@@ -219,14 +268,29 @@ void main() {
       });
     });
 
-    testWidgets('"All 209 jobs" opens every unpaid job, oldest first', (t) async {
+    testWidgets('"All 209" opens every unpaid job, oldest first', (t) async {
       final api = _api();
       await pumpDashboard(t, const CollectionsDashboardScreen(), api: api, body: () async {
-        await t.tap(find.text('All 209 jobs'));
+        await t.tap(find.text('All 209'));
         await settleDashboard(t, frames: 5);
         expect((await openedUri(api)).queryParameters['stage'], 'all');
         expect(find.text('All unpaid balances'), findsOneWidget);
       });
+    });
+
+    testWidgets('a balance on one job gives its age, several give the oldest, and one day is singular', (t) async {
+      final api = _api()
+        ..extra.insert(0, (req) async {
+          if (req.url.path != _path) return null;
+          final body = dashFixture('collections');
+          final owing = (body['topOwing'] as List).cast<Map<String, dynamic>>();
+          owing[3]['oldestDays'] = 1;
+          return http.Response(json.encode(body), 200);
+        });
+      await pumpDashboard(t, const CollectionsDashboardScreen(), api: api);
+      expect(find.text('1 job · 3 months old'), findsOneWidget); // Summit Builders
+      expect(find.text('5 jobs · oldest 5 months'), findsOneWidget); // Oakridge Property Co
+      expect(find.text('1 job · 1 day old'), findsOneWidget); // Cedar Point Storage
     });
 
     testWidgets("a customer opens only that customer's unpaid jobs, adding up to their balance", (t) async {
@@ -259,22 +323,23 @@ void main() {
     testWidgets('hovering a month shows it against the same month last year', (t) async {
       await pumpDashboard(t, const CollectionsDashboardScreen(), api: _api(), size: const Size(1500, 800), body: () async {
         final r = t.getRect(_plot);
-        final slot = (r.width - 58) / 12;
+        final slot = (r.width - 52) / 12;
         final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
         await mouse.addPointer(location: Offset.zero);
-        await mouse.moveTo(Offset(r.left + 54 + slot * 3.5, r.center.dy)); // April
-        await t.pump(const Duration(milliseconds: 100));
+        await mouse.moveTo(Offset(r.left + 48 + slot * 3.5, r.center.dy)); // April
+        await t.pump();
+        await t.pump(const Duration(milliseconds: 200)); // the tooltip fades in
         expect(find.text('Apr 2026'), findsOneWidget);
-        expect(find.text('\$395,785'), findsOneWidget);
-        expect(find.text('2025: \$280,098'), findsOneWidget);
-        expect(find.text('+41% on 2025'), findsOneWidget);
+        expect(find.text('\$395,785'), findsWidgets); // also the headline's best month
+        expect(find.text('▲ 47% on Mar'), findsOneWidget);
+        expect(find.text('▲ 41% on Apr 2025 (\$280,098)'), findsOneWidget);
         await saveDashShot(t, 'collections_chart_hover');
 
-        await mouse.moveTo(Offset(r.left + 54 + slot * 9.5, r.center.dy)); // October, in progress
-        await t.pump(const Duration(milliseconds: 100));
+        await mouse.moveTo(Offset(r.left + 48 + slot * 9.5, r.center.dy)); // October, in progress
+        await t.pump(const Duration(milliseconds: 200));
         expect(find.text('Oct 2026 so far'), findsOneWidget);
-        expect(find.text('2025 (whole month): \$326,806'), findsOneWidget);
-        expect(find.textContaining('% on 2025'), findsNothing, reason: 'a part month is never compared with a whole one');
+        expect(find.text('Oct 2025 (whole month): \$326,806'), findsOneWidget);
+        expect(find.textContaining(RegExp(r'[▲▼] \d+% on')), findsNothing, reason: 'a part month is never compared with a whole one');
         await mouse.removePointer();
       });
     });
@@ -292,8 +357,9 @@ void main() {
         expect(find.text('Oct 2026 so far'), findsOneWidget);
         await t.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
         await t.pump();
+        await t.pump(const Duration(milliseconds: 200)); // the tooltip fades in
         expect(find.text('Sep 2026'), findsOneWidget);
-        expect(t.getSemantics(chart).value, 'Sep 2026: \$137,737. 2025: \$226,395');
+        expect(t.getSemantics(chart).value, 'Sep 2026: \$137,737. ▼ 62% on Aug. ▼ 39% on Sep 2025 (\$226,395)');
         await saveDashShot(t, 'collections_chart_keyboard');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await t.pump();
@@ -338,7 +404,7 @@ void main() {
         await t.tap(find.text('Try again'));
         await settleDashboard(t);
         api.status[_path] = 500;
-        await t.tap(find.byTooltip('Refresh now'));
+        await t.tap(dashRefreshButton);
         await settleDashboard(t, frames: 5);
         expect(find.text("Couldn't refresh"), findsOneWidget);
         expect(find.text('\$238,133'), findsOneWidget);
