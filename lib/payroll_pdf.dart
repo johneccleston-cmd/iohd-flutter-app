@@ -497,7 +497,20 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
     );
   }
 
-  for (final j in w.jobs) {
+  // Oldest finished job first: ordered by the last day worked (completion), not the day the job was closed.
+  String completedOn(_Job j) =>
+      j.lastWorked.isNotEmpty ? j.lastWorked : (j.firstWorked.isNotEmpty ? j.firstWorked : j.closedOn);
+  final jobsInOrder = [...w.jobs]
+    ..sort((a, b) {
+      final ca = completedOn(a), cb = completedOn(b);
+      // Jobs with no work date go last.
+      if (ca.isEmpty != cb.isEmpty) return ca.isEmpty ? 1 : -1;
+      final c = ca.compareTo(cb);
+      if (c != 0) return c;
+      final f = a.firstWorked.compareTo(b.firstWorked);
+      return f != 0 ? f : a.jobId.compareTo(b.jobId);
+    });
+  for (final j in jobsInOrder) {
     out.add(pw.SizedBox(height: 10));
     out.add(_pdfJob(j, r));
   }

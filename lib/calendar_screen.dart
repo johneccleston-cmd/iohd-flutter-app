@@ -334,6 +334,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
   bool _loading = true;
   Timer? _slowTimer;
   Timer? _refreshTimer;
+
+  /// Pauses the 5-minute refresh while the browser tab or desktop window is hidden. TickerMode only covers switching
+  /// pages inside the app, so a calendar left open in a background tab re-read three months of visits every 5 minutes
+  /// all night (seen in the server logs).
+  AppLifecycleListener? _lifecycle;
+  bool get _appInForeground {
+    final state = WidgetsBinding.instance.lifecycleState;
+    return state == null || state == AppLifecycleState.resumed || state == AppLifecycleState.inactive;
+  }
   bool _slowLoad = false; // still loading after a few seconds: the free-tier server is probably waking up
   String? _error;
   bool _forbidden = false; // the error is "no access": no Retry
@@ -379,10 +388,16 @@ class _CalendarScreenState extends State<CalendarScreen> {
     // Pick up changes made elsewhere (new jobs, rescheduled visits) and roll "today" over at midnight, without a spinner.
     _refreshTimer = Timer.periodic(_refreshEvery, (_) {
       if (!mounted) return;
-      if (!_visible) {
-        _missedRefresh = true; // caught up on return (didChangeDependencies)
+      if (!_visible || !_appInForeground) {
+        _missedRefresh = true; // caught up on return (didChangeDependencies or the app coming back to the front)
         return;
       }
+      if (!_loading) _ensureLoaded(force: true, quiet: true);
+      setState(() {});
+    });
+    _lifecycle = AppLifecycleListener(onResume: () {
+      if (!mounted || !_visible || !_missedRefresh) return;
+      _missedRefresh = false;
       if (!_loading) _ensureLoaded(force: true, quiet: true);
       setState(() {});
     });
@@ -406,6 +421,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void dispose() {
     _slowTimer?.cancel();
     _refreshTimer?.cancel();
+    _lifecycle?.dispose();
     _focusNode.dispose();
     _techButtonFocus.dispose();
     _statusButtonFocus.dispose();

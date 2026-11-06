@@ -195,6 +195,10 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
   /// doesn't send it, which leaves the chart without its Work days view.
   List<double>? _workDaysByMonth;
 
+  /// The same months counting only days from go-live on (`liveWorkDays`), which the chart adds to the on-pace credit for
+  /// the days before it. Null from a server that doesn't send it (the chart then shows [_workDaysByMonth] as it is).
+  List<double>? _liveWorkDaysByMonth;
+
   /// The days behind Actual / day by month (`fieldDaysMonthly`): the Work pace roster's, Zac's install days and former
   /// techs', everyone whose share is in the profit. Null from an older server, which divides by [_workDaysByMonth].
   List<double>? _fieldDaysByMonth;
@@ -253,13 +257,15 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
           return c != 0 ? c : a.name.compareTo(b.name);
         });
       _chartData = chartRaw.map((e) => _MonthlyChartPoint.fromJson(e as Map<String, dynamic>)).toList();
-      List<double>? byMonth(Object? monthly) => monthly is List
+      List<double>? byMonth(Object? monthly, [String key = 'workDays']) => monthly is List
           ? [
               for (var m = 1; m <= 12; m++)
-                _parseMoney(monthly.whereType<Map>().where((e) => _toInt(e['month']) == m).firstOrNull?['workDays']),
+                _parseMoney(monthly.whereType<Map>().where((e) => _toInt(e['month']) == m).firstOrNull?[key]),
             ]
           : null;
       _workDaysByMonth = byMonth(body['paceMonthly']);
+      final hasLive = body['paceMonthly'] is List && (body['paceMonthly'] as List).whereType<Map>().any((e) => e.containsKey('liveWorkDays'));
+      _liveWorkDaysByMonth = hasLive ? byMonth(body['paceMonthly'], 'liveWorkDays') : null;
       _fieldDaysByMonth = byMonth(body['fieldDaysMonthly']);
       _paceActuals = {
         for (final e in (body['pace'] is List ? body['pace'] as List : const []).whereType<Map>())
@@ -381,15 +387,16 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
     ];
 
     final pace = _paceRows(year);
+    final workDayTarget = pace.fold<double>(0, (a, p) => a + p.goals.workDayTarget);
     return _Grid(
       tiles: tiles,
       chart: _ProfitChart(
         data: _chartData,
         year: year,
         avgPerDayYtd: _avgProfitPerDay,
-        workDays: _workDaysByMonth,
-        fieldDays: _fieldDaysByMonth,
-        workDayTarget: pace.fold<double>(0, (a, p) => a + p.goals.workDayTarget),
+        workDays: _creditedMonths(year, workDayTarget),
+        fieldDays: _creditedFieldDays(year, workDayTarget),
+        workDayTarget: workDayTarget,
       ),
       techs: (layout) => _TechsPanel(
         g: g,
@@ -407,6 +414,28 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
     );
   }
 
+  /// The company's work days by month for [year] with everyone credited as on pace before go-live (see [_preLiveCredit]):
+  /// each month's share of [target] (everyone's targets added up) for the weekdays before Oct 5, plus the days counted
+  /// from go-live on. A server that doesn't send the go-live split, or a year that has no such stretch, gets the plain
+  /// months.
+  List<double>? _creditedMonths(int year, double target) {
+    final live = _liveWorkDaysByMonth;
+    if (live == null || year != _goLive.year) return _workDaysByMonth;
+    return [for (var m = 0; m < 12; m++) _preLiveCredit(year, target, month: m + 1) + live[m]];
+  }
+
+  /// The days behind Actual / day with the same credit: the roster's days are [_creditedMonths]; Zac's install days and
+  /// former techs' (what the field days hold beyond the roster's own counted days) stay as counted.
+  List<double>? _creditedFieldDays(int year, double target) {
+    final field = _fieldDaysByMonth;
+    final roster = _workDaysByMonth;
+    final credited = _creditedMonths(year, target);
+    if (field == null || roster == null || credited == null || _liveWorkDaysByMonth == null || year != _goLive.year) {
+      return field;
+    }
+    return [for (var m = 0; m < 12; m++) credited[m] + math.max(0.0, field[m] - roster[m])];
+  }
+
   /// Every tech, and Dennis, against their targets for [year], furthest ahead of their profit pace first. Work days and
   /// profit come from the server (the commission work days); someone it sends nothing for (an older server) gets
   /// sample figures, the same each time (by their place in the roster).
@@ -421,7 +450,10 @@ class _TechniciansDashboardContentState extends State<TechniciansDashboardConten
             dayProfitTarget: t.perDay,
             yearProfitTarget: t.year,
             fireGoal: t.fire,
-            workDays: a.workDays,
+            // Before go-live everyone counts as on pace; from then on, the days the server counted.
+            workDays: a.liveWorkDays == null || year != _goLive.year
+                ? a.workDays
+                : _preLiveCredit(year, t.days) + a.liveWorkDays!,
             profit: a.profit,
           );
     // Dennis isn't normally in the technicians list: he comes from the pace list (or, from an older server, as a
@@ -1197,6 +1229,9 @@ class _PaceActual {
   final String jobTitle;
   final String avatarUrl;
   final double workDays;
+
+  /// The days from go-live on (null from a server that doesn't split them).
+  final double? liveWorkDays;
   final double profit;
   const _PaceActual({
     required this.id,
@@ -1204,6 +1239,7 @@ class _PaceActual {
     required this.jobTitle,
     required this.avatarUrl,
     required this.workDays,
+    this.liveWorkDays,
     required this.profit,
   });
 
@@ -1213,6 +1249,7 @@ class _PaceActual {
     jobTitle: (json['jobTitle'] ?? '').toString(),
     avatarUrl: (json['avatarUrl'] ?? '').toString(),
     workDays: _parseMoney(json['workDays']),
+    liveWorkDays: json['liveWorkDays'] == null ? null : _parseMoney(json['liveWorkDays']),
     profit: _parseMoney(json['profit']),
   );
 }
@@ -1267,6 +1304,26 @@ double _yearGone(int year) {
   return _weekdays(year, now) / _weekdays(year, DateTime(year, 12, 31));
 }
 
+/// The day the app went live (Oct 5, 2026, the server's commission go-live). Work days before it were never marked
+/// complete, so the Work pace view counts everyone as exactly on pace up to it and the real days from it on.
+final _goLive = DateTime(2026, 10, 5);
+
+/// The work days a tech with a [target] for [year] is credited before go-live: the target's share for the weekdays from
+/// Jan 1 to the day before go-live, so they stand exactly on pace there. With [month] (1-12), only that month's share
+/// (none for a month that starts on or after go-live). 0 for a year that doesn't contain go-live.
+double _preLiveCredit(int year, double target, {int? month}) {
+  if (year != _goLive.year) return 0;
+  final total = _weekdays(year, DateTime(year, 12, 31));
+  final dayBefore = _goLive.subtract(const Duration(days: 1));
+  if (month == null) return target * _weekdays(year, dayBefore) / total;
+  final first = DateTime(year, month);
+  if (!first.isBefore(_goLive)) return 0;
+  final monthEnd = DateTime(year, month + 1, 0);
+  final end = monthEnd.isBefore(dayBefore) ? monthEnd : dayBefore;
+  final before = month == 1 ? 0 : _weekdays(year, first.subtract(const Duration(days: 1)));
+  return target * (_weekdays(year, end) - before) / total;
+}
+
 /// Mondays to Fridays from Jan 1 of [year] to [to], both included (counted in UTC, so no clock change skips a day).
 int _weekdays(int year, DateTime to) {
   final end = DateTime.utc(to.year, to.month, to.day);
@@ -1314,7 +1371,9 @@ class _Pace {
   /// Profit so far against where it should be by today (1 is exactly on pace): what the techs are ranked by.
   double get share => profitPace > 0 ? goals.profit / profitPace : 0;
 
-  bool get daysOk => goals.workDays >= dayPace;
+  /// On pace for work days. A gap under a quarter day rounds to "on pace" in the words (days show to the half), so it
+  /// counts as on pace here too, not as a red "short" of nothing.
+  bool get daysOk => goals.workDays - dayPace > -0.25;
   bool get rateOk => perDay >= goals.dayProfitTarget;
 
   /// On pace for the year's profit: the goal the other two add up to, so the tech's verdict.

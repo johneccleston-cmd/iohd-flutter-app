@@ -102,6 +102,22 @@ void main() {
       expect(api.posts.single.containsKey('verified'), isFalse);
     });
 
+    testWidgets('a fix that leaves a verified visit at weight 0 warns it pays nothing, until a weight is set', (t) async {
+      final api = FakeCorrApi();
+      await withCorrections(t, api, () async {
+        await _openFix(t, 0); // Daniel: verified, weight 0
+        expect(find.textContaining('still has weight 0'), findsNothing, reason: 'nothing picked yet');
+        await t.tap(find.text('Verified').last);
+        await pumpN(t, 3);
+        expect(find.textContaining('still has weight 0'), findsOneWidget);
+        await t.tap(find.text('Set a value'));
+        await pumpN(t, 3);
+        await t.enterText(_weightField, '1');
+        await pumpN(t, 3);
+        expect(find.textContaining('still has weight 0'), findsNothing);
+      }, size: const Size(1440, 1100));
+    });
+
     testWidgets('a comma decimal is accepted and the 0 to 3 limit is enforced before saving', (t) async {
       final api = FakeCorrApi();
       await withCorrections(t, api, () async {

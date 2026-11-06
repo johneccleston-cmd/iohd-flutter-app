@@ -69,14 +69,14 @@ void main() {
     'sales_heather',
     _heather,
     () => salesApi(),
-    mustShow: ['HEATHER VERA', 'Close rate', r'$703,107', 'Sales won', 'Gross profit', 'Late to send', 'Turnaround', 'LARGEST DEAL · 2026', 'Open estimates', 'Customer reviews'],
+    mustShow: ['HEATHER VERA', 'Close rate', r'$703,107', 'Sales revenue', 'Gross profit', 'Late to send', 'Turnaround', 'LARGEST DEAL · 2026', 'Open estimates', 'Customer reviews'],
     mayCut: (text) => text.contains('Heather walked us through') || text.contains('Fast quote') || text == 'David and Molli Snell',
   );
   dashFitTests(
     'sales_zac',
     _zac,
     () => salesApi(),
-    mustShow: ['ZAC CLEMENS', 'Close rate', 'Sales won', 'Gross profit', 'Late to send', 'Turnaround', 'Inventory strikes', 'LARGEST DEAL · 2026', 'Open estimates'],
+    mustShow: ['ZAC CLEMENS', 'Close rate', 'Sales revenue', 'Gross profit', 'Late to send', 'Turnaround', 'Inventory strikes', 'LARGEST DEAL · 2026', 'Open estimates'],
     // A long customer name is cut short on the deal card (the full name is in its tooltip).
     mayCut: (text) => text == 'Southern Brothers Construction LLC',
   );
@@ -94,7 +94,7 @@ void main() {
       // Only the technician and warehouse pages carry a peer rating.
       expect(find.text('Peer rating'), findsNothing);
       // The old scorecards (margin now rides in the gross-profit caption) and the old left-column cards.
-      for (final label in ['Close rate', 'Sales won', 'Gross profit', 'Late to send', 'Turnaround', 'Inventory strikes']) {
+      for (final label in ['Close rate', 'Sales revenue', 'Gross profit', 'Late to send', 'Turnaround', 'Inventory strikes']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
       expect(find.textContaining('37.3% margin'), findsOneWidget);
@@ -130,7 +130,7 @@ void main() {
     final errors = await pumpDashboard(t, _heather(), api: salesApi(), size: const Size(1500, 800), body: () async {
       expect(find.textContaining('Rank #'), findsOneWidget);
       expect(find.text('Morale'), findsOneWidget);
-      for (final label in ['Close rate', 'Sales won', 'Gross profit', 'Late to send', 'Turnaround']) {
+      for (final label in ['Close rate', 'Sales revenue', 'Gross profit', 'Late to send', 'Turnaround']) {
         expect(find.text(label), findsWidgets, reason: label);
       }
       // Residential: no inventory strikes, no mix; Sales and Close rate tabs.
@@ -153,13 +153,13 @@ void main() {
     final api = salesApi();
     final errors = await pumpDashboard(t, _heather(), api: api, size: const Size(1500, 800), body: () async {
       expect(find.text('90.3%'), findsOneWidget);
-      expect(find.textContaining('177 won of 196 closed'), findsOneWidget);
+      expect(find.textContaining('177 of 196 estimates won'), findsOneWidget);
       expect(find.text(r'$703,107'), findsWidgets);
       expect(find.text(r'$300,930'), findsWidgets);
       expect(find.text('42.8%'), findsOneWidget); // the chart's margin, as on the scorecard
       // The largest deal is the far right card of the top row, level with the scorecards and right of the last one.
       final deal = t.getRect(find.textContaining('LARGEST DEAL'));
-      expect(deal.top, lessThan(t.getRect(_rich('Sales won · by estimate date')).top));
+      expect(deal.top, lessThan(t.getRect(_rich('Sales revenue · by job start date')).top));
       expect(deal.left, greaterThan(t.getRect(find.text('Turnaround')).right));
       expect(find.textContaining('42.8% margin'), findsOneWidget);
       expect(find.text('Stale estimates'), findsNothing); // the stale counts live in the Open estimates panel
@@ -168,8 +168,8 @@ void main() {
       expect(find.text('12'), findsWidgets);
       expect(find.text('1.9 days'), findsOneWidget);
       // The chart's first story: the year's sales, the profit, the margin and the best month.
-      expect(_rich('Sales won · by estimate date'), findsOneWidget);
-      expect(find.text('Best month: Sep, \$137,118 won'), findsOneWidget);
+      expect(_rich('Sales revenue · by job start date'), findsOneWidget);
+      expect(find.text('Best month: Sep, \$137,118'), findsOneWidget);
       // Pipeline headline and finding.
       expect(find.text(r'$1,521,836'), findsOneWidget);
       expect(find.text('249'), findsOneWidget); // the ring's middle
@@ -189,11 +189,11 @@ void main() {
   // ---------------------------------------------------------------------------------------------------------------
   testWidgets("Zac's chart steps through its four stories every 8 seconds, and holds while the pointer is on it", (t) async {
     final errors = await pumpDashboard(t, _zac(), api: salesApi(), size: const Size(1500, 800), body: () async {
-      expect(_rich('Hard bids won · by estimate date'), findsOneWidget);
-      expect(find.text(r'Best month: Jul, $24,000 won · 69% of everything won'), findsOneWidget);
+      expect(_rich('Hard bids won · by job start date'), findsOneWidget);
+      expect(find.text(r'Best month: Jul, $24,000 · 69% of all sales revenue'), findsOneWidget);
       await t.pump(const Duration(seconds: 8));
       await settleDashboard(t, frames: 12);
-      expect(_rich('Other commercial won · by estimate date'), findsOneWidget);
+      expect(_rich('Other commercial won · by job start date'), findsOneWidget);
       await t.pump(const Duration(seconds: 8));
       await settleDashboard(t, frames: 12);
       expect(_rich('Close rate · by estimate date'), findsOneWidget);
@@ -254,9 +254,9 @@ void main() {
       await settleDashboard(t, frames: 8);
       expect(find.textContaining('(the Sales dashboard calls this the win rate)'), findsOneWidget);
       expect(find.textContaining('Hard bids 100% (2 of 2) on their own'), findsOneWidget);
-      await mouse.moveTo(t.getCenter(find.text('Sales won').first));
+      await mouse.moveTo(t.getCenter(find.text('Sales revenue').first));
       await settleDashboard(t, frames: 8);
-      expect(find.textContaining("The chart's Hard bids and Commercial views split it by kind of estimate; the Mix view has the rest."), findsOneWidget);
+      expect(find.textContaining("The chart's Hard bids and Commercial views split it by the kind of estimate each job came from; the Mix view is about estimates."), findsOneWidget);
       await mouse.moveTo(t.getCenter(find.text('Inventory strikes')));
       await settleDashboard(t, frames: 8);
       final last = find.textContaining('found by the stock audit');
@@ -435,13 +435,29 @@ void main() {
     expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
   });
 
+  testWidgets('Sales revenue and Gross profit count the jobs the person is an agent on, not the won estimates', (t) async {
+    // 177 estimates were won, but the figures behind the two cards come from 200 jobs (jobCount), 190 of them with a profit figure.
+    final api = salesApi(mutate: (s) {
+      s['jobCount'] = 200;
+      s['profitCoverage'] = {'withProfit': 190, 'won': 200};
+      (((s['monthlyByType'] as Map)['other'] as List)[8] as Map)['revenueWithProfit'] = 125118;
+    });
+    final errors = await pumpDashboard(t, _heather(), api: api, size: const Size(1280, 600), body: () async {
+      expect(find.textContaining(RegExp(r'^200 jobs( as agent)?( · |$)')), findsOneWidget, reason: 'the Sales revenue caption counts jobs');
+      expect(find.textContaining(RegExp(r'^42\.8%( margin)? · 10 (jobs )?left out')), findsOneWidget, reason: 'the profit caption counts jobs without a profit figure');
+      expect(find.textContaining('177 estimate'), findsNothing);
+      expect(find.textContaining('177 of 196 estimates won'), findsOneWidget, reason: 'the close rate still counts estimates');
+    });
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
   testWidgets('a chart margin divides the profit by the won revenue that carries a profit figure', (t) async {
     // July's $24,000 hard bid: $20,000 of it is on estimates with a profit figure. 11,800 / (20,000 + 6,100) = 45.2%.
     final api = salesApi(mutate: (s) => (((s['monthlyByType'] as Map)['hardBid'] as List)[6] as Map)['revenueWithProfit'] = 20000);
     final errors = await pumpDashboard(t, _zac(), api: api, size: const Size(1500, 800), body: () async {
-      expect(_rich('Hard bids won · by estimate date'), findsOneWidget);
+      expect(_rich('Hard bids won · by job start date'), findsOneWidget);
       expect(find.text('45.2%'), findsOneWidget);
-      expect(find.text('Value won'), findsOneWidget);
+      expect(find.text('Revenue'), findsOneWidget);
     });
     expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
   });

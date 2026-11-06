@@ -313,6 +313,15 @@ void main() {
       semantics.dispose();
     });
 
+    testWidgets('opening or reloading the page asks the server for fresh numbers, not its cached copy', (t) async {
+      final seen = <Uri>[];
+      await _withScreen(t, seen: seen, () async {
+        final report = seen.where((u) => u.path.endsWith('/commission-detail'));
+        expect(report, hasLength(1));
+        expect(report.single.queryParameters['fresh'], '1');
+      });
+    });
+
     testWidgets('keyboard only: Tab reaches a range pill and Space picks it', (t) async {
       final semantics = t.ensureSemantics();
       final seen = <Uri>[];

@@ -2048,6 +2048,15 @@ class _FixDayDialogState extends State<_FixDayDialog> {
     return note.isEmpty ? _why! : '$_why: $note';
   }
 
+  /// Saving leaves a verified visit at weight 0. Weight is what pays, so the fix would change nothing in payroll. A weight
+  /// the office typed as 0 is on purpose, so only an untouched weight counts.
+  bool get _stillPaysNothing {
+    if (!_hasChange || _weight != _Pick.keep || (_num(_d['day_weight']) ?? 0) != 0) return false;
+    final verified = _verified == _Pick.keep || _verified == _Pick.auto ? _isVerified : _verified == _Pick.yes;
+    final callback = _callback == _Pick.keep || _callback == _Pick.auto ? _isCallback : _callback == _Pick.yes;
+    return verified && !callback;
+  }
+
   bool get _valid => _hasChange && !_weightMissing && _weightOk && _reasonOk && !_saving;
 
   /// The save verifies a visit the tech never marked complete, for that reason: a missed completion against the tech.
@@ -2312,6 +2321,13 @@ class _FixDayDialogState extends State<_FixDayDialog> {
                   ],
                 ),
         ),
+        if (_stillPaysNothing) ...[
+          const SizedBox(height: 10),
+          const AppNotice(
+            'This visit still has weight 0, so it will pay nothing. Set a weight above for it to pay.',
+            kind: AppNoticeKind.warning,
+          ),
+        ],
         if (_why == _missedReason) ...[
           const SizedBox(height: 10),
           _missed

@@ -347,6 +347,28 @@ void main() {
       handle.dispose();
     });
 
+    testWidgets('before Oct 5 everyone counts as on pace; from then on the days the server counted', (t) async {
+      final api = DashFakeApi()
+        ..extra.add((req) async {
+          if (req.url.path != _path) return null;
+          final f = dashFixture('technicians');
+          // `workDays` is the whole year as the server counts it (any visit before go-live); `liveWorkDays` only from Oct 5.
+          f['pace'] = [
+            {'id': 'alex.rivera', 'name': 'Alex Rivera', 'jobTitle': 'Lead Technician', 'avatarUrl': '', 'workDays': 90, 'liveWorkDays': 10, 'profit': 400000},
+            {'id': 'sam.carter', 'name': 'Sam Carter', 'jobTitle': 'Technician', 'avatarUrl': '', 'workDays': 300, 'liveWorkDays': 0, 'profit': 296000},
+            {'id': 'dgray', 'name': 'Dennis Gray', 'jobTitle': 'Warehouse Technician', 'avatarUrl': '', 'workDays': 2, 'liveWorkDays': 2, 'profit': 27905},
+          ];
+          return http.Response(json.encode(f), 200);
+        });
+      await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
+        await openPace(t);
+        // 197 of the year's 261 weekdays are before Oct 5: 240 days -> 181.2 credited, Dennis's 53 -> 40.0.
+        expect(find.text('191 / 240', findRichText: true), findsOneWidget, reason: 'Alex: 181.2 credited + 10 counted');
+        expect(find.text('181 / 240', findRichText: true), findsOneWidget, reason: 'Sam: his 300 old visit days are not used');
+        expect(find.text('42 / 53', findRichText: true), findsOneWidget, reason: 'Dennis: 40.0 credited + 2 counted');
+      });
+    });
+
     testWidgets('targets from the server replace the sample ones', (t) async {
       final api = DashFakeApi()
         ..extra.add((req) async {
@@ -435,14 +457,14 @@ void main() {
 
     // The fixture: $874,320 of profit Jan-Oct over the roster's 727 days is $1,203 a day. With ten more field days a
     // month (Zac's install days, say) it is $874,320 over 827 days, $1,057; the Work days view keeps the roster's 727.
-    Future<void> actualPerDay(WidgetTester t, DashFakeApi api, String perDay) async {
+    Future<void> actualPerDay(WidgetTester t, DashFakeApi api, String perDay, {String daysText = '727 of '}) async {
       await pumpDashboard(t, const TechniciansDashboardScreen(), api: api, size: const Size(1500, 800), body: () async {
         await t.tap(find.bySemanticsLabel('Chart view: Actual / day'));
         await settleDashboard(t, frames: 10);
         expect(find.text(perDay), findsOneWidget);
         await t.tap(find.bySemanticsLabel('Chart view: Work days'));
         await settleDashboard(t, frames: 10);
-        expect(find.textContaining('727 of '), findsOneWidget);
+        expect(find.textContaining(daysText), findsOneWidget);
       });
     }
 
@@ -464,6 +486,26 @@ void main() {
             return http.Response(json.encode(f), 200);
           }),
         r'$1,057',
+      );
+    });
+
+    testWidgets('Actual / day divides by the credited days: on pace before Oct 5, the counted days after', (t) async {
+      // Everyone's targets (1,013 days) credited for the 197 of 261 weekdays before Oct 5 is 764.6 days, plus the 10
+      // counted since: $874,320 over 774.6 days is $1,129 a day (not $1,203 over the old 727 visit days).
+      await actualPerDay(
+        t,
+        DashFakeApi()
+          ..extra.add((req) async {
+            if (req.url.path != _path) return null;
+            final f = dashFixture('technicians');
+            f['paceMonthly'] = [
+              for (final m in (f['paceMonthly'] as List).cast<Map<String, dynamic>>())
+                {...m, 'liveWorkDays': m['month'] == 10 ? 10 : 0},
+            ];
+            return http.Response(json.encode(f), 200);
+          }),
+        r'$1,129',
+        daysText: '775 of ',
       );
     });
 

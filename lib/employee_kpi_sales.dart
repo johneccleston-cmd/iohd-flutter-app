@@ -294,6 +294,8 @@ class _SalesBody extends StatelessWidget {
     final untrackedCaptions = ['Not tracked before $sinceFull', 'Not tracked in $year', 'Not tracked'];
     final untrackedWhy = 'Not tracked for $year: the status history only became reliable on $sinceFull.';
     final won = s.wonCount, lost = s.lostCount, closed = won + lost;
+    // Sales revenue and Gross profit count the closed jobs $first is an Agent on, not the won estimates (the close rate still counts estimates).
+    final jobs = s.jobsWon;
     final rates = _salesCloseRates(s, year);
 
     // --- Results: close rate, sales won, gross profit (with the margin). ---
@@ -309,8 +311,8 @@ class _SalesBody extends StatelessWidget {
           ? ['Nothing won or lost $soFar']
           : [
               if (bids != null && bidText != null) ...['$won of $closed won · $bidText', '$won of $closed won · hard bids ${bids.wonCount} of ${bids.wonCount + bids.lostCount}'],
-              '$won won of $closed closed · $period',
-              '$won won of $closed closed',
+              '$won of $closed estimates won · $period',
+              '$won of $closed estimates won',
               '$won of $closed won',
             ],
       definition: 'The estimates dated in $year that $first owns and that were won, as a share of those won or lost: $won of $closed (the Sales '
@@ -332,13 +334,13 @@ class _SalesBody extends StatelessWidget {
 
     List<double> monthlyTotal(List<List<double>> all) => [for (var m = 0; m < 12; m++) all.fold<double>(0, (t, b) => t + (m < b.length ? b[m] : 0))];
     final wonValue = _TileSpec(
-      title: 'Sales won',
+      title: 'Sales revenue',
       value: s.wonValue,
       format: _wholeMoney,
-      captions: won == 0 ? ['Nothing won $soFar'] : ['${dashCount(won, 'estimate')} won · $period', '${dashCount(won, 'estimate')} won', '$won won'],
-      definition: 'The value of the $won estimates dated in $year that $first owns (Opportunity Owner in Service Fusion) and that '
-          'reached a won status. ${s.residential ? 'The Sales chart shows it month by month.' : 'The chart\'s Hard bids and Commercial views '
-              'split it by kind of estimate; the Mix view has the rest.'}',
+      captions: jobs == 0 ? ['No closed jobs $soFar'] : ['${dashCount(jobs, 'job')} as agent · $period', '${dashCount(jobs, 'job')} as agent', dashCount(jobs, 'job')],
+      definition: 'The job totals of the $jobs closed jobs started in $year that $first is an Agent on in Service Fusion. '
+          'A job only counts once it reaches a closed status. ${s.residential ? 'The Sales chart shows it month by month.' : 'The chart\'s Hard bids and Commercial views '
+              'split it by the kind of estimate each job came from; the Mix view is about estimates.'}',
       color: DashUi.sky,
       trend: s.monthlyRevenue.isEmpty ? null : dashTrend(monthlyTotal(s.monthlyRevenue), year),
     );
@@ -351,26 +353,27 @@ class _SalesBody extends StatelessWidget {
     final pricedValue = s.monthlyRevenueWithProfit.isEmpty
         ? null
         : s.monthlyRevenueWithProfit.expand((m) => m).fold<double>(0, (a, b) => a + b);
-    final partial = priced != null && priced < won && (pricedValue == null || s.wonValue - pricedValue >= 1);
-    final left = partial ? won - priced : 0;
+    final partial = priced != null && priced < jobs && (pricedValue == null || s.wonValue - pricedValue >= 1);
+    final left = partial ? jobs - priced : 0;
     final profit = _TileSpec(
       title: 'Gross profit',
       value: s.grossProfit,
       format: _wholeMoney,
       captions: margin == null
-          ? [won == 0 ? 'Nothing won $soFar' : 'No profit figures on the won estimates']
+          ? [jobs == 0 ? 'No closed jobs $soFar' : 'No profit figures on the jobs']
           : partial
               ? [
-                  '${_fmtNum(margin)}% margin · $left won left out, no profit figure',
-                  '${_fmtNum(margin)}% margin · $left won left out',
+                  '${_fmtNum(margin)}% margin · $left ${left == 1 ? 'job' : 'jobs'} left out, no profit figure',
+                  '${_fmtNum(margin)}% margin · $left left out',
                   '${_fmtNum(margin)}% margin · $left left out',
                   '${_fmtNum(margin)}% · $left left out',
                 ]
               : ['${_fmtNum(margin)}% margin · $period', '${_fmtNum(margin)}% margin', '${_fmtNum(margin)}%'],
-      definition: 'The profit Service Fusion shows on the won estimates (quoted price minus estimated cost), not invoiced or collected.'
-          '${!partial ? '' : priced == 0 ? ' None of the $won won estimates carries a profit figure${now ? ' yet' : ''}.' : ' Only $priced of the $won won '
-              'estimates carry a profit figure; the other ${won - priced} add nothing to it, so it may read low.'}'
-          '${margin == null ? '' : ' The margin is that profit as a share of the value of ${partial ? 'the $priced estimates that carry it' : 'the won estimates'} '
+      definition: 'The gross profit Service Fusion shows on the $jobs closed jobs $first is an Agent on (job price minus cost). '
+          'A job only counts once it reaches a closed status.'
+          '${!partial ? '' : priced == 0 ? ' None of the $jobs jobs carries a profit figure${now ? ' yet' : ''}.' : ' Only $priced of the $jobs '
+              'jobs carry a profit figure; the other ${jobs - priced} add nothing to it, so it may read low.'}'
+          '${margin == null ? '' : ' The margin is that profit as a share of the revenue of ${partial ? 'the $priced jobs that carry it' : 'those jobs'} '
               '(${_fmtNum(margin)}%)${s.markupPct == null ? '.' : '; as a markup on cost it is ${_fmtNum(s.markupPct!)}%.'}'}',
       color: DashUi.blue,
       trend: s.monthlyProfit.isEmpty ? null : dashTrend(monthlyTotal(s.monthlyProfit), year),
@@ -650,9 +653,9 @@ class _SalesChartPanelState extends State<_SalesChartPanel> {
     final view = _view.clamp(0, views.length - 1);
     final kind = views[view].$2;
     final (title, note, tip) = switch (kind) {
-      'sales' => ('Sales won', 'by estimate date', 'The value of the estimates won, by the month of the estimate\'s date, and the gross profit on them, for every kind of estimate.'),
-      'bids' => ('Hard bids won', 'by estimate date', 'Hard bids (the Service Fusion category "Commercial Hard Bid") won, by the month of the estimate\'s date, and the gross profit on them.'),
-      'commercial' => ('Other commercial won', 'by estimate date', 'Commercial estimates that are not hard bids, won, by the month of the estimate\'s date, and the gross profit on them.'),
+      'sales' => ('Sales revenue', 'by job start date', 'The job totals of the closed jobs this person is an Agent on, by the month the job started, and the gross profit on those jobs, for every kind of job.'),
+      'bids' => ('Hard bids won', 'by job start date', 'Closed jobs that came from a hard bid (the Service Fusion category "Commercial Hard Bid" on the estimate), by the month the job started, and the gross profit on them.'),
+      'commercial' => ('Other commercial won', 'by job start date', 'Closed jobs that came from a commercial estimate that is not a hard bid, by the month the job started, and the gross profit on them.'),
       'close' => ('Close rate', 'by estimate date', 'Of the estimates dated each month that were won or lost, the share that was won. A month with nothing closed is a gap.'),
       _ => ('Estimate mix', dashPeriodLabel(year), 'Every estimate dated in $year by its Service Fusion category. Select a slice or a row to list the estimates.'),
     };
@@ -776,12 +779,12 @@ class _SalesMonthView extends StatelessWidget {
       callout = year == now.year ? 'No $what won in $year yet' : 'No $what won in $year';
       calloutColor = DashUi.slate;
     } else {
-      final share = s.wonValue > 0 && bucket != null ? ' · ${(totalRev / s.wonValue * 100).round()}% of everything won' : '';
+      final share = s.wonValue > 0 && bucket != null ? ' · ${(totalRev / s.wonValue * 100).round()}% of all sales revenue' : '';
       callout = best >= 0
-          ? 'Best month: ${dashMonthNames[best]}, ${_wholeMoney(rev[best])} won$share'
+          ? 'Best month: ${dashMonthNames[best]}, ${_wholeMoney(rev[best])}$share'
           : (partial != null && rev[partial] > 0
-              ? 'Only ${dashMonthNames[partial]} so far: ${_wholeMoney(rev[partial])} won$share'
-              : '${_wholeMoney(totalRev)} won in $year$share');
+              ? 'Only ${dashMonthNames[partial]} so far: ${_wholeMoney(rev[partial])}$share'
+              : '${_wholeMoney(totalRev)} in $year$share');
     }
     final avg = dashFinishedAverage([for (var m = 0; m < 12; m++) m < rev.length ? rev[m] : 0.0], year);
     final average = totalRev <= 0 || avg <= 0 ? null : avg;
@@ -794,7 +797,7 @@ class _SalesMonthView extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.baseline,
           textBaseline: TextBaseline.alphabetic,
           children: [
-            _StoryStat(totalRev, _wholeMoney, 'won', DashUi.ink),
+            _StoryStat(totalRev, _wholeMoney, 'revenue', DashUi.ink),
             const SizedBox(width: 22),
             _StoryStat(totalProf, _wholeMoney, 'profit', DashUi.emeraldText),
             if (margin != null) ...[
@@ -825,7 +828,7 @@ class _SalesMonthView extends StatelessWidget {
         legend: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            dashKeyItem(dashKeyBox(DashUi.sky), 'Value won'),
+            dashKeyItem(dashKeyBox(DashUi.sky), 'Revenue'),
             const SizedBox(width: 16),
             dashKeyItem(dashKeyBox(DashUi.emerald), 'Gross profit'),
             if (showPartial) ...[

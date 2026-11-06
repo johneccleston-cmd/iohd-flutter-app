@@ -93,11 +93,11 @@ class _Pipeline {
   }
 }
 
-/// The biggest won estimate of the year.
+/// The biggest job of the year the person is an agent on.
 class _BigDeal {
   final double amount;
   final String customer;
-  final String date; // "2026-09-25", the estimate's date
+  final String date; // "2026-09-25", the job's start date
   const _BigDeal(this.amount, this.customer, this.date);
 
   static _BigDeal? fromJson(dynamic j) {
@@ -118,8 +118,13 @@ class _SalesKpis {
   final double grossProfit;
   final double? markupPct; // profit / cost (not shown; the scorecard uses margin)
   final double? marginPct; // profit / revenue
-  /// How many won estimates carry a profit figure (the margin counts only those); null when the server doesn't say.
+  /// How many of the agent jobs carry a profit figure (the margin counts only those); null when the server doesn't say.
   final int? wonWithProfit;
+
+  /// The jobs behind [wonValue] and [grossProfit]: the ones this person is an Agent on in Service Fusion. Null from an older
+  /// server, which counted won estimates instead (then [wonCount] is the count that goes with those figures).
+  final int? jobCount;
+  int get jobsWon => jobCount ?? wonCount;
   final List<_TypeKpis> byType;
   final _BidKpis? bids;
 
@@ -137,12 +142,12 @@ class _SalesKpis {
   final int? openEstimates;
   final int? agingEstimates;
 
-  /// Won revenue and profit per month (January first) for each estimate bucket: [hard bid, commercial, other].
+  /// Won revenue and profit per month (January first) on the agent jobs, for each bucket (the kind of estimate the job came from): [hard bid, commercial, residential, other].
   /// Empty until the backend sends `monthlyByType`.
   final List<List<double>> monthlyRevenue;
   final List<List<double>> monthlyProfit;
 
-  /// The won revenue on estimates that carry a profit figure, same shape (what a margin divides by); empty from an
+  /// The won revenue on jobs that carry a profit figure, same shape (what a margin divides by); empty from an
   /// older server, which only sends all won revenue.
   final List<List<double>> monthlyRevenueWithProfit;
 
@@ -172,6 +177,7 @@ class _SalesKpis {
   const _SalesKpis({
     this.since,
     this.trackedFrom,
+    this.jobCount,
     this.monthlyRevenueWithProfit = const [],
     this.closeWon = const [],
     this.closeLost = const [],
@@ -258,6 +264,7 @@ class _SalesKpis {
       markupPct: _num(j['markupPct']),
       marginPct: _num(j['marginPct']),
       wonWithProfit: cov is Map ? int.tryParse(_str(cov['withProfit'])) : null,
+      jobCount: int.tryParse(_str(j['jobCount'])),
     );
   }
 }
@@ -2828,7 +2835,7 @@ class _LateEstimatesDialogState extends State<_LateEstimatesDialog> {
   }
 }
 
-/// The year's largest won deal, dressed up like a win: a gold card with confetti drifting down, a twinkling star or two,
+/// The year's largest job (one the person is an agent on), dressed up like a win: a gold card with confetti drifting down, a twinkling star or two,
 /// a trophy and an amount that counts up. Still (no drift, no twinkle, no count-up) when the OS asks for reduced motion.
 class _BigDealCard extends StatefulWidget {
   final _BigDeal deal;
@@ -2867,7 +2874,7 @@ class _BigDealCardState extends State<_BigDealCard> with SingleTickerProviderSta
     final deep = Color.lerp(DashUi.amber, DashUi.ink, 0.45)!;
     final date = deal.date.isEmpty ? null : _prettyDate(deal.date);
     return Semantics(
-      label: 'Largest deal of ${widget.year}: ${_wholeMoney(deal.amount)} for ${deal.customer}${date == null ? '' : ', estimate dated $date'}',
+      label: 'Largest deal of ${widget.year}: ${_wholeMoney(deal.amount)} for ${deal.customer}${date == null ? '' : ', job started $date'}',
       child: Container(
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
@@ -2936,7 +2943,7 @@ class _BigDealCardState extends State<_BigDealCard> with SingleTickerProviderSta
                       message: deal.customer, // commercial names run long
                       child: Text(deal.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3)),
                     ),
-                    if (date != null) FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('Estimate dated $date', maxLines: 1, style: const TextStyle(fontSize: 11, height: 1.3, color: DashUi.slate))),
+                    if (date != null) FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: Text('Job started $date', maxLines: 1, style: const TextStyle(fontSize: 11, height: 1.3, color: DashUi.slate))),
                   ],
                 ),
               ),

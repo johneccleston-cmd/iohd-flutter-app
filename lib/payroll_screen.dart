@@ -553,7 +553,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _load();
+      if (mounted) _load(fresh: true); // opening or reloading the page must never show the server's cached register
     });
   }
 
@@ -763,8 +763,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
     return null;
   }
 
-  /// [fresh] skips the server's response cache (the Refresh button, and after a payroll run). Other loads may be
-  /// answered from it, which is what makes the screen open instantly.
+  /// [fresh] skips the server's response cache (opening or reloading the page, and after a payroll run). Other loads,
+  /// such as changing the dates, may be answered from it.
   Future<void> _load({bool fresh = false}) async {
     final id = ++_requestId;
     _loadRuns();
