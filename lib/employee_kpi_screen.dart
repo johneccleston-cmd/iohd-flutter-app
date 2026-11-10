@@ -174,7 +174,11 @@ class _SalesKpis {
   final _Pipeline? pipeline;
   final _BigDeal? largestDeal;
 
+  /// Won estimates beside the closed job each became (the chart's "Sold vs final" view); null from an older server.
+  final _EstVsJob? estVsJob;
+
   const _SalesKpis({
+    this.estVsJob,
     this.since,
     this.trackedFrom,
     this.jobCount,
@@ -232,6 +236,7 @@ class _SalesKpis {
       closeLost: mc.isEmpty ? const [] : [for (var m = 0; m < 12; m++) closeAt(m, 'lost')],
       pipeline: _Pipeline.fromJson(j['pipeline']),
       largestDeal: _BigDeal.fromJson(j['largestDeal']),
+      estVsJob: _EstVsJob.fromJson(j['estimateVsJob']),
       monthlyRevenue: haveMonthly ? [series('hardBid', 'revenue'), series('commercial', 'revenue'), series('residential', 'revenue'), series('other', 'revenue')] : const [],
       monthlyProfit: haveMonthly ? [series('hardBid', 'profit'), series('commercial', 'profit'), series('residential', 'profit'), series('other', 'profit')] : const [],
       monthlyRevenueWithProfit: haveMonthly && havePriced

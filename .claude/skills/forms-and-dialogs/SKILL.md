@@ -6,7 +6,8 @@ description: Build forms, edit dialogs, confirmation dialogs and side panels in 
 # Forms and dialogs
 
 Examples in the repo: `team_admin_screen.dart` (create/edit user, optimistic `version` for edits,
-reset PIN), `commission_corrections_screen.dart`, `login_screen.dart`, `job_details_dialog.dart`.
+reset PIN), `commission_corrections_screen.dart` (Fix dialog on `AppDialog`), `login_screen.dart`, and the
+note/task dialogs in `job_detail_screen.dart`.
 
 ## Forms
 
@@ -36,8 +37,11 @@ reset PIN), `commission_corrections_screen.dart`, `login_screen.dart`, `job_deta
 
 ## Dialogs
 
-- Use `showDialog` + `AlertDialog`/`Dialog` with `constraints: BoxConstraints(maxWidth: 520)` for forms
-  (720 for detail views). Use a radius of 16 and keep the title short.
+- Prefer `AppDialog` (`lib/widgets/app_dialog.dart`): `title`, `icon`, `body`, `actions`, an optional pinned
+  `footer` for errors, default width 460; fields use `appFieldDecoration` + `AppFieldLabel`, buttons
+  `AppButton.ghost('Cancel')` + `AppButton.ink('Save note', danger: ...)`. The file's header comment shows the
+  pattern. Plain `AlertDialog` with `maxWidth: 520` remains in older screens. Keep the title short.
+- Block closing mid-save with `PopScope(canPop: !_saving)`.
 - Buttons go bottom-right: secondary `TextButton('Cancel')` then primary `FilledButton('Save vendor')`.
   Name the action specifically, not "OK".
 - Long content scrolls inside the dialog body. The title and buttons stay fixed.

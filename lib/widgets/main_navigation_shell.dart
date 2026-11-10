@@ -165,8 +165,8 @@ List<_NavModule> _navFor(AuthSession session) {
         ...group(null, [
           ('hr_payroll', Icons.payments_rounded, 'Payroll', '/hr/payroll'),
           ('hr_kpis', Icons.speed_outlined, "KPI's", '/hr/kpis'),
+          ('team', Icons.manage_accounts_rounded, 'Team', '/hr/team'),
         ]).links,
-        if (session.isAdmin) const _NavLink(Icons.manage_accounts_rounded, 'Team', '/hr/team'),
       ]),
     ]),
     _NavModule.menu('Dashboards', Icons.insights_rounded, const [8], [

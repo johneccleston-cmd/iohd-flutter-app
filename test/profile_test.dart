@@ -1,10 +1,16 @@
-// My Profile: opened from the account menu in the top bar, shows the signed-in person, lists the pages they may open
-// and changes their PIN. Renders to test/shots/profile/ as well, so a RenderFlex overflow fails the test.
+// My Profile: opened from the account menu in the top bar. The standard ribbon (Refresh, Sign out), a compact identity
+// header with the integrity score, then Account, Sign-in and security (Change PIN) and My badges. Renders to
+// test/shots/profile/ as well, so a RenderFlex overflow fails the test.
 // Run:  flutter test test/profile_test.dart --update-goldens
+// Review shots instead of goldens (also runs the extra sizes in the 'review shots' group):
+//       flutter test test/profile_test.dart --dart-define=PROFILE_SHOT_DIR=build/profile_shots
 
 import 'dart:convert';
+import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -15,8 +21,27 @@ import 'package:iohd_desktop/widgets/app_dialog.dart';
 
 import 'nav_fixture.dart';
 
-Future<void> _shot(String name) =>
-    expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/profile/$name.png'));
+/// Set with --dart-define to write review PNGs there instead of comparing with the goldens.
+const _shotDir = String.fromEnvironment('PROFILE_SHOT_DIR');
+
+Future<void> _shot(WidgetTester t, String name) async {
+  if (_shotDir.isEmpty) {
+    return expectLater(find.byType(MaterialApp), matchesGoldenFile('shots/profile/$name.png'));
+  }
+  var boundary = t.renderObject(find.byType(MaterialApp));
+  while (!boundary.isRepaintBoundary) {
+    boundary = boundary.parent!;
+  }
+  final target = boundary;
+  final layer = target.debugLayer! as OffsetLayer;
+  await t.runAsync(() async {
+    final image = await layer.toImage(target.paintBounds);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    File('$_shotDir/$name.png')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync(bytes!.buffer.asUint8List());
+  });
+}
 
 const _users = [
   {
@@ -30,6 +55,8 @@ const _users = [
   },
 ];
 
+var _usersHits = 0;
+
 /// Runs [body] with a fake API. [users] is the /users answer (status, body); PIN calls are recorded in [pinCalls].
 Future<void> _withApi(
   WidgetTester t,
@@ -39,8 +66,12 @@ Future<void> _withApi(
   int pinStatus = 200,
 }) async {
   final pinCalls = <http.Request>[];
+  _usersHits = 0;
   await http.runWithClient(() => body(pinCalls), () => MockClient((req) async {
-        if (req.url.path == '/users') return http.Response(json.encode(usersBody), usersStatus);
+        if (req.url.path == '/users') {
+          _usersHits++;
+          return http.Response(json.encode(usersBody), usersStatus);
+        }
         if (req.url.path == '/update_pin') {
           pinCalls.add(req);
           return http.Response(json.encode(pinStatus == 200 ? {'status': 'success'} : {'error': 'nope'}), pinStatus);
@@ -49,8 +80,8 @@ Future<void> _withApi(
       }));
 }
 
-/// [still] turns animations off (the slats loop forever, which pumpAndSettle can't wait out).
-Future<void> _open(WidgetTester t, Size size, {bool still = true}) async {
+/// [still] turns animations off, so pumpAndSettle can be used.
+Future<void> _open(WidgetTester t, Size size, {bool still = true, double textScale = 1}) async {
   Future<void> settle() => still ? t.pumpAndSettle() : t.pump(const Duration(milliseconds: 600));
   t.view.physicalSize = size;
   t.view.devicePixelRatio = 1;
@@ -61,8 +92,10 @@ Future<void> _open(WidgetTester t, Size size, {bool still = true}) async {
     debugShowCheckedModeBanner: false,
     routerConfig: navTestRouter(initial: '/calendar'),
     theme: navTestTheme(),
-    builder: (context, child) =>
-        MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: still), child: child!),
+    builder: (context, child) => MediaQuery(
+      data: MediaQuery.of(context).copyWith(disableAnimations: still, textScaler: TextScaler.linear(textScale)),
+      child: child!,
+    ),
   ));
   await settle();
   await t.tap(find.byTooltip('Heather Vera'));
@@ -88,6 +121,7 @@ void main() {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
       expect(find.byType(ProfileScreen), findsOneWidget);
+      expect(find.text('MY PROFILE'), findsOneWidget); // the standard ribbon
       expect(find.text('Heather Vera'), findsWidgets);
       expect(find.textContaining('Sales Account Manager'), findsWidgets);
       expect(find.textContaining('3 years with IOHD'), findsOneWidget);
@@ -99,13 +133,14 @@ void main() {
     });
   });
 
-  testWidgets('the hero slats keep moving, and hold still when animations are off', (t) async {
+  testWidgets('the opening motion plays once and settles, and nothing moves when animations are off', (t) async {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900), still: false);
-      await t.pump(const Duration(seconds: 1));
-      expect(t.binding.hasScheduledFrame, isTrue); // an animation is still running
-      await t.pump(const Duration(seconds: 1));
-      expect(t.binding.hasScheduledFrame, isTrue);
+      for (var i = 0; i < 12; i++) {
+        await t.pump(const Duration(milliseconds: 250));
+      }
+      expect(t.binding.hasScheduledFrame, isFalse); // no endless decoration loop
+      expect(find.text('92%'), findsOneWidget);
     });
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
@@ -114,18 +149,20 @@ void main() {
     });
   });
 
-  testWidgets('integrity score sits in the banner, beside the chips', (t) async {
+  testWidgets('integrity score sits in the header, beside the name and role', (t) async {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
       expect(find.text('Integrity score'), findsOneWidget);
       expect(find.text('92%'), findsOneWidget);
-      expect(find.byTooltip('Excellent'), findsOneWidget);
+      expect(find.text('Excellent'), findsOneWidget);
+      expect(find.byTooltip('Scored out of 100: 90 and up is Excellent, 75 to 89 is Solid, under 75 needs attention.'),
+          findsOneWidget);
       final score = t.getRect(find.text('92%'));
-      final chip = t.getRect(find.text('Sales Account Manager').first);
-      expect((score.center.dy - chip.center.dy).abs(), lessThan(30)); // the same row
-      expect(score.left, greaterThan(chip.right)); // off to the side of them
-      expect(score.top, lessThan(260)); // inside the banner
-      await _shot('score_1280');
+      final role = t.getRect(find.text('Sales Account Manager').first);
+      expect((score.center.dy - role.center.dy).abs(), lessThan(30)); // the same row
+      expect(score.left, greaterThan(role.right)); // off to the side of them
+      expect(score.top, lessThan(260)); // inside the header, above the sections
+      await _shot(t, 'score_1280');
     });
   });
 
@@ -137,7 +174,7 @@ void main() {
         await t.pump(const Duration(milliseconds: 400));
       }
       expect(find.text('92%'), findsOneWidget);
-      expect(find.byTooltip('Excellent'), findsOneWidget);
+      expect(find.text('Excellent'), findsOneWidget);
     });
   });
 
@@ -145,7 +182,7 @@ void main() {
     testWidgets('integrity score $score is "$word"', (t) async {
       await _withApi(t, (_) async {
         await _open(t, const Size(1280, 900));
-        expect(find.byTooltip(word), findsOneWidget);
+        expect(find.text(word), findsOneWidget);
         expect(find.text('$score%'), findsOneWidget);
       }, usersBody: [
         {..._users.first, 'integrityScore': score}
@@ -156,9 +193,9 @@ void main() {
   testWidgets('no integrity score yet says so', (t) async {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
-      expect(find.byTooltip('Not scored yet'), findsOneWidget);
+      expect(find.text('Not scored yet'), findsOneWidget);
       expect(find.text('—'), findsWidgets);
-      await _shot('score_none_1280');
+      await _shot(t, 'score_none_1280');
     }, usersBody: [
       {..._users.first, 'integrityScore': null}
     ]);
@@ -168,11 +205,11 @@ void main() {
     await _withApi(t, (_) async {
       await _open(t, const Size(390, 800));
       expect(find.byType(ProfileScreen), findsOneWidget);
-      await _shot('narrow_390');
+      await _shot(t, 'narrow_390');
     });
   });
 
-  testWidgets('My badges: earned ones are counted, the rest are locked, with the years medallion', (t) async {
+  testWidgets('My badges: earned ones are counted, the rest are locked, with the years badge', (t) async {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
       expect(find.text('My badges'), findsOneWidget);
@@ -181,7 +218,9 @@ void main() {
       expect(find.text('Not earned yet'), findsNWidgets(3));
       expect(find.byIcon(Icons.lock_outline_rounded), findsNWidgets(3));
       expect(find.byIcon(Icons.star_rounded), findsOneWidget);
-      await _shot('admin_1280');
+      // A locked badge still says what it is for.
+      expect(find.byTooltip('Not earned yet. No callbacks since go-live.'), findsOneWidget);
+      await _shot(t, 'admin_1280');
     });
   });
 
@@ -193,7 +232,7 @@ void main() {
       expect(find.text('Administrator'), findsNothing);
       expect(find.text('0 of 5 earned'), findsOneWidget);
       expect(find.textContaining('No badges yet'), findsOneWidget);
-      await _shot('no_badges_1280');
+      await _shot(t, 'no_badges_1280');
     });
   });
 
@@ -210,17 +249,44 @@ void main() {
     await _withApi(t, (_) async {
       await _open(t, const Size(1280, 900));
       expect(find.text('Try again'), findsOneWidget);
-      // The page still shows what the sign-in already knew.
+      expect(find.text("Couldn't load your details (server error 500)."), findsOneWidget);
+      // The page still shows what the sign-in already knew; the score is unknown, not "not scored".
       expect(find.text('Heather Vera'), findsWidgets);
-      await _shot('error_1280');
+      expect(find.text('Unavailable'), findsOneWidget);
+      expect(find.text('Not scored yet'), findsNothing);
+      await _shot(t, 'error_1280');
+      final before = _usersHits;
+      await t.tap(find.text('Try again'));
+      await t.pumpAndSettle();
+      expect(_usersHits, before + 1);
     }, usersStatus: 500, usersBody: {'error': 'boom'});
+  });
+
+  testWidgets('a network failure says so in plain words, without the raw exception', (t) async {
+    await http.runWithClient(() async {
+      await _open(t, const Size(1280, 900));
+      expect(find.textContaining("the server can't be reached"), findsOneWidget);
+      expect(find.textContaining('ClientException'), findsNothing);
+      expect(find.textContaining('http'), findsNothing);
+    }, () => MockClient((req) async => throw http.ClientException('Failed to fetch', req.url)));
+  });
+
+  testWidgets('Refresh in the ribbon loads the details again', (t) async {
+    await _withApi(t, (_) async {
+      await _open(t, const Size(1280, 900));
+      final before = _usersHits; // the nav bar looks up the avatar photo in the same list
+      await t.tap(find.byTooltip('Refresh'));
+      await t.pumpAndSettle();
+      expect(_usersHits, before + 1);
+      expect(find.text('hvera'), findsOneWidget);
+    });
   });
 
   testWidgets('change PIN: needs 4 matching digits, then posts the old and new PIN', (t) async {
     await _withApi(t, (pinCalls) async {
       await _open(t, const Size(1280, 900));
       await _openPinDialog(t);
-      await _shot('pin_dialog_1280');
+      await _shot(t, 'pin_dialog_1280');
 
       final save = find.widgetWithText(FilledButton, 'Save PIN');
       expect(t.widget<FilledButton>(save).onPressed, isNull);
@@ -260,7 +326,7 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text("That isn't your current PIN."), findsOneWidget);
       expect(find.text('Save PIN'), findsOneWidget);
-      await _shot('pin_wrong_1280');
+      await _shot(t, 'pin_wrong_1280');
     }, pinStatus: 401);
   });
 
@@ -273,4 +339,47 @@ void main() {
       expect(AuthSession.instance.isLoggedIn, isFalse);
     });
   });
+
+  // Extra sizes for looking at the page; they only run when PROFILE_SHOT_DIR is set (there are no goldens for them).
+  group('review shots', () {
+    for (final (name, size, scale) in [
+      ('full_1280x720', const Size(1280, 720), 1.0),
+      ('full_1920x1080', const Size(1920, 1080), 1.0),
+      ('full_1024x768', const Size(1024, 768), 1.0),
+      ('full_800x900', const Size(800, 900), 1.0),
+      ('full_390x1300', const Size(390, 1300), 1.0),
+      ('full_320x1400', const Size(320, 1400), 1.0),
+      ('text130_1280x900', const Size(1280, 900), 1.3),
+      ('text130_390x1600', const Size(390, 1600), 1.3),
+    ]) {
+      testWidgets(name, (t) async {
+        await _withApi(t, (_) async {
+          await _open(t, size, textScale: scale);
+          await _shot(t, name);
+        });
+      });
+    }
+
+    testWidgets('entrance frames', (t) async {
+      await _withApi(t, (_) async {
+        await _open(t, const Size(1280, 900), still: false);
+        var ms = 0;
+        for (final at in [120, 320, 700, 2000]) {
+          while (ms < at) {
+            await t.pump(const Duration(milliseconds: 20));
+            ms += 20;
+          }
+          await _shot(t, 'entrance_${at}ms');
+        }
+      });
+    });
+
+    testWidgets('not_listed_1280', (t) async {
+      await navSignIn(badges: ['five_star']);
+      await http.runWithClient(() async {
+        await _open(t, const Size(1280, 900), still: true);
+      }, () => MockClient((req) async => http.Response('[]', 200)));
+      await _shot(t, 'not_listed_1280'); // the owner login: not in the users list
+    });
+  }, skip: _shotDir.isEmpty);
 }

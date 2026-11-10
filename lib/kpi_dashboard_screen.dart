@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'config/access.dart';
@@ -27,6 +28,7 @@ part 'employee_kpi_tech.dart';
 part 'employee_kpi_warehouse.dart';
 part 'employee_kpi_office.dart';
 part 'employee_kpi_sales.dart';
+part 'employee_kpi_sold_vs_final.dart';
 
 class KPIDashboardScreen extends StatelessWidget {
   const KPIDashboardScreen({super.key});

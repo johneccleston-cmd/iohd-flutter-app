@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math' as math;
 
@@ -9,7 +10,9 @@ import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'theme/app_theme.dart';
 import 'widgets/app_dialog.dart';
+import 'widgets/app_ribbon.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/flat_page.dart';
 
 /// What the users list knows about the signed-in person. The sign-in answer has no photo, username or start date.
 class _MyDetails {
@@ -31,7 +34,7 @@ Future<_MyDetails?> _loadMyDetails(String name) async {
     AuthSession.instance.logout(); // sends the app back to the sign-in screen
     throw Exception('Your session expired. Please sign in again.');
   }
-  if (res.statusCode != 200) throw Exception('Server error (${res.statusCode})');
+  if (res.statusCode != 200) throw Exception("Couldn't load your details (server error ${res.statusCode}).");
   final body = json.decode(res.body);
   final list = body is List ? body : (body is Map && body['users'] is List ? body['users'] as List : const []);
   for (final u in list) {
@@ -50,8 +53,12 @@ Future<_MyDetails?> _loadMyDetails(String name) async {
   return null;
 }
 
-/// The signed-in person's own page, opened from the account menu in the top bar: who they are, how long they stay
-/// signed in, the pages they can open, and changing their own PIN.
+/// The page's content column, shared by the identity header and the sections so their left edges line up.
+const double _kMaxWidth = 1040;
+
+/// The signed-in person's own page, opened from the account menu in the top bar: the standard ribbon (Refresh,
+/// Sign out), a compact identity header with the integrity score, then Account, Sign-in and security (Change PIN)
+/// and My badges as flat, hairline-ruled sections.
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
 
@@ -60,8 +67,10 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
+  final _activity = RibbonActivity();
   _MyDetails? _details;
   bool _loading = true;
+  bool _loadedOnce = false;
   String? _error;
   String _loadedFor = '';
 
@@ -71,6 +80,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _activity.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     final name = AuthSession.instance.name;
     _loadedFor = name;
@@ -78,20 +93,37 @@ class _ProfileScreenState extends State<ProfileScreen> {
       _loading = true;
       _error = null;
     });
+    // The ribbon's refresh light runs only when a reload keeps the old details on screen, not on the first load.
+    _activity.setRefreshing(_loadedOnce);
     try {
       final d = name.isEmpty ? null : await _loadMyDetails(name);
       if (!mounted || _loadedFor != name) return;
       setState(() {
         _details = d;
         _loading = false;
+        _loadedOnce = true;
       });
+      _activity
+        ..setRefreshing(false)
+        ..landed();
     } catch (e) {
       if (!mounted || _loadedFor != name) return;
       setState(() {
         _loading = false;
-        _error = e is Exception ? e.toString().replaceFirst('Exception: ', '') : "Couldn't load your profile.";
+        _loadedOnce = true;
+        _error = _friendlyError(e);
       });
+      _activity.setRefreshing(false);
     }
+  }
+
+  /// Plain words for a failed load; never the raw exception (which can carry the URL).
+  static String _friendlyError(Object e) {
+    if (e is TimeoutException) return "Couldn't load your details: the server took too long to answer.";
+    if (e is http.ClientException) return "Couldn't load your details: the server can't be reached. Check your connection.";
+    if (e is FormatException) return "Couldn't load your details: the server sent something unexpected.";
+    if (e is Exception) return e.toString().replaceFirst('Exception: ', '');
+    return "Couldn't load your profile.";
   }
 
   Future<void> _changePin() async {
@@ -119,19 +151,47 @@ class _ProfileScreenState extends State<ProfileScreen> {
               if (mounted && session.name != _loadedFor) _load();
             });
           }
-          return LayoutBuilder(
-            builder: (context, c) {
-              return Scrollbar(
-                child: SingleChildScrollView(child: _content(session, c.maxWidth < 600)),
-              );
-            },
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageBanner(
+                title: 'My Profile',
+                icon: Icons.person_rounded,
+                activity: _activity,
+                actions: [
+                  PageBanner.refresh(onPressed: _loading ? null : _load),
+                  // Below 360 px the labelled button would squeeze the title, so it becomes an icon with a tooltip.
+                  if (MediaQuery.sizeOf(context).width < 360)
+                    IconButton(
+                      tooltip: 'Sign out',
+                      onPressed: session.logout,
+                      icon: const Icon(Icons.logout_rounded, size: 20),
+                      color: Colors.white,
+                      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+                      padding: EdgeInsets.zero,
+                    )
+                  else
+                    PageBanner.button(icon: Icons.logout_rounded, label: 'Sign out', onPressed: session.logout),
+                ],
+              ),
+              Expanded(
+                child: LayoutBuilder(
+                  builder: (context, c) => Scrollbar(
+                    child: SingleChildScrollView(child: _content(session, c.maxWidth)),
+                  ),
+                ),
+              ),
+            ],
           );
         },
       ),
     );
   }
 
-  Widget _content(AuthSession session, bool narrow) {
+  Widget _content(AuthSession session, double width) {
+    final narrow = width < 600;
+    final side = narrow ? 16.0 : 32.0;
+    final inner = math.min(width, _kMaxWidth) - side * 2;
     final d = _details;
     final title = d != null && d.jobTitle.isNotEmpty ? d.jobTitle : session.role;
     final years = d?.yearsWorked;
@@ -142,34 +202,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ? 'Joined within the last year'
             : '$fullYears ${fullYears == 1 ? 'year' : 'years'} with IOHD';
     final expires = session.expiresAt;
+    final username = d != null && d.username.isNotEmpty ? d.username : '—';
 
-    final account = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    final account = _Section(
+      title: 'Account',
       children: [
-        const _SectionTitle('Account', Icons.person_rounded),
-        _InfoRow('Name', session.name.isEmpty ? '—' : session.name),
-        _InfoRow('Role', title.isEmpty ? '—' : title),
-        _InfoRow('Username', _loading ? 'Loading…' : (d != null && d.username.isNotEmpty ? d.username : '—')),
-        _InfoRow('Access', session.isAdmin ? 'Administrator: every page and action' : 'Standard: the pages an admin switched on'),
-      ],
-    );
-    final signIn = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _SectionTitle('Sign-in', Icons.lock_rounded),
-        _InfoRow('Signed in until', expires == null ? '—' : _when(expires)),
+        _InfoRow(Icons.person_outline_rounded, 'Name', session.name.isEmpty ? '—' : session.name),
+        _InfoRow(Icons.work_outline_rounded, 'Role', title.isEmpty ? '—' : title),
+        _InfoRow(Icons.alternate_email_rounded, 'Username', _loading ? 'Loading…' : username, quiet: _loading),
         _InfoRow(
-          'PIN',
-          '4 digits, also used in the tech app',
-          trailing: AppButton.ink('Change PIN', _changePin, icon: Icons.lock_reset_rounded),
+          session.isAdmin ? Icons.admin_panel_settings_outlined : Icons.shield_outlined,
+          'Access',
+          session.isAdmin ? 'Administrator: every page and action' : 'Standard: the pages an admin switched on',
         ),
       ],
+    );
+    final security = _Section(
+      title: 'Sign-in and security',
+      children: [
+        _InfoRow(Icons.schedule_rounded, 'Signed in until', expires == null ? '—' : _when(expires),
+            caption: expires == null ? null : 'On this device'),
+        _InfoRow(Icons.password_rounded, 'PIN', '4 digits',
+            caption: 'Also used in the tech app',
+            trailing: _QuietButton(icon: Icons.lock_reset_rounded, label: 'Change PIN', onPressed: _changePin)),
+      ],
+    );
+
+    final body = Padding(
+      padding: EdgeInsets.fromLTRB(side, narrow ? 20 : 28, side, 40),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_error != null) ...[
+            _ErrorBar(message: _error!, narrow: narrow, onRetry: _loading ? null : _load),
+            const SizedBox(height: 24),
+          ],
+          if (inner >= 760)
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _Rise(delayMs: 80, child: account)),
+                const SizedBox(width: 40),
+                Expanded(child: _Rise(delayMs: 140, child: security)),
+              ],
+            )
+          else ...[
+            _Rise(delayMs: 80, child: account),
+            const SizedBox(height: 28),
+            _Rise(delayMs: 140, child: security),
+          ],
+          SizedBox(height: narrow ? 28 : 36),
+          _Badges(badges: session.badges, years: fullYears),
+        ],
+      ),
     );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Hero(
+        _IdentityHeader(
           name: session.name,
           title: title,
           tenure: tenure,
@@ -177,36 +268,11 @@ class _ProfileScreenState extends State<ProfileScreen> {
           photoUrl: d?.photoUrl,
           score: d?.integrityScore,
           scoreLoading: _loading,
+          scoreFailed: _error != null && d == null,
           narrow: narrow,
-          onSignOut: session.logout,
+          side: side,
         ),
-        Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1000),
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(narrow ? 16 : 32, 28, narrow ? 16 : 32, 40),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_error != null) ...[
-                    AppNotice(_error!, kind: AppNoticeKind.error),
-                    const SizedBox(height: 8),
-                    Align(alignment: Alignment.centerLeft, child: AppButton.ghost('Try again', _load)),
-                    const SizedBox(height: 16),
-                  ],
-                  _Badges(badges: session.badges, years: fullYears),
-                  const SizedBox(height: 36),
-                  narrow
-                      ? Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [account, const SizedBox(height: 28), signIn])
-                      : Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [Expanded(child: account), const SizedBox(width: 48), Expanded(child: signIn)],
-                        ),
-                ],
-              ),
-            ),
-          ),
-        ),
+        Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: _kMaxWidth), child: body)),
       ],
     );
   }
@@ -220,8 +286,34 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 }
 
-/// The dark band at the top: big photo with a red ring, name, role and tenure chips, and Sign out.
-class _Hero extends StatelessWidget {
+/// Fades a block in and lifts it a few pixels, [delayMs] after the page opens, so the page settles top to bottom.
+/// Runs once; nothing moves when the system asks for less motion.
+class _Rise extends StatelessWidget {
+  final int delayMs;
+  final Widget child;
+  const _Rise({required this.delayMs, required this.child});
+
+  static const _runMs = 380;
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return child;
+    final total = delayMs + _runMs;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: Duration(milliseconds: total),
+      builder: (context, t, child) {
+        final p = Curves.easeOutCubic.transform(((t * total - delayMs) / _runMs).clamp(0.0, 1.0));
+        return Opacity(opacity: p, child: Transform.translate(offset: Offset(0, 8 * (1 - p)), child: child));
+      },
+      child: child,
+    );
+  }
+}
+
+/// Who is signed in, on a quiet band under the ribbon: photo, name, role, tenure and admin tag, with the integrity
+/// score to the right (under it on a phone-width window).
+class _IdentityHeader extends StatelessWidget {
   final String name;
   final String title;
   final String? tenure;
@@ -229,9 +321,10 @@ class _Hero extends StatelessWidget {
   final String? photoUrl;
   final double? score;
   final bool scoreLoading;
+  final bool scoreFailed;
   final bool narrow;
-  final VoidCallback onSignOut;
-  const _Hero({
+  final double side;
+  const _IdentityHeader({
     required this.name,
     required this.title,
     required this.tenure,
@@ -239,8 +332,9 @@ class _Hero extends StatelessWidget {
     required this.photoUrl,
     required this.score,
     required this.scoreLoading,
+    required this.scoreFailed,
     required this.narrow,
-    required this.onSignOut,
+    required this.side,
   });
 
   String get _initials {
@@ -249,287 +343,276 @@ class _Hero extends StatelessWidget {
     return (parts.length == 1 ? parts.first[0] : parts.first[0] + parts.last[0]).toUpperCase();
   }
 
-  Widget _chip(IconData icon, String text) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: Colors.white.withValues(alpha: 0.16)),
+  @override
+  Widget build(BuildContext context) {
+    final avatar = _Avatar(initials: _initials, photoUrl: photoUrl, size: narrow ? 56 : 72);
+    final hasMeta = tenure != null || isAdmin;
+    final identity = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Semantics(
+          header: true,
+          child: Text(
+            name.isEmpty ? 'My profile' : name,
+            maxLines: narrow ? 2 : 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                fontSize: narrow ? 20 : 24, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.5, height: 1.2),
+          ),
         ),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, size: 15, color: const Color(0xFFCBD5E1)),
-          const SizedBox(width: 6),
-          Flexible(child: Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Colors.white))),
-        ]),
-      );
+        if (title.isNotEmpty) ...[
+          const SizedBox(height: 2),
+          Text(title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: narrow ? 14 : 15, fontWeight: FontWeight.w500, color: DashUi.slate, height: 1.35)),
+        ],
+        if (hasMeta) ...[
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 14,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              if (tenure != null) _Meta(Icons.event_available_outlined, tenure!),
+              if (isAdmin) const _AdminTag(),
+            ],
+          ),
+        ],
+      ],
+    );
+    final scoreBlock = _ScoreBlock(score: score, loading: scoreLoading, failed: scoreFailed);
+
+    final content = narrow
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(children: [avatar, const SizedBox(width: 14), Expanded(child: identity)]),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.only(top: 14),
+                decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
+                alignment: Alignment.centerLeft,
+                child: scoreBlock,
+              ),
+            ],
+          )
+        : Row(
+            children: [
+              avatar,
+              const SizedBox(width: 20),
+              Expanded(child: identity),
+              const SizedBox(width: 24),
+              Container(width: 1, height: 56, color: DashUi.line),
+              const SizedBox(width: 24),
+              scoreBlock,
+            ],
+          );
+
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.subtleFillLight,
+        border: Border(bottom: BorderSide(color: DashUi.line)),
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: _kMaxWidth),
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: side, vertical: narrow ? 18 : 24),
+            child: _Rise(delayMs: 0, child: content),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The photo in a white ring with a hairline edge; initials on navy when there is no photo or it won't load.
+class _Avatar extends StatelessWidget {
+  final String initials;
+  final String? photoUrl;
+  final double size;
+  const _Avatar({required this.initials, required this.photoUrl, required this.size});
 
   @override
   Widget build(BuildContext context) {
-    final size = narrow ? 84.0 : 112.0;
     final fallback = Container(
       width: size,
       height: size,
       alignment: Alignment.center,
-      color: const Color(0xFF1E293B),
-      child: Text(_initials, style: TextStyle(fontSize: size * 0.34, fontWeight: FontWeight.w800, color: Colors.white)),
+      color: DashUi.ink,
+      child: Text(initials,
+          style: TextStyle(fontSize: size * 0.36, fontWeight: FontWeight.w700, color: Colors.white, letterSpacing: 0.5)),
     );
     final url = photoUrl;
-    final photo = ClipOval(
-      child: url == null
-          ? fallback
-          : Image.network(
-              url,
-              width: size,
-              height: size,
-              fit: BoxFit.cover,
-              alignment: const Alignment(0, -0.4), // keeps the face in frame
-              errorBuilder: (context, error, stackTrace) => fallback,
-              loadingBuilder: (context, child, progress) => progress == null ? child : fallback,
-            ),
-    );
-    final avatar = Container(
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        gradient: const LinearGradient(colors: [Color(0xFFEF4444), Color(0xFFCC0007)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-        boxShadow: [BoxShadow(color: const Color(0xFFCC0007).withValues(alpha: 0.45), blurRadius: 28)],
-      ),
+    return ExcludeSemantics(
       child: Container(
         padding: const EdgeInsets.all(3),
-        decoration: const BoxDecoration(color: DashUi.ink, shape: BoxShape.circle),
-        child: photo,
-      ),
-    );
-
-    final chips = Wrap(spacing: 8, runSpacing: 8, children: [
-      if (title.isNotEmpty) _chip(Icons.work_outline_rounded, title),
-      if (tenure != null) _chip(Icons.cake_outlined, tenure!),
-      if (isAdmin) _chip(Icons.verified_user_outlined, 'Administrator'),
-    ]);
-    final scorePill = _ScorePill(score: score, loading: scoreLoading);
-
-    final text = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(name.isEmpty ? 'My profile' : name,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: narrow ? 26 : 34, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: -0.8)),
-        const SizedBox(height: 10),
-        // The chips, with the integrity score off to their right (under them when the window is narrow).
-        if (narrow) ...[
-          chips,
-          const SizedBox(height: 12),
-          scorePill,
-        ] else
-          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            Flexible(child: chips),
-            const SizedBox(width: 16),
-            scorePill,
-          ]),
-      ],
-    );
-
-    final signOut = OutlinedButton.icon(
-      onPressed: onSignOut,
-      icon: const Icon(Icons.logout_rounded, size: 18),
-      label: const Text('Sign out', style: TextStyle(fontWeight: FontWeight.w700)),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: Colors.white,
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.3)),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 15),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-    );
-
-    final pad = EdgeInsets.fromLTRB(narrow ? 16 : 40, narrow ? 24 : 36, narrow ? 16 : 40, narrow ? 24 : 36);
-    return Semantics(
-      header: true,
-      label: name,
-      child: ClipRect(
-        child: Container(
-          width: double.infinity,
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(colors: [DashUi.ink, Color(0xFF1E293B)], begin: Alignment.topLeft, end: Alignment.bottomRight),
-          ),
-          child: Stack(
-            children: [
-              // Slats and a soft red glow: the same garage-door motif as the sign-in screen.
-              const Positioned.fill(child: _MovingSlats()),
-              Padding(
-                padding: pad,
-                child: narrow
-                    ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(children: [
-                          ExcludeSemantics(child: avatar),
-                          const SizedBox(width: 16),
-                          Expanded(child: text),
-                        ]),
-                        const SizedBox(height: 18),
-                        signOut,
-                      ])
-                    : Row(children: [
-                        ExcludeSemantics(child: avatar),
-                        const SizedBox(width: 28),
-                        Expanded(child: text),
-                        const SizedBox(width: 16),
-                        signOut,
-                      ]),
-              ),
-            ],
-          ),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+          border: Border.all(color: DashUi.line),
+        ),
+        child: ClipOval(
+          child: url == null
+              ? fallback
+              : Image.network(
+                  url,
+                  width: size,
+                  height: size,
+                  fit: BoxFit.cover,
+                  alignment: const Alignment(0, -0.4), // keeps the face in frame
+                  errorBuilder: (context, error, stackTrace) => fallback,
+                  loadingBuilder: (context, child, progress) => progress == null ? child : fallback,
+                ),
         ),
       ),
     );
   }
 }
 
-/// The sign-in screen's motif: slats drifting down and fading toward the bottom, and a soft red glow that wanders.
-/// Still when the system asks for less motion.
-class _MovingSlats extends StatefulWidget {
-  const _MovingSlats();
-
-  @override
-  State<_MovingSlats> createState() => _MovingSlatsState();
-}
-
-class _MovingSlatsState extends State<_MovingSlats> with SingleTickerProviderStateMixin {
-  late final AnimationController _ambient = AnimationController(vsync: this, duration: const Duration(seconds: 18));
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (MediaQuery.disableAnimationsOf(context)) {
-      _ambient.stop();
-    } else if (!_ambient.isAnimating) {
-      _ambient.repeat();
-    }
-  }
-
-  @override
-  void dispose() {
-    _ambient.dispose();
-    super.dispose();
-  }
+/// A small icon and a fact, on the identity header.
+class _Meta extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  const _Meta(this.icon, this.text);
 
   @override
   Widget build(BuildContext context) {
-    return RepaintBoundary(
-      child: AnimatedBuilder(
-        animation: _ambient,
-        builder: (context, _) => CustomPaint(painter: _SlatsPainter(_ambient.value)),
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 16, color: DashUi.subtle),
+      const SizedBox(width: 6),
+      Flexible(child: Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate))),
+    ]);
+  }
+}
+
+class _AdminTag extends StatelessWidget {
+  const _AdminTag();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(7, 3, 9, 3),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: DashUi.line),
       ),
+      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.verified_user_outlined, size: 14, color: DashUi.ink),
+        SizedBox(width: 5),
+        Text('Administrator', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
+      ]),
     );
   }
 }
 
-class _SlatsPainter extends CustomPainter {
-  final double t; // 0..1, loops
-  const _SlatsPainter(this.t);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final glow = Offset(
-      size.width * (0.14 + 0.06 * math.sin(t * math.pi * 2)),
-      size.height * (0.5 + 0.18 * math.cos(t * math.pi * 2)),
-    );
-    final radius = size.height * 1.3;
-    canvas.drawCircle(
-      glow,
-      radius,
-      Paint()
-        ..shader = RadialGradient(
-          colors: [AppTheme.brandRed.withValues(alpha: 0.32), AppTheme.brandRed.withValues(alpha: 0)],
-        ).createShader(Rect.fromCircle(center: glow, radius: radius)),
-    );
-
-    const gap = 46.0;
-    final offset = t * gap * 4 % gap;
-    for (var y = -gap + offset; y < size.height; y += gap) {
-      final fade = (1 - (y / size.height)).clamp(0.0, 1.0);
-      final line = Paint()
-        ..color = Colors.white.withValues(alpha: 0.10 * fade + 0.02)
-        ..strokeWidth = 1.5;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
-      canvas.drawLine(Offset(0, y + 3), Offset(size.width, y + 3), line..color = Colors.black.withValues(alpha: 0.12 * fade));
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _SlatsPainter old) => old.t != t;
+/// Where a score sits: its word and colours, with the same 90 and 75 cut-offs as the KPI profile cards. [ring] draws
+/// the ring; [text] is the AA-safe shade for the word.
+({String word, Color ring, Color text}) _scoreTier(double score) {
+  if (score >= 90) return (word: 'Excellent', ring: DashUi.emerald, text: DashUi.emeraldText);
+  if (score >= 75) return (word: 'Solid', ring: DashUi.amber, text: DashUi.amberText);
+  return (word: 'Needs attention', ring: DashUi.red, text: DashUi.redText);
 }
 
-/// Where a score sits: its word and colour, with the same 90 and 75 cut-offs and colours as the KPI profile cards.
-({String word, Color from}) _scoreTier(double score) {
-  if (score >= 90) return (word: 'Excellent', from: const Color(0xFF34D399));
-  if (score >= 75) return (word: 'Solid', from: const Color(0xFFFBBF24));
-  return (word: 'Needs attention', from: const Color(0xFFF87171));
-}
-
-/// The integrity score, drawn like the KPI profile cards draw it (a tinted pill: small ring, label, bold percent),
-/// on the dark hero. The ring sweeps up and the number counts up; both jump to the end when the system asks for
-/// less motion.
-class _ScorePill extends StatelessWidget {
+/// The integrity score: a small ring, its label, the percent and the tier word. The ring sweeps up and the number
+/// counts up when the score arrives; both jump to the end when the system asks for less motion.
+class _ScoreBlock extends StatelessWidget {
   final double? score;
   final bool loading;
-  const _ScorePill({required this.score, required this.loading});
+  final bool failed; // the users list didn't load, so the score is unknown rather than missing
+  const _ScoreBlock({required this.score, required this.loading, required this.failed});
+
+  static const _scale = 'Scored out of 100: 90 and up is Excellent, 75 to 89 is Solid, under 75 needs attention.';
 
   @override
   Widget build(BuildContext context) {
     final value = score;
     final tier = value == null ? null : _scoreTier(value);
-    final color = tier?.from ?? const Color(0xFF94A3B8);
+    final ring = tier?.ring ?? DashUi.muted;
     final still = MediaQuery.disableAnimationsOf(context);
 
-    Widget pill(double t) => Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: color.withValues(alpha: 0.4)),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            SizedBox(
-              width: 38,
-              height: 38,
-              child: CustomPaint(
-                painter: _RingPainter(progress: value == null ? 0 : value / 100 * t, color: color),
-                child: Center(child: Icon(Icons.verified_rounded, size: 15, color: color)),
-              ),
+    Widget block(double t) => Row(mainAxisSize: MainAxisSize.min, children: [
+          SizedBox(
+            width: 44,
+            height: 44,
+            child: CustomPaint(
+              painter: _RingPainter(progress: value == null ? 0 : value / 100 * t, color: ring),
+              child: Center(child: Icon(Icons.verified_rounded, size: 18, color: ring)),
             ),
-            const SizedBox(width: 10),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text('Integrity score', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFFCBD5E1))),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Integrity score', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.slate)),
+              const SizedBox(height: 1),
+              Row(mainAxisSize: MainAxisSize.min, children: [
                 Text(
                   value == null ? (loading ? '…' : '—') : '${(value * t).round()}%',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: color, height: 1.15),
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: DashUi.ink,
+                    letterSpacing: -0.5,
+                    height: 1.15,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
-              ],
-            ),
-          ]),
-        );
+                if (tier != null || !loading) ...[
+                  const SizedBox(width: 8),
+                  // The word arrives as the count lands, so "53% Excellent" never shows on the way up.
+                  Opacity(
+                    opacity: value == null ? 1 : ((t - 0.55) / 0.45).clamp(0.0, 1.0),
+                    child: _TierTag(tier?.word ?? (failed ? 'Unavailable' : 'Not scored yet'),
+                        fg: tier?.text ?? DashUi.subtle, tint: tier?.ring ?? DashUi.muted),
+                  ),
+                ],
+              ]),
+            ],
+          ),
+        ]);
 
     return Tooltip(
-      message: tier?.word ?? (loading ? 'Loading your score' : 'Not scored yet'),
+      message: value == null && loading
+          ? 'Loading your score'
+          : (value == null && failed ? "Couldn't load your score. Try again." : _scale),
       child: Semantics(
         container: true,
-        label: value == null ? 'Integrity score: not scored yet' : 'Integrity score: ${value.round()} percent, ${tier!.word}',
+        label: value == null
+            ? (failed ? 'Integrity score: not available' : 'Integrity score: not scored yet')
+            : 'Integrity score: ${value.round()} percent, ${tier!.word}',
         child: ExcludeSemantics(
           child: still
-              ? pill(1)
+              ? block(1)
               : TweenAnimationBuilder<double>(
                   key: ValueKey(value), // a score arriving after the page loads sweeps up again
                   tween: Tween(begin: 0, end: 1),
-                  duration: const Duration(milliseconds: 1400),
+                  duration: const Duration(milliseconds: 1200),
                   curve: Curves.easeOutCubic,
-                  builder: (context, t, _) => pill(t),
+                  builder: (context, t, _) => block(t),
                 ),
         ),
       ),
+    );
+  }
+}
+
+class _TierTag extends StatelessWidget {
+  final String text;
+  final Color fg;
+  final Color tint;
+  const _TierTag(this.text, {required this.fg, required this.tint});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(color: tint.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(999)),
+      child: Text(text, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg)),
     );
   }
 }
@@ -541,7 +624,7 @@ class _RingPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    const stroke = 4.5;
+    const stroke = 4.0;
     final arc = (Offset.zero & size).deflate(stroke / 2);
     canvas.drawArc(
       arc,
@@ -551,7 +634,7 @@ class _RingPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = stroke
-        ..color = color.withValues(alpha: 0.22),
+        ..color = color.withValues(alpha: 0.18),
     );
     if (progress <= 0) return;
     canvas.drawArc(
@@ -571,66 +654,143 @@ class _RingPainter extends CustomPainter {
   bool shouldRepaint(_RingPainter old) => old.progress != progress || old.color != color;
 }
 
-class _SectionTitle extends StatelessWidget {
-  final String text;
-  final IconData icon;
-  const _SectionTitle(this.text, this.icon);
+/// A section heading with an optional note on the right, then its rows under a hairline.
+class _Section extends StatelessWidget {
+  final String title;
+  final Widget? trailing;
+  final bool ruled;
+  final List<Widget> children;
+  const _Section({required this.title, required this.children, this.trailing, this.ruled = true});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Semantics(
-        header: true,
-        child: Row(children: [
-          Container(
-            width: 30,
-            height: 30,
-            decoration: BoxDecoration(color: const Color(0xFFFCEEEE), borderRadius: BorderRadius.circular(9)),
-            child: Icon(icon, size: 17, color: AppTheme.brandRed),
-          ),
-          const SizedBox(width: 10),
-          Text(text, style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w800, color: DashUi.ink, letterSpacing: -0.3)),
-        ]),
-      ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: Row(children: [
+            Expanded(
+              child: Semantics(
+                header: true,
+                child: Text(title,
+                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.2)),
+              ),
+            ),
+            ?trailing,
+          ]),
+        ),
+        if (ruled) const Divider(height: 1, thickness: 1, color: DashUi.line),
+        ...children,
+      ],
     );
   }
 }
 
-/// One label/value line with a rule under it; [trailing] is an action for that line.
+/// One fact: an 18px icon, its label, the value (with an optional quieter [caption] under it) and an optional
+/// action at the end. Label and value stack when the column is narrow.
 class _InfoRow extends StatelessWidget {
+  final IconData icon;
   final String label;
   final String value;
+  final String? caption;
   final Widget? trailing;
-  const _InfoRow(this.label, this.value, {this.trailing});
+  final bool quiet; // the value is a placeholder ("Loading…")
+  const _InfoRow(this.icon, this.label, this.value, {this.caption, this.trailing, this.quiet = false});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      constraints: const BoxConstraints(minHeight: 56),
+      constraints: const BoxConstraints(minHeight: 48),
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: DashUi.line))),
       child: LayoutBuilder(
         builder: (context, c) {
-          final stack = c.maxWidth < 420;
-          final labelW = Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.slate));
-          final valueW = Text(value, style: const TextStyle(fontSize: 15, color: DashUi.ink));
-          if (stack) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [labelW, const SizedBox(height: 2), valueW, if (trailing != null) ...[const SizedBox(height: 8), trailing!]],
-            );
-          }
+          // The label column grows with the text size so "Signed in until" never runs into its value.
+          final labelWidth = MediaQuery.textScalerOf(context).scale(128).clamp(128.0, 200.0);
+          final stack = c.maxWidth < labelWidth + 292;
+          final labelW = Text(label,
+              style: TextStyle(fontSize: stack ? 12.5 : 13.5, fontWeight: FontWeight.w600, color: DashUi.slate, height: 1.3));
+          final valueW = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(value,
+                  style: TextStyle(
+                      fontSize: 14, fontWeight: FontWeight.w500, color: quiet ? DashUi.subtle : DashUi.ink, height: 1.35)),
+              if (caption != null)
+                Text(caption!, style: const TextStyle(fontSize: 12.5, color: DashUi.subtle, height: 1.3)),
+            ],
+          );
           return Row(
             children: [
-              SizedBox(width: 130, child: labelW),
-              Expanded(child: valueW),
+              Icon(icon, size: 18, color: DashUi.subtle),
+              const SizedBox(width: 12),
+              if (stack)
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [labelW, const SizedBox(height: 2), valueW],
+                  ),
+                )
+              else ...[
+                SizedBox(width: labelWidth, child: labelW),
+                Expanded(child: valueW),
+              ],
               if (trailing != null) ...[const SizedBox(width: 12), trailing!],
             ],
           );
         },
       ),
     );
+  }
+}
+
+/// A compact outlined button for an action that belongs to a row (Change PIN, Try again), so the row stays one line
+/// tall. The text style sits on the label so it keeps the app's font.
+class _QuietButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  const _QuietButton({required this.icon, required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 17),
+      label: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: DashUi.ink,
+        backgroundColor: Colors.white,
+        side: const BorderSide(color: DashUi.line),
+        minimumSize: const Size(0, 36),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      ),
+    );
+  }
+}
+
+/// A failed load: the reason, with Try again beside it (under it on a phone-width window).
+class _ErrorBar extends StatelessWidget {
+  final String message;
+  final bool narrow;
+  final VoidCallback? onRetry;
+  const _ErrorBar({required this.message, required this.narrow, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    final notice = AppNotice(message, kind: AppNoticeKind.error);
+    final retry = _QuietButton(icon: Icons.refresh_rounded, label: 'Try again', onPressed: onRetry);
+    if (narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [notice, const SizedBox(height: 8), retry],
+      );
+    }
+    return Row(children: [Expanded(child: notice), const SizedBox(width: 12), retry]);
   }
 }
 
@@ -653,8 +813,8 @@ const List<_BadgeDef> _badgeDefs = [
   _BadgeDef('team_favorite', 'Team Favorite', 'Top-rated by teammates.', Icons.groups_rounded, Color(0xFF818CF8), Color(0xFF4F46E5)),
 ];
 
-/// "My badges": the five recognition badges as medallions (earned ones in colour, the rest locked), plus the
-/// years-with-IOHD medallion. [badges] is null when this sign-in predates badges.
+/// "My badges": the years-with-IOHD badge, then the five recognition badges (earned ones in their colour, the rest
+/// locked) in a compact grid. [badges] is null when this sign-in predates badges.
 class _Badges extends StatelessWidget {
   final Set<String>? badges;
   final int? years;
@@ -665,9 +825,10 @@ class _Badges extends StatelessWidget {
     final earned = badges == null ? 0 : _badgeDefs.where((b) => badges!.contains(b.key)).length;
     final tiles = <Widget>[
       if (years != null && years! >= 1)
-        _Medallion(
+        _BadgeTile(
           label: '$years ${years == 1 ? 'Year' : 'Years'}',
           caption: 'With IOHD',
+          meaning: '$years ${years == 1 ? 'year' : 'years'} with IOHD.',
           icon: Icons.military_tech_rounded,
           from: const Color(0xFFF87171),
           to: const Color(0xFFB91C1C),
@@ -675,79 +836,100 @@ class _Badges extends StatelessWidget {
           number: '$years',
         ),
       for (final b in _badgeDefs)
-        _Medallion(
+        _BadgeTile(
           label: b.label,
           caption: badges == null || badges!.contains(b.key) ? b.meaning : 'Not earned yet',
+          meaning: b.meaning,
           icon: b.icon,
           from: b.from,
           to: b.to,
           earned: badges?.contains(b.key) ?? false,
         ),
     ];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return _Section(
+      title: 'My badges',
+      ruled: false,
+      trailing: badges == null ? null : _EarnedMeter(earned: earned, total: _badgeDefs.length),
       children: [
-        Row(children: [
-          const Expanded(child: _SectionTitle('My badges', Icons.emoji_events_rounded)),
-          if (badges != null)
-            Text('$earned of ${_badgeDefs.length} earned',
-                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.slate)),
-        ]),
-        const SizedBox(height: 14),
         if (badges == null)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 14),
-            child: AppNotice('Sign out and back in once to load your badges.'),
+          const _Rise(
+            delayMs: 200,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: AppNotice('Sign out and back in once to load your badges.'),
+            ),
           )
         else if (earned == 0)
-          const Padding(
-            padding: EdgeInsets.only(bottom: 14),
-            child: Text('No badges yet. An admin awards them for great KPIs, and they show up here.',
-                style: TextStyle(fontSize: 15, color: DashUi.slate)),
+          const _Rise(
+            delayMs: 200,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: Text('No badges yet. An admin awards them for great KPIs, and they show up here.',
+                  style: TextStyle(fontSize: 14, color: DashUi.slate)),
+            ),
           ),
-        Wrap(
-          spacing: 12,
-          runSpacing: 20,
-          children: [for (var i = 0; i < tiles.length; i++) _PopIn(delay: i, child: tiles[i])],
+        const SizedBox(height: 4),
+        LayoutBuilder(
+          builder: (context, c) {
+            final cols = c.maxWidth >= 840 ? 3 : (c.maxWidth >= 520 ? 2 : 1);
+            const gap = 24.0;
+            final w = ((c.maxWidth - gap * (cols - 1)) / cols).floorToDouble();
+            return Wrap(
+              spacing: gap,
+              runSpacing: 14,
+              children: [
+                for (var i = 0; i < tiles.length; i++)
+                  SizedBox(width: w, child: _Rise(delayMs: 220 + i * 45, child: tiles[i])),
+              ],
+            );
+          },
         ),
       ],
     );
   }
 }
 
-/// Fades and springs a medallion in, one after another. Instant when the system asks for less motion.
-class _PopIn extends StatelessWidget {
-  final int delay;
-  final Widget child;
-  const _PopIn({required this.delay, required this.child});
+/// "2 of 5 earned" with a five-step meter beside it.
+class _EarnedMeter extends StatelessWidget {
+  final int earned;
+  final int total;
+  const _EarnedMeter({required this.earned, required this.total});
 
   @override
   Widget build(BuildContext context) {
-    if (MediaQuery.disableAnimationsOf(context)) return child;
-    return TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
-      duration: Duration(milliseconds: 420 + delay * 90),
-      curve: Curves.easeOutBack,
-      builder: (context, t, child) => Opacity(
-        opacity: t.clamp(0.0, 1.0),
-        child: Transform.scale(scale: 0.6 + 0.4 * t, child: child),
+    return Row(mainAxisSize: MainAxisSize.min, children: [
+      ExcludeSemantics(
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          for (var i = 0; i < total; i++)
+            Container(
+              width: 14,
+              height: 4,
+              margin: EdgeInsets.only(left: i == 0 ? 0 : 3),
+              decoration: BoxDecoration(color: i < earned ? DashUi.ink : DashUi.line, borderRadius: BorderRadius.circular(2)),
+            ),
+        ]),
       ),
-      child: child,
-    );
+      const SizedBox(width: 10),
+      Text('$earned of $total earned', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate)),
+    ]);
   }
 }
 
-class _Medallion extends StatelessWidget {
+/// One badge: a 40px disc (its colour, softly tinted, when earned; a lock when not), the name and one line about it.
+/// Hovering lifts the disc a touch and the tooltip says what the badge is for.
+class _BadgeTile extends StatefulWidget {
   final String label;
   final String caption;
+  final String meaning;
   final IconData icon;
   final Color from;
   final Color to;
   final bool earned;
-  final String? number; // shown instead of the icon (the years medallion)
-  const _Medallion({
+  final String? number; // shown instead of the icon (the years badge)
+  const _BadgeTile({
     required this.label,
     required this.caption,
+    required this.meaning,
     required this.icon,
     required this.from,
     required this.to,
@@ -756,41 +938,64 @@ class _Medallion extends StatelessWidget {
   });
 
   @override
+  State<_BadgeTile> createState() => _BadgeTileState();
+}
+
+class _BadgeTileState extends State<_BadgeTile> {
+  bool _hover = false;
+
+  @override
   Widget build(BuildContext context) {
-    const size = 84.0;
+    final w = widget;
+    final still = MediaQuery.disableAnimationsOf(context);
     final disc = Container(
-      width: size,
-      height: size,
+      width: 40,
+      height: 40,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        gradient: earned ? LinearGradient(colors: [from, to], begin: Alignment.topLeft, end: Alignment.bottomRight) : null,
-        color: earned ? null : DashUi.faint,
-        border: Border.all(color: earned ? Colors.white : DashUi.line, width: 3),
-        boxShadow: earned ? [BoxShadow(color: to.withValues(alpha: 0.38), blurRadius: 18, offset: const Offset(0, 7))] : null,
+        color: w.earned ? w.from.withValues(alpha: 0.18) : DashUi.faint,
+        border: Border.all(color: w.earned ? w.from.withValues(alpha: 0.45) : DashUi.line),
       ),
-      child: number != null
-          ? Text(number!, style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w800, color: Colors.white))
-          : Icon(earned ? icon : Icons.lock_outline_rounded, size: earned ? 40 : 28, color: earned ? Colors.white : DashUi.muted),
+      child: w.number != null
+          ? Text(w.number!, style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: w.to, height: 1))
+          : Icon(w.earned ? w.icon : Icons.lock_outline_rounded, size: w.earned ? 20 : 17, color: w.earned ? w.to : DashUi.muted),
     );
     return Semantics(
-      label: '$label, ${earned ? 'earned' : 'not earned yet'}. $caption',
+      label: '${w.label}, ${w.earned ? 'earned' : 'not earned yet'}. ${w.meaning}',
       child: ExcludeSemantics(
         child: Tooltip(
-          message: caption,
-          child: SizedBox(
-            width: 132,
-            child: Column(
-              children: [
-                disc,
-                const SizedBox(height: 10),
-                Text(label,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: earned ? DashUi.ink : DashUi.subtle)),
-                const SizedBox(height: 2),
-                Text(caption, textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: DashUi.slate, height: 1.3)),
-              ],
-            ),
+          message: w.earned ? w.meaning : 'Not earned yet. ${w.meaning}',
+          child: MouseRegion(
+            onEnter: (_) => setState(() => _hover = true),
+            onExit: (_) => setState(() => _hover = false),
+            child: Row(children: [
+              AnimatedScale(
+                scale: _hover && !still ? 1.08 : 1,
+                duration: still ? Duration.zero : const Duration(milliseconds: 160),
+                curve: Curves.easeOutCubic,
+                child: disc,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(w.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            fontSize: 13.5, fontWeight: FontWeight.w700, color: w.earned ? DashUi.ink : DashUi.subtle, height: 1.3)),
+                    const SizedBox(height: 1),
+                    Text(w.caption,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.subtle, height: 1.3)),
+                  ],
+                ),
+              ),
+            ]),
           ),
         ),
       ),

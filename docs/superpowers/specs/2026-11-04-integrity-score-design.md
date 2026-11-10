@@ -1,5 +1,8 @@
 # Integrity score design
 
+> **Status 2026-11-10: ON HOLD.** The user wants to revisit this design before any plan or build. Live today is only
+> the placeholder `integrityScore = max(0, 100 - 2 x missed completions)` on `/users` in the backend.
+
 Status: awaiting John's review. Nothing here is built yet.
 
 ## Purpose

@@ -5,15 +5,17 @@ description: Build list and table screens in the IOHD app (customers, jobs, inve
 
 # Lists and tables
 
-Reference implementation: `lib/customers_screen.dart` (debounced search, server paging, sort,
-page cache with prefetch, stale-response guard). Copy its structure for new list screens.
+Reference implementations: `lib/customers_screen.dart` (debounced search, server paging, sort, page cache
+with prefetch, stale-response guard), `lib/payments_screen.dart` and `lib/widgets/record_list_view.dart`
+(Jobs/Estimates), all built on the flat kit in `lib/widgets/flat_page.dart` (`FlatTableHeader`, `FlatTableRow`,
+`FlatPager`, `FlatStats`, `FlatFilterChip`, `FlatLoading`, `FlatStaleNotice`). Copy their structure.
 
 ## Search
 
 - Debounce typing by ~300ms with a `Timer`, and reset to page 1 on a new query.
 - Show the query in the empty state ("No results for …") with a clear (x) suffix button.
-- Read an initial `?q=` from the route. The global search in the nav bar sends job IDs to `/jobs`
-  and everything else to `/customers`.
+- Read an initial `?q=` from the route. The nav bar search (`lib/widgets/global_search.dart`) opens the
+  picked record directly; Enter with no pick falls back to `?q=` on `/jobs` (numbers) or `/customers`.
 - Ignore stale responses with a request counter (`_requestId`).
 
 ## Filters and sort
@@ -30,15 +32,16 @@ page cache with prefetch, stale-response guard). Copy its structure for new list
 
 ## Table layout
 
-- Header row: 12px UPPERCASE, w600, slate. Rows are 44–52px tall with a hairline divider, plus a hover
+- Header row: use `FlatTableHeader` (pinned, striped) rather than hand-building one. Rows are 44–52px tall with a hairline divider, plus a hover
   tint (`DashUi.faint`) when the row is clickable, and `MouseRegion(cursor: SystemMouseCursors.click)`.
 - **Right-align** money and numbers, left-align text, and centre short status badges. Keep consistent decimals.
 - First column is the identifier (bold, w600). Truncate long text with `TextOverflow.ellipsis` +
   a `Tooltip` showing the full value.
 - Wide tables: wrap `DataTable` in a horizontal `SingleChildScrollView` inside a `LayoutBuilder`
   with `ConstrainedBox(minWidth: constraints.maxWidth)` so it fills the space on wide screens and
-  scrolls on narrow ones. On compact widths (<600), consider switching to cards.
-- Row click opens details (dialog like `job_details_dialog.dart`). Row actions go in a trailing
+  scrolls on narrow ones. On narrow widths the flat screens switch to stacked rows (not cards: cards are
+  only for dashboards and KPI pages).
+- Row click opens the record's route (`/jobs/<n>`, `/customers/<id>`). Row actions go in a trailing
   `PopupMenuButton` (`Icons.more_horiz_rounded`) with tooltip "More actions".
 - Sticky header and totals row for long financial tables (payroll, commissions).
 

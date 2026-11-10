@@ -1,5 +1,10 @@
 # Final polish audit: handoff
 
+> **Status 2026-11-10:** this work is committed (desktop `117e5df`, `373ead9`). Since the handoff, the stale test
+> asserts were updated, `dashMonthStory` counts only months with prior data, and "Cash collected" / "Average month"
+> wording landed. Still open: the vs/on wording (`dash_story.dart` still says "on <year>, same months"), the
+> production SQL checklist, and every item under "Left for the user".
+
 **Last updated:** 2026-11-04 (session 2, end)
 **Status:** audit pass complete and reported. "Session 2 progress" below supersedes items 0-5 of "Still to do"; what is
 left is listed under "Left for the user or a later pass".

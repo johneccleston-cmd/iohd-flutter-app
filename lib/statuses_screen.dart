@@ -202,6 +202,11 @@ class _StatusesScreenState extends State<StatusesScreen> {
   Map<String, CommissionInfo> _commission = {}; // lower-cased status name -> what commission does in it
   bool _loading = true;
   bool _readOnly = false; // the server has no status list yet, so we show the built-in one
+
+  // The Team screen's Statuses switches (the server checks the same ones).
+  bool get _canAdd => AuthSession.instance.can('statuses', AccessAction.create);
+  bool get _canChange => AuthSession.instance.can('statuses', AccessAction.update);
+  bool get _canRemove => AuthSession.instance.can('statuses', AccessAction.delete);
   String? _error;
   String _kind = 'job';
   bool _busy = false;
@@ -407,11 +412,12 @@ class _StatusesScreenState extends State<StatusesScreen> {
             icon: accessIcon('statuses'),
             actions: [
               PageBanner.refresh(onPressed: _loading ? null : _load),
-              PageBanner.button(
-                icon: Icons.add_rounded,
-                label: _kind == 'job' ? 'Add job status' : 'Add estimate status',
-                onPressed: canEdit && !_busy ? () => _edit() : null,
-              ),
+              if (_canAdd)
+                PageBanner.button(
+                  icon: Icons.add_rounded,
+                  label: _kind == 'job' ? 'Add job status' : 'Add estimate status',
+                  onPressed: canEdit && !_busy ? () => _edit() : null,
+                ),
             ],
           ),
           Padding(
@@ -469,7 +475,7 @@ class _StatusesScreenState extends State<StatusesScreen> {
       return FlatEmpty(
         icon: Icons.timeline_rounded,
         title: _kind == 'job' ? 'No job statuses yet' : 'No estimate statuses yet',
-        message: _readOnly ? 'Nothing to show.' : 'Use the add button above to create the first one.',
+        message: _readOnly || !_canAdd ? 'Nothing to show.' : 'Use the add button above to create the first one.',
       );
     }
     return LayoutBuilder(
@@ -484,7 +490,7 @@ class _StatusesScreenState extends State<StatusesScreen> {
                 buildDefaultDragHandles: false,
                 padding: const EdgeInsets.only(bottom: 24),
                 itemCount: list.length,
-                onReorderItem: _readOnly || _busy ? (_, _) {} : _reorder,
+                onReorderItem: _readOnly || _busy || !_canChange ? (_, _) {} : _reorder,
                 itemBuilder: (context, i) => _row(list[i], i, wide),
               ),
             ),
@@ -527,7 +533,7 @@ class _StatusesScreenState extends State<StatusesScreen> {
           children: [
             SizedBox(
               width: 32,
-              child: _readOnly
+              child: _readOnly || !_canChange
                   ? null
                   : ReorderableDragStartListener(
                       index: i,
@@ -601,14 +607,14 @@ class _StatusesScreenState extends State<StatusesScreen> {
                   : Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        IconButton(
+                        if (_canChange) IconButton(
                           tooltip: 'Edit ${s.name}',
                           iconSize: 18,
                           color: DashUi.slate,
                           icon: const Icon(Icons.edit_outlined),
                           onPressed: _busy ? null : () => _edit(s),
                         ),
-                        IconButton(
+                        if (_canRemove) IconButton(
                           tooltip: 'Delete ${s.name}',
                           iconSize: 18,
                           color: DashUi.slate,

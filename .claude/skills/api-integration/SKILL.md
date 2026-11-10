@@ -38,13 +38,12 @@ Rules:
 
 1. **Always** use `AuthSession.instance.headers()`. It adds the shared bearer key and the user's
    `x-user-token`, and logs out on expiry. Use `headers(json: false)` for GETs with no body.
-   A few older files build their own headers (`tech_retainage_screen.dart`, `admin_retainage_screen.dart`,
-   `company_pool_screen.dart`, `services/commission_service.dart`). Switch them over when you touch them.
+   Only `services/commission_service.dart` still builds its own headers (and it is unused dead code).
 2. **Always** add `.timeout(...)`: 40–60s for reads and anything that may hit a cold start.
 3. Build query strings with `Uri.replace(queryParameters:)`, never string concatenation of user input.
 4. POST/PUT bodies use `jsonEncode(...)`. `headers()` already sets `Content-Type: application/json`.
 5. Never hardcode another base URL. `services/commission_service.dart` still points at a placeholder
-   `your-render-app.onrender.com` and is broken until it uses `kApiBaseUrl`.
+   `your-render-app.onrender.com`; nothing calls it, so delete it rather than fix it if it comes up.
 6. Don't add new secrets to source.
 
 ## Parsing defensively
@@ -64,12 +63,14 @@ raw maps inside `build()`.
 
 - Guard `setState` after `await` with `if (!mounted) return;`.
 - When requests can overlap (typing in search, changing year), use a request counter and drop stale
-  responses, as `_requestId` does in `customers_screen.dart`.
+  responses, as `_requestId` does in `customers_screen.dart`. Dashboards use the shared `DashRequests`
+  helper in `lib/widgets/dashboard_data.dart` (stale guard + timeout).
 - Dashboards refetch in `didUpdateWidget` when `selectedYear` changes.
 - Show errors with the UI from the `ux-states` skill. Strip the `Exception: ` prefix before showing text.
 
 ## Mock data
 
-`payments_screen.dart`, `invoices_screen.dart` and `payroll_sample_data.dart` use hardcoded data.
-When wiring them up, keep the UI and replace the list with a fetch that follows this pattern. Ask
-the user for the endpoint shape rather than inventing one.
+Payments and Invoices are real now (`/api/payments`, `/api/invoices`). `vendors_screen.dart` (no vendor
+table exists) and `product_catalog_screen.dart` still show hardcoded sample data. When wiring one up, keep
+the UI and replace the list with a fetch that follows this pattern. Ask the user for the endpoint shape
+rather than inventing one.

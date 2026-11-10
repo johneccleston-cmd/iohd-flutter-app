@@ -306,7 +306,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                   ? 'Add the first project, or copy everything over from the old project sheet.'
                   : 'Projects will show here once someone adds them.',
             ),
-            if (_session.isAdmin)
+            if (_canCreate)
               OutlinedButton.icon(
                 onPressed: _importing ? null : _importSheet,
                 icon: _importing

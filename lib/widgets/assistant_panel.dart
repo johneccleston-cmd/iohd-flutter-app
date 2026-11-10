@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollDirection;
 import 'package:flutter/semantics.dart' show SemanticsService;
 import 'package:go_router/go_router.dart';
 
@@ -13,6 +14,7 @@ import '../utils/status_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 
+import '../config/access.dart';
 import '../config/api_config.dart';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1609,6 +1611,10 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   static const _sideWidth = 216.0;
   static bool _recentOpen = true; // the saved chats under "Recent chats", remembered while the app is open
   bool _showJump = false; // scrolled away from the bottom of a long thread
+  // Whether the thread keeps itself pinned to the bottom as words arrive. Any scroll up by the person turns it off at once
+  // (however small), and it comes back when they scroll back to the bottom, tap Latest, or ask something new. It is
+  // separate from _showJump, whose 160px threshold let a single wheel notch be pulled straight back down by the next word.
+  bool _follow = true;
 
   @override
   void initState() {
@@ -1650,6 +1656,23 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     if (!_scroll.hasClients) return;
     final away = _scroll.position.maxScrollExtent - _scroll.offset > 160;
     if (away != _showJump) setState(() => _showJump = away);
+  }
+
+  /// Scrolls the person makes themselves (wheel, trackpad, drag, scrollbar), never the panel's own jumps.
+  bool _onUserScroll(UserScrollNotification n) {
+    if (n.depth != 0 || n.metrics.axis != Axis.vertical) return false; // a wide table scrolling sideways is not the thread
+    if (n.direction == ScrollDirection.forward) {
+      _follow = false; // moving up, toward older messages
+    } else if (n.direction == ScrollDirection.idle) {
+      _follow = n.metrics.maxScrollExtent - n.metrics.pixels <= 24; // settled at the bottom: follow again
+    }
+    return false;
+  }
+
+  /// "Latest": back to the bottom and keep up with the answer from there.
+  void _jumpToLatest() {
+    _follow = true;
+    _scrollToEnd();
   }
 
   /// Up arrow in an empty box brings back the last question, like a terminal.
@@ -1825,6 +1848,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
       _lastError = _chat.error;
       // An empty chat has nothing to scroll, so the "Latest" button would be left hanging with no list to jump in.
       if (_chat.messages.isEmpty && _showJump) setState(() => _showJump = false);
+      _follow = true;
       _scrollToEnd(jump: true);
       return;
     }
@@ -1833,19 +1857,21 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     final streamLen = _chat.streamText.length;
     final streaming = streamLen != _lastStream;
     final changed = n != _seen || _chat.busy != _wasBusy || _chat.error != _lastError || streaming;
+    if (_chat.busy && !_wasBusy) _follow = true; // a new question (asked, retried, edited or regenerated): show it
     _seen = n;
     _wasBusy = _chat.busy;
     _lastError = _chat.error;
     _lastStream = streamLen;
     if (!changed) return; // a rename or other metadata change should not move the thread
-    if (streaming) {
-      // follow the words as they are written, unless the person has scrolled up to read something
-      if (!_showJump) _scrollToEnd(jump: true);
-      return;
-    }
     if (newAnswer) {
       // The answer may have been written out above the reader's place: say it is there.
       SemanticsService.sendAnnouncement(View.of(context), 'Jarvis answered.', TextDirection.ltr);
+    }
+    // The person scrolled up to read something: leave them there (the Latest button takes them back down).
+    if (!_follow) return;
+    if (streaming) {
+      _scrollToEnd(jump: true); // follow the words as they are written
+      return;
     }
     if (newAnswer && !_chat.lastAnswerStreamed) {
       // Start reading a new answer at its first line, not its last.
@@ -1862,7 +1888,9 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   void _scrollToEnd({bool jump = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scroll.hasClients) return;
+      if (!_scroll.hasClients || !_follow) return; // checked when it runs: they may have scrolled up since it was asked for
+      // never snatch the list out of the person's hand mid-drag or mid-fling
+      if (_scroll.position.userScrollDirection != ScrollDirection.idle) return;
       final end = _scroll.position.maxScrollExtent;
       if (jump) {
         _scroll.jumpTo(end);
@@ -1874,7 +1902,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   /// The server answers admins and owners only (Jarvis can read pay, profit and every customer), so other signed-in staff
   /// are told so up front instead of being handed a box whose every question fails.
-  bool get _canAsk => !AuthSession.instance.isLoggedIn || AuthSession.instance.isAdmin;
+  // The Team screen's Ask Jarvis switch (admins always); the server checks the same one.
+  bool get _canAsk => !AuthSession.instance.isLoggedIn || AuthSession.instance.can('jarvis', AccessAction.view);
 
   /// "Edit question" on a failed one: it goes back into the box, ready to change and send.
   void _editFailed() {
@@ -2017,7 +2046,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                           shape: const StadiumBorder(side: BorderSide(color: _stroke)),
                           child: InkWell(
                             customBorder: const StadiumBorder(),
-                            onTap: _scrollToEnd,
+                            onTap: _jumpToLatest,
                             child: const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                               child: Row(
@@ -2166,6 +2195,13 @@ class _AssistantPanelState extends State<_AssistantPanel> {
 
   Widget _thread() {
     final msgs = _chat.messages;
+    return NotificationListener<UserScrollNotification>(
+      onNotification: _onUserScroll,
+      child: _threadScroll(msgs),
+    );
+  }
+
+  Widget _threadScroll(List<AssistantMessage> msgs) {
     return SingleChildScrollView(
       controller: _scroll,
       padding: const EdgeInsets.fromLTRB(24, 18, 24, 10),
@@ -2300,7 +2336,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
               style: const TextStyle(fontSize: 14.5, color: _ink, height: 1.4),
               cursorColor: _brandRed,
               decoration: InputDecoration(
-                hintText: _canAsk ? 'Ask Jarvis about your business…' : 'Jarvis is available to admin accounts',
+                hintText: _canAsk ? 'Ask Jarvis about your business…' : 'Ask Jarvis is switched off for you. An admin can turn it on in Team.',
                 hintStyle: const TextStyle(fontSize: 14.5, color: DashUi.subtle),
                 counterText: '',
                 isDense: true,

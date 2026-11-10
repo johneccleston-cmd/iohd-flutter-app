@@ -95,7 +95,7 @@ void main() {
         await _settle(t);
         expect(_inMenu("KPI's"), findsOneWidget);
         expect(_inMenu('Payroll'), findsNothing);
-        expect(_inMenu('Team'), findsNothing, reason: 'Team is for admins');
+        expect(_inMenu('Team'), findsOneWidget, reason: 'Team follows its switch like every page');
         await t.tapAt(const Offset(1300, 700));
         await _settle(t);
         await t.tap(_inBar('My Office'));
@@ -106,7 +106,7 @@ void main() {
         await _settle(t);
 
         // Typing the address of a page it can't open still lands somewhere it can.
-        for (final blocked in ['/hr/payroll', '/hr/team', '/inventory/vendors', '/projects', '/payments']) {
+        for (final blocked in ['/hr/payroll', '/inventory/vendors', '/projects', '/payments']) {
           router().go(blocked);
           await _settle(t);
           expect(router().state.uri.path, '/calendar', reason: '$blocked should be refused');

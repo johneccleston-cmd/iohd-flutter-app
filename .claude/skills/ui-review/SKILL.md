@@ -5,7 +5,7 @@ description: Audit an IOHD screen (or the whole app) for UI/UX quality and produ
 
 # UI/UX review
 
-Review the target screen file(s) (default: files changed on this branch, `git diff --name-only main...HEAD -- lib`).
+Review the target screen file(s) (default: files with uncommitted changes, `git status --short lib`; work happens directly on `main`).
 Read the code fully. If Flutter is available, also run the app (`flutter run -d chrome`) and look at
 it at 1280px and 800px wide.
 
@@ -25,7 +25,8 @@ Check each area against the matching skill, then report.
    semantics on custom tappables and charts, keyboard reachable, text scale 1.3 survives, reduced motion.
 5. **Responsive** (`responsive-desktop`): no overflow at 360/800/1280/1920, max content width,
    wide tables scroll, hover + click cursor on interactive elements.
-6. **Copy**: sentence case for buttons and titles ("Save vendor", not "SAVE" or "Submit"), no emoji,
+6. **Copy**: sentence case for buttons and dialog titles ("Save vendor", not "SAVE" or "Submit"; ribbon titles
+   are capitals and menu labels Title Case by design), no emoji,
    no jargon or raw field names (`completed_count`), and errors that say what to do next.
 7. **Code health that affects UI**: huge `build()` methods (split into private widgets),
    controllers disposed, no network calls in `build()`, `const` constructors where possible.

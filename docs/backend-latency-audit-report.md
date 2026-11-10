@@ -1,5 +1,10 @@
 # Backend latency audit: report (2026-11-05)
 
+> **Status 2026-11-10:** the fixes marked "not deployed" below shipped: backend `e93e29f6` "Fixing Speed" (2026-11-05)
+> added `src/requestTiming.js` and `src/staticAssets.js` and `cors({ maxAge: 7200 })`, and it is live; the calendar
+> hidden-tab polling change is committed in this repo. The remaining next steps (P95 ranking from the timing lines,
+> Brett's KPI page, `name_lookup`, cache headroom, source map, health check, brotli) are still open.
+
 Scope: API latency and app responsiveness for IOHD Office and the backend on Render.
 Nothing has been committed, pushed or deployed. The changes below wait for your approval.
 

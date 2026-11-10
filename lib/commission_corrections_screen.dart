@@ -527,7 +527,14 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     }
   }
 
+  /// Team screen: Commission Corrections > Update. Without it the page is for looking only.
+  bool get _canCorrect => AuthSession.instance.can('hr_corrections', AccessAction.update);
+
   Future<void> _fixDay(Map<String, dynamic> day, {required bool jobLocked, required List<DateTime> paidWeeks}) async {
+    if (!_canCorrect) {
+      _toast('Saving corrections is switched off for you. An admin can turn it on in Team.', error: true);
+      return;
+    }
     final id = day['id'];
     await showDialog<void>(
       context: context,
@@ -1303,7 +1310,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     required bool paid,
     required List<DateTime> paidWeeks,
   }) {
-    final canUnlock = !closing && !paid;
+    final canUnlock = !closing && !paid && _canCorrect;
     final why = paid
         ? 'Commission is already paid, so this job cannot be unlocked.'
         : 'Change the job to a non-closing status in Service Fusion first.';

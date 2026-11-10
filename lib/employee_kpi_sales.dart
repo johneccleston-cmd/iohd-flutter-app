@@ -614,9 +614,13 @@ class _SalesChartPanelState extends State<_SalesChartPanel> {
   bool _focused = false;
 
   /// (tab, what the view shows) in order.
-  List<(String, String)> get _views => widget.s.residential
-      ? const [('Sales', 'sales'), ('Close rate', 'close')]
-      : const [('Hard bids', 'bids'), ('Commercial', 'commercial'), ('Close rate', 'close'), ('Mix', 'mix')];
+  List<(String, String)> get _views => [
+        ...(widget.s.residential
+            ? const [('Sales', 'sales'), ('Close rate', 'close')]
+            : const [('Hard bids', 'bids'), ('Commercial', 'commercial'), ('Close rate', 'close'), ('Mix', 'mix')]),
+        // An older server sends no estimate-vs-job figures: no tab rather than an empty one.
+        if (widget.s.estVsJob != null) ('Sold vs final', 'final'),
+      ];
 
   @override
   void initState() {
@@ -657,6 +661,13 @@ class _SalesChartPanelState extends State<_SalesChartPanel> {
       'bids' => ('Hard bids won', 'by job start date', 'Closed jobs that came from a hard bid (the Service Fusion category "Commercial Hard Bid" on the estimate), by the month the job started, and the gross profit on them.'),
       'commercial' => ('Other commercial won', 'by job start date', 'Closed jobs that came from a commercial estimate that is not a hard bid, by the month the job started, and the gross profit on them.'),
       'close' => ('Close rate', 'by estimate date', 'Of the estimates dated each month that were won or lost, the share that was won. A month with nothing closed is a gap.'),
+      'final' => (
+          'Won estimates vs final job',
+          'by estimate date',
+          'Each estimate this person won in $year beside the job it became, once that job is closed: what was sold against what the job '
+              'finally came to. The job is the one for the same customer and address, created around the win, that shares line items '
+              'with the estimate. Jobs still open, cancelled or not found are counted but not charted.',
+        ),
       _ => ('Estimate mix', dashPeriodLabel(year), 'Every estimate dated in $year by its Service Fusion category. Select a slice or a row to list the estimates.'),
     };
     final Widget content = switch (kind) {
@@ -664,6 +675,7 @@ class _SalesChartPanelState extends State<_SalesChartPanel> {
       'bids' => _SalesMonthView(s: s, year: year, bucket: 0, what: 'hard bids'),
       'commercial' => _SalesMonthView(s: s, year: year, bucket: 1, what: 'other commercial work'),
       'close' => _CloseRateView(s: s, year: year),
+      'final' => _SoldVsFinalView(data: s.estVsJob!, year: year, name: widget.name),
       _ => _MixView(s: s, year: year, employeeId: widget.employeeId, name: widget.name),
     };
     final reduce = MediaQuery.disableAnimationsOf(context);

@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../config/access.dart';
 import '../config/api_config.dart';
 import '../config/auth_session.dart';
 import 'app_dialog.dart';
@@ -16,6 +17,12 @@ import 'dashboard_kit.dart' show DashUi, SkeletonPulse;
 /// Calls and texts from Quo for one customer or one job. Each conversation (one customer number on one of our Quo lines)
 /// is a collapsed row; clicking it opens the conversation in a popup, with who sent every message and a box to text back.
 /// History comes from our own database (filled by Quo's webhooks and the import), matched to the customer by phone number.
+// The Team screen's Calls & Texts switches (the server checks the same ones): Create sends texts, Update links calls to
+// jobs and fetches call details, Delete removes conversations.
+bool get _canText => AuthSession.instance.canUseCommunications(AccessAction.create);
+bool get _canLink => AuthSession.instance.canUseCommunications(AccessAction.update);
+bool get _canRemove => AuthSession.instance.canUseCommunications(AccessAction.delete);
+
 class QuoActivityPanel extends StatefulWidget {
   /// Give exactly one: [customerId] shows everything with that customer, [jobId] only what belongs to that job or estimate.
   final String? customerId;
@@ -329,7 +336,7 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
   }
 
   Future<void> _open(String key) async {
-    _fetchDetails(_items.value.where((a) => _threadKey(a) == key).toList());
+    if (_canLink) _fetchDetails(_items.value.where((a) => _threadKey(a) == key).toList());
     _poll?.cancel();
     _poll = Timer.periodic(const Duration(seconds: 15), (_) => _load(quiet: true));
     try {
@@ -486,7 +493,7 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
               message: when == null ? '' : DateFormat('EEE, MMM d, y h:mm a').format(when),
               child: Text(_when(when), style: const TextStyle(fontSize: 13, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()])),
             ),
-            PopupMenuButton<String>(
+            if ((_canLink && (_jobs.isNotEmpty || attached.isNotEmpty)) || _canRemove) PopupMenuButton<String>(
               tooltip: 'More',
               icon: const Icon(Icons.more_vert_rounded, color: DashUi.slate),
               onSelected: (v) {
@@ -499,10 +506,11 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
                 }
               },
               itemBuilder: (_) => [
-                if (_jobs.isNotEmpty) PopupMenuItem(value: 'attach', child: Text(attached.isEmpty ? 'Attach to a job or estimate...' : 'Move to another job or estimate...')),
-                for (final id in attached) PopupMenuItem(value: 'remove:$id', child: Text('Remove from ${_labelFor(_jobs, id)}')),
-                const PopupMenuDivider(),
-                const PopupMenuItem(value: 'delete', child: Text('Delete conversation', style: TextStyle(color: DashUi.redText))),
+                if (_canLink && _jobs.isNotEmpty) PopupMenuItem(value: 'attach', child: Text(attached.isEmpty ? 'Attach to a job or estimate...' : 'Move to another job or estimate...')),
+                if (_canLink)
+                  for (final id in attached) PopupMenuItem(value: 'remove:$id', child: Text('Remove from ${_labelFor(_jobs, id)}')),
+                if (_canLink && _canRemove) const PopupMenuDivider(),
+                if (_canRemove) const PopupMenuItem(value: 'delete', child: Text('Delete conversation', style: TextStyle(color: DashUi.redText))),
               ],
             ),
             const Icon(Icons.chevron_right_rounded, color: DashUi.slate),
@@ -738,7 +746,7 @@ class _ThreadDialogState extends State<_ThreadDialog> {
               children: rows,
             ),
           ),
-          footer: _composer(number, send),
+          footer: _canText ? _composer(number, send) : null, // Team screen: Calls & Texts > Create
           actions: const [],
         );
       },
@@ -889,12 +897,12 @@ class _ThreadDialogState extends State<_ThreadDialog> {
           style: TextStyle(fontSize: 11.5, color: sub, fontFeatures: const [FontFeature.tabularFigures()]),
         ),
         Tooltip(
-          message: 'Change which job this belongs to',
+          message: _canLink ? 'Change which job this belongs to' : 'The job this belongs to',
           child: Material(
             color: dark ? Colors.white.withValues(alpha: 0.12) : DashUi.faint,
             shape: StadiumBorder(side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.18) : DashUi.line)),
             child: InkWell(
-              onTap: () => _pickJob(a),
+              onTap: _canLink ? () => _pickJob(a) : null,
               customBorder: const StadiumBorder(),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),

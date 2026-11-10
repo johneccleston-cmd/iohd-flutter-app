@@ -348,7 +348,7 @@ void main() {
       await t.pumpAndSettle();
       expect(_inMenu("KPI's"), findsOneWidget);
       expect(_inMenu('Payroll'), findsNothing);
-      expect(_inMenu('Team'), findsNothing, reason: 'Team is for admins');
+      expect(_inMenu('Team'), findsOneWidget, reason: 'Team follows its switch like every page');
       await t.tapAt(const Offset(1200, 600));
       await t.pumpAndSettle();
       await t.tap(find.text('My Office'));
@@ -358,9 +358,21 @@ void main() {
     });
 
     testWidgets('HR does not show an empty menu when only Commission Corrections is allowed', (t) async {
-      await navSignIn(admin: false, denied: denyViews(['hr_payroll', 'hr_kpis']));
+      await navSignIn(admin: false, denied: denyViews(['hr_payroll', 'hr_kpis', 'team']));
       await pumpNav(t, _wide);
       expect(find.text('HR'), findsNothing);
+    });
+
+    testWidgets('every dashboard follows its switch, the profit ones included', (t) async {
+      await navSignIn(admin: false, denied: denyViews(['dash_financial', 'dash_sales']));
+      await pumpNav(t, _wide);
+      await t.tap(find.text('Dashboards'));
+      await t.pumpAndSettle();
+      expect(_inMenu('Financial'), findsNothing);
+      expect(_inMenu('Sales'), findsNothing);
+      for (final name in ['Commissions', 'Technicians', 'Collections']) {
+        expect(_inMenu(name), findsOneWidget, reason: '$name is switched on');
+      }
     });
 
     testWidgets('with nothing in the dropdown, search sends a name to Customers and a number to Jobs', (t) async {

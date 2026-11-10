@@ -1145,7 +1145,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
           textStyle: text,
         ),
         // Open on the last week of the range, which is the week most likely being paid, not the first.
-        onPressed: () => showPayrollRunDialog(
+        // Team screen: Payroll > Create.
+        onPressed: !AuthSession.instance.can('hr_payroll', AccessAction.create) ? null : () => showPayrollRunDialog(
           context,
           initialDate: _range.end,
           onChanged: () {

@@ -1,12 +1,12 @@
 ---
 name: dashboard-screen
-description: Build or modify an analytics dashboard in the IOHD app using DashboardLayout and dashboard_kit (KPI cards, sparklines, charts, year selector, skeletons). Use for anything under /dashboards, KPI pages, metric cards, charts, or when replacing a GenericDashboardScreen placeholder (Sales, Collections).
+description: Build or modify an analytics dashboard in the IOHD app using DashboardLayout and dashboard_kit (KPI cards, sparklines, charts, year selector, skeletons). Use for anything under /dashboards, KPI pages, metric cards, charts, or story callouts.
 ---
 
 # Dashboards
 
-Existing examples to copy from: `jobs_dashboard_screen.dart`, `estimates_dashboard_screen.dart`,
-`inventory_dashboard_screen.dart`, `commission_dashboard_screen.dart`.
+Reference: `collections_dashboard_screen.dart` (the approved no-scroll design); the other seven dashboards
+follow it on the shared kit in `lib/widgets/dashboard_panels.dart` + `dash_story.dart`.
 
 ## Skeleton
 
@@ -33,7 +33,7 @@ In the content state, call `initState` → `_fetch()`, refetch in `didUpdateWidg
 changes, and render `_isLoading ? skeleton : _error != null ? DashErrorPanel(...) : content`.
 Fetch rules are in the `api-integration` skill.
 
-`DashboardLayout` gives you the dark header, the year selector, `actions:` (refresh/export buttons),
+`DashboardLayout` gives you the standard navy ribbon (pass `icon: accessIcon('<key>')`), the year selector, `actions:` (refresh/export buttons),
 a max content width of 1600 and a compact breakpoint at 600. Descendants can read the year with
 `DashboardScope.yearOf(context)`.
 
@@ -41,7 +41,10 @@ a max content width of 1600 and a compact breakpoint at 600. Descendants can rea
 
 | Use | Widget / helper |
 |-----|-----------------|
-| Panels | `Container(decoration: DashUi.panel())`: white, 16 radius, hairline `DashUi.line` border, no shadow |
+| Panels | `DashPanel` / `DashPanelHeader` / `DashCallout` / `DashEmptyNote` (`dashboard_panels.dart`); raw `DashUi.panel()` only for one-offs |
+| Drill-down tile | `DashDrillCard`; tabs `DashSegmented` (ink text, flush right) |
+| Hover detail | `DashHoverCard` (`dash_hover_card.dart`), never a plain `Tooltip` on scorecards |
+| Fetch / today | `DashRequests` and `DashClock` (`dashboard_data.dart`; tests pin the clock) |
 | KPI tile | `AnimatedMetricCard(title:, value:, valueColor:, index:, caption:, trend:, format:)`. `value: null` shows "—" |
 | Money | `dashMoney(v)` → `$12,345.67` |
 | Hover affordance | `HoverLift(builder: (ctx, hovering) => ...)` |
@@ -60,16 +63,22 @@ hairlines). Give each screen **one** bold element. Never add a new colour withou
 
 ## Charts
 
-There's no chart package. Charts are `CustomPainter`s (see `_SparklinePainter`). Before adding a
-chart package, ask the user. Chart rules:
+There's no chart package. Use the shared charts first: `DashMonthChart` (`dashboard_panels.dart`),
+`DashMonthBars` / `DashCashByMonth` inside `DashStoryFrame`, with `dashMonthStory(...)` for the headline
+(`dash_story.dart`), and `DashBar` / `DashStackBar` / `DashBarRow` for ranked rows. Custom ones are
+`CustomPainter`s. Before adding a chart package, ask the user. Chart rules:
 
 - Start bar/area y-axes at zero. Label axes and units ($, %, count).
 - Use at most 5–6 series colours, from `DashUi`, with a legend or direct labels.
 - Use tabular-looking numbers: right-align figures and keep the same decimal places in a column.
 - Every chart has an empty state ("No jobs completed in 2025") and doesn't draw a flat line of zeros.
 - Add a `Tooltip` or hover readout for exact values, since bars alone aren't readable.
+- Every chart tells a story: a headline with the answer in words and numbers, a callout naming the main
+  finding, plain labels and a key whenever colour carries meaning.
 
 ## Layout
 
-Use a KPI row on top (3–5 cards in a `Wrap` or a `LayoutBuilder` grid that drops to 2 or 1 columns),
-then the main chart, then the breakdown tables. Use 16–24px gaps.
+Dashboards must not scroll at desktop sizes. Each screen's `_Grid` picks an arrangement from measured
+heights (`DashGeo`); new cards flex into existing space instead of adding height. Only below about
+1000-1150 px wide does it fall back to one scrolling column. Check with the `test/dashboard_fit.dart` sizes
+(down to 1280x600, and 130% text). Use 16–24px gaps.

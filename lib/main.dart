@@ -62,14 +62,10 @@ final GoRouter _router = GoRouter(
     // Page access follows the Permissions card on the Team screen. Someone who opens a page they're
     // switched off from lands on the calendar, or on the first page they can use.
     final session = AuthSession.instance;
-    final path = state.matchedLocation == '/dashboards'
-        ? '/dashboards/financial'
-        : state.matchedLocation.startsWith('/jobs/')
-            ? '/jobs' // a job's own page needs the same permission as the Jobs list
-            : state.matchedLocation;
+    final path = state.matchedLocation == '/dashboards' ? '/dashboards/financial' : state.matchedLocation;
     if (signedIn && !session.isAdmin) {
-      if (path == '/hr/team') return '/calendar';
-      final page = kAccessPages.where((p) => p.route == path).firstOrNull;
+      // A record's own page (/jobs/123, /estimates/123, /customers/9, /hr/kpis/4) needs its list's permission.
+      final page = accessPageFor(path);
       if (page != null && !session.canView(page.key)) {
         if (session.canView('calendar')) return '/calendar';
         return kAccessPages.where((p) => session.canView(p.key)).firstOrNull?.route;

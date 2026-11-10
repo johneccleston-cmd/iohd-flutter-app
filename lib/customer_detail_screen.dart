@@ -167,6 +167,21 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
                   1 => _financial(),
                   2 => _serviceLocations(_customer!),
                   3 => _jobsTable(),
+                  _ when !AuthSession.instance.canUseCommunications(AccessAction.view) => const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 28),
+                    child: Row(
+                      children: [
+                        Icon(Icons.lock_outline_rounded, size: 18, color: DashUi.subtle),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Calls and texts are switched off for you. An admin can turn them on in Team.',
+                            style: TextStyle(fontSize: 14, color: DashUi.slate),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   _ => QuoActivityPanel(key: ValueKey('quo-${widget.customerId}'), customerId: widget.customerId),
                 },
               ),

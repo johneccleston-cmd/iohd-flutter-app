@@ -117,10 +117,13 @@ const Map<String, String> _labels = {
 
 /// Draft value for `access_denied` is the list of keys that are ALLOWED (what the pills show); the
 /// server stores the opposite, the keys switched off. Keys come from config/access.dart.
-List<String> _allowedFrom(dynamic denied) => [
-  for (final k in kAllAccessKeys)
-    if (denied is! List || !denied.contains(k)) k,
-];
+List<String> _allowedFrom(dynamic denied) {
+  final off = effectiveDenied(denied); // nothing saved yet: the defaults (pay, profit, Team and Jarvis off)
+  return [
+    for (final k in kAllAccessKeys)
+      if (!off.contains(k)) k,
+  ];
+}
 
 /// Admins (John and Ryan) see everything, so they get no permissions card. This is the Admin and
 /// Owner roles only: Sales Account Manager (Heather) is not an admin.
@@ -816,7 +819,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       _fieldErrors = {};
     });
     try {
-      final res = await _send('PATCH', _uri('/${e.id}'), body: {'changes': _payload(), 'version': e.version});
+      final res = await _send('PATCH', _uri('/${e.id}'), body: {'changes': _payload(), 'version': e.version, 'accessVersion': kAccessVersion});
       final body = res.body;
       if (!mounted) return;
 
@@ -909,7 +912,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => _AddEmployeeDialog(
-        roles: _roles,
+        roles: _viewerIsAdmin ? _roles : [for (final r in _roles) if (!r.grantsAdmin) r], // only admins hand out admin roles
         submit: (data) async {
           final res = await _send('POST', _uri(''), body: data);
           if (res.ok) return res.body;
@@ -1378,7 +1381,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
         const SizedBox(width: 8),
         // White on the ribbon (the usual dark button would disappear into it).
         FilledButton.icon(
-          onPressed: _users.isEmpty ? null : _addEmployee,
+          onPressed: _users.isEmpty || !AuthSession.instance.can('team', AccessAction.create) ? null : _addEmployee,
           icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
           label: const Text('Add employee', style: TextStyle(fontWeight: FontWeight.w700)),
           style: FilledButton.styleFrom(
@@ -1704,15 +1707,24 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
 
   // ---- Detail ---------------------------------------------------------------
 
+  // The Team screen's own switches. Admins can do everything. Someone else with Team > Update can edit people, but never
+  // an admin and never their own permissions; Team > Create adds people. The server refuses the same things.
+  bool get _viewerIsAdmin => AuthSession.instance.isAdmin;
+  bool _canEditPerson(_Emp e) =>
+      _viewerIsAdmin || (AuthSession.instance.can('team', AccessAction.update) && !_grantsAdmin(e.role));
+  bool _canEditPermissions(_Emp e) => _canEditPerson(e) && (_viewerIsAdmin || !_isMe(e));
+
   Widget _detail() {
     final e = _selected;
     if (e == null) return _TeamOverview(users: _users, onOpen: _openEmployee);
+    final canEdit = _canEditPerson(e);
 
     final sections = <Widget>[
       _profileSection(e),
       _badgesSection(),
       _weightSection(),
-      if (!_isOwnerAdmin(_s(_value('role')))) _permissionsSection(),
+      if (!_isOwnerAdmin(_s(_value('role'))))
+        AbsorbPointer(absorbing: !_canEditPermissions(e), child: _permissionsSection(readOnly: !_canEditPermissions(e))),
       _historySection(),
     ];
     return Stack(
@@ -1724,17 +1736,21 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
             // Build the whole record up front, so each section's entrance plays as the person opens, not on scroll.
             scrollCacheExtent: const ScrollCacheExtent.pixels(4000),
             children: [
-              _hero(e),
+              if (!canEdit) _viewOnlyNote(e),
+              AbsorbPointer(absorbing: !canEdit, child: _hero(e)),
               // One record, not a stack of cards: the sections are told apart by a thin rule, and come in one after
-              // another when the person opens.
+              // another when the person opens. Someone who may only look gets the same record, with nothing to press.
               for (var i = 0; i < sections.length; i++)
                 _Reveal(
                   key: ValueKey('section-${e.id}-$i'),
                   delayMs: 220 + i * 70,
                   from: const Offset(0, 18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [if (i > 0) _sectionRule(), sections[i]],
+                  child: AbsorbPointer(
+                    absorbing: !canEdit && i < sections.length - 1, // the change history stays open to read
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [if (i > 0) _sectionRule(), sections[i]],
+                    ),
                   ),
                 ),
             ],
@@ -2471,7 +2487,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
-  Widget _permissionsSection() {
+  Widget _permissionsSection({bool readOnly = false}) {
     final allowed = (_value('access_denied') as List).cast<String>().toSet();
     final isTech = isTechnicianRole(_s(_value('role')));
 
@@ -2525,9 +2541,11 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       title: 'Permissions',
       icon: Icons.shield_outlined,
       tone: DashUi.sky,
-      subtitle: isTech
+      subtitle: readOnly
+          ? 'Your own permissions can only be changed by an admin.'
+          : isTech
           ? 'Technicians use the tech app, so only its switches apply.'
-          : 'Tick what this person can do. Anything unticked is hidden from their menu or blocked.',
+          : 'Tick what this person can do. Anything unticked is hidden from them and refused by the server.',
       trailing: _changedTag('access_denied'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2661,6 +2679,25 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     );
   }
 
+  /// Above a record this person may only look at: why, in one line.
+  Widget _viewOnlyNote(_Emp e) => Container(
+    margin: const EdgeInsets.fromLTRB(0, 0, 0, 12),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+    decoration: BoxDecoration(color: _T.wash, borderRadius: BorderRadius.circular(10), border: Border.all(color: DashUi.line)),
+    child: Row(
+      children: [
+        const Icon(Icons.visibility_outlined, size: 17, color: DashUi.slate),
+        const SizedBox(width: 9),
+        Expanded(
+          child: Text(
+            _grantsAdmin(e.role) ? 'Only an admin can change an admin.' : 'View only. Changing people needs Team > Update.',
+            style: const TextStyle(fontSize: 13.5, color: DashUi.slate),
+          ),
+        ),
+      ],
+    ),
+  );
+
   Widget _subHeader(String text) => Padding(
     padding: const EdgeInsets.only(top: 4, bottom: 10),
     child: Text(
@@ -2762,17 +2799,44 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                     child: InkWell(
                       onTap: () => toggleRow(r),
                       child: Padding(
-                        padding: const EdgeInsets.fromLTRB(14, 9, 8, 9),
+                        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
                         child: Row(
                           children: [
                             Icon(r.icon, size: 16, color: DashUi.muted),
                             const SizedBox(width: 9),
                             Flexible(
-                              child: Text(
-                                r.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Flexible(
+                                        child: Text(
+                                          r.label,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: DashUi.ink,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  // What the ticks let them do, in plain words (the full text on hover when it is cut off).
+                                  if (r.help.isNotEmpty)
+                                    Tooltip(
+                                      message: r.help,
+                                      waitDuration: const Duration(milliseconds: 400),
+                                      child: Text(
+                                        r.help,
+                                        maxLines: 2,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.3),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
                           ],
@@ -2780,28 +2844,28 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                       ),
                     ),
                   ),
-                  for (final a in AccessAction.values.where(used.contains))
-                    SizedBox(
-                      width: _cellW,
-                      child: r.actions.contains(a)
-                          ? Center(
-                              child: Semantics(
-                                label: '${r.label} ${a.label.toLowerCase()}',
-                                child: Checkbox(
-                                  value: allowed.contains(r.keyFor(a)),
-                                  onChanged: (_) => toggleCell(r, a),
-                                  activeColor: DashUi.emeraldDeep,
-                                  side: const BorderSide(color: DashUi.muted, width: 1.4),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
-                                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  visualDensity: VisualDensity.compact,
+                    for (final a in AccessAction.values.where(used.contains))
+                      SizedBox(
+                        width: _cellW,
+                        child: r.actions.contains(a)
+                            ? Center(
+                                child: Semantics(
+                                  label: '${r.label} ${a.label.toLowerCase()}',
+                                  child: Checkbox(
+                                    value: allowed.contains(r.keyFor(a)),
+                                    onChanged: (_) => toggleCell(r, a),
+                                    activeColor: DashUi.emeraldDeep,
+                                    side: const BorderSide(color: DashUi.muted, width: 1.4),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    visualDensity: VisualDensity.compact,
+                                  ),
                                 ),
+                              )
+                            : const Center(
+                                child: Text('\u2013', style: TextStyle(color: DashUi.line, fontSize: 14)),
                               ),
-                            )
-                          : const Center(
-                              child: Text('\u2013', style: TextStyle(color: DashUi.line, fontSize: 14)),
-                            ),
-                    ),
+                      ),
                 ],
               ),
             ),
@@ -2822,6 +2886,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
     // You can't take admin access away from yourself (the server refuses), so only admin roles are offered.
     final lockedToAdmin = _isMe(e) && _grantsAdmin(_s(_base('role')));
     if (lockedToAdmin) options = options.where((o) => _grantsAdmin(o.$2)).toList();
+    if (!_viewerIsAdmin) options = options.where((o) => !_grantsAdmin(o.$2)).toList(); // the server refuses it too
     final selectedTitle = current == null
         ? null
         : options.firstWhere((o) => o.$1.toLowerCase() == current.toLowerCase(), orElse: () => (current, role)).$1;

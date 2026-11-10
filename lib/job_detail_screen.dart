@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +29,7 @@ import 'widgets/dashboard_panels.dart' show DashPressable;
 import 'widgets/file_viewer.dart';
 import 'widgets/flat_page.dart' show PageBanner;
 import 'widgets/line_items_editor.dart';
+import 'widgets/record_list_view.dart' show recordDeleted;
 
 part 'job_detail_items.dart';
 
@@ -76,6 +78,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   List<Map<String, dynamic>> _ourNotes = const []; // notes added in this app (author known)
   List<Map<String, dynamic>> _ourTasks = const []; // tasks added in this app
   bool _loading = true;
+  bool _deleting = false; // the Delete request is out
   bool _visitsExpanded = false; // Site Visits shows only the latest few until this is on
   bool _notesExpanded = false; // the Notes section shows only the newest few until this is on
   String? _error;
@@ -223,8 +226,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     _option = pick?.id ?? 'sf';
   }
 
-  bool get _canSeeCost => _lines?.canSeeCost ?? AuthSession.instance.isAdmin;
+  bool get _canSeeCost => _lines?.canSeeCost ?? AuthSession.instance.can('line_items', AccessAction.view);
   bool get _canEditLines => (_lines?.canEdit ?? false) && AuthSession.instance.can(_isEstimate ? 'estimates' : 'jobs', AccessAction.update);
+
+  // The Team screen's switches for this record (the server checks the same ones). Update covers notes, tasks, pictures
+  // and documents; Delete the ribbon's Delete; Payments > Create the Request payment link.
+  String get _recordKey => _isEstimate ? 'estimates' : 'jobs';
+  bool get _canUpdate => AuthSession.instance.can(_recordKey, AccessAction.update);
+  bool get _canDelete => AuthSession.instance.can(_recordKey, AccessAction.delete);
+  bool get _canRequestPayment => AuthSession.instance.can('payments', AccessAction.create);
 
   /// Opens another record's page: an estimate under /estimates, a job under /jobs (so the right nav item stays lit).
   void _openRecord(String id, {required bool estimate}) => context.go('/${estimate ? 'estimates' : 'jobs'}/${Uri.encodeComponent(id)}');
@@ -311,6 +321,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             icon: estimate ? Icons.build_rounded : Icons.request_quote_rounded,
             label: matchLabel,
             onPressed: () => _openRecord(_matchId!, estimate: !estimate),
+          ),
+        // For a record that was deleted in Service Fusion: the Jobs (or Estimates) Delete switch; the server checks too.
+        if (_job != null && _canDelete)
+          PageBanner.button(
+            icon: Icons.delete_outline_rounded,
+            label: _deleting ? 'Deleting…' : 'Delete',
+            onPressed: _deleting ? null : _deleteRecord,
           ),
         PageBanner.refresh(onPressed: _loading ? null : _load),
       ],
@@ -410,7 +427,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             tone: DashUi.indigo,
           ),
         ],
-        4 => [QuoActivityPanel(key: ValueKey('quo-job-${widget.jobId}'), jobId: widget.jobId)],
+        4 => [
+          if (AuthSession.instance.canUseCommunications(AccessAction.view))
+            QuoActivityPanel(key: ValueKey('quo-job-${widget.jobId}'), jobId: widget.jobId)
+          else
+            _noAccess('Calls and texts are switched off for you. An admin can turn them on in Team.'),
+        ],
         _ => summaryRows,
       },
       tabs: [
@@ -636,8 +658,39 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           name,
           style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.ink),
         ),
-        if (status.isNotEmpty) _pill(status),
+        if (status.isNotEmpty) _visitPill(status),
       ],
+    );
+  }
+
+  /// A tech's status on a visit, drawn like the Android app's visit pill (StatusStyle.applyPill): a dot in the status's own
+  /// colour, then the words in a darkened shade of it, on a 12% tint of it. No solid fill, so a neon green or bright amber
+  /// is a point of colour instead of a block.
+  Widget _visitPill(String status) {
+    final accent = statusColor(status);
+    final fill = Color.alphaBlend(accent.withValues(alpha: 31 / 255), Colors.white);
+    double contrast(Color a, Color b) {
+      final l1 = a.computeLuminance(), l2 = b.computeLuminance();
+      return (math.max(l1, l2) + 0.05) / (math.min(l1, l2) + 0.05);
+    }
+
+    // Same rule as Android's StatusStyle.textColor: darken bright colours by half, then keep going until it clears 4.5:1.
+    var text = accent.computeLuminance() > 0.2 ? Color.lerp(accent, Colors.black, 0.5)! : accent;
+    for (var i = 0; i < 10 && contrast(text, fill) < 4.5; i++) {
+      text = Color.lerp(text, Colors.black, 0.12)!;
+    }
+    final label = status.trim().toLowerCase().split(' ').map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(color: fill, borderRadius: BorderRadius.circular(999)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 7, height: 7, decoration: BoxDecoration(color: accent, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(color: text, fontWeight: FontWeight.w600, fontSize: 12.5)),
+        ],
+      ),
     );
   }
 
@@ -1332,7 +1385,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             ),
           ),
           const SizedBox(width: 12),
-          Tooltip(
+          if (_canUpdate) Tooltip(
             message: pictures ? 'JPG, PNG, WEBP, GIF or HEIC, up to 25 MB each' : 'PDF, Word, Excel, PowerPoint, CSV, TXT or DWG, up to 25 MB each',
             child: FilledButton.icon(
               onPressed: (busy || !_filesEnabled) ? null : () => _upload(pictures: pictures),
@@ -1410,7 +1463,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             uploadedBy: isOurs ? (f['uploadedBy'] ?? '').toString() : '',
             ours: isOurs,
             onOpen: url.isEmpty ? null : () => showFileViewer(context, viewer, i),
-            onRemove: isOurs ? () => _removeFile(f) : null,
+            onRemove: isOurs && _canUpdate ? () => _removeFile(f) : null,
           );
         }(),
     ];
@@ -1443,7 +1496,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _detailsEmpty(
           Icons.photo_camera_outlined,
           sf == null ? 'No pictures yet' : 'No pictures on this job',
-          _filesEnabled
+          _filesEnabled && _canUpdate
               ? (sf == null ? 'Upload one above. Service Fusion pictures appear after the next sync of this job.' : 'Upload one above.')
               : (sf == null ? 'Service Fusion pictures appear after the next sync of this job.' : 'Service Fusion has none on this job either.'),
           tone: DashUi.sky,
@@ -1486,7 +1539,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         private: f['is_private'] == true,
         // Ours open in the viewer; Service Fusion's only have a file name, so they just explain that.
         onOpen: isOurs ? () => showFileViewer(context, viewer, index) : (url.isEmpty ? null : () => _openFile(url)),
-        onRemove: isOurs ? () => _removeFile(f) : null,
+        onRemove: isOurs && _canUpdate ? () => _removeFile(f) : null,
       );
     }
 
@@ -1501,7 +1554,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _detailsEmpty(
           Icons.description_outlined,
           sf == null ? 'No documents yet' : 'No documents on this job',
-          _filesEnabled
+          _filesEnabled && _canUpdate
               ? (sf == null ? 'Upload one above. Service Fusion documents appear after the next sync of this job.' : 'Upload one above.')
               : (sf == null ? 'Service Fusion documents appear after the next sync of this job.' : 'Service Fusion has none on this job either.'),
         )
@@ -1635,6 +1688,65 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return ok == true;
   }
 
+  /// Removes the job or estimate from the IOHD apps (it was deleted in Service Fusion). Nothing is sent to Service
+  /// Fusion; the server keeps a backup copy and the sync stops bringing it back. Refused when it has payments or
+  /// payroll history, and the server's reason is shown.
+  Future<void> _deleteRecord() async {
+    final kind = _kind;
+    final title = _isEstimate ? 'Estimate' : 'Job';
+    final customer = _s('customer_name');
+    final whose = customer.isEmpty ? 'This $kind' : "$customer's $kind";
+    final ok = await _confirm(
+      'Delete $kind #${widget.jobId}?',
+      '$whose comes out of the IOHD apps for everyone: lists, calendar, search and dashboards. '
+          'Use this when it was deleted in Service Fusion.\n\n'
+          'Nothing changes in Service Fusion, and the sync will not bring it back.',
+      'Delete $kind',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _deleting = true);
+    String? problem;
+    try {
+      final res = await http
+          .delete(Uri.parse('$kApiBaseUrl/api/jobs/${Uri.encodeComponent(widget.jobId)}'), headers: AuthSession.instance.headers())
+          .timeout(const Duration(seconds: 30));
+      if (!mounted) return;
+      if (res.statusCode == 401) {
+        AuthSession.instance.logout();
+        return;
+      }
+      if (res.statusCode == 200) {
+        recordDeleted.value = widget.jobId;
+        _say('$title #${widget.jobId} deleted.');
+        context.go(_isEstimate ? '/estimates' : '/jobs');
+        return;
+      }
+      String? msg;
+      try {
+        msg = (json.decode(res.body) as Map)['error']?.toString();
+      } catch (_) {}
+      problem = switch (res.statusCode) {
+        403 => 'Only admins can delete ${kind}s.',
+        404 => 'It is already gone from the app. Refresh the list.',
+        _ => msg ?? 'Server error (${res.statusCode}). Nothing was deleted.',
+      };
+    } catch (_) {
+      problem = 'Could not reach the server. Nothing was deleted.';
+    }
+    if (!mounted) return;
+    setState(() => _deleting = false);
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'Not deleted',
+        icon: Icons.info_outline_rounded,
+        iconColor: DashUi.ink,
+        body: Text(problem!, style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45)),
+        actions: [AppButton.ink('OK', () => Navigator.pop(ctx))],
+      ),
+    );
+  }
+
   Future<void> _removeNote(Map<String, dynamic> n) async {
     if (!await _confirm('Remove this note?', 'It comes off this $_kind for everyone. This cannot be undone.', 'Remove note')) return;
     final err = await _send('DELETE', 'notes/${Uri.encodeComponent(n['id'].toString())}');
@@ -1677,6 +1789,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
 
   /// The strip that opens a section at the top of a section (Task List on Details, the Notes card), drawn like Site
   /// Visits' on Job Info: icon and "Title (n)", an optional [note] beside it ("1 of 3 done"), the Add button on the right.
+  /// Where a section is switched off for this person: one plain line in place of it.
+  Widget _noAccess(String text) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+    child: Row(
+      children: [
+        const Icon(Icons.lock_outline_rounded, size: 18, color: DashUi.subtle),
+        const SizedBox(width: 10),
+        Expanded(child: Text(text, style: const TextStyle(fontSize: 14, color: DashUi.slate))),
+      ],
+    ),
+  );
+
   Widget _sectionStrip(IconData icon, String title, {String note = '', Color noteTone = DashUi.subtle, required Widget action}) => Container(
     padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
     decoration: const BoxDecoration(
@@ -1711,9 +1835,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Widget _tasksSection() {
     final raw = _sf['tasks'];
     final List<Map<String, dynamic>> sfTasks = raw is List ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : const [];
-    final action = _addButton('Add Task', _addTask);
+    final action = _canUpdate ? _addButton('Add Task', _addTask) : const SizedBox.shrink();
 
-    Widget row({required Key key, required String text, required bool done, required String sub, VoidCallback? onToggle, VoidCallback? onRemove}) =>
+    Widget row({required Key key, required String text, required bool done, required String sub, bool synced = false, VoidCallback? onToggle, VoidCallback? onRemove}) =>
         _HoverRow(
           key: key,
           builder: (_) => Padding(
@@ -1744,7 +1868,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                             padding: const EdgeInsets.only(top: 2),
                             child: Row(
                               children: [
-                                if (onToggle == null) ...[const Icon(Icons.sync_rounded, size: 13, color: DashUi.subtle), const SizedBox(width: 4)],
+                                if (synced) ...[const Icon(Icons.sync_rounded, size: 13, color: DashUi.subtle), const SizedBox(width: 4)],
                                 Flexible(
                                   child: Text(sub, style: const TextStyle(fontSize: 12.5, color: DashUi.subtle)),
                                 ),
@@ -1777,8 +1901,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             if ((t['createdBy'] ?? '').toString().isNotEmpty) 'Added by ${t['createdBy']}',
             if (t['isCompleted'] == true && (t['completedBy'] ?? '').toString().isNotEmpty) 'done by ${t['completedBy']}',
           ].join('  ·  '),
-          onToggle: () => _toggleTask(t),
-          onRemove: () => _removeTask(t),
+          onToggle: _canUpdate ? () => _toggleTask(t) : null,
+          onRemove: _canUpdate ? () => _removeTask(t) : null,
         ),
       for (var i = 0; i < sfTasks.length; i++)
         row(
@@ -1786,6 +1910,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           text: (sfTasks[i]['description'] ?? '').toString(),
           done: sfTasks[i]['is_completed'] == true,
           sub: 'Service Fusion',
+          synced: true,
         ),
     ];
     final total = rows.length;
@@ -1806,7 +1931,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           Padding(
             padding: const EdgeInsets.all(20),
             child: _factText(
-              _sf['tasks'] is List ? 'No tasks on this job. Use Add Task to add one.' : 'No tasks yet. Use Add Task to add one.',
+              '${_sf['tasks'] is List ? 'No tasks on this $_kind.' : 'No tasks yet.'}${_canUpdate ? ' Use Add Task to add one.' : ''}',
               quiet: true,
             ),
           )
@@ -1852,7 +1977,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             who: (n['author'] ?? '').toString(),
             when: _dateTime(n['createdAt']),
             text: (n['body'] ?? '').toString(),
-            onRemove: () => _removeNote(n),
+            onRemove: _canUpdate ? () => _removeNote(n) : null,
           ),
         ),
       for (var i = 0; i < sfNotes.length; i++)
@@ -1867,7 +1992,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           ),
         ),
     ]..sort((a, b) => (b.at ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(a.at ?? DateTime.fromMillisecondsSinceEpoch(0)));
-    final action = _addButton('Add Notes', _addNote);
+    final action = _canUpdate ? _addButton('Add Notes', _addNote) : const SizedBox.shrink();
     // Collapsed by default when there are more than a couple: the newest few, then a control to show them all.
     final collapsible = all.length > _notesCollapsedCount;
     final shown = (collapsible && !_notesExpanded) ? all.take(_notesCollapsedCount).toList() : all;
@@ -1879,7 +2004,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           Padding(
             padding: const EdgeInsets.all(20),
             child: _factText(
-              _sf['notes'] is List ? 'No notes on this job. Use Add Notes to write one.' : 'No notes yet. Use Add Notes to write one.',
+              '${_sf['notes'] is List ? 'No notes on this $_kind.' : 'No notes yet.'}${_canUpdate ? ' Use Add Notes to write one.' : ''}',
               quiet: true,
             ),
           )
@@ -2720,7 +2845,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
         _sfRow(Icons.account_balance_wallet_outlined, 'Balance Due', job['due_total'] == null ? null : _balanceText(job)),
       ],
-      if (showRequest)
+      if (showRequest && _canRequestPayment)
         Padding(
           padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
           child: Align(

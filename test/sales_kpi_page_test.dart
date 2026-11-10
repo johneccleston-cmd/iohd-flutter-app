@@ -99,7 +99,7 @@ void main() {
       }
       expect(find.textContaining('37.3% margin'), findsOneWidget);
       // The chart's tabs: hard bids, commercial, close rate, and the estimate mix that had its own card.
-      for (final tab in ['Hard bids', 'Commercial', 'Close rate', 'Mix']) {
+      for (final tab in ['Hard bids', 'Commercial', 'Close rate', 'Mix', 'Sold vs final']) {
         expect(find.text(tab), findsWidgets, reason: tab);
       }
       // Pipeline: dollars still moving / gone quiet, the stale tube's on track / aging / stale, the two stages.
@@ -136,7 +136,7 @@ void main() {
       // Residential: no inventory strikes, no mix; Sales and Close rate tabs.
       expect(find.text('Inventory strikes'), findsNothing);
       expect(find.text('Mix'), findsNothing);
-      for (final tab in ['Sales', 'Close rate']) {
+      for (final tab in ['Sales', 'Close rate', 'Sold vs final']) {
         expect(find.text(tab), findsWidgets, reason: tab);
       }
       expect(_rich('Open estimates'), findsOneWidget);
@@ -224,7 +224,7 @@ void main() {
     for (final scale in const [1.0, 1.3]) {
       testWidgets('every chart view fits the smallest window ($who, 1280x600, text ${(scale * 100).round()}%)', (t) async {
         final errors = await pumpDashboard(t, EmployeeKpiScreen(employeeId: who), api: salesApi(), size: const Size(1280, 600), textScale: scale, body: () async {
-          final tabs = who == 'hvera' ? ['Close rate'] : ['Commercial', 'Close rate', 'Mix'];
+          final tabs = who == 'hvera' ? ['Close rate', 'Sold vs final'] : ['Commercial', 'Close rate', 'Mix', 'Sold vs final'];
           for (final tab in tabs) {
             await t.tap(find.text(tab).last);
             await settleDashboard(t, frames: 25);
@@ -235,6 +235,79 @@ void main() {
       });
     }
   }
+
+  // ---------------------------------------------------------------------------------------------------------------
+  // Won estimates vs the final job
+  // ---------------------------------------------------------------------------------------------------------------
+  testWidgets("Sold vs final: what was sold against what the closed jobs came to, month by month, and the list", (t) async {
+    final errors = await pumpDashboard(t, _heather(), api: salesApi(), size: const Size(1500, 800), body: () async {
+      await t.tap(find.text('Sold vs final').last);
+      await settleDashboard(t, frames: 30);
+      expect(_rich('Won estimates vs final job · by estimate date'), findsOneWidget);
+      // 11 closed jobs: $95,650 sold, $113,485 final, +$17,834 (+19%).
+      expect(find.text(r'$95,650'), findsOneWidget);
+      expect(find.text(r'$113,485'), findsOneWidget);
+      expect(find.text(r'+$17,834'), findsOneWidget);
+      expect(find.text('(+19%)'), findsOneWidget);
+      expect(
+        find.text(r'5 finished higher, 3 lower, 3 at the estimate · biggest move: HTP Contractors +$28,477'),
+        findsOneWidget,
+      );
+      expect(find.text('Not charted: 18 still open, 20 with no job found, 3 cancelled'), findsOneWidget);
+      // April: HTP up $28,477 and Arden down $19,339 = +$9.1k over the pair.
+      expect(find.text(r'+$9.1k'), findsOneWidget);
+      expect(find.text(r'−$240'), findsOneWidget); // March: Tom Reyes
+      await saveDashShot(t, 'sales_heather_sold_vs_final');
+      // Hovering April's pair gives its figures.
+      final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: t.getCenter(find.text('Apr').last));
+      await mouse.moveTo(t.getCenter(find.text('Apr').last) - const Offset(0, 30));
+      await settleDashboard(t, frames: 6);
+      expect(find.textContaining('2 jobs: 1 higher, 1 lower, 0 the same'), findsOneWidget);
+      await saveDashShot(t, 'sales_heather_sold_vs_final_hover');
+      await mouse.removePointer();
+      // The list: every pair, biggest change first.
+      await t.tap(find.text('List jobs'));
+      await settleDashboard(t, frames: 12);
+      expect(find.text('Heather Vera · Won estimates vs final job'), findsOneWidget);
+      expect(find.text('11 closed jobs from estimates won in 2026, biggest change first'), findsOneWidget);
+      final htp = t.getTopLeft(find.text('HTP Contractors').last).dy;
+      final arden = t.getTopLeft(find.text('Arden Brazzeal').last).dy;
+      expect(htp, lessThan(arden));
+      expect(find.text(r'+$28,477 (+411%)'), findsOneWidget);
+      expect(find.text(r'−$19,339 (−67%)'), findsOneWidget);
+      await saveDashShot(t, 'sales_heather_sold_vs_final_list');
+      // The list scrolls to the last row; jobs that closed at the estimate read $0.
+      await t.scrollUntilVisible(find.text('Ortiz Family'), 200, scrollable: find.descendant(of: find.byType(Dialog), matching: find.byType(Scrollable)));
+      await settleDashboard(t, frames: 6);
+      expect(find.descendant(of: find.byType(Dialog), matching: find.text(r'$0')), findsWidgets);
+    });
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('an older server without estimateVsJob: no Sold vs final tab', (t) async {
+    final errors = await pumpDashboard(t, _zac(), api: salesApi(mutate: (s) => s.remove('estimateVsJob')), size: const Size(1500, 800), body: () async {
+      expect(find.text('Mix'), findsWidgets);
+      expect(find.text('Sold vs final'), findsNothing);
+    });
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('no won estimate with a closed job yet: said in words, no list button', (t) async {
+    final errors = await pumpDashboard(
+      t,
+      _zac(),
+      api: salesApi(mutate: (s) => s['estimateVsJob'] = {'rows': <Object>[], 'openJobs': 3, 'unmatched': 1, 'cancelled': 0}),
+      size: const Size(1500, 800),
+      body: () async {
+        await t.tap(find.text('Sold vs final').last);
+        await settleDashboard(t, frames: 20);
+        expect(find.text('No estimate won in 2026 has a closed job yet · 3 still open, 1 with no job found'), findsWidgets);
+        expect(find.text('List jobs'), findsNothing);
+      },
+    );
+    expect(errors.overflowed, isFalse, reason: errors.messages.join('\n'));
+  });
 
   testWidgets('hovering a scorecard brings its definition in as an animated card, inside the window', (t) async {
     final errors = await pumpDashboard(t, _zac(), api: salesApi(), size: const Size(1500, 800), body: () async {

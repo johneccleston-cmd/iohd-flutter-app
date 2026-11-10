@@ -529,6 +529,9 @@ class _FileViewerState extends State<_FileViewer> with SingleTickerProviderState
                 canDebug: false,
                 allowPrinting: false,
                 allowSharing: false,
+                // A page at about its printed size (a Letter page is 816 px wide at 96 dpi), not stretched to fill a wide
+                // window, where a one-page report turned into a poster you had to scroll down.
+                maxPageWidth: 820,
                 scrollViewDecoration: const BoxDecoration(color: DashUi.faint),
                 onError: (_, _) => _message(Icons.picture_as_pdf_outlined, 'This PDF cannot be shown here', 'Use Download to open it in your PDF viewer.', dark: false),
               );

@@ -23,8 +23,8 @@ inside panels.
 ## Overflow checklist
 
 - `Row` children with text → wrap in `Expanded`/`Flexible` + `overflow: TextOverflow.ellipsis`.
-- KPI rows → `Wrap(spacing: 16, runSpacing: 16)` or a `LayoutBuilder` grid, not a fixed `Row` of `Expanded` cards
-  (e.g. `payments_screen.dart` puts 3 `Expanded` cards in a `Row`, which gets cramped below ~700px).
+- KPI rows → `Wrap(spacing: 16, runSpacing: 16)`, `FlatStats` or a `LayoutBuilder` grid, not a fixed `Row` of
+  `Expanded` cards (they get cramped below ~700px). Dashboards instead pick a no-scroll arrangement (`DashGeo`).
 - Fixed widths (`width: 420`) → `ConstrainedBox(constraints: BoxConstraints(maxWidth: 420))`.
 - Test at 360, 800, 1280 and 1920 widths, and at text scale 1.3.
 

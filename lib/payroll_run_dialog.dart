@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
 import 'config/api_config.dart';
+import 'config/access.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 
@@ -269,6 +270,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
   bool get _canFinalize {
     final p = _preview;
     if (p == null || _busy || _loading) return false;
+    if (!AuthSession.instance.can('hr_payroll', AccessAction.create)) return false; // Team screen: Payroll > Create
     if (!p.weekIsOver || p.lines.isEmpty) return false;
     if (p.hasPriorRuns && p.lines.every((l) => l.amountPaid == 0 && l.carryRecovered == 0)) return false;
     return true;
@@ -589,7 +591,7 @@ class _PayrollRunDialogState extends State<_PayrollRunDialog> {
               ),
             ),
           ),
-          if (!voided && latestFinal) TextButton(onPressed: _busy ? null : () => _void(r), child: const Text('Void')),
+          if (!voided && latestFinal && AuthSession.instance.can('hr_payroll', AccessAction.delete)) TextButton(onPressed: _busy ? null : () => _void(r), child: const Text('Void')),
         ],
       ),
     );

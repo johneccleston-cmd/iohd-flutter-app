@@ -71,6 +71,10 @@ class RecordListConfig {
   );
 }
 
+/// Set to a job or estimate number when it is deleted from its page. The Jobs and Estimates lists stay alive in their
+/// tabs, so they listen for this, drop the row at once and reload.
+final recordDeleted = ValueNotifier<String?>(null);
+
 /// A load failure whose message is already fit to show.
 class _LoadError implements Exception {
   final String message;
@@ -160,6 +164,16 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
     _search.text = q;
     _loadCounts();
     _load(1);
+    recordDeleted.addListener(_onRecordDeleted);
+  }
+
+  void _onRecordDeleted() {
+    final id = recordDeleted.value;
+    if (id == null || !mounted) return;
+    _cache.clear();
+    if (_rows.any((r) => _idOf(r) == id)) setState(() => _rows = _rows.where((r) => _idOf(r) != id).toList());
+    _loadCounts();
+    _load(_wantedPage);
   }
 
   @override
@@ -176,6 +190,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
 
   @override
   void dispose() {
+    recordDeleted.removeListener(_onRecordDeleted);
     _debounce?.cancel();
     _slowTimer?.cancel();
     _search.dispose();

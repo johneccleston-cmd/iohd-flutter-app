@@ -107,9 +107,19 @@ class AuthSession extends ChangeNotifier {
   /// When this sign-in ends and the sign-in screen comes back. Null when signed out.
   DateTime? get expiresAt => isLoggedIn ? DateTime.fromMillisecondsSinceEpoch(_expiresAtMs) : null;
 
-  /// Whether the signed-in user may do [action] on a resource (keys in access.dart). Admins always can;
-  /// everyone else can unless the Team screen's permissions matrix switched it off.
-  bool can(String resource, AccessAction action) => _isAdmin || !_denied.contains('$resource.${action.name}');
+  /// Whether the signed-in user may do [action] on a resource (keys in access.dart). Admins always can. Everyone else
+  /// can unless the Team screen's grid switched it off, and an action needs View on too. Same rule as canDo in the
+  /// backend's dashboardAccess.js.
+  bool can(String resource, AccessAction action) {
+    if (_isAdmin) return true;
+    final r = kAccessResources[resource];
+    if (r != null && !r.actions.contains(action)) return false;
+    return !_denied.contains('$resource.view') && !_denied.contains('$resource.${action.name}');
+  }
+
+  /// Calls and texts sit on job, estimate and customer pages: the switch, plus one of those pages.
+  bool canUseCommunications(AccessAction action) =>
+      can('communications', action) && (canView('jobs') || canView('estimates') || canView('customers'));
 
   /// Whether they may open a resource's page.
   bool canView(String resource) => can(resource, AccessAction.view);
@@ -188,8 +198,7 @@ class AuthSession extends ChangeNotifier {
     _name = body['name']?.toString() ?? user;
     _role = body['role']?.toString() ?? '';
     _isAdmin = body['is_admin'] == true;
-    final denied = body['access_denied'];
-    _denied = denied is List ? denied.map((e) => e.toString()).toSet() : {};
+    _denied = effectiveDenied(body['access_denied']); // nothing saved: the defaults (pay, profit, Team, Jarvis off)
     _badges = {
       for (final k in kBadgeKeys)
         if (body['has_$k'] == true || (k == 'five_star' && body['has_5star'] == true)) k,

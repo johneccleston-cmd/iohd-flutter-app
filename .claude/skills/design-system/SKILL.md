@@ -5,19 +5,19 @@ description: The IOHD visual design system: colours, typography, spacing, radii,
 
 # IOHD design system
 
-The look is a clean, light, "quiet structure" UI: off-white page, white cards with hairline borders,
+The look is a clean, light, "quiet structure" UI: a light slate page, white surfaces with hairline borders,
 no drop shadows, brand red used sparingly for primary actions and the active nav state.
 
 ## Token sources (use these, don't add new hex literals)
 
 | Where | What |
 |-------|------|
-| `lib/theme/app_theme.dart` → `AppTheme` | App chrome: `bgColor #F8F9FB`, `primaryText #1A1C1E`, `secondaryText #4B5563`, `sectionLabel #9CA3AF`, `strokeBorder #E5E7EB`, `brandRed #CC0007`, `successGreen`, notes (amber) colours |
-| `lib/widgets/dashboard_kit.dart` → `DashUi` | Data UI: `ink`, `slate`, `muted`, `line`, `faint` + semantic `emerald`, `indigo`, `sky`, `blue`, `amber`, `red` |
+| `lib/theme/app_theme.dart` → `AppTheme` | App chrome: `bgColor #E2E8F0` (the dashboards' slate), `primaryText #1A1C1E`, `secondaryText #4B5563`, `sectionLabel #9CA3AF`, `mutedText #6B7280` (readable muted), `strokeBorder #E5E7EB`, `brandRed #CC0007`, `successGreen`, notes (amber) colours |
+| `lib/widgets/dashboard_kit.dart` → `DashUi` | Data UI: `ink`, `slate`, `muted`, `subtle #64748B`, `line`, `faint` + semantic `emerald`, `indigo`, `sky`, `blue`, `amber`, `red`, and AA-safe small-text variants `emeraldText`, `amberText`, `redText` |
 | `lib/main.dart` → `ThemeData` | Material 3, `ColorScheme.fromSeed(brandRed)`, card theme (radius 14, 1px border) |
 
-Known drift: many screens redeclare private `_brandRed`, `_inkColor`, `_slateColor` and `_strokeBorder`
-with slightly different values (e.g. `#181B1F` vs `#1A1C1E`, `#E4E7EC` vs `#E5E7EB`). When you edit
+Known drift: a few files still redeclare private `_brandRed`-style colours (`inventory_screen.dart`,
+`widgets/assistant_panel.dart`, `widgets/main_navigation_shell.dart`). When you edit
 a screen, replace its private copies with `AppTheme`/`DashUi`. Don't create another palette.
 `AppTheme.lightTheme` exists but isn't wired into `MaterialApp`. Ask before switching, because it
 changes button sizes app-wide.
@@ -33,7 +33,7 @@ changes button sizes app-wide.
 
 | Role | Size / weight |
 |------|---------------|
-| Page title | 24, w700, letterSpacing -0.5, `ink` |
+| Page title | in the ribbon: 16, bold, white capitals (see Components) |
 | Section title | 16–17, w700 |
 | Body | 14, `secondaryText`, height 1.4 |
 | Table header / section label | 12, w600–700, UPPERCASE, letterSpacing 0.8, `sectionLabel` |
@@ -44,10 +44,8 @@ Use `Theme.of(context).textTheme` where it fits. Don't go below 12px for anythin
 
 ## Status colours
 
-Job and estimate statuses each have a fixed colour. The canonical map is in `lib/utils/status_colors.dart`,
-but its function is **private** (`_getStatusColor`), so `jobs_screen.dart` and `job_details_dialog.dart`
-keep their own copies. When touching status UI, make it public (`statusColor(String)`) and import it
-everywhere instead of copying again.
+Job and estimate statuses each have a fixed colour. Use `statusColor(status)` / `kStatusColors` from
+`lib/utils/status_colors.dart` and `StatusPill` from `lib/widgets/status_pill.dart`; don't copy the map.
 
 Render a status as a badge: a tinted background (`color.withValues(alpha: 0.12)`), a coloured dot or
 text in the full colour, w600 12–13px, radius 999. Some status colours (bright green `#08EB00`, sky
@@ -66,12 +64,17 @@ and use dark text.
   titled dialogs) or `RibbonSurface` + `RibbonIcon`/`RibbonTitle` (custom toolbars like Payroll).
   Never hand-build a dark banner, and change the look only inside `app_ribbon.dart`. Colours on it
   come from `RibbonColors`.
-- Buttons: one primary `FilledButton` (brand red) per view. Use `OutlinedButton` for secondary actions
+- Buttons: one primary action per view. Older screens use a brand-red `FilledButton`; dialogs and newer
+  screens built on `AppDialog` use `AppButton.ink` (`danger: true` for red) and `AppButton.ghost`. Don't
+  restyle one family to match the other without asking. Use `OutlinedButton` for secondary actions
   and `TextButton` for tertiary ones. Use icon + label for important actions. Disable the button
   and show a spinner while it's submitting.
-- Inputs: filled `#F9FAFB`, 1px border, radius 10, focus border brand red 1.5. Always give a label or
+- Inputs: `appFieldDecoration()` (`app_dialog.dart`: fill `#F8FAFC`, ink focus border) in dialogs; older
+  screens use filled `#F9FAFB`, 1px border, radius 10, focus border brand red 1.5. Always give a label or
   hint. Search fields get a `prefixIcon: Icons.search`.
-- Cards: `AppCard` or `Container(decoration: DashUi.panel())`.
+- Cards: only on dashboards and KPI pages (`DashPanel`, `AnimatedMetricCard`). Other screens are flat full
+  pages with hairline dividers (`flat_page.dart`).
+- Tabs / segmented controls: `DashSegmented` or `AppSegmented`; the selected label is `DashUi.ink`, never blue.
 - Section headers: `AppSectionLabel('Customer')`. Notes and warnings: `AppNotesCard`.
 - Icons: Material `*_rounded` variants, 18–20px inline and 24 in tiles.
 - Money: `dashMoney()` or `NumberFormat.simpleCurrency()` (intl). Dates: `DateFormat('MMM d, yyyy')`.

@@ -21,6 +21,35 @@ List<Map<String, num>> _months(List<num> rev, List<num> profit, [List<num>? pric
     [for (var m = 0; m < 12; m++) {'revenue': rev[m], 'profit': profit[m], 'revenueWithProfit': (priced ?? rev)[m]}];
 final _zeros = List<num>.filled(12, 0);
 
+/// estimateVsJob: closed jobs beside the won estimates they came from (biggest change first, as the server sorts them).
+Map<String, dynamic> _estVsJob(List<(String, String, String, num, num)> rows /* customer, estimate date, what happened, sold, final */, {int open = 0, int unmatched = 0, int cancelled = 0}) {
+  final sorted = [...rows]..sort((a, b) => (b.$5 - b.$4).abs().compareTo((a.$5 - a.$4).abs()));
+  return {
+    'rows': [
+      for (final (i, r) in sorted.indexed)
+        {'jobId': '10900${(i + 10).toString()}', 'estimateIds': ['10800${(i + 10).toString()}'], 'customer': r.$1, 'estimateDate': r.$2, 'estimate': r.$4, 'job': r.$5},
+    ],
+    'openJobs': open,
+    'unmatched': unmatched,
+    'cancelled': cancelled,
+  };
+}
+
+/// Heather's 2026 pairs, the shape of production's (Nov 2026: 145 closed jobs, $485k sold, $489k final).
+final heatherEstVsJob = _estVsJob(const [
+  ('HTP Contractors', '2026-04-10', 'grew', 6926, 35402.87),
+  ('Arden Brazzeal', '2026-04-07', 'one option taken', 28826.70, 9487.71),
+  ('Fly Away Construction', '2026-05-20', 'grew', 7859.11, 15345),
+  ('Moser Construction LLC', '2026-02-11', 'same', 16872.70, 16872.70),
+  ('Molli Snell', '2026-01-14', 'up', 4200, 4485.50),
+  ('Tom Reyes', '2026-03-03', 'down', 2950, 2710),
+  ('Lennar Homes', '2026-06-18', 'same', 1435.81, 1435.81),
+  ('Ridgeview HOA', '2026-07-09', 'up', 8800, 9420),
+  ('Ann Patel', '2026-08-21', 'down', 3100, 2895),
+  ('Cole Builders', '2026-09-02', 'up', 12400, 13150),
+  ('Ortiz Family', '2026-10-06', 'same', 2280, 2280),
+], open: 18, unmatched: 20, cancelled: 3);
+
 const _limits = {'requestedDays': 5, 'providedDays': 14, 'turnaroundDays': 3, 'hardBidDays': 14};
 
 /// Heather's `sales` part: residential, nothing categorised as commercial. Turnaround and late to send only exist from
@@ -39,6 +68,7 @@ Map<String, dynamic> heatherSales({int year = 2026}) {
     'focus': 'Residential Sales',
     'turnaroundSince': '2026-09-10',
     'monthlyClose': [for (final wl in close) {'won': wl.$1, 'lost': wl.$2}],
+    'estimateVsJob': heatherEstVsJob,
     'largestDeal': {'amount': 38608.12, 'customer': 'David and Molli Snell', 'date': now ? '2026-09-25' : '$year-06-11', 'jobId': '1095251088'},
     'pipeline': {
       'requested': {'count': 27, 'value': 11611.59},
@@ -77,6 +107,10 @@ Map<String, dynamic> zacSales({int year = 2026}) => {
       },
       'focus': 'Commercial Sales',
       'turnaroundSince': '2026-09-10',
+      'estimateVsJob': _estVsJob(const [
+        ('Southern Brothers Construction LLC', '2026-07-14', 'up', 24000, 24850),
+        ('Ridgedale Commons', '2026-09-08', 'same', 2926, 2926),
+      ], open: 3),
       'largestDeal': {'amount': 24000, 'customer': 'Southern Brothers Construction LLC', 'date': '2026-07-14', 'jobId': '1097413576'},
       'pipeline': {
         'requested': {'count': 4, 'value': 48073.63},

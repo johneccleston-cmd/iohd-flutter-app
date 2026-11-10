@@ -19,7 +19,7 @@ instead, and tell the user which commands they need to run locally.
 ```bash
 flutter pub get
 flutter analyze
-flutter test            # there is no test/ folder yet; create one if adding tests
+flutter test            # many goldens in test/shots are stale; never --update-goldens without the user's OK
 ```
 
 `flutter analyze` uses `package:flutter_lints/flutter.yaml` (see `analysis_options.yaml`). Platform
@@ -42,7 +42,8 @@ requests use long timeouts.
 ## 4. Dependencies
 
 - Add with `flutter pub add <pkg>`, never by hand-editing `pubspec.lock`.
-- Current stack: `go_router`, `http`, `intl`, `table_calendar`, `pdf`, `printing`, `cached_network_image`.
+- Current stack: `go_router`, `http`, `intl`, `table_calendar`, `pdf`, `printing`, `cached_network_image`,
+  `url_launcher`, `file_picker`, `shared_preferences`, `font_awesome_flutter` (see `pubspec.yaml`).
   Prefer these before adding something new. There's no state-management package; screens use
   `StatefulWidget` + `setState`, and `AuthSession` is a `ChangeNotifier`.
 - Root `package.json` / `node_modules` (only `cors`) are leftovers and unrelated to the Flutter build.
@@ -54,7 +55,12 @@ flutter build web --release --dart-define=API_BASE_URL=<prod url>
 flutter build windows --release
 ```
 
-Bump `version:` in `pubspec.yaml` (`x.y.z+build`) for releases.
+Bump `version:` in `pubspec.yaml` (`x.y.z+build`) and `kAppVersion` in `lib/config/app_info.dart`
+(or pass `--dart-define=APP_VERSION`) for releases.
+
+Publishing the office web app: build with `--output build/web_release` (a running `flutter run` rewrites
+`build/web` and once produced a blank page), check `flutter_bootstrap.js` parses with node, then copy into
+`integrity-backend/src/public`. Pushing that is a production deploy: only with the user's OK.
 
 ## Done means
 
