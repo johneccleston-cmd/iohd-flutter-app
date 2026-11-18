@@ -205,7 +205,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
         _categories = cats;
         _reviews = marks ?? const [];
         _reviewsLive = marks != null;
-        _quality = catalogQuality(_all, withCost: _canSeeCost, reviews: _reviews);
+        _quality = catalogQuality(_all, withCost: _canSeeCost, reviews: _reviews, historyDays: _historyDays);
         _loading = false;
         _cats.removeWhere((c) => !_all.any((e) => e.category == c)); // a category that is gone cannot stay picked
         _selected.removeWhere((k) => !_all.any((e) => e.key == k)); // nor a product that is gone

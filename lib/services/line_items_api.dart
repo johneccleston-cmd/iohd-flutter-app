@@ -369,23 +369,122 @@ class CatalogCategory {
   );
 }
 
-/// A "looked at, not a problem" mark on a possible-duplicate group. It applies only while the group still has exactly
-/// the products it had ([signature]: their ids, comma-separated).
+/// A mark on a Cleanup finding: a possible-duplicate group, or one product under one check (`no_cost:123`). [status] is
+/// `reviewed` (fine as it is) or `follow_up` (still a question; someone is on it). It applies only while the finding
+/// still has exactly the products it had ([signature]: their ids, comma-separated) and, for one product, the values the
+/// check looked at ([basis], e.g. its price and cost).
 class CatalogReview {
   final String issueKey;
   final String signature;
+  final String status;
+  final String? basis;
   final String note;
   final String? reviewedBy;
   final DateTime? reviewedAt;
-  const CatalogReview({required this.issueKey, required this.signature, this.note = '', this.reviewedBy, this.reviewedAt});
+
+  /// [reviewedAt] as the server sent it: sent back when the mark is changed, so a newer mark is never overwritten.
+  final String? stamp;
+  const CatalogReview({
+    required this.issueKey,
+    required this.signature,
+    this.status = 'reviewed',
+    this.basis,
+    this.note = '',
+    this.reviewedBy,
+    this.reviewedAt,
+    this.stamp,
+  });
+
+  bool get followUp => status == 'follow_up';
 
   factory CatalogReview.fromJson(Map<String, dynamic> j) => CatalogReview(
     issueKey: (j['issueKey'] ?? '').toString(),
     signature: (j['signature'] ?? '').toString(),
+    status: (j['status'] ?? 'reviewed').toString(),
+    basis: j['basis']?.toString(),
     note: (j['note'] ?? '').toString(),
     reviewedBy: j['reviewedBy']?.toString(),
     reviewedAt: DateTime.tryParse((j['reviewedAt'] ?? '').toString())?.toLocal(),
+    stamp: j['reviewedAt']?.toString(),
   );
+}
+
+/// One product's sales in all of Service Fusion's history (not only the catalog's window), and the stock row the list
+/// links it to (null when it has none).
+class CatalogSale {
+  final int id;
+  final DateTime? lastJobAt;
+  final String? lastJob;
+  final int jobs;
+  final DateTime? lastEstimateAt;
+  final String? lastEstimate;
+  final int estimates;
+  final ({int itemId, int? qty, String? location, int? reorderPoint, DateTime? updatedAt})? stock;
+  const CatalogSale({
+    required this.id,
+    this.lastJobAt,
+    this.lastJob,
+    this.jobs = 0,
+    this.lastEstimateAt,
+    this.lastEstimate,
+    this.estimates = 0,
+    this.stock,
+  });
+
+  factory CatalogSale.fromJson(Map<String, dynamic> j) {
+    final s = j['stock'] is Map ? Map<String, dynamic>.from(j['stock'] as Map) : null;
+    DateTime? at(Object? v) => DateTime.tryParse((v ?? '').toString())?.toLocal();
+    return CatalogSale(
+      id: (j['id'] as num?)?.toInt() ?? 0,
+      lastJobAt: at(j['lastJobAt']),
+      lastJob: j['lastJob']?.toString(),
+      jobs: (j['jobs'] as num?)?.toInt() ?? 0,
+      lastEstimateAt: at(j['lastEstimateAt']),
+      lastEstimate: j['lastEstimate']?.toString(),
+      estimates: (j['estimates'] as num?)?.toInt() ?? 0,
+      stock: s == null || s['itemId'] is! num
+          ? null
+          : (
+              itemId: (s['itemId'] as num).toInt(),
+              qty: (s['qty'] as num?)?.toInt(),
+              location: s['location']?.toString(),
+              reorderPoint: (s['reorderPoint'] as num?)?.toInt(),
+              updatedAt: at(s['updatedAt']),
+            ),
+    );
+  }
+}
+
+/// The History view's filters: who, from (inclusive) and to (exclusive), one product, and kinds of change (a family like
+/// `category` or one action like `products.bulk`). Empty = everything.
+class CatalogAuditFilter {
+  final String? by;
+  final DateTime? from;
+  final DateTime? to;
+  final int? productId;
+  final List<String> actions;
+  const CatalogAuditFilter({this.by, this.from, this.to, this.productId, this.actions = const []});
+
+  bool get isEmpty => by == null && from == null && to == null && productId == null && actions.isEmpty;
+
+  Map<String, String> get query => {
+    'by': ?by,
+    if (from != null) 'from': from!.toUtc().toIso8601String(),
+    if (to != null) 'to': to!.toUtc().toIso8601String(),
+    if (productId != null) 'productId': '$productId',
+    if (actions.isNotEmpty) 'actions': actions.join(','),
+  };
+
+  /// The same rule as the server, so an older server that ignores the filters still shows only what was asked.
+  bool matches(CatalogAuditEntry e) {
+    if (by != null && e.by != by) return false;
+    final at = e.at;
+    if (from != null && (at == null || at.isBefore(from!))) return false;
+    if (to != null && (at == null || !at.isBefore(to!))) return false;
+    if (productId != null && !e.productIds.contains(productId)) return false;
+    if (actions.isNotEmpty && !actions.any((a) => e.action == a || e.action.split('.').first == a)) return false;
+    return true;
+  }
 }
 
 /// One line of the catalog's change log. A cost value the person may not see comes back as null.
@@ -753,25 +852,91 @@ class LineItemsApi {
     );
   }
 
-  static Future<void> markReviewed(String issueKey, String signature, {String? note, String? label}) async {
-    await _call('PUT', Uri.parse('$kApiBaseUrl/api/catalog/reviews'), body: {'issueKey': issueKey, 'signature': signature, 'note': ?note, 'label': ?label});
+  /// Marks a finding [status] `reviewed` or `follow_up`. With [checkExpected], [expectedStamp] is the mark the page showed
+  /// (null: none): if someone changed the mark since, nothing is saved (409 `CHANGED`). Returns the saved mark (null from
+  /// a server older than 11-18).
+  static Future<CatalogReview?> markReviewed(
+    String issueKey,
+    String signature, {
+    String? note,
+    String? label,
+    String status = 'reviewed',
+    String? basis,
+    bool checkExpected = false,
+    String? expectedStamp,
+  }) async {
+    final d = await _call(
+      'PUT',
+      Uri.parse('$kApiBaseUrl/api/catalog/reviews'),
+      body: {
+        'issueKey': issueKey,
+        'signature': signature,
+        'note': ?note,
+        'label': ?label,
+        'status': status,
+        'basis': ?basis,
+        if (checkExpected) 'expectedReviewedAt': expectedStamp,
+      },
+    );
+    return d['review'] is Map ? CatalogReview.fromJson(Map<String, dynamic>.from(d['review'] as Map)) : null;
   }
 
-  static Future<void> clearReview(String issueKey) async {
-    await _call('DELETE', Uri.parse('$kApiBaseUrl/api/catalog/reviews').replace(queryParameters: {'issueKey': issueKey}));
+  /// Takes a mark off. [expectedStamp] (the mark the page showed) makes it refuse when someone changed the mark since.
+  static Future<void> clearReview(String issueKey, {String? expectedStamp}) async {
+    await _call(
+      'DELETE',
+      Uri.parse('$kApiBaseUrl/api/catalog/reviews').replace(queryParameters: {'issueKey': issueKey, 'expectedReviewedAt': ?expectedStamp}),
+    );
+  }
+
+  /// Every mark, follow-up and undo of one finding, newest first.
+  static Future<List<CatalogAuditEntry>> reviewHistory(String issueKey) async {
+    final d = await _call('GET', Uri.parse('$kApiBaseUrl/api/catalog/reviews/history').replace(queryParameters: {'issueKey': issueKey}));
+    return [for (final e in (d['entries'] as List? ?? const []).whereType<Map>()) CatalogAuditEntry.fromJson(Map<String, dynamic>.from(e))];
   }
 
   /// The change log, newest first; [before] continues from an entry's id. [more] says there are older ones.
-  static Future<({List<CatalogAuditEntry> entries, bool more})> listCatalogAudit({int limit = 100, int? before, int? productId}) async {
+  static Future<({List<CatalogAuditEntry> entries, bool more})> listCatalogAudit({
+    int limit = 100,
+    int? before,
+    int? productId,
+    CatalogAuditFilter filter = const CatalogAuditFilter(),
+  }) async {
     final d = await _call(
       'GET',
       Uri.parse('$kApiBaseUrl/api/catalog/audit').replace(
-        queryParameters: {'limit': '$limit', if (before != null) 'before': '$before', if (productId != null) 'productId': '$productId'},
+        queryParameters: {
+          'limit': '$limit',
+          if (before != null) 'before': '$before',
+          if (productId != null) 'productId': '$productId',
+          ...filter.query,
+        },
       ),
     );
     return (
       entries: [for (final e in (d['entries'] as List? ?? const []).whereType<Map>()) CatalogAuditEntry.fromJson(Map<String, dynamic>.from(e))],
       more: d['more'] == true,
+    );
+  }
+
+  /// Who appears in the change log, most recent first (the History view's Who filter).
+  static Future<List<({String name, int changes})>> catalogAuditPeople() async {
+    final d = await _call('GET', Uri.parse('$kApiBaseUrl/api/catalog/audit/people'));
+    return [
+      for (final p in (d['people'] as List? ?? const []).whereType<Map>())
+        if ((p['name'] ?? '').toString().isNotEmpty) (name: p['name'].toString(), changes: (p['changes'] as num?)?.toInt() ?? 0),
+    ];
+  }
+
+  /// [ids]' sales in all of Service Fusion's history, and their stock rows. [since] is the oldest job on record.
+  static Future<({DateTime? since, Map<int, CatalogSale> sales})> productSales(List<int> ids) async {
+    final d = await _call('POST', Uri.parse('$kApiBaseUrl/api/catalog/products/sales'), body: {'ids': ids});
+    return (
+      since: DateTime.tryParse((d['since'] ?? '').toString())?.toLocal(),
+      sales: {
+        for (final s in (d['sales'] as List? ?? const []).whereType<Map>())
+          if (s['id'] is num) (s['id'] as num).toInt(): CatalogSale.fromJson(Map<String, dynamic>.from(s)),
+      },
     );
   }
 }

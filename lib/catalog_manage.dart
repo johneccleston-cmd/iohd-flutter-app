@@ -38,10 +38,31 @@ class CatalogManager {
   Future<CatalogBulkResult> bulkUpdate(Map<int, String> expected, {String? category, bool? active}) =>
       LineItemsApi.bulkUpdateProducts(expected, category: category, active: active);
   Future<({List<CatalogReview> reviews, bool canEdit})> listReviews() => LineItemsApi.listReviews();
-  Future<void> markReviewed(String issueKey, String signature, {String? note, String? label}) =>
-      LineItemsApi.markReviewed(issueKey, signature, note: note, label: label);
-  Future<void> clearReview(String issueKey) => LineItemsApi.clearReview(issueKey);
-  Future<({List<CatalogAuditEntry> entries, bool more})> listAudit({int limit = 100, int? before}) => LineItemsApi.listCatalogAudit(limit: limit, before: before);
+  Future<CatalogReview?> markReviewed(
+    String issueKey,
+    String signature, {
+    String? note,
+    String? label,
+    String status = 'reviewed',
+    String? basis,
+    bool checkExpected = false,
+    String? expectedStamp,
+  }) => LineItemsApi.markReviewed(
+    issueKey,
+    signature,
+    note: note,
+    label: label,
+    status: status,
+    basis: basis,
+    checkExpected: checkExpected,
+    expectedStamp: expectedStamp,
+  );
+  Future<void> clearReview(String issueKey, {String? expectedStamp}) => LineItemsApi.clearReview(issueKey, expectedStamp: expectedStamp);
+  Future<List<CatalogAuditEntry>> reviewHistory(String issueKey) => LineItemsApi.reviewHistory(issueKey);
+  Future<({List<CatalogAuditEntry> entries, bool more})> listAudit({int limit = 100, int? before, CatalogAuditFilter filter = const CatalogAuditFilter()}) =>
+      LineItemsApi.listCatalogAudit(limit: limit, before: before, filter: filter);
+  Future<List<({String name, int changes})>> auditPeople() => LineItemsApi.catalogAuditPeople();
+  Future<({DateTime? since, Map<int, CatalogSale> sales})> productSales(List<int> ids) => LineItemsApi.productSales(ids);
 }
 
 /// A server older than Phase 3 does not have the management calls (404).
@@ -248,6 +269,7 @@ class _BulkDialogState extends State<_BulkDialog> {
       if (offerNew) row(typed, null, isNew: true),
       for (final c in rows) row(c.key, _count.format(c.value)),
     ];
+    final alike = _newTarget && _target != null ? categoryLookalikes(_target!, widget.categories!.keys) : const <String>[];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -264,11 +286,23 @@ class _BulkDialogState extends State<_BulkDialog> {
         ),
         const SizedBox(height: 8),
         SizedBox(
-          height: math.min(340, math.max(1, items.length) * 38.0 + 4),
+          height: math.min(alike.isEmpty ? 340 : 250, math.max(1, items.length) * 38.0 + 4),
           child: items.isEmpty
               ? const Center(child: Text('No category matches', style: CatalogUi.meta))
               : ListView(padding: EdgeInsets.zero, children: items),
         ),
+        if (alike.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          CategoryLookalikeNotice(
+            typed: _target!,
+            alike: alike,
+            counts: widget.categories!,
+            onPick: (name) => setState(() {
+              _target = name;
+              _newTarget = false;
+            }),
+          ),
+        ],
       ],
     );
   }
@@ -651,3 +685,557 @@ Future<bool> confirmCatalogAction(
 
 /// The catalog's icon, for dialogs that belong to it.
 IconData get catalogIcon => accessIcon('catalog');
+
+// ---- "did you mean...?" before a new category is made ------------------------------------------------------------
+
+/// Warns that a new category looks like ones the catalog already has, with a button to use each instead.
+class CategoryLookalikeNotice extends StatelessWidget {
+  final String typed;
+  final List<String> alike;
+  final Map<String, int?> counts;
+  final ValueChanged<String> onPick;
+  const CategoryLookalikeNotice({super.key, required this.typed, required this.alike, required this.counts, required this.onPick});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('category-lookalike'),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      decoration: BoxDecoration(
+        color: DashUi.amber.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: DashUi.amber.withValues(alpha: 0.45)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 1),
+                child: Icon(Icons.help_outline_rounded, size: 17, color: DashUi.amberText),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '"$typed" looks like ${alike.length == 1 ? 'a category' : 'categories'} the catalog already has. Did you mean:',
+                  style: const TextStyle(fontSize: 13.5, height: 1.35, color: DashUi.ink, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 2,
+            children: [
+              for (final a in alike)
+                TextButton(
+                  key: ValueKey('use-category:$a'),
+                  onPressed: () => onPick(a),
+                  style: TextButton.styleFrom(
+                    foregroundColor: DashUi.ink,
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                  child: Text('Use "$a"${counts[a] == null ? '' : ' (${catalogPlural(counts[a]!, 'product')})'}'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---- the product page's category picker ----------------------------------------------------------------------------
+
+/// What the category picker chose: an existing category (spelled as the catalog spells it), no category (''), or a
+/// new one the person chose to create on purpose ([isNew]).
+typedef CategoryPick = ({String name, bool isNew});
+
+/// Picks a product's category from the catalog's existing categories, searchable. A new category is only made when the
+/// person picks "Create ..." for the name typed in the search, and a name that looks like an existing one asks "did
+/// you mean" first: a typo never quietly starts a new category. [load] returns the categories and their product
+/// counts (null count: not known). Returns null when cancelled.
+Future<CategoryPick?> showCategoryPickerDialog(
+  BuildContext context, {
+  required String current,
+  required Future<Map<String, int?>> Function() load,
+  String? pendingNew,
+}) {
+  return showDialog<CategoryPick>(
+    context: context,
+    builder: (_) => _CategoryPickerDialog(current: current, load: load, pendingNew: pendingNew),
+  );
+}
+
+class _CategoryPickerDialog extends StatefulWidget {
+  final String current;
+  final Future<Map<String, int?>> Function() load;
+
+  /// A new category picked earlier on this page and not saved yet: offered again.
+  final String? pendingNew;
+  const _CategoryPickerDialog({required this.current, required this.load, this.pendingNew});
+
+  @override
+  State<_CategoryPickerDialog> createState() => _CategoryPickerDialogState();
+}
+
+class _CategoryPickerDialogState extends State<_CategoryPickerDialog> {
+  final _search = TextEditingController();
+  Map<String, int?>? _cats;
+  String? _error;
+  String _query = '';
+  late String _picked = widget.current;
+  bool _isNew = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _isNew = widget.pendingNew != null && widget.pendingNew == widget.current;
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() => _error = null);
+    try {
+      final c = await widget.load();
+      if (!mounted) return;
+      setState(() => _cats = c);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _error = catalogErrorText(e));
+    }
+  }
+
+  String get _typed => _query.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+  void _pick(String name, {bool isNew = false}) => setState(() {
+    _picked = name;
+    _isNew = isNew;
+  });
+
+  Widget _row(String name, String? count, {bool isNew = false, bool none = false}) {
+    final on = _picked == name && _isNew == isNew;
+    final label = none ? 'No category' : (isNew ? 'Create "$name" as a new category' : name);
+    return Semantics(
+      button: true,
+      selected: on,
+      label: isNew ? 'Create the category $name' : (count == null ? label : '$label, $count'),
+      excludeSemantics: true,
+      child: InkWell(
+        key: ValueKey(isNew ? 'pick-new-category' : (none ? 'pick-no-category' : 'pick-category:$name')),
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _pick(name, isNew: isNew),
+        child: AnimatedContainer(
+          duration: CatalogUi.motion(context, 120),
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(color: on ? CatalogUi.picked : Colors.transparent, borderRadius: BorderRadius.circular(8)),
+          child: Row(
+            children: [
+              _Radio(on: on),
+              const SizedBox(width: 10),
+              if (isNew) ...[const Icon(Icons.add_rounded, size: 17, color: DashUi.ink), const SizedBox(width: 4)],
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: on ? FontWeight.w700 : FontWeight.w500,
+                    color: none ? DashUi.slate : DashUi.ink,
+                    fontStyle: none ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+              ),
+              if (name == widget.current && !isNew && !none) ...[
+                const CatalogTag('Now'),
+                const SizedBox(width: 8),
+              ],
+              if (count != null) Text(count, style: const TextStyle(fontSize: 12.5, color: DashUi.subtle, fontFeatures: CatalogUi.figures)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cats = _cats;
+    Widget body;
+    if (cats == null && _error == null) {
+      body = const SizedBox(
+        height: 160,
+        child: Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.2, color: DashUi.slate))),
+      );
+    } else if (cats == null) {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AppNotice('The categories could not be loaded: $_error', kind: AppNoticeKind.error),
+          const SizedBox(height: 10),
+          Align(alignment: Alignment.centerLeft, child: AppButton.ghost('Try again', _load)),
+        ],
+      );
+    } else {
+      final all = cats.keys.toList()..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      final q = _query.trim().toLowerCase();
+      final rows = q.isEmpty ? all : all.where((c) => c.toLowerCase().contains(q)).toList();
+      final typed = _typed;
+      final exists = cats.keys.any((c) => catalogNorm(c) == catalogNorm(typed));
+      final pending = widget.pendingNew;
+      final offerNew = typed.isNotEmpty && !exists && typed.length <= 120;
+      final items = [
+        if (offerNew) _row(typed, null, isNew: true),
+        if (!offerNew && pending != null && !cats.containsKey(pending) && (q.isEmpty || pending.toLowerCase().contains(q))) _row(pending, null, isNew: true),
+        if (q.isEmpty && widget.current.isNotEmpty) _row('', null, none: true),
+        for (final c in rows) _row(c, cats[c] == null ? null : _count.format(cats[c])),
+      ];
+      final alike = _isNew ? categoryLookalikes(_picked, cats.keys) : const <String>[];
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CatalogSearchField(
+            controller: _search,
+            hint: 'Find a category, or type a new one',
+            height: 38,
+            autofocus: true,
+            onChanged: (v) => setState(() => _query = v),
+            onClear: () {
+              _search.clear();
+              setState(() => _query = '');
+            },
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            height: math.min(alike.isEmpty ? 340 : 240, math.max(1, items.length) * 38.0 + 4),
+            child: items.isEmpty
+                ? const Center(child: Text('No category matches', style: CatalogUi.meta))
+                : ListView(padding: EdgeInsets.zero, children: items),
+          ),
+          if (alike.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            CategoryLookalikeNotice(typed: _picked, alike: alike, counts: cats, onPick: (name) => _pick(name)),
+          ] else if (_isNew) ...[
+            const SizedBox(height: 8),
+            AppNotice('"$_picked" becomes a new category when you save the product.'),
+          ],
+        ],
+      );
+    }
+    final changed = _picked != widget.current || (_isNew && widget.pendingNew != _picked);
+    return AppDialog(
+      title: 'Pick a category',
+      subtitle: widget.current.isEmpty ? 'Not in a category yet' : 'Now in ${widget.current}',
+      icon: Icons.folder_outlined,
+      width: 520,
+      body: body,
+      actions: [
+        AppButton.ghost('Cancel', () => Navigator.pop(context)),
+        AppButton.ink(
+          _isNew ? 'Create and use it' : 'Use this category',
+          cats == null || !changed ? null : () => Navigator.pop(context, (name: _picked, isNew: _isNew)),
+          icon: Icons.check_rounded,
+        ),
+      ],
+    );
+  }
+}
+
+// ---- marks on a Cleanup finding ----------------------------------------------------------------------------------
+
+/// What marking a finding did: the saved mark, or [reload] when someone changed the mark in the meantime.
+typedef CatalogMarkOutcome = ({CatalogReview? review, bool reload});
+
+/// Marks a Cleanup finding (a group of possible duplicates, or one product under one check) as reviewed or to follow
+/// up, with an optional note, after showing its earlier marks. The save is checked against the mark this page showed
+/// ([current]): if someone changed it since, nothing is saved and the page reloads.
+Future<CatalogMarkOutcome?> showFindingMarkDialog(
+  BuildContext context, {
+  required CatalogManager manager,
+  required String issueKey,
+  required String signature,
+  String? basis,
+  required String title,
+  required String label,
+  required String status,
+  CatalogReview? current,
+  required String lapses,
+}) {
+  return showDialog<CatalogMarkOutcome>(
+    context: context,
+    builder: (_) => _MarkDialog(
+      manager: manager,
+      issueKey: issueKey,
+      signature: signature,
+      basis: basis,
+      title: title,
+      label: label,
+      status: status,
+      current: current,
+      lapses: lapses,
+    ),
+  );
+}
+
+class _MarkDialog extends StatefulWidget {
+  final CatalogManager manager;
+  final String issueKey;
+  final String signature;
+  final String? basis;
+  final String title;
+  final String label;
+  final String status;
+  final CatalogReview? current;
+  final String lapses;
+  const _MarkDialog({
+    required this.manager,
+    required this.issueKey,
+    required this.signature,
+    required this.basis,
+    required this.title,
+    required this.label,
+    required this.status,
+    required this.current,
+    required this.lapses,
+  });
+
+  @override
+  State<_MarkDialog> createState() => _MarkDialogState();
+}
+
+class _MarkDialogState extends State<_MarkDialog> {
+  late String _status = widget.status;
+  // Starts empty: the mark it replaces (and its note) stays in the history below.
+  final _note = TextEditingController();
+  bool _busy = false;
+  String? _error;
+  bool _stale = false;
+  List<CatalogAuditEntry>? _history;
+  bool _historyFailed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.manager
+        .reviewHistory(widget.issueKey)
+        .then((h) {
+          if (mounted) setState(() => _history = h);
+        })
+        .catchError((Object _) {
+          if (mounted) setState(() => _historyFailed = true);
+        });
+  }
+
+  @override
+  void dispose() {
+    _note.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      final note = _note.text.trim();
+      final saved = await widget.manager.markReviewed(
+        widget.issueKey,
+        widget.signature,
+        note: note.isEmpty ? null : note,
+        label: widget.label,
+        status: _status,
+        basis: widget.basis,
+        checkExpected: true,
+        expectedStamp: widget.current?.stamp,
+      );
+      if (mounted) Navigator.pop(context, (review: saved, reload: false));
+    } on LineItemsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _stale = e.status == 409;
+        _error = e.status == 409 && e.code == 'CHANGED' ? 'Someone else changed this mark after you opened the list. Nothing was saved.' : catalogErrorText(e);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _busy = false;
+        _error = catalogErrorText(e);
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final follow = _status == 'follow_up';
+    final history = _history ?? const <CatalogAuditEntry>[];
+    return AppDialog(
+      title: follow ? 'Mark to follow up' : 'Mark as reviewed',
+      subtitle: widget.title,
+      icon: follow ? Icons.flag_outlined : Icons.task_alt_rounded,
+      width: 540,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          AppSegmented<String>(
+            value: _status,
+            options: const [('reviewed', 'Reviewed: fine as it is'), ('follow_up', 'Follow up: still to sort out')],
+            onChanged: (v) => setState(() => _status = v),
+            dense: true,
+          ),
+          const SizedBox(height: 14),
+          AppFieldLabel(
+            'Why (optional)',
+            help: follow ? 'What still needs doing, and who is on it.' : 'Why it is right as it is, for whoever looks next.',
+          ),
+          TextField(
+            key: const ValueKey('mark-note'),
+            controller: _note,
+            autofocus: true,
+            maxLines: 3,
+            maxLength: 600,
+            style: const TextStyle(fontSize: 14.5, color: DashUi.ink),
+            decoration: appFieldDecoration().copyWith(counterText: ''),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            follow
+                ? 'It moves to Follow up and off the open count. Nothing about the product changes. ${widget.lapses}'
+                : 'It moves to Reviewed and off the open count. Nothing about the product changes. ${widget.lapses}',
+            style: CatalogUi.meta.copyWith(fontSize: 13),
+          ),
+          if (history.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            CatalogMarkHistory(entries: history, max: 4),
+          ] else if (_historyFailed) ...[
+            const SizedBox(height: 10),
+            const Text('Earlier marks could not be loaded.', style: CatalogUi.meta),
+          ],
+          if (_error != null) ...[const SizedBox(height: 12), AppNotice(_error!, kind: _stale ? AppNoticeKind.warning : AppNoticeKind.error)],
+        ],
+      ),
+      actions: [
+        if (_stale)
+          AppButton.ink('Reload the list', () => Navigator.pop(context, (review: null, reload: true)), icon: Icons.refresh_rounded)
+        else ...[
+          AppButton.ghost('Cancel', _busy ? null : () => Navigator.pop(context)),
+          AppButton.ink(_busy ? 'Saving…' : (follow ? 'Mark to follow up' : 'Mark reviewed'), _busy ? null : _save, icon: _busy ? null : Icons.check_rounded),
+        ],
+      ],
+    );
+  }
+}
+
+/// A finding's earlier marks, newest first: who, when, what, and the note.
+class CatalogMarkHistory extends StatelessWidget {
+  final List<CatalogAuditEntry> entries;
+  final int? max;
+  const CatalogMarkHistory({super.key, required this.entries, this.max});
+
+  static final _when = DateFormat('MMM d, y · h:mm a');
+
+  static String verb(String action) => switch (action) {
+    'review.mark' => 'Marked reviewed',
+    'review.follow_up' => 'Marked to follow up',
+    'review.clear' => 'Took the mark off',
+    _ => action,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = max == null ? entries : entries.take(max!).toList();
+    return Column(
+      key: const ValueKey('mark-history'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'HISTORY${entries.length > shown.length ? ' (latest ${shown.length} of ${entries.length})' : ''}',
+          style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, letterSpacing: 0.6, color: DashUi.subtle),
+        ),
+        const SizedBox(height: 4),
+        for (final e in shown)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(
+                    e.action == 'review.follow_up'
+                        ? Icons.flag_outlined
+                        : e.action == 'review.clear'
+                        ? Icons.undo_rounded
+                        : Icons.task_alt_rounded,
+                    size: 15,
+                    color: DashUi.slate,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text.rich(
+                    TextSpan(
+                      children: [
+                        TextSpan(
+                          text: '${verb(e.action)}${e.by.isEmpty ? '' : ' by ${e.by}'}',
+                          style: const TextStyle(fontWeight: FontWeight.w700, color: DashUi.ink),
+                        ),
+                        if (e.at != null) TextSpan(text: '  ·  ${_when.format(e.at!)}'),
+                        if ((e.details['note'] ?? '').toString().isNotEmpty) TextSpan(text: '\n"${e.details['note']}"', style: const TextStyle(fontStyle: FontStyle.italic)),
+                        if (e.details['pricing'] == true) const TextSpan(text: '\nA pricing check (details need the cost switch)'),
+                      ],
+                    ),
+                    style: CatalogUi.meta.copyWith(fontSize: 13, height: 1.35),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// A finding's whole history in a dialog (the Cleanup view's History button on a marked finding).
+Future<void> showFindingHistoryDialog(BuildContext context, {required CatalogManager manager, required String issueKey, required String title}) {
+  return showDialog<void>(
+    context: context,
+    builder: (ctx) => AppDialog(
+      title: 'Review history',
+      subtitle: title,
+      icon: Icons.history_rounded,
+      width: 540,
+      body: FutureBuilder<List<CatalogAuditEntry>>(
+        future: manager.reviewHistory(issueKey),
+        builder: (context, snap) {
+          if (snap.hasError) return AppNotice('The history could not be loaded: ${catalogErrorText(snap.error!)}', kind: AppNoticeKind.error);
+          if (!snap.hasData) {
+            return const SizedBox(
+              height: 80,
+              child: Center(child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2.2, color: DashUi.slate))),
+            );
+          }
+          if (snap.data!.isEmpty) return const Text('No marks yet.', style: CatalogUi.meta);
+          return ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 420),
+            child: SingleChildScrollView(child: CatalogMarkHistory(entries: snap.data!)),
+          );
+        },
+      ),
+      actions: [AppButton.ink('Close', () => Navigator.pop(ctx))],
+    ),
+  );
+}

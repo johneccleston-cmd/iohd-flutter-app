@@ -59,6 +59,22 @@ Future<void> _pump(WidgetTester t, ProductDetailScreen screen, {Size size = cons
 /// A form box by what it is (the page keys every box `field:<name>`), so the two-column layout can order them freely.
 Finder _field(String name) => find.byKey(ValueKey('field:$name'));
 
+/// The catalog's categories as the picker gets them (name -> products).
+const _cats = <String, int?>{'Bearing - RC': 4, 'Keypad': 14, 'Overhead Door': 9, 'Mine': 1, 'Something else': 2};
+Future<Map<String, int?>> _catLoader() async => _cats;
+
+/// Picks the existing category [name] in the category picker.
+Future<void> _pickCategory(WidgetTester t, String name) async {
+  await t.tap(_field('category'));
+  await t.pumpAndSettle();
+  await t.enterText(find.widgetWithText(TextField, 'Find a category, or type a new one'), name);
+  await t.pumpAndSettle();
+  await t.tap(find.byKey(ValueKey('pick-category:$name')));
+  await t.pumpAndSettle();
+  await t.tap(find.text('Use this category'));
+  await t.pumpAndSettle();
+}
+
 /// The text field under the label [label].
 
 void main() {
@@ -154,11 +170,10 @@ void main() {
   });
 
   testWidgets('Cancel with changes asks; Discard puts the saved values back', (t) async {
-    await _pump(t, ProductDetailScreen(productId: 1, loader: (_) async => _page()));
+    await _pump(t, ProductDetailScreen(productId: 1, loader: (_) async => _page(), categoriesLoader: _catLoader));
     await t.tap(find.text('Edit'));
     await t.pumpAndSettle();
-    await t.enterText(_field('category'), 'Something else');
-    await t.pumpAndSettle();
+    await _pickCategory(t, 'Something else');
     await t.tap(find.text('Cancel'));
     await t.pumpAndSettle();
     expect(find.text('Discard your changes?'), findsOneWidget);
@@ -181,12 +196,12 @@ void main() {
         productId: 1,
         loader: (_) async => _page(),
         saver: (id, f, at, {confirmDuplicate = false}) async => throw const LineItemsException('Someone else changed this product while you were editing.', status: 409),
+        categoriesLoader: _catLoader,
       ),
     );
     await t.tap(find.text('Edit'));
     await t.pumpAndSettle();
-    await t.enterText(_field('category'), 'Mine');
-    await t.pumpAndSettle();
+    await _pickCategory(t, 'Mine');
     await t.tap(find.text('Save'));
     await t.pumpAndSettle();
     expect(find.textContaining('Someone else changed this product'), findsOneWidget);
@@ -371,14 +386,13 @@ void main() {
   testWidgets('editing a per-job product without touching the price leaves it per job (the price is not sent)', (t) async {
     const door = ProductRecord(id: 263, name: 'Complete Door 904', unitPrice: 0, memberPrice: 0, avgUnitCost: 6841.79, updatedAt: '2026-11-16T15:52:00.045Z');
     Map<String, dynamic>? sent;
-    await _pump(t, ProductDetailScreen(productId: 263, startEditing: true, loader: (_) async => _page(product: door), saver: (id, f, at, {confirmDuplicate = false}) async {
+    await _pump(t, ProductDetailScreen(productId: 263, startEditing: true, loader: (_) async => _page(product: door), categoriesLoader: _catLoader, saver: (id, f, at, {confirmDuplicate = false}) async {
       sent = f;
       return door;
     }));
     expect(find.widgetWithText(TextField, '0.00'), findsNothing); // the price box is empty, with "Priced per job" as its hint
     expect(find.text('Priced per job'), findsOneWidget);
-    await t.enterText(_field('category'), 'Overhead Door');
-    await t.pumpAndSettle();
+    await _pickCategory(t, 'Overhead Door');
     await t.tap(find.text('Save'));
     await t.pumpAndSettle();
     expect(sent, {'category': 'Overhead Door'});
@@ -462,6 +476,104 @@ void main() {
   });
 
   // Not a check: writes the page's pictures (set PRODUCT_SHOTS to a folder) so they can be looked at.
+  // ---- the category picker (2026-11-18): existing categories only, unless "Create" is chosen on purpose ------------
+
+  ProductDetailScreen picking({required void Function(Map<String, dynamic> f) onSave, Future<Map<String, int?>> Function()? cats, Object? error}) => ProductDetailScreen(
+    productId: 1,
+    startEditing: true,
+    loader: (_) async => _page(),
+    categoriesLoader: cats ?? _catLoader,
+    saver: (id, f, at, {confirmDuplicate = false}) async {
+      onSave(f);
+      if (error != null) throw error;
+      return ProductRecord(id: 1, name: _bearing.name, category: f['category'] as String? ?? _bearing.category, updatedAt: '2026-11-18T10:00:00.000Z');
+    },
+  );
+
+  testWidgets('the category is picked from the catalog; a typo of one asks "did you mean" before anything new is made', (t) async {
+    Map<String, dynamic>? sent;
+    await _pump(t, picking(onSave: (f) => sent = f));
+    await t.tap(_field('category'));
+    await t.pumpAndSettle();
+    expect(find.text('Pick a category'), findsOneWidget);
+    expect(find.byKey(const ValueKey('pick-category:Keypad')), findsOneWidget);
+    expect(find.text('14'), findsOneWidget, reason: 'each category with its product count');
+    await t.enterText(find.widgetWithText(TextField, 'Find a category, or type a new one'), 'Keypads');
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const ValueKey('pick-new-category')));
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('category-lookalike')), findsOneWidget);
+    expect(find.textContaining('"Keypads" looks like a category the catalog already has'), findsOneWidget);
+    await t.tap(find.byKey(const ValueKey('use-category:Keypad')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Use this category'));
+    await t.pumpAndSettle();
+    expect(find.descendant(of: _field('category'), matching: find.text('Keypad')), findsOneWidget);
+    expect(find.text('New category'), findsNothing);
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    expect(sent, {'category': 'Keypad'}, reason: 'an existing category, so nothing is created');
+  });
+
+  testWidgets('a new category is only made on purpose: "Create", a tag on the field, and createCategory with the save', (t) async {
+    Map<String, dynamic>? sent;
+    await _pump(t, picking(onSave: (f) => sent = f));
+    await t.tap(_field('category'));
+    await t.pumpAndSettle();
+    await t.enterText(find.widgetWithText(TextField, 'Find a category, or type a new one'), 'Gate  Hardware');
+    await t.pumpAndSettle();
+    expect(find.text('Create "Gate Hardware" as a new category'), findsOneWidget);
+    expect(t.widget<FilledButton>(find.widgetWithText(FilledButton, 'Use this category')).onPressed, isNull, reason: 'typing alone picks nothing');
+    await t.tap(find.byKey(const ValueKey('pick-new-category')));
+    await t.pumpAndSettle();
+    expect(find.text('"Gate Hardware" becomes a new category when you save the product.'), findsOneWidget);
+    await t.tap(find.text('Create and use it'));
+    await t.pumpAndSettle();
+    expect(find.descendant(of: _field('category'), matching: find.text('Gate Hardware')), findsOneWidget);
+    expect(find.text('New category'), findsOneWidget);
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    expect(sent, {'category': 'Gate Hardware', 'createCategory': true});
+  });
+
+  testWidgets('"No category" can be picked; a category the server does not know shows on the field', (t) async {
+    final sent = <Map<String, dynamic>>[];
+    await _pump(t, picking(onSave: sent.add, error: const LineItemsException('There is no category called "Mine". Pick one from the list.', status: 400, code: 'CATEGORY_UNKNOWN')));
+    await t.tap(_field('category'));
+    await t.pumpAndSettle();
+    await t.tap(find.byKey(const ValueKey('pick-no-category')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Use this category'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    expect(sent.single, {'category': ''});
+    expect(find.text('There is no category called "Mine". Pick one from the list.'), findsWidgets, reason: 'on the field and in the save notice');
+    expect(find.byType(TextField), findsWidgets, reason: 'still editing');
+  });
+
+  testWidgets('the picker says when the categories could not be loaded, and Try again loads them', (t) async {
+    var calls = 0;
+    await _pump(
+      t,
+      picking(
+        onSave: (_) {},
+        cats: () async {
+          calls++;
+          if (calls == 1) throw const LineItemsException('Could not reach the server.');
+          return _cats;
+        },
+      ),
+    );
+    await t.tap(_field('category'));
+    await t.pumpAndSettle();
+    expect(find.textContaining('The categories could not be loaded'), findsOneWidget);
+    expect(find.text('Create and use it'), findsNothing);
+    await t.tap(find.text('Try again'));
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pick-category:Keypad')), findsOneWidget);
+  });
+
   testWidgets('pictures', (t) async {
     final dir = Platform.environment['PRODUCT_SHOTS'];
     if (dir == null) return;

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import 'catalog_manage.dart' show showCategoryPickerDialog;
 import 'config/access.dart';
 import 'config/auth_session.dart';
 import 'services/line_items_api.dart';
@@ -20,8 +21,8 @@ import 'widgets/leave_guard.dart';
 /// reloads and shows the change when you come back to it.
 final ValueNotifier<int> productCatalogChanged = ValueNotifier<int>(0);
 
-/// The catalog's categories, A to Z, as the Product Catalog list last loaded them: the product page suggests them while
-/// the Category box is being typed in (it is still free text: a new category can be typed).
+/// The catalog's categories, A to Z, as the Product Catalog list last loaded them: the product page's category picker
+/// falls back to them when the server has no categories call (one older than Phase 3).
 final ValueNotifier<List<String>> productCategories = ValueNotifier<List<String>>(const []);
 
 /// The Product Catalog's sub-routes: `/inventory/catalog/new` and `/inventory/catalog/:id` (`?edit=1` opens it for editing).
@@ -93,7 +94,11 @@ class ProductDetailScreen extends StatefulWidget {
   final Future<ProductRecord> Function(int? id, Map<String, dynamic> fields, String? expectedUpdatedAt, {bool confirmDuplicate})? saver;
   final Future<void> Function(int id)? deleter;
 
-  const ProductDetailScreen({super.key, this.productId, this.startEditing = false, this.loader, this.saver, this.deleter});
+  /// The categories the Category picker offers, with their product counts (null: not known). Tests pass a fake; the
+  /// app asks the server.
+  final Future<Map<String, int?>> Function()? categoriesLoader;
+
+  const ProductDetailScreen({super.key, this.productId, this.startEditing = false, this.loader, this.saver, this.deleter, this.categoriesLoader});
 
   @override
   State<ProductDetailScreen> createState() => _ProductDetailScreenState();
@@ -126,6 +131,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
   bool _conflict = false;
   Map<String, String> _errors = {};
   Map<String, Object?> _original = {};
+
+  /// A category the person chose to create in the picker ("Create ... as a new category"); sent as createCategory
+  /// with the save, so the server makes it. Any other category must already exist.
+  String? _newCategory;
   VoidCallback? _unguard;
 
   bool get _isNew => widget.productId == null;
@@ -268,6 +277,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   /// Puts a saved product into the form (and takes the unsaved edits out of it).
   void _fill(ProductRecord r) {
+    _newCategory = null; // saved, discarded or reloaded: a new category picked before is no longer pending
     void set(String k, String v) => _c[k]!.text = v;
     set('name', r.name);
     set('category', r.category);
@@ -356,6 +366,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       }
     }
     if (_isNew) body.removeWhere((k, v) => v == null || v == '');
+    if (_newCategory != null && body['category'] == _newCategory) body['createCategory'] = true;
     setState(() => _errors = errors);
     return errors.isEmpty ? body : null;
   }
@@ -432,6 +443,15 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       if (e.code == 'DUPLICATE' && !confirmDuplicate) {
         setState(() => _saving = false);
         if (await _confirmDuplicate(e) && mounted) await _save(confirmDuplicate: true);
+        return;
+      }
+      if (e.code == 'CATEGORY_UNKNOWN') {
+        // The category is not one the catalog has (someone deleted it, or an old page typed it): pick again.
+        setState(() {
+          _saving = false;
+          _errors = {..._errors, 'category': e.message};
+          _saveError = e.message;
+        });
         return;
       }
       setState(() {
@@ -1243,63 +1263,65 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
 
   final _categoryFocus = FocusNode(debugLabel: 'product-category');
 
-  /// Category: free text, with the catalog's existing categories suggested as it is typed (so "Keypad" is not typed
-  /// as "Keypads" next to it).
+  /// The categories to pick from: the server's list with product counts, or (from a server older than Phase 3) the
+  /// names the Product Catalog list last loaded.
+  Future<Map<String, int?>> _loadCategories() async {
+    if (widget.categoriesLoader != null) return widget.categoriesLoader!();
+    try {
+      final r = await LineItemsApi.listCategories();
+      return {for (final c in r.categories) c.name: c.products};
+    } on LineItemsException catch (e) {
+      if (e.status == 404 && e.code == null && productCategories.value.isNotEmpty) return {for (final n in productCategories.value) n: null};
+      rethrow;
+    }
+  }
+
+  Future<void> _pickCategory() async {
+    final pick = await showCategoryPickerDialog(
+      context,
+      current: _c['category']!.text.trim(),
+      load: _loadCategories,
+      pendingNew: _newCategory,
+    );
+    if (pick == null || !mounted) return;
+    _newCategory = pick.isNew ? pick.name : null;
+    _c['category']!.text = pick.name; // its listener rebuilds the page (and the Save and leave checks see the change)
+    setState(() => _errors = {..._errors}..remove('category'));
+    _categoryFocus.requestFocus();
+  }
+
+  /// Category: picked from the catalog's categories (searchable). A new category is only made when the person chooses
+  /// "Create ..." in the picker, so a typo never quietly starts one (2026-11-18; it used to be free text).
   Widget _categoryField() {
+    final value = _c['category']!.text.trim();
+    final isNew = _newCategory != null && value == _newCategory;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const AppFieldLabel('Category'),
-        RawAutocomplete<String>(
-          textEditingController: _c['category']!,
-          focusNode: _categoryFocus,
-          optionsBuilder: (v) {
-            final q = v.text.trim().toLowerCase();
-            final all = productCategories.value;
-            if (q.isEmpty) return all.take(12);
-            return all.where((c) => c.toLowerCase().contains(q) && c.toLowerCase() != q).take(12);
-          },
-          fieldViewBuilder: (context, controller, focus, onSubmit) => TextField(
+        Semantics(
+          button: true,
+          label: 'Category: ${value.isEmpty ? 'none' : value}${isNew ? ', a new category' : ''}. Pick a category',
+          excludeSemantics: true,
+          child: InkWell(
             key: const ValueKey('field:category'),
-            controller: controller,
-            focusNode: focus,
-            enabled: !_saving,
-            style: const TextStyle(fontSize: 14.5, color: DashUi.ink),
-            decoration: appFieldDecoration(
-              error: _errors['category'],
-              hint: productCategories.value.isEmpty ? null : 'Pick or type a category',
-            ).copyWith(suffixIcon: productCategories.value.isEmpty ? null : const Icon(Icons.expand_more_rounded, size: 20, color: DashUi.slate)),
-            onSubmitted: (_) => onSubmit(),
-          ),
-          optionsViewBuilder: (context, onSelected, options) => Align(
-            alignment: Alignment.topLeft,
-            child: Material(
-              color: Colors.white,
-              elevation: 8,
-              shadowColor: DashUi.ink.withValues(alpha: 0.14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-                side: const BorderSide(color: DashUi.line),
-              ),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 280, maxWidth: 420),
-                child: ListView(
-                  padding: const EdgeInsets.all(6),
-                  shrinkWrap: true,
-                  children: [
-                    for (final o in options)
-                      InkWell(
-                        onTap: () => onSelected(o),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          height: 36,
-                          alignment: Alignment.centerLeft,
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Text(o, style: const TextStyle(fontSize: 14, color: DashUi.ink)),
-                        ),
-                      ),
-                  ],
-                ),
+            focusNode: _categoryFocus,
+            onTap: _saving ? null : _pickCategory,
+            borderRadius: BorderRadius.circular(10),
+            child: InputDecorator(
+              isEmpty: value.isEmpty,
+              isFocused: _categoryFocus.hasFocus,
+              decoration: appFieldDecoration(
+                error: _errors['category'],
+                hint: 'No category',
+              ).copyWith(suffixIcon: const Icon(Icons.expand_more_rounded, size: 20, color: DashUi.slate), enabled: !_saving),
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14.5, color: DashUi.ink)),
+                  ),
+                  if (isNew) ...[const SizedBox(width: 8), const CatalogTag('New category', tone: CatalogTone.info, icon: Icons.add_rounded)],
+                ],
               ),
             ),
           ),

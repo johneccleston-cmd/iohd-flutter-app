@@ -174,7 +174,11 @@ void main() {
     updatedAt: '2026-11-16T15:00:00.000Z',
   );
 
-  Future<void> pumpPage(WidgetTester t, {Future<ProductRecord> Function(int? id, Map<String, dynamic> f, String? at, {bool confirmDuplicate})? saver}) async {
+  Future<void> pumpPage(
+    WidgetTester t, {
+    Future<ProductRecord> Function(int? id, Map<String, dynamic> f, String? at, {bool confirmDuplicate})? saver,
+    Future<Map<String, int?>> Function()? categoriesLoader,
+  }) async {
     t.view.physicalSize = const Size(1366, 900);
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
@@ -184,6 +188,7 @@ void main() {
           productId: 1,
           loader: (_) async => (product: bearing, stock: 65, canSeeCost: true, canEdit: true, inventoryConflict: null),
           saver: saver,
+          categoriesLoader: categoriesLoader,
         ),
       ),
     );
@@ -227,15 +232,18 @@ void main() {
     expect(sent, {'description': 'Steel bearing'});
   });
 
-  testWidgets('the category box suggests the catalog\'s categories', (t) async {
-    productCategories.value = const ['Bearing - RC', 'Keypad', 'Overhead Door'];
-    addTearDown(() => productCategories.value = const []);
-    await pumpPage(t);
+  testWidgets('the category picker lists the catalog\'s categories and narrows as you type', (t) async {
+    await pumpPage(t, categoriesLoader: () async => const {'Bearing - RC': 4, 'Keypad': 14, 'Overhead Door': 9});
     await t.tap(find.text('Edit'));
     await t.pumpAndSettle();
-    await t.enterText(find.byKey(const ValueKey('field:category')), 'key');
+    await t.tap(find.byKey(const ValueKey('field:category')));
     await t.pumpAndSettle();
-    await t.tap(find.text('Keypad'));
+    await t.enterText(find.widgetWithText(TextField, 'Find a category, or type a new one'), 'key');
+    await t.pumpAndSettle();
+    expect(find.byKey(const ValueKey('pick-category:Overhead Door')), findsNothing);
+    await t.tap(find.byKey(const ValueKey('pick-category:Keypad')));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Use this category'));
     await t.pumpAndSettle();
     expect(find.descendant(of: find.byKey(const ValueKey('field:category')), matching: find.text('Keypad')), findsOneWidget);
   });

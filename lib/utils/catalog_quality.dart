@@ -42,6 +42,39 @@ enum CatalogCheck {
   }
 }
 
+/// The mark key of one product under one check (`no_cost:123`), or null for an entry that is not a price-list product.
+String? catalogFindingKey(CatalogCheck c, CatalogEntry e) => e.productId == null ? null : '${c.key}:${e.productId}';
+
+/// A short fingerprint of [s] (two polynomial hashes, exact in doubles, so the app on the web and on a desktop agree).
+String catalogDigest(String s) {
+  var a = 7;
+  var b = 11;
+  for (final c in s.codeUnits) {
+    a = (a * 31 + c) % 2147483629;
+    b = (b * 37 + c) % 2147483587;
+  }
+  return '${a.toRadixString(36)}.${b.toRadixString(36)}';
+}
+
+/// What a one-product mark was made on, besides the product id: every value the check looked at, and the product's
+/// name and part number (a renamed or re-numbered product is a different question). If any of them changes, the mark
+/// no longer applies and the product comes back to be looked at (refinement 2026-11-18, final audit). [usual] is the
+/// category products named like it are in (the "unusual category" check is about that too). Stored as a fingerprint,
+/// so no price or cost is kept in the mark.
+String catalogFindingBasis(CatalogCheck c, CatalogEntry e, {String? usual}) {
+  final who = '${catalogNorm(e.name)}|${catalogNorm(e.sku)}';
+  final raw = switch (c) {
+    CatalogCheck.costAbove || CatalogCheck.highMarkup => 'p${e.rate}|c${e.cost}',
+    CatalogCheck.noCost => 'c${e.cost}',
+    CatalogCheck.categoryOdd => 'in ${catalogNorm(e.category)}|usually ${catalogNorm(usual ?? '')}',
+    CatalogCheck.linkReview => 'conflict ${e.inventoryConflict ?? ''}',
+    CatalogCheck.noCategory => 'in ${catalogNorm(e.category)}',
+    CatalogCheck.obsolete => 'stock ${e.stock ?? ''}|kept ${e.inInventory}',
+    _ => '',
+  };
+  return 'v2:${catalogDigest('${c.key}|$raw|$who')}';
+}
+
 /// Products that belong together under one check ("Same part # 0140900"). [issueKey] names the group for a reviewed
 /// mark; [signature] is its products' ids, so a mark lapses when the group changes.
 class CatalogIssueGroup {
@@ -61,6 +94,10 @@ class CatalogIssueGroup {
       if (e.productId != null) e.productId!,
   ]..sort();
   String get signature => ids.join(',');
+
+  /// What a mark on the group was made on besides its members: each member's name and part number. A member renamed or
+  /// re-numbered (and still in the group) is a different question, so the mark lapses.
+  String get basis => 'v2:${catalogDigest([for (final e in products) '${e.productId}:${catalogNorm(e.name)}|${catalogNorm(e.sku)}'].join('\n'))}';
 }
 
 /// The checks' results for one list.
@@ -72,12 +109,22 @@ class CatalogQuality {
   /// Whether the cost checks ran (the person can see costs).
   final bool withCost;
 
-  /// Open groups per grouped check (reviewed ones are in [reviewedGroups]).
+  /// Open groups per grouped check (reviewed ones are in [reviewedGroups], ones someone is following up in
+  /// [followUpGroups]).
   final Map<CatalogCheck, List<CatalogIssueGroup>> groups;
   final Map<CatalogCheck, List<CatalogIssueGroup>> reviewedGroups;
+  final Map<CatalogCheck, List<CatalogIssueGroup>> followUpGroups;
 
-  /// Product keys flagged by each check (for a grouped check: the products of its OPEN groups).
+  /// Product keys flagged by each check and not yet marked (for a grouped check: the products of its OPEN groups).
   final Map<CatalogCheck, Set<String>> flagged;
+
+  /// One-product checks: products a person marked reviewed, and products someone is following up. Both still match
+  /// the check (and its values, see [catalogFindingBasis]); they are kept off the open count.
+  final Map<CatalogCheck, List<CatalogEntry>> reviewedItems;
+  final Map<CatalogCheck, List<CatalogEntry>> followUpItems;
+
+  /// The marks by issue key (who marked, when, the note).
+  final Map<String, CatalogReview> marks;
 
   /// For [CatalogCheck.categoryOdd]: the category most products named like it are in.
   final Map<String, String> usualCategory;
@@ -92,7 +139,11 @@ class CatalogQuality {
     required this.withCost,
     required this.groups,
     required this.reviewedGroups,
+    this.followUpGroups = const {},
     required this.flagged,
+    this.reviewedItems = const {},
+    this.followUpItems = const {},
+    this.marks = const {},
     required this.usualCategory,
     required this.nameLinked,
   });
@@ -121,7 +172,22 @@ class CatalogQuality {
 
   /// Open groups of a grouped check.
   int groupCount(CatalogCheck c) => groups[c]?.length ?? 0;
-  int reviewedCount(CatalogCheck c) => reviewedGroups[c]?.length ?? 0;
+  int reviewedCount(CatalogCheck c) => c.grouped ? (reviewedGroups[c]?.length ?? 0) : (reviewedItems[c]?.length ?? 0);
+
+  /// Findings of [c] someone marked to follow up (groups for a grouped check, products otherwise).
+  int followUpCount(CatalogCheck c) => c.grouped ? (followUpGroups[c]?.length ?? 0) : (followUpItems[c]?.length ?? 0);
+
+  /// Findings still to look at: open groups, or open products.
+  int openCount(CatalogCheck c) => c.grouped ? groupCount(c) : productCount(c);
+
+  /// Every finding marked to follow up, across the checks this person gets.
+  int get followUpTotal => checks.fold(0, (n, c) => n + followUpCount(c));
+
+  /// The mark on [e] under the one-product check [c], or null.
+  CatalogReview? markOf(CatalogCheck c, CatalogEntry e) {
+    final k = catalogFindingKey(c, e);
+    return k == null ? null : marks[k];
+  }
 
   /// How many products have at least one open issue (the Cleanup headline).
   int get productsWithIssues => {for (final s in flagged.values) ...s}.length;
@@ -243,9 +309,12 @@ List<({List<int> members, String why})> similarNameGroups(List<String> names, {b
 /// The first part of a catalog name ("Hinge RC | 14GA | #2" -> "hinge rc"): products named alike start alike.
 String _family(String name) => name.contains('|') ? catalogNorm(name.split('|').first) : '';
 
-/// Runs every check over [entries] (products only). [reviews] are the saved "reviewed" marks: a group whose products
-/// still match its mark is set aside rather than counted.
-CatalogQuality catalogQuality(List<CatalogEntry> entries, {required bool withCost, List<CatalogReview> reviews = const []}) {
+/// Runs every check over [entries] (products only). [reviews] are the saved marks: a finding whose products and values
+/// still match its mark is set aside rather than counted. A mark on a possibly obsolete product also lapses once it is
+/// older than the history window ([historyDays]): to be back on that list a product sold after the mark must have gone
+/// a whole window without a job, so an old "keep it" never outlives a sale.
+CatalogQuality catalogQuality(List<CatalogEntry> entries, {required bool withCost, List<CatalogReview> reviews = const [], int historyDays = 540, DateTime? now}) {
+  final today = now ?? DateTime.now();
   final products = [
     for (final e in entries)
       if (e.kind == 'product') e,
@@ -254,16 +323,32 @@ CatalogQuality catalogQuality(List<CatalogEntry> entries, {required bool withCos
     for (final e in products)
       if (e.active) e,
   ];
-  final reviewed = {for (final r in reviews) r.issueKey: r.signature};
+  final byKey = {for (final r in reviews) r.issueKey: r};
   final groups = <CatalogCheck, List<CatalogIssueGroup>>{};
   final reviewedGroups = <CatalogCheck, List<CatalogIssueGroup>>{};
+  final followUpGroups = <CatalogCheck, List<CatalogIssueGroup>>{};
+  final reviewedItems = <CatalogCheck, List<CatalogEntry>>{};
+  final followUpItems = <CatalogCheck, List<CatalogEntry>>{};
   final flagged = <CatalogCheck, Set<String>>{};
   void flag(CatalogCheck c, CatalogEntry e) => (flagged[c] ??= <String>{}).add(e.key);
+  // One product under one check: set aside while its mark still matches the product and the values checked.
+  void single(CatalogCheck c, CatalogEntry e, {String? usual}) {
+    final k = catalogFindingKey(c, e);
+    final r = k == null ? null : byKey[k];
+    final expired = c == CatalogCheck.obsolete && (r?.reviewedAt == null || today.difference(r!.reviewedAt!).inDays >= historyDays);
+    if (r != null && !expired && r.signature == '${e.productId}' && (r.basis ?? '') == catalogFindingBasis(c, e, usual: usual)) {
+      ((r.followUp ? followUpItems : reviewedItems)[c] ??= []).add(e);
+      return;
+    }
+    flag(c, e);
+  }
+
   void addGroup(CatalogIssueGroup g) {
     final sorted = [...g.products]..sort((a, b) => (a.productId ?? 0).compareTo(b.productId ?? 0));
     final group = CatalogIssueGroup(check: g.check, issueKey: g.issueKey, title: g.title, products: sorted, why: g.why);
-    if (reviewed[group.issueKey] == group.signature) {
-      (reviewedGroups[g.check] ??= []).add(group);
+    final mark = byKey[group.issueKey];
+    if (mark != null && mark.signature == group.signature && (mark.basis ?? '') == group.basis) {
+      ((mark.followUp ? followUpGroups : reviewedGroups)[g.check] ??= []).add(group);
       return;
     }
     (groups[g.check] ??= []).add(group);
@@ -314,25 +399,25 @@ CatalogQuality catalogQuality(List<CatalogEntry> entries, {required bool withCos
     if (top.key.isEmpty || top.value / members.length < 0.6) continue;
     for (final e in members) {
       if (e.category != top.key && e.category.isNotEmpty && counts[e.category] == 1) {
-        flag(CatalogCheck.categoryOdd, e);
         usualCategory[e.key] = top.key;
+        single(CatalogCheck.categoryOdd, e, usual: top.key);
       }
     }
   }
 
   // One product at a time.
   for (final e in active) {
-    if (e.sku.trim().isEmpty) flag(CatalogCheck.noPart, e);
-    if (e.category.trim().isEmpty) flag(CatalogCheck.noCategory, e);
-    if (e.inventoryConflict != null) flag(CatalogCheck.linkReview, e);
+    if (e.sku.trim().isEmpty) single(CatalogCheck.noPart, e);
+    if (e.category.trim().isEmpty) single(CatalogCheck.noCategory, e);
+    if (e.inventoryConflict != null) single(CatalogCheck.linkReview, e);
     // Not sold in the history window (no Service Fusion line has it) and nothing on hand: a question, not a verdict.
-    if (e.uses == 0 && e.lastUsed == null && (e.stock ?? 0) <= 0 && e.inventoryConflict == null) flag(CatalogCheck.obsolete, e);
+    if (e.uses == 0 && e.lastUsed == null && (e.stock ?? 0) <= 0 && e.inventoryConflict == null) single(CatalogCheck.obsolete, e);
     if (withCost) {
       final cost = e.cost;
       final price = e.rate;
-      if (cost == null) flag(CatalogCheck.noCost, e);
-      if (cost != null && price != null && price > 0 && cost >= price) flag(CatalogCheck.costAbove, e);
-      if (cost != null && cost > 0 && price != null && price >= cost * 10) flag(CatalogCheck.highMarkup, e);
+      if (cost == null) single(CatalogCheck.noCost, e);
+      if (cost != null && price != null && price > 0 && cost >= price) single(CatalogCheck.costAbove, e);
+      if (cost != null && cost > 0 && price != null && price >= cost * 10) single(CatalogCheck.highMarkup, e);
     }
   }
 
@@ -342,7 +427,11 @@ CatalogQuality catalogQuality(List<CatalogEntry> entries, {required bool withCos
     withCost: withCost,
     groups: groups,
     reviewedGroups: reviewedGroups,
+    followUpGroups: followUpGroups,
     flagged: flagged,
+    reviewedItems: reviewedItems,
+    followUpItems: followUpItems,
+    marks: byKey,
     usualCategory: usualCategory,
     nameLinked: products.where((e) => e.inventoryLink == 'name').length,
   );
@@ -409,4 +498,34 @@ List<CategoryNameIssue> categoryNameIssues(List<String> names) {
     );
   }
   return out;
+}
+
+/// Existing categories a newly typed category name looks like ("Keypads" next to "Keypad", "Weather  Seal" next to
+/// "Weather Seal"): the same name spaced or cased differently, the same words in another order, one word of 5+ letters
+/// spelt differently or made plural, or one name inside the other. Short codes are never "near" each other: "Spring -
+/// RC" does not suggest "Spring - Res" (RC is not Res in this catalog). Best match first, at most three. Used to ask
+/// "did you mean...?" before a new category is created.
+List<String> categoryLookalikes(String typed, Iterable<String> existing) {
+  final t = catalogNorm(typed);
+  if (t.isEmpty) return const [];
+  final tw = _words(typed).join(' ');
+  final out = <(int, String)>[];
+  for (final name in existing) {
+    final n = catalogNorm(name);
+    if (n.isEmpty) continue;
+    if (n == t) {
+      out.add((0, name));
+      continue;
+    }
+    final nw = _words(name).join(' ');
+    if (nw == tw) {
+      out.add((1, name)); // spacing or punctuation
+    } else if (similarNameGroups([typed, name], includeExact: true, minWords: 1).isNotEmpty) {
+      out.add((2, name)); // word order or one word spelt differently
+    } else if (t.length >= 4 && n.length >= 4 && (n.contains(t) || t.contains(n))) {
+      out.add((4, name));
+    }
+  }
+  out.sort((a, b) => a.$1 != b.$1 ? a.$1.compareTo(b.$1) : a.$2.toLowerCase().compareTo(b.$2.toLowerCase()));
+  return [for (final o in out.take(3)) o.$2];
 }
