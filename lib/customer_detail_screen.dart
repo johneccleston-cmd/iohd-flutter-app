@@ -126,7 +126,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
             ],
           ),
           SizedBox(height: 3, child: _loading ? const LinearProgressIndicator(minHeight: 3, color: DashUi.ink, backgroundColor: DashUi.line) : null),
-          Expanded(child: _body()),
+          Expanded(child: PageSheet(child: _body())),
         ],
       ),
     );

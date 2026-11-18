@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../services/line_items_api.dart';
 import '../utils/line_item_math.dart';
 import 'dashboard_kit.dart';
+import 'ps_menu.dart';
 
 /// What a pick from the catalog search is: a catalog entry, a custom line named after what was typed, or a message
 /// (searching failed, nothing matched) that can't be picked.
@@ -21,6 +22,10 @@ class CatalogChoice {
 /// "Search the catalog to add a line": type part of a name or a SKU, matches drop down as you type (best first),
 /// arrow keys and Enter pick one. The field keeps focus after a pick, so several lines go in one after another.
 class CatalogSearchField extends StatefulWidget {
+  /// The search box's height, fixed, so the buttons beside it can be exactly as tall (round 3, 2026-11-13: a field's
+  /// own height comes from its font, and its intrinsic height, which a Row stretched to, is taller than it draws).
+  static const height = 40.0;
+
   final ValueChanged<CatalogChoice> onPick;
   final bool showCost;
 
@@ -35,6 +40,7 @@ class CatalogSearchField extends StatefulWidget {
 
 class _CatalogSearchFieldState extends State<CatalogSearchField> {
   final _controller = TextEditingController();
+  final _fieldKey = GlobalKey(debugLabel: 'catalog search');
   late final FocusNode _focus = widget.focusNode ?? FocusNode();
   int _asked = 0;
   String _lastQ = '';
@@ -81,6 +87,15 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
     _focus.requestFocus();
   }
 
+  /// Whether the results open over the field: the side with more room, as [OptionsViewOpenDirection.mostSpace] picks.
+  bool _opensUp() {
+    final box = _fieldKey.currentContext?.findRenderObject();
+    final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (box is! RenderBox || overlay is! RenderBox || !box.hasSize) return false;
+    final top = box.localToGlobal(Offset.zero, ancestor: overlay).dy;
+    return top > overlay.size.height - (top + box.size.height);
+  }
+
   @override
   Widget build(BuildContext context) {
     return RawAutocomplete<CatalogChoice>(
@@ -92,49 +107,70 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
       // The search sits under the last line, often low on the page: the list opens where there is room.
       optionsViewOpenDirection: OptionsViewOpenDirection.mostSpace,
       fieldViewBuilder: (context, controller, focus, onSubmit) => TextField(
+        key: _fieldKey,
+        mouseCursor: SystemMouseCursors.click,
         controller: controller,
         focusNode: focus,
         onSubmitted: (_) => onSubmit(),
         style: const TextStyle(fontSize: 13.5, color: DashUi.ink),
+        textAlignVertical: TextAlignVertical.center,
+        // A plus and the hint in an outlined box, so it reads as something to click (user 2026-11-13), in the same quiet
+        // hairline as the line boxes above it (user 2026-11-13 pass 5), a light fill under the pointer, ink while typing.
         decoration: InputDecoration(
           isDense: true,
           filled: true,
-          fillColor: const Color(0xFFF8FAFC),
+          fillColor: Colors.white.withValues(alpha: 0),
+          hoverColor: DashUi.faint.withValues(alpha: 0.6),
           hintText: 'Add a line: search products and services by name or SKU',
-          hintStyle: const TextStyle(fontSize: 13, color: DashUi.subtle, fontWeight: FontWeight.w500),
-          prefixIcon: const Icon(Icons.add_circle_outline_rounded, size: 19, color: DashUi.slate),
-          prefixIconConstraints: const BoxConstraints(minWidth: 38, minHeight: 36),
+          hintStyle: const TextStyle(fontSize: 13, color: DashUi.ink, fontWeight: FontWeight.w500),
+          prefixIcon: const Icon(Icons.add_rounded, size: 18, color: DashUi.ink),
+          prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: 36),
+          constraints: const BoxConstraints.tightFor(height: CatalogSearchField.height),
           contentPadding: const EdgeInsets.symmetric(vertical: 10),
-          border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.line)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: DashUi.ink, width: 1.2)),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: DashUi.fieldEdge),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: DashUi.fieldEdge),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: DashUi.ink, width: 1.5),
+          ),
         ),
       ),
       optionsViewBuilder: (context, onSelected, options) {
         final list = options.toList();
-        // No Align of its own: the autocomplete lines the list up under (or over) the field.
+        // No Align of its own: the autocomplete lines the list up under (or over) the field. It opens the way there is
+        // more room (mostSpace), so it grows out of the field from that side.
         return Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Material(
-              color: Colors.white,
-              elevation: 10,
-              shadowColor: Colors.black.withValues(alpha: 0.16),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: DashUi.line)),
-              clipBehavior: Clip.antiAlias,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 640, maxHeight: 360),
-                child: ListView.separated(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  shrinkWrap: true,
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1, color: DashUi.faint),
-                  itemBuilder: (context, i) {
-                    final highlighted = AutocompleteHighlightedOption.of(context) == i;
-                    return _ChoiceRow(choice: list[i], highlighted: highlighted, showCost: widget.showCost, onTap: () => onSelected(list[i]));
-                  },
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: PsMenuEntrance(
+            up: _opensUp(),
+            child: Container(
+              decoration: psMenuPanelDecoration(),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(9),
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640, maxHeight: 360),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.all(6),
+                      shrinkWrap: true,
+                      itemCount: list.length,
+                      itemBuilder: (context, i) {
+                        final highlighted = AutocompleteHighlightedOption.of(context) == i;
+                        return _ChoiceRow(choice: list[i], highlighted: highlighted, showCost: widget.showCost, onTap: () => onSelected(list[i]));
+                      },
+                    ),
+                  ),
                 ),
               ),
             ),
+          ),
         );
       },
     );
@@ -150,40 +186,37 @@ class _ChoiceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = highlighted ? DashUi.faint : Colors.white;
     if (choice.message != null) {
-      return Container(
-        color: Colors.white,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         child: Text(choice.message!, style: const TextStyle(fontSize: 13, color: DashUi.slate)),
       );
     }
     if (choice.custom != null) {
-      return InkWell(
-        onTap: onTap,
-        child: Container(
-          color: bg,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          child: Row(
-            children: [
-              const Icon(Icons.edit_note_rounded, size: 18, color: DashUi.slate),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text.rich(
-                  TextSpan(
-                    children: [
-                      const TextSpan(text: 'Add a custom line: '),
-                      TextSpan(text: '"${choice.custom}"', style: const TextStyle(fontWeight: FontWeight.w800, color: DashUi.ink)),
-                      const TextSpan(text: '  (you enter the price)'),
-                    ],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, color: DashUi.slate),
+      return _tap(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          children: [
+            const Icon(Icons.edit_note_rounded, size: 18, color: DashUi.slate),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    const TextSpan(text: 'Add a custom line: '),
+                    TextSpan(
+                      text: '"${choice.custom}"',
+                      style: const TextStyle(fontWeight: FontWeight.w800, color: DashUi.ink),
+                    ),
+                    const TextSpan(text: '  (you enter the price)'),
+                  ],
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, color: DashUi.slate),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       );
     }
@@ -196,7 +229,10 @@ class _ChoiceRow extends StatelessWidget {
     ].join('  ·  ');
     final Widget price;
     if (e.rate != null) {
-      price = Text(centsMoney((e.rate! * 100).round()), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: [FontFeature.tabularFigures()]));
+      price = Text(
+        centsMoney((e.rate! * 100).round()),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: [FontFeature.tabularFigures()]),
+      );
     } else if (e.rateMin != null && e.rateMax != null && e.rateMin != e.rateMax) {
       price = Text(
         'Price varies\n${centsMoney((e.rateMin! * 100).round())} – ${centsMoney((e.rateMax! * 100).round())}',
@@ -204,39 +240,66 @@ class _ChoiceRow extends StatelessWidget {
         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.amberText, height: 1.3),
       );
     } else {
-      price = const Text('No price on file', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle));
+      price = const Text(
+        'No price on file',
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle),
+      );
     }
-    return InkWell(
-      onTap: onTap,
-      child: Container(
-        color: bg,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-        child: Row(
-          children: [
-            Icon(e.kind == 'service' ? Icons.handyman_outlined : Icons.inventory_2_outlined, size: 18, color: DashUi.slate),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(e.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                  if (meta.isNotEmpty)
-                    Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: DashUi.subtle)),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
+    return _tap(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      child: Row(
+        children: [
+          Icon(e.kind == 'service' ? Icons.handyman_outlined : Icons.inventory_2_outlined, size: 18, color: DashUi.slate),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                price,
-                if (showCost && e.cost != null)
-                  Text('Cost ${centsMoney((e.cost! * 100).round())}', style: const TextStyle(fontSize: 12, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()])),
+                Text(
+                  e.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                ),
+                if (meta.isNotEmpty)
+                  Text(
+                    meta,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, color: DashUi.subtle),
+                  ),
               ],
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              price,
+              if (showCost && e.cost != null)
+                Text(
+                  'Cost ${centsMoney((e.cost! * 100).round())}',
+                  style: const TextStyle(fontSize: 12, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()]),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
+
+  /// A pickable row: a rounded highlight inset in the list (the arrow keys' choice, or the pointer's), a touch darker
+  /// while pressed, as the block's menus have it.
+  Widget _tap({required EdgeInsets padding, required Widget child}) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(6),
+    hoverColor: DashUi.faint,
+    highlightColor: DashUi.line.withValues(alpha: 0.6),
+    splashFactory: NoSplash.splashFactory,
+    child: Ink(
+      decoration: BoxDecoration(color: highlighted ? DashUi.faint : Colors.white.withValues(alpha: 0), borderRadius: BorderRadius.circular(6)),
+      padding: padding,
+      child: child,
+    ),
+  );
 }

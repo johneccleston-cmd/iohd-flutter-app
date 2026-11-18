@@ -420,29 +420,38 @@ class _StatusesScreenState extends State<StatusesScreen> {
                 ),
             ],
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: SizedBox(
-                width: 340,
-                child: AppSegmented<String>(
-                  value: _kind,
-                  options: const [('job', 'Job Statuses'), ('estimate', 'Estimate Statuses')],
-                  onChanged: (v) => setState(() => _kind = v),
-                ),
+          Expanded(
+            child: PageSheet(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 12),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: SizedBox(
+                        width: 340,
+                        child: AppSegmented<String>(
+                          value: _kind,
+                          options: const [('job', 'Job Statuses'), ('estimate', 'Estimate Statuses')],
+                          onChanged: (v) => setState(() => _kind = v),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_readOnly)
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
+                      child: AppNotice(
+                        'Showing the statuses we use today. Adding, editing and deleting turns on once the latest server update is live.',
+                        kind: AppNoticeKind.warning,
+                      ),
+                    ),
+                  Expanded(child: _body()),
+                ],
               ),
             ),
           ),
-          if (_readOnly)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
-              child: AppNotice(
-                'Showing the statuses we use today. Adding, editing and deleting turns on once the latest server update is live.',
-                kind: AppNoticeKind.warning,
-              ),
-            ),
-          Expanded(child: _body()),
         ],
       ),
     );

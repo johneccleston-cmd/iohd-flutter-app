@@ -103,4 +103,37 @@ void main() {
     final text = _printed(await buildProposalPdf(input(const []), compress: false));
     expect(text, contains('This estimate has no line items yet.'));
   });
+
+  // The old 9,999.999 quantity cap: Service Fusion's percentage lines carry the dollar base as the quantity, and a return
+  // is -1. The Qty column (68 pt since 2026-11-13) shows them whole, on one line, with two decimals, and the totals follow.
+  test('quantities above 9,999.999, negative and fractional print whole, with the right amounts', () async {
+    const big = ProposalOption(
+      name: 'Standard',
+      taxRate: 10,
+      lines: [
+        LineDraft(name: 'Clopay Canyon Ridge | CR13 | 16x7 | Complete Door', quantity: 1, rate: 36000, taxable: true),
+        LineDraft(name: '10% Discount (Doors & Openers)', quantity: 35125.3, rate: -0.1),
+        LineDraft(name: '5% Discount', quantity: 49376.125, rate: -0.05),
+        LineDraft(name: 'Return: Weather Seal | Stop Mold', quantity: -1, rate: 10, taxable: true),
+        LineDraft(name: 'Stop Mold | Install New Standard Color', quantity: 68.57, rate: 0.61, taxable: true),
+        LineDraft(name: 'Wire rope (per foot)', quantity: 999999.99, rate: 0.01),
+        // The widest a quantity can be: typed (two decimals) and stored (a third).
+        LineDraft(name: 'Credit', quantity: -999999.99, rate: 0.01),
+        LineDraft(name: 'Stored credit', quantity: -999999.999, rate: 0.01),
+      ],
+    );
+    final bytes = await buildProposalPdf(input([big]), compress: false);
+    File('${out.path}/big_quantities.pdf').writeAsBytesSync(bytes);
+    final words = _printed(bytes).split(' ');
+    // Whole words: a quantity broken over two lines prints as two ("-999,999.9" and "9").
+    for (final q in ['35,125.30', '49,376.125', '-1.00', '68.57', '999,999.99', '-999,999.99', '-999,999.999']) {
+      expect(words, contains(q), reason: 'quantity $q on one line');
+    }
+    for (final a in [r'-$3,512.53', r'-$2,468.81', r'-$10.00', r'$41.83', r'$10,000.00', r'-$10,000.00']) {
+      expect(words, contains(a), reason: 'amount $a');
+    }
+    // 36,000.00 - 3,512.53 - 2,468.81 - 10.00 + 41.83 + 10,000.00 - 10,000.00 - 10,000.00 = 20,050.49 (-9,999.99999 is
+    // -$10,000.00 to the cent); 10% of the 36,031.83 taxed = 3,603.18.
+    expect(words, contains(r'$23,653.67'), reason: 'the total');
+  });
 }

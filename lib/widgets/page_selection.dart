@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart' show Selectable;
+import 'package:flutter/rendering.dart' show Selectable, SelectionRegistrar;
 
 /// Makes all text in the app highlightable and copyable with the mouse, like on a normal website: every page, dialog,
 /// pop-up and the sign-in screen. Wire it up once, in `MaterialApp.router(builder: appSelectionBuilder)`.
@@ -42,25 +42,32 @@ class _AppSelectionState extends State<AppSelection> {
 /// menu, the screen's text cannot be selected, so a drag inside the dialog never picks up the page behind it.
 ///
 /// A screen that is on top is added to the app's selection group exactly as it is, with no extra group around it
-/// (nesting groups confused where a drag starts). A GlobalKey keeps the screen's state when it is moved under the
-/// "disabled" wrapper and back.
-class RouteSelection extends StatefulWidget {
+/// (nesting groups confused where a drag starts). While it is covered, its text registers with a registrar that keeps
+/// nothing. Only the registrar changes: the screen stays where it is in the tree. (It used to be moved under a
+/// `SelectionContainer.disabled` with a GlobalKey, and moving a whole screen like that broke pages with lists in them,
+/// such as the job page: "Duplicate GlobalKeys" and detached parts every time a dialog or menu opened over it.)
+class RouteSelection extends StatelessWidget {
   final Widget child;
   const RouteSelection({super.key, required this.child});
 
   @override
-  State<RouteSelection> createState() => _RouteSelectionState();
+  Widget build(BuildContext context) {
+    final onTop = ModalRoute.isCurrentOf(context) ?? true;
+    final group = SelectionContainer.maybeOf(context);
+    if (group == null) return child; // no selection area above (tests that pump a screen on its own)
+    return SelectionRegistrarScope(registrar: onTop ? group : _covered, child: child);
+  }
 }
 
-class _RouteSelectionState extends State<RouteSelection> {
-  final _key = GlobalKey();
+/// Where a covered screen's text registers: nowhere.
+final _covered = _NoSelection();
+
+class _NoSelection implements SelectionRegistrar {
+  @override
+  void add(Selectable selectable) {}
 
   @override
-  Widget build(BuildContext context) {
-    final screen = KeyedSubtree(key: _key, child: widget.child);
-    final onTop = ModalRoute.isCurrentOf(context) ?? true;
-    return onTop ? screen : SelectionContainer.disabled(child: screen);
-  }
+  void remove(Selectable selectable) {}
 }
 
 /// Puts all the text under it into ONE selection group with a dependable reading order.

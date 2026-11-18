@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
+import '../theme/app_theme.dart';
 import 'app_dialog.dart';
 import 'app_ribbon.dart';
 import 'dashboard_kit.dart';
@@ -20,7 +21,10 @@ class PageBanner extends StatelessWidget {
   /// Set it while a reload is out and the ribbon runs its refresh motion, like a dashboard's.
   final RibbonActivity? activity;
 
-  const PageBanner({super.key, required this.title, this.icon, this.actions = const [], this.activity});
+  /// Right after the title: the page's views as [RibbonTabs] (the Product Catalog's), or badges.
+  final Widget? titleTrailing;
+
+  const PageBanner({super.key, required this.title, this.icon, this.actions = const [], this.activity, this.titleTrailing});
 
   @override
   Widget build(BuildContext context) {
@@ -29,31 +33,114 @@ class PageBanner extends StatelessWidget {
       icon: icon,
       compactSide: 16,
       activity: activity,
+      titleTrailing: titleTrailing,
       controls: [
         for (var i = 0; i < actions.length; i++) ...[if (i > 0) const SizedBox(width: 8), actions[i]],
       ],
     );
   }
 
+  static final ButtonStyle _buttonStyle = FilledButton.styleFrom(
+    minimumSize: const Size(0, 40),
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    backgroundColor: Colors.white,
+    foregroundColor: DashUi.ink,
+    // Off (a request is out, or the page is already in that state): still readable on the navy.
+    disabledBackgroundColor: Colors.white.withValues(alpha: 0.14),
+    disabledForegroundColor: RibbonColors.quiet,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+  );
+
   /// A white button that stays visible on the dark banner.
   static Widget button({required IconData icon, required String label, required VoidCallback? onPressed}) {
-    return FilledButton.icon(
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: FilledButton.styleFrom(
-        minimumSize: const Size(0, 40),
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        backgroundColor: Colors.white,
-        foregroundColor: DashUi.ink,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
-      ),
-      onPressed: onPressed,
-    );
+    return FilledButton.icon(icon: Icon(icon, size: 18), label: Text(label), style: _buttonStyle, onPressed: onPressed);
   }
+
+  /// A white "More" button, like [button], that drops down the page's less-used actions (Job detail's Delete). Off
+  /// when no item can be picked.
+  static Widget more({required List<BannerMenuItem> items, String label = 'More'}) => _BannerMore(items: items, label: label, style: _buttonStyle);
 
   /// A refresh icon for the banner.
   static Widget refresh({required VoidCallback? onPressed}) => RibbonRefreshButton(onPressed: onPressed);
+}
+
+/// One action in a [PageBanner.more] menu. [danger]: a destructive one (Delete), in red. [onPressed] null: shown, off.
+class BannerMenuItem {
+  final IconData icon;
+  final String label;
+  final VoidCallback? onPressed;
+  final bool danger;
+  const BannerMenuItem({required this.icon, required this.label, required this.onPressed, this.danger = false});
+}
+
+class _BannerMore extends StatelessWidget {
+  final List<BannerMenuItem> items;
+  final String label;
+  final ButtonStyle style;
+  const _BannerMore({required this.items, required this.label, required this.style});
+
+  @override
+  Widget build(BuildContext context) {
+    final any = items.any((i) => i.onPressed != null);
+    return MenuAnchor(
+      alignmentOffset: const Offset(0, 6),
+      menuChildren: [
+        for (final i in items)
+          MenuItemButton(
+            onPressed: i.onPressed,
+            leadingIcon: Icon(i.icon, size: 18, color: i.onPressed == null ? DashUi.muted : (i.danger ? DashUi.redText : DashUi.ink)),
+            style: MenuItemButton.styleFrom(minimumSize: const Size(180, 40), padding: const EdgeInsets.symmetric(horizontal: 14)),
+            child: Text(
+              i.label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: i.onPressed == null ? DashUi.muted : (i.danger ? DashUi.redText : DashUi.ink),
+              ),
+            ),
+          ),
+      ],
+      builder: (context, controller, _) => FilledButton.icon(
+        style: style,
+        iconAlignment: IconAlignment.end,
+        icon: Icon(controller.isOpen ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 18),
+        label: Text(label),
+        onPressed: any ? () => controller.isOpen ? controller.close() : controller.open() : null,
+      ),
+    );
+  }
+}
+
+/// The standard page edge for every full screen (user rule, 2026-11-12; bottom removed 2026-11-16): everything below the
+/// ribbon sits on a white sheet with a slight [edge] of the page backdrop on the left and right, none on top or bottom, so
+/// the sheet runs straight out of the ribbon and down to the window's bottom edge. Wrap the whole body under the ribbon in it (the 3 px loading strip can stay above it,
+/// full width under the ribbon). Pages made of blocks (Job detail) use [edge] for their outer padding instead.
+class PageSheet extends StatelessWidget {
+  /// The margin on the left and right. The same as the gutter between Job detail's blocks.
+  static const double edge = 8;
+
+  /// The page edge as padding: the sides only, nothing on top or bottom.
+  static const EdgeInsets padding = EdgeInsets.symmetric(horizontal: edge);
+
+  final Widget child;
+
+  /// The sheet itself. White on every flat page; a page built of blocks can pass the backdrop to let its gutters show.
+  final Color color;
+
+  const PageSheet({super.key, required this.child, this.color = Colors.white});
+
+  @override
+  Widget build(BuildContext context) {
+    return ColoredBox(
+      color: AppTheme.bgColor,
+      child: Padding(
+        padding: padding,
+        // A Material, not a ColoredBox, so ListTile hovers and ink splashes inside still show.
+        child: Material(color: color, child: child),
+      ),
+    );
+  }
 }
 
 class FlatStat {
@@ -381,6 +468,14 @@ class FlatLink extends StatelessWidget {
 /// Pinned under a long table: where you are in the list and how to move, without scrolling to the end of it. One line in
 /// a [compact] window, where every line it takes is a line of the list lost.
 class FlatPager extends StatelessWidget {
+  // Slim arrows keep the bar thin: 30 px square instead of the 40 px compact density gives.
+  static final ButtonStyle _pagerButton = IconButton.styleFrom(
+    minimumSize: const Size(30, 30),
+    maximumSize: const Size(30, 30),
+    padding: EdgeInsets.zero,
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
+
   final int page;
   final int totalPages;
   final int total;
@@ -409,24 +504,24 @@ class FlatPager extends StatelessWidget {
   Widget build(BuildContext context) {
     final count = NumberFormat.decimalPattern();
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 4),
       decoration: const BoxDecoration(border: Border(top: BorderSide(color: DashUi.line))),
       child: Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
         spacing: compact ? 8 : 24,
-        runSpacing: 8,
+        runSpacing: 4,
         children: [
           Wrap(
             spacing: 12,
-            runSpacing: 8,
+            runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               if (!compact) ...[
                 const Text('Rows', style: flatCellMuted),
                 SizedBox(
                   width: 112,
-                  child: AppSegmented<int>(value: pageSize, options: const [(50, '50'), (100, '100')], onChanged: onPageSize),
+                  child: AppSegmented<int>(dense: true, value: pageSize, options: const [(50, '50'), (100, '100')], onChanged: onPageSize),
                 ),
               ],
               Text('${count.format(firstRow)}–${count.format(firstRow + rowsShown - 1)} of ${count.format(total)}', style: flatCellMuted),
@@ -438,6 +533,7 @@ class FlatPager extends StatelessWidget {
               IconButton.outlined(
                 tooltip: 'Previous page',
                 visualDensity: VisualDensity.compact,
+                style: _pagerButton,
                 onPressed: busy || page <= 1 ? null : () => onPage(page - 1),
                 icon: const Icon(Icons.chevron_left_rounded),
               ),
@@ -448,6 +544,7 @@ class FlatPager extends StatelessWidget {
               IconButton.outlined(
                 tooltip: 'Next page',
                 visualDensity: VisualDensity.compact,
+                style: _pagerButton,
                 onPressed: busy || page >= totalPages ? null : () => onPage(page + 1),
                 icon: const Icon(Icons.chevron_right_rounded),
               ),

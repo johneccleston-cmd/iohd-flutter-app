@@ -197,7 +197,7 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
               PageBanner.refresh(onPressed: _loading ? null : _load),
             ],
           ),
-          Expanded(child: _body()),
+          Expanded(child: PageSheet(child: _body())),
         ],
       ),
     );

@@ -194,7 +194,7 @@ void main() {
   });
 
   testWidgets(
-    'the daily briefing shows a live checklist of what it reads, then ranked priorities with reasons, links and definitions',
+    'the daily briefing shows a live checklist of what it reads, then ranked priorities with reasons and links',
     (tester) async {
       final events = [for (final e in _transcript('priorities')['events'] as List) e as Map<String, dynamic>];
       final live = _Live();
@@ -248,8 +248,10 @@ void main() {
         expect(find.text('Low'), findsOneWidget);
         expect(find.textContaining('Suggested: Order 3 today'), findsOneWidget);
         expect(find.textContaining('The biggest of 3 invoices over 60 days'), findsOneWidget);
-        expect(find.text('Dates and definitions'), findsOneWidget);
-        expect(find.textContaining('invoiced jobs (Final Invoice Sent or Check on Payment)'), findsOneWidget);
+        // The answer still carries a `::: basis` block (the server asks for one); since 2026-11-12 it is read and dropped.
+        expect(find.text('Dates and definitions'), findsNothing, reason: 'the dates-and-definitions box was taken out');
+        expect(find.textContaining('invoiced jobs (Final Invoice Sent or Check on Payment)'), findsNothing);
+        expect(find.textContaining('Stuck: active jobs 14+ days'), findsNothing);
         expect(find.text('Which other jobs are stuck?'), findsOneWidget);
         expect(find.textContaining(':::'), findsNothing);
         expect(find.textContaining('](job:'), findsNothing);
@@ -273,7 +275,7 @@ void main() {
         await tester.tap(find.text('1095802214'));
         await _pump(tester, 600);
         expect(_where, '/jobs/1095802214');
-        expect(find.text('Dates and definitions'), findsNothing, reason: 'the panel closed to show the job');
+        expect(find.text('How I got this'), findsNothing, reason: 'the panel closed to show the job');
         await _close(tester);
       }, _server);
     },
@@ -476,7 +478,8 @@ void main() {
       await tester.tap(find.text('Today’s priorities'));
       await _settle(tester);
       expect((_asked.single['messages'] as List).last['content'], _briefingQuestion);
-      expect(find.text('Dates and definitions'), findsOneWidget, reason: 'the briefing answer is drawn as before');
+      expect(find.text('High'), findsNWidgets(2), reason: 'the briefing answer is drawn as before');
+      expect(find.text('Dates and definitions'), findsNothing);
       await _close(tester);
     }, _server);
   });

@@ -23,6 +23,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../config/auth_session.dart';
 import '../theme/app_theme.dart';
 import 'dashboard_kit.dart';
+import 'leave_guard.dart';
 
 part 'assistant_workspace.dart';
 
@@ -215,8 +216,19 @@ class AssistantMessage {
   /// When the answer came back: the figures in it are as of then, which matters once a chat is a few hours old.
   DateTime? at;
 
+  /// The lookups behind this answer exactly as the server ran them (`lookups` in its reply: tool and arguments). They go
+  /// back with this answer in later questions, so a follow-up ("show the full list", "add the date", "why do these two
+  /// differ") can re-run or adjust the same lookup instead of starting over. Never shown.
+  List<Map<String, String>> replay = const [];
+
   AssistantMessage(this.role, this.text, [this.sources = const [], this.calls = const [], this.links = const []]);
 }
+
+/// The `lookups` list of a server reply as [AssistantMessage.replay]: only well-formed {tool, input} pairs, at most 8.
+List<Map<String, String>> _replayFrom(Object? raw) => [
+  for (final l in (raw is List ? raw : const []))
+    if (l is Map && l['tool'] is String && (l['tool'] as String).isNotEmpty) {'tool': l['tool'] as String, 'input': '${l['input'] ?? '{}'}'},
+].take(8).toList();
 
 /// One lookup behind an answer: a line in the live checklist while Jarvis works, then a line under "How I got this".
 class AssistantLookup {
@@ -536,6 +548,7 @@ class AssistantChat extends ChangeNotifier {
                 for (final l in (m['lookups'] as List? ?? const []))
                   if (l is Map) AssistantLookup.fromJson(l),
               ]
+              ..replay = _replayFrom(m['replay'])
               ..at = DateTime.tryParse('${m['at'] ?? ''}'),
           );
         }
@@ -600,6 +613,7 @@ class AssistantChat extends ChangeNotifier {
                       'calls': m.calls,
                       'links': m.links,
                       if (m.lookups.isNotEmpty) 'lookups': [for (final l in m.lookups) l.toJson()],
+                      if (m.replay.isNotEmpty) 'replay': m.replay,
                       if (m.at != null) 'at': m.at!.toIso8601String(),
                     },
                 ],
@@ -671,7 +685,7 @@ class AssistantChat extends ChangeNotifier {
     return _ask();
   }
 
-  List<Map<String, String>> _payload() {
+  List<Map<String, Object>> _payload() {
     final list = List<AssistantMessage>.from(messages);
     while (list.length > _sendMessages) {
       list.removeAt(0);
@@ -684,6 +698,8 @@ class AssistantChat extends ChangeNotifier {
         {
           'role': m.role == AssistantRole.user ? 'user' : 'assistant',
           'content': m.text.length > _maxChars ? m.text.substring(0, _maxChars) : m.text,
+          // what the answer was based on, for follow-ups (the server keeps it for the newest few answers only)
+          if (m.role == AssistantRole.assistant && m.replay.isNotEmpty) 'lookups': m.replay,
         },
     ];
   }
@@ -747,7 +763,9 @@ class AssistantChat extends ChangeNotifier {
         ..body = json.encode({
           'messages': _payload(),
           'stream': true,
-          // The answer blocks this build draws; the server turns them into plain markdown for builds that do not say so.
+          // The answer blocks this build reads; the server turns them into plain markdown for builds that do not say so.
+          // 'basis' stays listed although it is no longer shown (2026-11-12): listed, the server sends the block as is and
+          // the parser drops it; unlisted, the server would turn it into italic lines in the answer text.
           'formats': const ['priorities', 'compare', 'basis'],
           if (usePage && pageContext.isNotEmpty) 'context': pageContext,
         });
@@ -878,6 +896,7 @@ class AssistantChat extends ChangeNotifier {
               )
               ..fresh = !lastAnswerStreamed
               ..lookups = _finishedLookups(body)
+              ..replay = _replayFrom(body['lookups'])
               ..at = now(),
           );
           _save();
@@ -1191,8 +1210,7 @@ class _Parsed {
   final List<_Block> blocks;
   final List<String> followUps;
   final String plain;
-  final List<String> basis; // the "dates and definitions" footnote
-  _Parsed(this.blocks, this.followUps, this.plain, [this.basis = const []]);
+  _Parsed(this.blocks, this.followUps, this.plain);
 }
 
 /// Splits "a | [b | c](customer:x) | d" on the pipes that are not inside a link's [text] or (target).
@@ -1339,8 +1357,8 @@ String? _streamHolding(String text) {
       return 'Ranking the priorities…';
     case 'compare':
       return 'Lining up the comparison…';
-    case 'basis':
-      return 'Noting the dates and definitions…';
+    case 'basis': // read and dropped (see _parse): all that is left is the last few lines of the answer
+      return 'Finishing up…';
     default:
       break;
   }
@@ -1366,13 +1384,13 @@ List<String> _cells(String l) {
 
 /// Understands the slice of markdown the assistant uses (**bold**, bullets, numbered lists, ## headings,
 /// pipe tables) plus the directive blocks: `::: stats` ("value | label" lines), `::: chart`, `::: priorities`,
-/// `::: compare`, `::: basis` (the dates-and-definitions footnote) and `::: followups`.
+/// `::: compare` and `::: followups`. A `::: basis` block (the dates-and-definitions footnote the server still asks the
+/// model for) is read and dropped: it is neither shown nor copied (taken out of the panel 2026-11-12).
 _Parsed _parse(String text) {
   final lines = text.split('\n');
   final blocks = <_Block>[];
   final followUps = <String>[];
   final plain = <String>[];
-  final basis = <String>[];
   _Para? prevPara; // the previous plain line, when nothing but a line break separates it from this one
   var i = 0;
   while (i < lines.length) {
@@ -1452,13 +1470,7 @@ _Parsed _parse(String text) {
           }
         }
       } else if (kind == 'basis') {
-        for (final b in body) {
-          final t = b.replaceFirst(_bulletRe, '').trim();
-          if (t.isNotEmpty) basis.add(t);
-        }
-        for (final t in basis) {
-          plain.add('Basis: ${_stripMd(t)}');
-        }
+        // not shown (see above)
       } else if (kind == 'chart') {
         final chart = _parseChart(body);
         if (chart != null) {
@@ -1574,7 +1586,7 @@ _Parsed _parse(String text) {
       prevPara = para;
     }
   }
-  return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim(), basis.take(4).toList());
+  return _Parsed(blocks, followUps.take(3).toList(), plain.join('\n').trim());
 }
 
 // =============================================================================
@@ -1607,8 +1619,28 @@ class _AssistantPanelState extends State<_AssistantPanel> {
   static bool? _sideChoice; // set when the person toggles the chat list; remembered while the app is open
 
   /// The chat list starts open on a roomy window and closed on a narrow one, where it would leave the chat a sliver.
-  bool _sideOpen(double screen) => _sideChoice ?? screen >= 760;
+  /// On a phone-width window it is a drawer over the chat instead (see [_drawerBelow]): that one always starts closed,
+  /// whatever was chosen on a wider window, and is opened and closed on its own.
+  bool _sideOpen(double screen) => screen < _drawerBelow ? _drawerOpen : (_sideChoice ?? screen >= 760);
+  bool _drawerOpen = false;
+  void _setSideOpen(double screen, bool open) => setState(() {
+    if (screen < _drawerBelow) {
+      _drawerOpen = open;
+    } else {
+      _sideChoice = open;
+    }
+  });
   static const _sideWidth = 216.0;
+  static const _drawerBelow = 600.0; // a window narrower than this opens the chat list over the chat, not beside it
+  bool _drawer = false; // the chat list is a drawer over the chat right now (set in build)
+
+  /// Runs a tap in the chat list, then closes the list when it is a drawer over the chat, so the result is in view.
+  VoidCallback? _sideTap(VoidCallback? f) => f == null
+      ? null
+      : () {
+          f();
+          if (_drawer && mounted) setState(() => _drawerOpen = false);
+        };
   static bool _recentOpen = true; // the saved chats under "Recent chats", remembered while the app is open
   bool _showJump = false; // scrolled away from the bottom of a long thread
   // Whether the thread keeps itself pinned to the bottom as words arrive. Any scroll up by the person turns it off at once
@@ -1726,16 +1758,26 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         builder: (context, _) => Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(18, 18, 16, 14),
+            Padding(
+              padding: EdgeInsets.fromLTRB(18, _drawer ? 10 : 18, _drawer ? 6 : 16, _drawer ? 6 : 14),
               child: Row(
                 children: [
-                  JarvisMark(size: 22),
-                  SizedBox(width: 10),
-                  Text(
-                    'Jarvis',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: _navy, letterSpacing: -0.3),
+                  const JarvisMark(size: 22),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      'Jarvis',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: _navy, letterSpacing: -0.3),
+                    ),
                   ),
+                  // As a drawer it covers the title bar's chat-list button, so it closes from here (or a tap beside it).
+                  if (_drawer)
+                    IconButton(
+                      tooltip: 'Hide chats',
+                      onPressed: () => setState(() => _drawerOpen = false),
+                      icon: const Icon(Icons.menu_open_rounded, size: 20),
+                      color: _slate,
+                    ),
                 ],
               ),
             ),
@@ -1747,7 +1789,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   _SideRow(
                     icon: Icons.add_circle_outline_rounded,
                     label: 'New chat',
-                    onTap: _chat.canAddChat ? _chat.newChat : null,
+                    onTap: _sideTap(_chat.canAddChat ? _chat.newChat : null),
                   ),
                   _SideRow(
                     icon: Icons.schedule_rounded,
@@ -1779,7 +1821,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                               label: _chat.chats[i].label,
                               selected: i == _chat.active,
                               enabled: !_chat.busy,
-                              onTap: () => _chat.selectChat(i),
+                              onTap: _sideTap(() => _chat.selectChat(i))!,
                               onRename: () => _rename(i),
                               onDelete: () => _delete(i),
                             ),
@@ -1805,17 +1847,16 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                         children: [
                           // the daily briefing: what to act on first and why
                           _SideRow(
-                            icon: Icons.auto_awesome_rounded,
-                            iconColor: _brandRed,
+                            icon: Icons.checklist_rounded,
                             label: 'Today’s priorities',
                             small: true,
-                            onTap: _chat.busy ? null : () => _submit(_briefingQuestion),
+                            onTap: _sideTap(_chat.busy ? null : () => _submit(_briefingQuestion)),
                           ),
                           _SideRow(
                             icon: Icons.chat_bubble_outline_rounded,
                             label: 'Ask a question',
                             small: true,
-                            onTap: () => _inputFocus.requestFocus(),
+                            onTap: _sideTap(() => _inputFocus.requestFocus()),
                           ),
                         ],
                       ),
@@ -1931,6 +1972,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
     final minWidth = (sideOpen ? 680.0 : 480.0).clamp(0.0, screen);
     final auto = screen * (_wide ? 0.92 : 0.62);
     final width = (_userWidth ?? auto).clamp(minWidth, screen);
+    _drawer = screen < _drawerBelow;
     final base = Theme.of(context);
     // Ctrl+J opens Jarvis from anywhere in the app, so the same keys close it again (Esc does too).
     void close() => Navigator.of(context).maybePop();
@@ -1964,13 +2006,40 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   decoration: const BoxDecoration(
                     border: Border(left: BorderSide(color: _stroke)),
                   ),
+                  // On a phone-width panel the chat list opens over the chat as a drawer (tap outside it to close it)
+                  // instead of beside it, where it left the chat too narrow for its own title bar (2026-11-12).
                   child: SafeArea(
-                    child: Row(
-                      children: [
-                        if (sideOpen) _Arrive(begin: 0.2, end: 0.62, rise: 0, child: _sidebar()),
-                        Expanded(child: _chatColumn(screen)),
-                      ],
-                    ),
+                    child: _drawer
+                        ? Stack(
+                            children: [
+                              Positioned.fill(child: _chatColumn(screen)),
+                              if (sideOpen) ...[
+                                Positioned.fill(
+                                  child: GestureDetector(
+                                    onTap: () => setState(() => _drawerOpen = false),
+                                    child: ColoredBox(color: _navy.withValues(alpha: 0.18)),
+                                  ),
+                                ),
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  child: DecoratedBox(
+                                    decoration: BoxDecoration(
+                                      boxShadow: [BoxShadow(color: _navy.withValues(alpha: 0.12), blurRadius: 16)],
+                                    ),
+                                    child: _sidebar(),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          )
+                        : Row(
+                            children: [
+                              if (sideOpen) _Arrive(begin: 0.2, end: 0.62, rise: 0, child: _sidebar()),
+                              Expanded(child: _chatColumn(screen)),
+                            ],
+                          ),
                   ),
                 ),
                 // drag handle on the left edge
@@ -2101,7 +2170,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
         children: [
           IconButton(
             tooltip: _sideOpen(screen) ? 'Hide chats' : 'Show chats',
-            onPressed: () => setState(() => _sideChoice = !_sideOpen(screen)),
+            onPressed: () => _setSideOpen(screen, !_sideOpen(screen)),
             icon: Icon(_sideOpen(screen) ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
             color: _slate,
           ),
@@ -2289,7 +2358,23 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                   animation: _input,
                   builder: (context, _) {
                     final len = _input.text.length;
-                    if (!_canAsk || len < _maxChars * 0.9) return const SizedBox(height: 16); // only the character limit is worth saying
+                    if (!_canAsk) return const SizedBox(height: 16);
+                    if (len < _maxChars * 0.9) {
+                      // While typing, the one thing worth knowing about the box: Enter sends, Shift+Enter adds a line.
+                      final typing = _inputFocus.hasFocus && len > 0;
+                      return AnimatedOpacity(
+                        duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 160),
+                        opacity: typing ? 1 : 0,
+                        child: const SizedBox(
+                          height: 16,
+                          child: Text(
+                            'Enter to send · Shift+Enter for a new line',
+                            textAlign: TextAlign.right,
+                            style: TextStyle(fontSize: 12, color: DashUi.subtle, height: 1.3),
+                          ),
+                        ),
+                      );
+                    }
                     return Text(
                       '$len / $_maxChars characters${len >= _maxChars ? ' · that is the limit, anything longer is cut off' : ''}',
                       style: TextStyle(fontSize: 12, color: len >= _maxChars ? DashUi.redText : DashUi.subtle, height: 1.4),
@@ -2503,7 +2588,6 @@ class _ChatRowState extends State<_ChatRow> {
 /// A row in the left column: an icon and a label, greyed out while it can't be used.
 class _SideRow extends StatefulWidget {
   final IconData icon;
-  final Color? iconColor;
   final String label;
   final Widget? trailing;
   final bool small; // the quick actions, a size under the main rows
@@ -2511,7 +2595,6 @@ class _SideRow extends StatefulWidget {
   final VoidCallback? onTap;
   const _SideRow({
     required this.icon,
-    this.iconColor,
     required this.label,
     this.trailing,
     this.small = false,
@@ -2543,7 +2626,7 @@ class _SideRowState extends State<_SideRow> {
             padding: EdgeInsets.symmetric(horizontal: 8, vertical: widget.small ? 7 : 8),
             child: Row(
               children: [
-                Icon(widget.icon, size: widget.small ? 17 : 18, color: on ? (widget.iconColor ?? _navy) : DashUi.subtle),
+                Icon(widget.icon, size: widget.small ? 17 : 18, color: on ? _navy : DashUi.subtle),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
@@ -2669,8 +2752,8 @@ class _UserMessageState extends State<_UserMessage> {
       padding: const EdgeInsets.fromLTRB(14, 6, 8, 8),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _brandRed.withValues(alpha: 0.55)),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: _navy.withValues(alpha: 0.35)), // the same as the message box when it has focus
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -2712,14 +2795,18 @@ class _UserMessageState extends State<_UserMessage> {
             mainAxisAlignment: MainAxisAlignment.end,
             children: [
               const Expanded(
-                child: Text('Answers below this question will be replaced.', style: TextStyle(fontSize: 11, color: _muted)),
+                child: Text('Answers below this question will be replaced.', style: TextStyle(fontSize: 12, color: DashUi.subtle)),
               ),
-              TextButton(onPressed: () => setState(() => _editing = false), child: const Text('Cancel')),
+              TextButton(
+                onPressed: () => setState(() => _editing = false),
+                style: TextButton.styleFrom(foregroundColor: _slate),
+                child: const Text('Cancel'),
+              ),
               const SizedBox(width: 4),
               FilledButton(
                 onPressed: _send,
                 style: FilledButton.styleFrom(
-                  backgroundColor: _brandRed,
+                  backgroundColor: _navy, // the Send button's navy, as in the message box
                   visualDensity: VisualDensity.compact,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
@@ -2878,8 +2965,6 @@ class _AnswerViewState extends State<_AnswerView> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 for (final b in blocks) KeyedSubtree(key: ObjectKey(b), child: reveal(_blockView(b))),
-                if (_parsed.basis.isNotEmpty)
-                  reveal(_BasisNote(lines: _parsed.basis, links: {for (final l in widget.message.links) _linkKey(l)})),
               ],
             ),
           ),
@@ -2902,12 +2987,17 @@ class _AnswerViewState extends State<_AnswerView> {
           ),
         ),
       ),
+      // A section heading: a clear step above the body (weight more than size), with more room above than below so it
+      // belongs to what follows. The first block of an answer needs no room above it.
       _Head() => Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 8),
-        child: Text.rich(
-          TextSpan(
-            style: _bodyStyle.copyWith(fontSize: 18, fontWeight: FontWeight.w600, height: 1.35),
-            children: _inlineSpans(b.text, _bodyStyle.copyWith(fontSize: 18, height: 1.35), links: links),
+        padding: EdgeInsets.only(top: identical(b, _parsed.blocks.first) ? 0 : 12, bottom: 6),
+        child: Semantics(
+          header: true,
+          child: Text.rich(
+            TextSpan(
+              style: _headStyle,
+              children: _inlineSpans(b.text, _headStyle, links: links),
+            ),
           ),
         ),
       ),
@@ -3017,10 +3107,10 @@ class _AnswerViewState extends State<_AnswerView> {
   Widget _callsBox(AssistantMessage m) {
     final at = m.at;
     return Container(
-      margin: const EdgeInsets.only(top: 6, bottom: 2),
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      margin: const EdgeInsets.only(top: 8, bottom: 2),
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
       width: double.infinity,
-      decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
+      decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(12)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -3028,13 +3118,13 @@ class _AnswerViewState extends State<_AnswerView> {
             children: [
               const Text(
                 'How I got this',
-                style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: _slate),
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _ink),
               ),
               const Spacer(),
               if (at != null)
                 Text(
                   'Looked up ${_answerTime(at, AssistantChat.now())}',
-                  style: const TextStyle(fontSize: 11.5, color: DashUi.subtle),
+                  style: const TextStyle(fontSize: 12, color: DashUi.subtle),
                 ),
             ],
           ),
@@ -3076,36 +3166,52 @@ class _AnswerViewState extends State<_AnswerView> {
             _MiniAction(icon: Icons.replay_rounded, label: 'Ask again', onTap: () => widget.onAsk(widget.question!)),
           _vote('up', Icons.thumb_up_outlined, Icons.thumb_up_rounded, 'Good answer'),
           _vote('down', Icons.thumb_down_outlined, Icons.thumb_down_rounded, 'Not helpful'),
+          // Where the figures came from, as a quiet outlined chip (it opens "How I got this"), so it reads as the answer's
+          // citation and not as one more button in the row.
           if (sources.isNotEmpty || detail)
             Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(6),
-                onTap: detail ? () => setState(() => _showCalls = !_showCalls) : null,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        gaps > 0 ? Icons.warning_amber_rounded : Icons.verified_outlined,
-                        size: 14,
-                        color: gaps > 0 ? DashUi.amberText : DashUi.subtle,
-                      ),
-                      const SizedBox(width: 5),
-                      Flexible(
-                        child: Text(
-                          [
-                            if (sources.isNotEmpty) 'Checked ${sources.join(' · ')}' else 'How I got this',
-                            if (gaps > 0) gaps == 1 ? '1 part not fully read' : '$gaps parts not fully read',
-                            if (at != null) _answerTime(at, AssistantChat.now()),
-                          ].join(' · '),
-                          style: TextStyle(fontSize: 11.5, color: gaps > 0 ? DashUi.amberText : DashUi.subtle),
+              padding: const EdgeInsets.only(left: 8),
+              child: Material(
+                color: _showCalls ? _fill : Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  side: BorderSide(color: gaps > 0 ? DashUi.amber.withValues(alpha: 0.45) : _stroke),
+                ),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: detail ? () => setState(() => _showCalls = !_showCalls) : null,
+                  hoverColor: _fill,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          gaps > 0 ? Icons.warning_amber_rounded : Icons.fact_check_outlined,
+                          size: 14,
+                          color: gaps > 0 ? DashUi.amberText : _slate,
                         ),
-                      ),
-                      if (detail)
-                        Icon(_showCalls ? Icons.expand_less_rounded : Icons.expand_more_rounded, size: 16, color: DashUi.subtle),
-                    ],
+                        const SizedBox(width: 6),
+                        Flexible(
+                          child: Text(
+                            [
+                              if (sources.isNotEmpty) 'Checked ${sources.join(' · ')}' else 'How I got this',
+                              if (gaps > 0) gaps == 1 ? '1 part not fully read' : '$gaps parts not fully read',
+                              if (at != null) _answerTime(at, AssistantChat.now()),
+                            ].join(' · '),
+                            style: TextStyle(fontSize: 12, color: gaps > 0 ? DashUi.amberText : _slate, height: 1.3),
+                          ),
+                        ),
+                        if (detail) ...[
+                          const SizedBox(width: 2),
+                          AnimatedRotation(
+                            turns: _showCalls ? 0.5 : 0,
+                            duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 200),
+                            child: const Icon(Icons.expand_more_rounded, size: 16, color: DashUi.subtle),
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -3117,11 +3223,23 @@ class _AnswerViewState extends State<_AnswerView> {
 
   Widget _followUps() {
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: [for (final q in _parsed.followUps) _FollowUpChip(text: q, onTap: () => widget.onAsk(q))],
+      padding: const EdgeInsets.only(top: 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 2, bottom: 8),
+            child: Text(
+              'Ask next',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle, height: 1.3),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [for (final q in _parsed.followUps) _FollowUpChip(text: q, onTap: () => widget.onAsk(q))],
+          ),
+        ],
       ),
     );
   }
@@ -3152,35 +3270,49 @@ class _MiniAction extends StatelessWidget {
   }
 }
 
-class _FollowUpChip extends StatelessWidget {
+class _FollowUpChip extends StatefulWidget {
   final String text;
   final VoidCallback onTap;
   const _FollowUpChip({required this.text, required this.onTap});
 
   @override
+  State<_FollowUpChip> createState() => _FollowUpChipState();
+}
+
+class _FollowUpChipState extends State<_FollowUpChip> {
+  bool _lit = false; // hovered or focused
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(20),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        hoverColor: _fill,
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 7, 10, 7),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: _stroke),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Flexible(
-                child: Text(text, style: const TextStyle(fontSize: 13.5, color: _ink, height: 1.3)),
-              ),
-              const SizedBox(width: 6),
-              const Icon(Icons.arrow_outward_rounded, size: 13, color: _muted),
-            ],
+    final radius = BorderRadius.circular(10);
+    return Semantics(
+      button: true,
+      label: 'Ask: ${widget.text}',
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: radius,
+          side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.28) : _stroke),
+        ),
+        child: InkWell(
+          onTap: widget.onTap,
+          onHover: (v) => setState(() => _lit = v),
+          onFocusChange: (v) => setState(() => _lit = v),
+          borderRadius: radius,
+          hoverColor: _navy.withValues(alpha: 0.025),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 7, 12, 7),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.subdirectory_arrow_right_rounded, size: 15, color: _lit ? _navy : DashUi.subtle),
+                const SizedBox(width: 6),
+                Flexible(
+                  child: Text(widget.text, style: const TextStyle(fontSize: 13.5, color: _ink, height: 1.3)),
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -3196,6 +3328,17 @@ class _FollowUpChip extends StatelessWidget {
 /// so it silently became Roboto there.)
 const TextStyle _serifStyle = TextStyle(color: _ink);
 final TextStyle _bodyStyle = _serifStyle.copyWith(fontSize: 15.5, height: 1.6);
+final TextStyle _headStyle = _serifStyle.copyWith(fontSize: 17, fontWeight: FontWeight.w700, letterSpacing: -0.2, height: 1.4);
+
+/// Column headings in every table Jarvis draws (tables and comparisons): small capitals in slate, one style throughout.
+const TextStyle _tableHeadStyle = TextStyle(fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.6, color: _slate, height: 1.3);
+
+/// A negative amount or change in a table ("-$1,200", "($450)", "−3%"): shown in red so a loss or a credit is not read
+/// as a normal figure. The sign or brackets stay, so it does not rely on colour.
+bool _isNegativeFigure(String s) {
+  final t = s.trim();
+  return RegExp(r'^[-−]\s?\$?\d').hasMatch(t) || RegExp(r'^\(\$?[\d,.]+\)$').hasMatch(t) || RegExp(r'^\$\s?-\d').hasMatch(t);
+}
 
 // A link target may hold spaces only for the app's own records ("customer:Riverside Logistics"); a web address may not.
 final RegExp _inlineRe = RegExp(
@@ -3307,11 +3450,13 @@ class _WebLinkState extends State<_WebLink> {
 
   @override
   Widget build(BuildContext context) {
+    // the same look as a record link (see _RecordLink): ink with a faint underline, red on hover
     final style = widget.style.copyWith(
-      color: _brandRed,
+      color: _hover ? _brandRed : _navy,
       fontWeight: FontWeight.w600,
-      decoration: _hover ? TextDecoration.underline : TextDecoration.none,
-      decorationColor: _brandRed,
+      decoration: TextDecoration.underline,
+      decorationColor: _hover ? _brandRed : _navy.withValues(alpha: 0.28),
+      decorationThickness: _hover ? 1.6 : 1.2,
     );
     return Semantics(
       link: true,
@@ -3331,7 +3476,11 @@ class _WebLinkState extends State<_WebLink> {
                   alignment: PlaceholderAlignment.middle,
                   child: Padding(
                     padding: const EdgeInsets.only(left: 3),
-                    child: Icon(Icons.open_in_new_rounded, size: (widget.style.fontSize ?? 15) * 0.8, color: _brandRed),
+                    child: Icon(
+                      Icons.open_in_new_rounded,
+                      size: (widget.style.fontSize ?? 15) * 0.8,
+                      color: _hover ? _brandRed : _slate,
+                    ),
                   ),
                 ),
               ],
@@ -4064,6 +4213,45 @@ class _ChatTableState extends State<_ChatTable> {
 
   List<String> _fit(List<String> r) => [for (var c = 0; c < _cols; c++) c < r.length ? _stripMd(r[c]) : ''];
 
+  /// Per label column, the width of its longest word or number with the cell's padding, so the column never gets narrower
+  /// than that: a stuck-jobs answer showed a job number split over two lines ("109580665 / 0") and "Partially Complete"
+  /// broken inside a word, because a long notes column took the width. Number columns are 0 (they hug their content
+  /// anyway). Capped, so one very long word (a link, a part number) still wraps instead of taking the table.
+  List<double> _wordFloors(BuildContext context) {
+    final base = DefaultTextStyle.of(context).style;
+    final scaler = MediaQuery.textScalerOf(context);
+    final bodyStyle = base.merge(const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.3));
+    final headStyle = base.merge(_tableHeadStyle);
+    final space = RegExp(r'\s+');
+    double widest(Iterable<String> words, TextStyle style) {
+      // only the few longest by length are worth measuring
+      final pick = (words.where((w) => w.isNotEmpty).toSet().toList()..sort((a, b) => b.length.compareTo(a.length))).take(6);
+      var best = 0.0;
+      for (final w in pick) {
+        final tp = TextPainter(text: TextSpan(text: w, style: style), textDirection: TextDirection.ltr, maxLines: 1, textScaler: scaler)
+          ..layout();
+        if (tp.width > best) best = tp.width;
+        tp.dispose();
+      }
+      return best;
+    }
+
+    return [
+      for (var c = 0; c < _cols; c++)
+        if (_numeric[c] || c == _barCol)
+          0.0
+        else
+          math.min(
+            220.0,
+            math.max(widest([for (final r in [..._body, ..._totals]) ...r[c].split(space)], bodyStyle),
+                    widest(_header[c].toUpperCase().split(space), headStyle)) +
+                24 + // cell padding
+                (c == _statusIdx ? 16 : 0) + // the status dot and its gap
+                2,
+          ),
+    ];
+  }
+
   bool _isTotal(List<String> r) => RegExp(r'^(grand\s+)?total\b', caseSensitive: false).hasMatch(r.first.trim());
 
   static double _num(String s) {
@@ -4152,9 +4340,10 @@ class _ChatTableState extends State<_ChatTable> {
       }
     }
 
+    // The sorted column says so in ink with an arrow, not in red: red is kept for what needs attention.
     Widget headCell(int c) => InkWell(
       onTap: () => _sortBy(c),
-      hoverColor: Colors.black.withValues(alpha: 0.04),
+      hoverColor: _navy.withValues(alpha: 0.04),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
         child: Row(
@@ -4165,17 +4354,12 @@ class _ChatTableState extends State<_ChatTable> {
                 _header[c].toUpperCase(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.5,
-                  color: _sortCol == c ? _brandRed : _slate,
-                ),
+                style: _tableHeadStyle.copyWith(color: _sortCol == c ? _navy : _slate),
               ),
             ),
             if (_sortCol == c) ...[
               const SizedBox(width: 3),
-              Icon(_asc ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 12, color: _brandRed),
+              Icon(_asc ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 12, color: _navy),
             ],
           ],
         ),
@@ -4187,8 +4371,8 @@ class _ChatTableState extends State<_ChatTable> {
       final raw = _raw[r]?[c] ?? t;
       final style = TextStyle(
         fontSize: 13,
-        fontWeight: total ? FontWeight.w800 : (c == 0 ? FontWeight.w600 : FontWeight.w500),
-        color: _ink,
+        fontWeight: total ? FontWeight.w700 : (c == 0 ? FontWeight.w600 : FontWeight.w500),
+        color: _numeric[c] && _isNegativeFigure(t) ? DashUi.redText : _ink,
         height: 1.3,
         fontFeatures: _numeric[c] ? const [FontFeature.tabularFigures()] : null,
       );
@@ -4214,41 +4398,53 @@ class _ChatTableState extends State<_ChatTable> {
           ],
         );
       }
-      Widget padded = Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), child: text);
       if (c == _barCol && !total && maxBar > 0) {
+        // A thin bar under the amount, growing from the right edge where the amount sits, so the two read as one figure.
+        // (The full-height tinted block it replaced started at the left, far from its number, and in red.)
         final f = (_num(t) / maxBar).clamp(0.0, 1.0);
-        padded = Stack(
-          alignment: AlignmentDirectional.centerEnd, // the amount sits right, under its header, like the other number columns
-          children: [
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: FractionallySizedBox(
-                    widthFactor: f,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(color: _brandRed.withValues(alpha: 0.09), borderRadius: BorderRadius.circular(5)),
-                      child: const SizedBox(height: double.infinity),
-                    ),
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              text,
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FractionallySizedBox(
+                  widthFactor: f,
+                  child: Container(
+                    height: 3,
+                    decoration: BoxDecoration(color: _navy.withValues(alpha: 0.22), borderRadius: BorderRadius.circular(2)),
                   ),
                 ),
               ),
-            ),
-            padded,
-          ],
+            ],
+          ),
         );
       }
-      return padded;
+      return Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10), child: text);
     }
 
     // Label columns share the width and wrap; number columns hug their content, except the bar column
-    // which needs room for its bar. So the table always fits the panel without side-scrolling.
-    final table = Table(
-      columnWidths: {
-        for (var c = 0; c < _cols; c++)
-          c: c == barCol ? const FlexColumnWidth(1.1) : (_numeric[c] ? const IntrinsicColumnWidth() : FlexColumnWidth(_flex[c])),
-      },
+    // which needs room for its bar. So the table always fits the panel without side-scrolling. A label column never
+    // gets narrower than its longest word (see _wordFloors), shrunk together only when the panel is too narrow for them.
+    final floors = _wordFloors(context);
+    Widget tableFor(double width) {
+      final total = floors.fold<double>(0, (t, w) => t + w);
+      final budget = width * 0.72; // the rest is for the number columns
+      final scale = total > budget && total > 0 ? budget / total : 1.0;
+      return Table(
+        columnWidths: {
+          for (var c = 0; c < _cols; c++)
+            c: c == barCol
+                ? const FlexColumnWidth(1.1)
+                : _numeric[c]
+                ? const IntrinsicColumnWidth()
+                : floors[c] > 0
+                ? MaxColumnWidth(FixedColumnWidth(floors[c] * scale), FlexColumnWidth(_flex[c]))
+                : FlexColumnWidth(_flex[c]),
+        },
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
       border: const TableBorder(horizontalInside: BorderSide(color: _stroke)),
       children: [
@@ -4259,11 +4455,15 @@ class _ChatTableState extends State<_ChatTable> {
         for (final r in shown) TableRow(children: [for (var c = 0; c < _cols; c++) cell(r, c)]),
         for (final r in _totals)
           TableRow(
-            decoration: BoxDecoration(color: _tint.withValues(alpha: 0.6)),
+            decoration: const BoxDecoration(
+              color: _fill,
+              border: Border(top: BorderSide(color: DashUi.muted)),
+            ),
             children: [for (var c = 0; c < _cols; c++) cell(r, c, total: true)],
           ),
       ],
     );
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -4278,10 +4478,10 @@ class _ChatTableState extends State<_ChatTable> {
           LayoutBuilder(
             builder: (context, box) {
               final minW = _cols * 110.0;
-              if (box.maxWidth >= minW) return table;
+              if (box.maxWidth >= minW) return tableFor(box.maxWidth);
               return SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
-                child: SizedBox(width: minW, child: table),
+                child: SizedBox(width: minW, child: tableFor(minW)),
               );
             },
           ),
@@ -4303,7 +4503,7 @@ class _ChatTableState extends State<_ChatTable> {
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
                     child: Text(
                       '${sorted.length} ${sorted.length == 1 ? 'row' : 'rows'}',
-                      style: const TextStyle(fontSize: 11.5, color: _muted),
+                      style: const TextStyle(fontSize: 12, color: DashUi.subtle),
                     ),
                   ),
                 const Spacer(),
@@ -4326,6 +4526,24 @@ class _ChatTableState extends State<_ChatTable> {
 // =============================================================================
 // Thinking + error
 // =============================================================================
+
+/// Jarvis's mark at work: the red star turns a quarter turn, swelling a little, once per beat of [anim] (the same motion
+/// as the Ask Jarvis button's hover, so it reads as "Jarvis is busy", not as a generic AI sparkle). Still under reduced
+/// motion. A quarter turn brings a four-point star back to where it started, so the loop has no visible seam.
+class _WorkingMark extends StatelessWidget {
+  final Animation<double> anim;
+  final double size;
+  const _WorkingMark({required this.anim, this.size = 20});
+
+  @override
+  Widget build(BuildContext context) {
+    if (MediaQuery.disableAnimationsOf(context)) return JarvisMark(size: size);
+    return AnimatedBuilder(
+      animation: anim,
+      builder: (context, _) => JarvisMark(size: size, twinkle: Curves.easeInOutCubic.transform(anim.value)),
+    );
+  }
+}
 
 class _SlideGradient extends GradientTransform {
   final double p;
@@ -4396,12 +4614,7 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
           padding: const EdgeInsets.only(top: 2, bottom: 18),
           child: Row(
             children: [
-              ScaleTransition(
-                scale: still
-                    ? const AlwaysStoppedAnimation(1.0)
-                    : Tween(begin: 0.85, end: 1.1).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-                child: const Icon(Icons.auto_awesome_rounded, size: 18, color: _brandRed),
-              ),
+              _WorkingMark(anim: _c, size: 18),
               if (widget.note != null) ...[
                 const SizedBox(width: 8),
                 AnimatedSwitcher(
@@ -4458,12 +4671,7 @@ class _ThinkingState extends State<_Thinking> with SingleTickerProviderStateMixi
   Widget _headline(bool still, int secs, int i) {
     return Row(
       children: [
-        ScaleTransition(
-          scale: still
-              ? const AlwaysStoppedAnimation(1.0)
-              : Tween(begin: 0.9, end: 1.08).animate(CurvedAnimation(parent: _c, curve: Curves.easeInOut)),
-          child: const Icon(Icons.auto_awesome_rounded, size: 20, color: _brandRed),
-        ),
+        _WorkingMark(anim: _c),
         const SizedBox(width: 10),
         Flexible(
           child: AnimatedBuilder(
@@ -4529,6 +4737,41 @@ class _ErrorNote extends StatelessWidget {
   final VoidCallback? onEdit;
   const _ErrorNote({required this.message, required this.onRetry, this.kind, this.onEdit});
 
+  /// "Try again" in ink as the way forward, "Edit question" outlined beside it.
+  static Widget _errorButton(IconData icon, String label, VoidCallback onTap, {bool primary = false}) {
+    final shape = RoundedRectangleBorder(borderRadius: BorderRadius.circular(8));
+    const pad = EdgeInsets.symmetric(horizontal: 12);
+    const text = TextStyle(fontSize: 13, fontWeight: FontWeight.w600);
+    return primary
+        ? FilledButton.icon(
+            onPressed: onTap,
+            icon: Icon(icon, size: 16),
+            label: Text(label, style: text),
+            style: FilledButton.styleFrom(
+              backgroundColor: _navy,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(0, 34),
+              padding: pad,
+              visualDensity: VisualDensity.compact,
+              shape: shape,
+            ),
+          )
+        : OutlinedButton.icon(
+            onPressed: onTap,
+            icon: Icon(icon, size: 16),
+            label: Text(label, style: text),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _ink,
+              backgroundColor: Colors.white,
+              side: const BorderSide(color: _stroke),
+              minimumSize: const Size(0, 34),
+              padding: pad,
+              visualDensity: VisualDensity.compact,
+              shape: shape,
+            ),
+          );
+  }
+
   @override
   Widget build(BuildContext context) {
     // The message already says what to do (the server's or the app's own wording), so the title only names what happened.
@@ -4546,11 +4789,11 @@ class _ErrorNote extends StatelessWidget {
       liveRegion: true,
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+        padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
         decoration: BoxDecoration(
-          color: DashUi.red.withValues(alpha: 0.06),
+          color: DashUi.red.withValues(alpha: 0.045),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: DashUi.red.withValues(alpha: 0.25)),
+          border: Border.all(color: DashUi.red.withValues(alpha: 0.2)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -4566,18 +4809,19 @@ class _ErrorNote extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.redText),
+                    style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.redText, height: 1.3),
                   ),
-                  const SizedBox(height: 2),
-                  Text(message, style: const TextStyle(fontSize: 12.5, color: _ink, height: 1.4)),
+                  const SizedBox(height: 3),
+                  Text(message, style: const TextStyle(fontSize: 13.5, color: _ink, height: 1.45)),
                   if (canRetry || onEdit != null)
                     Padding(
-                      padding: const EdgeInsets.only(top: 2),
+                      padding: const EdgeInsets.only(top: 10, bottom: 2),
                       child: Wrap(
-                        spacing: 4,
+                        spacing: 8,
+                        runSpacing: 6,
                         children: [
-                          if (canRetry) TextButton(onPressed: onRetry, child: const Text('Try again')),
-                          if (onEdit != null && canRetry) TextButton(onPressed: onEdit, child: const Text('Edit question')),
+                          if (canRetry) _errorButton(Icons.refresh_rounded, 'Try again', onRetry, primary: true),
+                          if (onEdit != null && canRetry) _errorButton(Icons.edit_outlined, 'Edit question', onEdit!),
                         ],
                       ),
                     ),

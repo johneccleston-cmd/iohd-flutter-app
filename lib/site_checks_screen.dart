@@ -18,12 +18,21 @@ class SiteChecksScreen extends StatelessWidget {
             icon: accessIcon('site_checks'),
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Site Check', onPressed: () {})],
           ),
-          const Expanded(
-            child: Center(
-              child: FlatEmpty(
-                icon: Icons.assignment_turned_in_outlined,
-                title: 'No site checks yet',
-                message: 'Create a new site check to document commercial site conditions.',
+          Expanded(
+            child: PageSheet(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Expanded(
+                    child: Center(
+                      child: FlatEmpty(
+                        icon: Icons.assignment_turned_in_outlined,
+                        title: 'No site checks yet',
+                        message: 'Create a new site check to document commercial site conditions.',
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

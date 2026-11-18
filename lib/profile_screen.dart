@@ -175,9 +175,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
                 ],
               ),
               Expanded(
-                child: LayoutBuilder(
-                  builder: (context, c) => Scrollbar(
-                    child: SingleChildScrollView(child: _content(session, c.maxWidth)),
+                child: PageSheet(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: LayoutBuilder(
+                          builder: (context, c) => Scrollbar(
+                            child: SingleChildScrollView(child: _content(session, c.maxWidth)),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

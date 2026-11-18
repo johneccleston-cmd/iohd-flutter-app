@@ -39,9 +39,16 @@ Future<void> exportThing(BuildContext context, Thing data) async {
 
 - Use `MultiPage` for anything that can grow, so tables break across pages. Set `pw.Table` header rows
   to repeat (`repeatHeader` / put the header inside the table).
-- **Fonts**: the built-in Helvetica only covers Latin-1. Run every string through `_pdfSafe` (as in
-  `payroll_pdf.dart`) or embed a TTF via `PdfGoogleFonts`/an asset font if names can contain
-  accents or symbols. Don't let a customer name print as `?` silently.
+- **Fonts**: the built-in Helvetica uses WinAnsi (Latin-1 plus “ ” ‘ ’ – — • € Š Ž Œ ™). Run every string through
+  `_pdfSafe` (as in `payroll_pdf.dart`: typographic punctuation through WinAnsi, Latin Extended-A and Vietnamese
+  letters without accents, combining marks dropped) or embed a TTF via `PdfGoogleFonts`/an asset font. Don't let a
+  customer name print as `?` silently. These WinAnsi letters copy and search correctly in viewers; to check a PDF's
+  text use `pdftotext -enc UTF-8` or PyMuPDF, not the raw stream bytes read as UTF-8 (that shows them as `�`).
+- **Payroll registers**: the screen register and the PDF's cover/person registers are built from one column list,
+  `_registerColumns` in `payroll_screen.dart`, so they always show the same figures and every row adds across
+  (pieces = gross; gross − hurdle − advances recovered = cash pay; cash pay + released − owed recovered = total due).
+  Add or change a column there, never in one place only; `test/payroll_reconcile_test.dart` reads the PDF's text
+  back and checks it against the register.
 - Reuse the dashboard palette (ink/slate/muted/line + green/red for money) so exports look like the app.
 - Right-align money columns, show totals in a bold footer row, and use the same money format as the UI (`dashMoney`).
 - Every report shows: the title, the date range or period, "Generated <date> by <AuthSession.instance.name>", and page numbers.

@@ -17,7 +17,7 @@ import 'package:iohd_desktop/widgets/main_navigation_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _restrictedDenied = [
-  'stock.view', 'catalog.view', 'purchase_orders.view', 'vendors.view', //
+  'stock.view', 'catalog.view', 'services_catalog.view', 'purchase_orders.view', 'vendors.view', //
   'hr_payroll.view', 'projects.view', 'payments.view',
 ];
 

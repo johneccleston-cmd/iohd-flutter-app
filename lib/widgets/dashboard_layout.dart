@@ -1,5 +1,7 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
+
 import '../theme/app_theme.dart';
 import 'dashboard_data.dart';
 import 'app_ribbon.dart';
@@ -7,8 +9,8 @@ import 'dashboard_kit.dart';
 
 /// Design tokens in one place so the header, selector and body stay consistent (the ribbon's own are [RibbonColors]).
 abstract final class _DashTokens {
-  static const background = AppTheme.bgColor; // one shared page colour for the whole app
-  static const maxContentWidth = 1600.0;
+  static const background =
+      AppTheme.bgColor; // one shared page colour for the whole app
   static const compactBreakpoint = 600.0;
 }
 
@@ -30,7 +32,8 @@ class DashboardScope extends InheritedWidget {
   }
 
   @override
-  bool updateShouldNotify(DashboardScope old) => selectedYear != old.selectedYear;
+  bool updateShouldNotify(DashboardScope old) =>
+      selectedYear != old.selectedYear;
 }
 
 class DashboardLayout extends StatefulWidget {
@@ -119,8 +122,9 @@ class _DashboardLayoutState extends State<DashboardLayout> {
   /// Newest first, de-duplicated.
   List<int> _resolveYears() {
     final now = DashClock.now().year;
-    final list = {...(widget.years ?? [now, now - 1, now - 2])}.toList()
-      ..sort((a, b) => b.compareTo(a));
+    final list = {
+      ...(widget.years ?? [now, now - 1, now - 2]),
+    }.toList()..sort((a, b) => b.compareTo(a));
     return list;
   }
 
@@ -143,22 +147,22 @@ class _DashboardLayoutState extends State<DashboardLayout> {
         children: [
           if (widget.showHeader)
             _HeaderBar(
-            title: widget.heading ?? widget.title.toUpperCase(),
-            kind: widget.heading == null ? 'DASHBOARD' : null,
-            subtitle: widget.subtitle,
-            leading: widget.leading,
-            icon: widget.icon,
-            titleTrailing: widget.titleTrailing,
-            freshness: widget.showFreshness ? _freshness : null,
-            actions: widget.actions,
-            yearSelector: widget.showYearSelector
-                ? _YearSelector(
-                    value: _selectedYear,
-                    years: _years,
-                    onChanged: _setYear,
-                  )
-                : null,
-          ),
+              title: widget.heading ?? widget.title.toUpperCase(),
+              kind: widget.heading == null ? 'DASHBOARD' : null,
+              subtitle: widget.subtitle,
+              leading: widget.leading,
+              icon: widget.icon,
+              titleTrailing: widget.titleTrailing,
+              freshness: widget.showFreshness ? _freshness : null,
+              actions: widget.actions,
+              yearSelector: widget.showYearSelector
+                  ? _YearSelector(
+                      value: _selectedYear,
+                      years: _years,
+                      onChanged: _setYear,
+                    )
+                  : null,
+            ),
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
@@ -166,31 +170,29 @@ class _DashboardLayoutState extends State<DashboardLayout> {
                 final pad = w < _DashTokens.compactBreakpoint
                     ? 12.0
                     : w < 1000
-                        ? 16.0
-                        : 24.0;
+                    ? 16.0
+                    : 24.0;
 
-                return Align(
-                  alignment: Alignment.topCenter,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(
-                      maxWidth: _DashTokens.maxContentWidth,
-                    ),
-                    child: Padding(
-                      // A little less space under the header banner and above the bottom edge than at the sides, so the content gets more height.
-                      padding: EdgeInsets.fromLTRB(pad, (pad * 0.6).roundToDouble(), pad, (pad * 0.6).roundToDouble()),
-                      // Fade between years so data swaps don't feel like a hard jump.
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 220),
-                        switchInCurve: Curves.easeOut,
-                        child: KeyedSubtree(
-                          key: ValueKey(_selectedYear),
-                          child: DashboardScope(
-                            selectedYear: _selectedYear,
-                            child: DashFreshnessScope(
-                              freshness: _freshness,
-                              child: widget.builder(context, _selectedYear),
-                            ),
-                          ),
+                // The body fills the window at every width (no cap), so a wide screen gets wider panels, not grey bands.
+                return Padding(
+                  // A little less space under the header banner and above the bottom edge than at the sides, so the content gets more height.
+                  padding: EdgeInsets.fromLTRB(
+                    pad,
+                    (pad * 0.6).roundToDouble(),
+                    pad,
+                    (pad * 0.6).roundToDouble(),
+                  ),
+                  // Fade between years so data swaps don't feel like a hard jump.
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 220),
+                    switchInCurve: Curves.easeOut,
+                    child: KeyedSubtree(
+                      key: ValueKey(_selectedYear),
+                      child: DashboardScope(
+                        selectedYear: _selectedYear,
+                        child: DashFreshnessScope(
+                          freshness: _freshness,
+                          child: widget.builder(context, _selectedYear),
                         ),
                       ),
                     ),
@@ -268,7 +270,12 @@ class _HeaderBarState extends State<_HeaderBar> {
   void _onFreshness() {
     final f = widget.freshness!;
     final refreshing = f.busy && f.updatedAt != null;
-    if (_wasRefreshing && !refreshing && f.refreshFailure == null && f.updatedAt != null) _activity.landed();
+    if (_wasRefreshing &&
+        !refreshing &&
+        f.refreshFailure == null &&
+        f.updatedAt != null) {
+      _activity.landed();
+    }
     _wasRefreshing = refreshing;
     _activity.setRefreshing(refreshing);
   }
@@ -292,7 +299,10 @@ class _HeaderBarState extends State<_HeaderBar> {
         if (widget.actions.isNotEmpty) ...[
           IconTheme(
             data: const IconThemeData(color: Colors.white, size: 20),
-            child: Row(mainAxisSize: MainAxisSize.min, children: widget.actions),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: widget.actions,
+            ),
           ),
           const SizedBox(width: 8),
         ],
@@ -314,9 +324,13 @@ class _FreshnessStatus extends StatefulWidget {
   State<_FreshnessStatus> createState() => _FreshnessStatusState();
 }
 
-class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerProviderStateMixin {
+class _FreshnessStatusState extends State<_FreshnessStatus>
+    with SingleTickerProviderStateMixin {
   Timer? _tick;
-  late final _ripple = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  late final _ripple = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
   bool _wasBusy = false;
 
   @override
@@ -351,9 +365,12 @@ class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerPro
   /// so it only starts the ring; its painter picks it up next frame.
   void _onChange() {
     final f = widget.freshness;
-    final landed = _wasBusy && !f.busy && f.updatedAt != null && f.refreshFailure == null;
+    final landed =
+        _wasBusy && !f.busy && f.updatedAt != null && f.refreshFailure == null;
     _wasBusy = f.busy;
-    if (landed && mounted && !MediaQuery.disableAnimationsOf(context)) _ripple.forward(from: 0);
+    if (landed && mounted && !MediaQuery.disableAnimationsOf(context)) {
+      _ripple.forward(from: 0);
+    }
   }
 
   static String _ago(DateTime t) {
@@ -385,7 +402,8 @@ class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerPro
         String? tip;
         if (failed != null) {
           label = "Couldn't refresh";
-          tip = '${failed.message}${at == null ? '' : '\nShowing figures from ${_clock(at)}.'}';
+          tip =
+              '${failed.message}${at == null ? '' : '\nShowing figures from ${_clock(at)}.'}';
         } else if (f.busy) {
           label = at == null ? 'Loading…' : 'Refreshing…';
         } else {
@@ -394,8 +412,8 @@ class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerPro
         final tone = failed != null
             ? RibbonColors.warn
             : f.busy
-                ? RibbonColors.live
-                : DashUi.emerald;
+            ? RibbonColors.live
+            : DashUi.emerald;
 
         final status = TweenAnimationBuilder<double>(
           key: ValueKey(label),
@@ -404,7 +422,10 @@ class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerPro
           curve: Curves.easeOut,
           builder: (context, v, child) => Opacity(
             opacity: v,
-            child: Transform.translate(offset: Offset(0, 4 * (1 - v)), child: child),
+            child: Transform.translate(
+              offset: Offset(0, 4 * (1 - v)),
+              child: child,
+            ),
           ),
           child: Text(
             label,
@@ -420,7 +441,10 @@ class _FreshnessStatusState extends State<_FreshnessStatus> with SingleTickerPro
           mainAxisSize: MainAxisSize.min,
           children: [
             if (!widget.compact) ...[
-              CustomPaint(size: const Size.square(7), painter: _DotPainter(color: tone, ripple: _ripple)),
+              CustomPaint(
+                size: const Size.square(7),
+                painter: _DotPainter(color: tone, ripple: _ripple),
+              ),
               const SizedBox(width: 8),
               // Each new wording rises into place (the old one goes at once, so there is never two).
               if (tip == null) status else Tooltip(message: tip, child: status),
@@ -529,13 +553,21 @@ class _YearSelectorState extends State<_YearSelector> {
                     children: [
                       SizedBox(
                         width: 22,
-                        child: y == value ? const Icon(Icons.check_rounded, size: 16, color: RibbonColors.live) : null,
+                        child: y == value
+                            ? const Icon(
+                                Icons.check_rounded,
+                                size: 16,
+                                color: RibbonColors.live,
+                              )
+                            : null,
                       ),
                       Text(
                         '$y',
                         style: TextStyle(
                           color: Colors.white,
-                          fontWeight: y == value ? FontWeight.bold : FontWeight.normal,
+                          fontWeight: y == value
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                           fontFeatures: const [FontFeature.tabularFigures()],
                         ),
                       ),
@@ -550,7 +582,11 @@ class _YearSelectorState extends State<_YearSelector> {
                 children: [
                   year,
                   const SizedBox(width: 2),
-                  const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white, size: 18),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                 ],
               ),
             ),
@@ -604,7 +640,8 @@ class _StepButton extends StatelessWidget {
 class _DotPainter extends CustomPainter {
   final Color color;
   final Animation<double> ripple;
-  _DotPainter({required this.color, required this.ripple}) : super(repaint: ripple);
+  _DotPainter({required this.color, required this.ripple})
+    : super(repaint: ripple);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -626,5 +663,6 @@ class _DotPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_DotPainter old) => old.color != color || old.ripple != ripple;
+  bool shouldRepaint(_DotPainter old) =>
+      old.color != color || old.ripple != ripple;
 }

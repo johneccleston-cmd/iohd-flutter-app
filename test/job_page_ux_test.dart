@@ -144,7 +144,7 @@ void main() {
     }, () => _mock(_record()));
   });
 
-  testWidgets("Service Fusion's line items show read-only in the Line Items panel, with its charges and total", (t) async {
+  testWidgets("Service Fusion's line items show read-only in the Products & Services panel, with its charges and total", (t) async {
     final r = _record(
       total: 1087.75,
       itemsTotal: 1000,
@@ -155,8 +155,8 @@ void main() {
     );
     await http.runWithClient(() async {
       await _pump(t, r);
-      await t.ensureVisible(find.text('Line Items'));
-      expect(find.text('Line Items'), findsOneWidget);
+      await t.ensureVisible(find.text('Products & Services'));
+      expect(find.text('Products & Services'), findsOneWidget);
       expect(find.text('Complete door'), findsOneWidget);
       expect(find.text('Sales tax'), findsOneWidget);
       expect(find.text('Same Day Service Credit'), findsOneWidget);
@@ -169,7 +169,7 @@ void main() {
     final gap = _record(total: 1100, itemsTotal: 1000);
     await http.runWithClient(() async {
       await _pump(t, gap);
-      await t.ensureVisible(find.text('Line Items'));
+      await t.ensureVisible(find.text('Products & Services'));
       expect(find.text('Tax and other charges'), findsOneWidget);
     }, () => _mock(gap));
   });

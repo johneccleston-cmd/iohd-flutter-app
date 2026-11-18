@@ -41,51 +41,60 @@ class _VendorsScreenState extends State<VendorsScreen> {
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Vendor', onPressed: () {})],
           ),
           Expanded(
-            child: SingleChildScrollView(
+            child: PageSheet(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const FlatStats(
-                    stats: [
-                      FlatStat('Total Vendors', '4'),
-                      FlatStat('Active Suppliers', '3'),
-                      FlatStat('Net 30 Terms', '1'),
-                    ],
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: SizedBox(
-                        width: 340,
-                        child: TextField(
-                          controller: _searchController,
-                          style: const TextStyle(fontSize: 14),
-                          decoration: flatSearchDecoration('Search vendors...'),
-                        ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const FlatStats(
+                            stats: [
+                              FlatStat('Total Vendors', '4'),
+                              FlatStat('Active Suppliers', '3'),
+                              FlatStat('Net 30 Terms', '1'),
+                            ],
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+                            child: Align(
+                              alignment: Alignment.centerLeft,
+                              child: SizedBox(
+                                width: 340,
+                                child: TextField(
+                                  controller: _searchController,
+                                  style: const TextStyle(fontSize: 14),
+                                  decoration: flatSearchDecoration('Search vendors...'),
+                                ),
+                              ),
+                            ),
+                          ),
+                          FlatTable(
+                            columns: const [
+                              FlatCol('Vendor Name', flex: 4),
+                              FlatCol('Email / Contact', flex: 4),
+                              FlatCol('Phone', flex: 3),
+                              FlatCol('Terms', flex: 3),
+                              FlatCol('Status', flex: 3),
+                            ],
+                            rows: [
+                              for (final v in _mockVendors)
+                                [
+                                  Text(v['name'], style: flatCellBold),
+                                  Text(v['contact'], style: flatCellStyle),
+                                  Text(v['phone'], style: flatCellMuted),
+                                  Text(v['terms'], style: flatCellStyle),
+                                  (v['active'] as bool)
+                                      ? const FlatStatus('Active', DashUi.emeraldDeep)
+                                      : const FlatStatus('Inactive', DashUi.slate),
+                                ],
+                            ],
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  FlatTable(
-                    columns: const [
-                      FlatCol('Vendor Name', flex: 4),
-                      FlatCol('Email / Contact', flex: 4),
-                      FlatCol('Phone', flex: 3),
-                      FlatCol('Terms', flex: 3),
-                      FlatCol('Status', flex: 3),
-                    ],
-                    rows: [
-                      for (final v in _mockVendors)
-                        [
-                          Text(v['name'], style: flatCellBold),
-                          Text(v['contact'], style: flatCellStyle),
-                          Text(v['phone'], style: flatCellMuted),
-                          Text(v['terms'], style: flatCellStyle),
-                          (v['active'] as bool)
-                              ? const FlatStatus('Active', DashUi.emeraldDeep)
-                              : const FlatStatus('Inactive', DashUi.slate),
-                        ],
-                    ],
                   ),
                 ],
               ),

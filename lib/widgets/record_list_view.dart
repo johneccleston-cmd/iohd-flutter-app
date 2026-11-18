@@ -449,20 +449,29 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
             actions: [PageBanner.refresh(onPressed: _loading ? null : _refresh)],
           ),
           Expanded(
-            child: LayoutBuilder(
-              builder: (context, c) {
-                // Larger text needs the room too, so the sidebar and the columns give way sooner.
-                final wide = c.maxWidth >= _sidebarWidth + scale.scale(_tableWidth);
-                return wide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          SizedBox(width: _sidebarWidth, child: _statusSidebar()),
-                          Expanded(child: _listPane(showMenuFilter: false)),
-                        ],
-                      )
-                    : _listPane(showMenuFilter: true);
-              },
+            child: PageSheet(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: LayoutBuilder(
+                      builder: (context, c) {
+                        // Larger text needs the room too, so the sidebar and the columns give way sooner.
+                        final wide = c.maxWidth >= _sidebarWidth + scale.scale(_tableWidth);
+                        return wide
+                            ? Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  SizedBox(width: _sidebarWidth, child: _statusSidebar()),
+                                  Expanded(child: _listPane(showMenuFilter: false)),
+                                ],
+                              )
+                            : _listPane(showMenuFilter: true);
+                      },
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
         ],

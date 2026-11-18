@@ -586,8 +586,8 @@ class _KPIDashboardContentState extends State<KPIDashboardContent> {
                         decoration: BoxDecoration(
                           gradient: LinearGradient(
                             colors: [
-                              const Color(0xFFE2E8F0).withValues(alpha: 0),
-                              const Color(0xFFE2E8F0).withValues(alpha: 0.9),
+                              AppTheme.bgColor.withValues(alpha: 0),
+                              AppTheme.bgColor.withValues(alpha: 0.9),
                             ],
                           ),
                         ),

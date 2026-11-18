@@ -450,6 +450,116 @@ class RibbonRefreshButton extends StatelessWidget {
   }
 }
 
+/// One view of a page, as a tab on the ribbon ([RibbonTabs]).
+class RibbonTab<T> {
+  final T value;
+  final String label;
+
+  /// A count after the label (things to look at), or null.
+  final int? badge;
+  const RibbonTab(this.value, this.label, {this.badge});
+}
+
+/// A page's views as tabs on the ribbon, right after its heading (AppRibbon.titleTrailing): the selected one is a white
+/// pill with ink text, the others quiet white text on the navy that lights up on hover. Each tab is a button for the
+/// keyboard and screen readers ("selected" on the current one). Costs the page no height.
+class RibbonTabs<T> extends StatelessWidget {
+  final T value;
+  final List<RibbonTab<T>> tabs;
+  final ValueChanged<T> onChanged;
+  const RibbonTabs({super.key, required this.value, required this.tabs, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return SelectionContainer.disabled(
+      child: Container(
+        padding: const EdgeInsets.all(3),
+        decoration: BoxDecoration(
+          color: RibbonColors.glass,
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(color: RibbonColors.glassEdge),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final t in tabs) _RibbonTabButton(label: t.label, badge: t.badge, selected: t.value == value, onTap: () => onChanged(t.value)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RibbonTabButton extends StatefulWidget {
+  final String label;
+  final int? badge;
+  final bool selected;
+  final VoidCallback onTap;
+  const _RibbonTabButton({required this.label, required this.badge, required this.selected, required this.onTap});
+
+  @override
+  State<_RibbonTabButton> createState() => _RibbonTabButtonState();
+}
+
+class _RibbonTabButtonState extends State<_RibbonTabButton> {
+  bool _hover = false;
+  bool _focus = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final on = widget.selected;
+    final reduce = MediaQuery.disableAnimationsOf(context);
+    final fg = on ? DashUi.ink : (_hover || _focus ? Colors.white : Colors.white.withValues(alpha: 0.78));
+    final n = widget.badge;
+    return Semantics(
+      button: true,
+      selected: on,
+      label: n == null || n == 0 ? widget.label : '${widget.label}, $n',
+      excludeSemantics: true,
+      child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _focus = v),
+        actions: {ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => widget.onTap())},
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: reduce ? Duration.zero : const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: on ? Colors.white : (_hover || _focus ? Colors.white.withValues(alpha: 0.10) : Colors.transparent),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _focus && !on ? Colors.white.withValues(alpha: 0.7) : Colors.transparent),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.label,
+                  style: TextStyle(fontSize: 12.5, fontWeight: on ? FontWeight.w800 : FontWeight.w600, color: fg, letterSpacing: 0.1),
+                ),
+                if (n != null && n > 0) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    decoration: BoxDecoration(color: on ? DashUi.ink : Colors.white.withValues(alpha: 0.16), borderRadius: BorderRadius.circular(999)),
+                    child: Text(
+                      n > 999 ? '999+' : '$n',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Colors.white, height: 1.45, fontFeatures: [FontFeature.tabularFigures()]),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A slanted band of light that crosses the ribbon once per run of [t], brightest half-way across.
 class _SheenPainter extends CustomPainter {
   final Animation<double> t;

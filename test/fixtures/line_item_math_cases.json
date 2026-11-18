@@ -53,6 +53,45 @@
         { "kind": "discount", "rate": 80, "taxable": true }
       ],
       "expect": { "itemsCents": 5000, "discountCents": 8000, "taxableCents": 0, "taxCents": 0, "totalCents": -3000, "costCents": 2000, "profitCents": -5000, "marginPct": null, "unpricedLines": 0, "missingCostLines": 0 }
+    },
+    {
+      "name": "SF estimate 1044450930: a 10% discount line is 35,125.3 x -$0.10, above the old 9,999.999 quantity cap",
+      "taxRate": 9.75,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 35125.3, "cost": 21000, "taxable": true },
+        { "kind": "item", "quantity": 35125.3, "rate": -0.1, "cost": 0, "taxable": false }
+      ],
+      "expect": { "itemsCents": 3161277, "discountCents": 0, "taxableCents": 3512530, "taxCents": 342472, "totalCents": 3503749, "costCents": 2100000, "profitCents": 1061277, "marginPct": 33.6, "unpricedLines": 0, "missingCostLines": 0 }
+    },
+    {
+      "name": "the largest SF quantities: 49,376 x -$0.05, a 3% card fee of 10,150 x $0.03, and 16,322.41 x -$0.05 = -$816.1205 to the cent",
+      "taxRate": 8.5,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 60000, "cost": 30000, "taxable": true },
+        { "kind": "item", "quantity": 49376, "rate": -0.05, "cost": 0, "taxable": false },
+        { "kind": "item", "quantity": 10150, "rate": 0.03, "cost": 0, "taxable": false },
+        { "kind": "item", "quantity": 16322.41, "rate": -0.05, "cost": 0, "taxable": false }
+      ],
+      "expect": { "itemsCents": 5701958, "discountCents": 0, "taxableCents": 6000000, "taxCents": 510000, "totalCents": 6211958, "costCents": 3000000, "profitCents": 2701958, "marginPct": 47.4, "unpricedLines": 0, "missingCostLines": 0 }
+    },
+    {
+      "name": "negative quantities (returns, as on SF job 1083198614) take off their amount, their cost and their tax",
+      "taxRate": 9.5,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 120, "cost": 60, "taxable": true },
+        { "kind": "item", "quantity": -1, "rate": 10, "cost": 10, "taxable": true },
+        { "kind": "item", "quantity": -1, "rate": 7, "cost": 7, "taxable": true },
+        { "kind": "item", "quantity": -36, "rate": 0, "cost": 0, "taxable": false }
+      ],
+      "expect": { "itemsCents": 10300, "discountCents": 0, "taxableCents": 10300, "taxCents": 979, "totalCents": 11279, "costCents": 4300, "profitCents": 6000, "marginPct": 58.3, "unpricedLines": 0, "missingCostLines": 0 }
+    },
+    {
+      "name": "exact past 2^53 (thousandths x cents): 522,990.543 x $989,955.00 is $517,737,102,995.57, not a cent short",
+      "taxRate": 9.75,
+      "items": [
+        { "kind": "item", "quantity": 522990.543, "rate": 989955, "cost": 1, "taxable": true }
+      ],
+      "expect": { "itemsCents": 51773710299557, "discountCents": 0, "taxableCents": 51773710299557, "taxCents": 5047936754207, "totalCents": 56821647053764, "costCents": 52299054, "profitCents": 51773658000503, "marginPct": 100, "unpricedLines": 0, "missingCostLines": 0 }
     }
   ]
 }

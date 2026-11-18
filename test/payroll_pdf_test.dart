@@ -2,7 +2,7 @@
 // looked at. Run:  flutter test test/payroll_pdf_test.dart
 //
 // To see the pages as images, render the saved PDFs with any PDF viewer (or PyMuPDF). The checks here are structural;
-// the money in the PDF comes straight from the report and is checked against it by text in the page content.
+// payroll_reconcile_test.dart reads the text back out of the PDF and checks every register figure against the report.
 
 import 'dart:convert';
 import 'dart:io';

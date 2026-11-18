@@ -5,9 +5,10 @@ part of 'payroll_screen.dart';
 // with every pay week, closed job, commission line item, advance, callback and
 // retainage release for the report dates.
 //
-// US Letter, landscape. Every register row reconciles across: closed-job net + advances + callbacks (+ sales
-// commission, retainage held, other) = gross; gross - hurdle = cash pay; cash pay + retainage released = total due.
-// The figures are the server's; this file only lays them out.
+// US Letter, landscape. The registers use the screen's own column list (_registerColumns), so the PDF and the
+// screen show the same figures, and every row adds across: the pieces make the gross; the gross less the hurdle and
+// any advances recovered is the cash pay; the cash pay plus retainage released, less any owed recovered, is the
+// total due. Each week's ledger adds down the same way. The figures are the server's; this file only lays them out.
 // ---------------------------------------------------------------------------
 
 final PdfColor _pInk = PdfColor.fromInt(0xFF0F172A);
@@ -15,29 +16,63 @@ final PdfColor _pSlate = PdfColor.fromInt(0xFF475569);
 final PdfColor _pSubtle = PdfColor.fromInt(0xFF64748B); // DashUi.subtle: secondary text that still prints clearly
 final PdfColor _pMuted = PdfColor.fromInt(0xFF94A3B8); // only for zeros, which are meant to recede
 final PdfColor _pLine = PdfColor.fromInt(0xFFE2E8F0);
+final PdfColor _pRule = PdfColor.fromInt(0xFFCBD5E1); // the rule above a subtotal: a step darker than the row lines
 final PdfColor _pFaint = PdfColor.fromInt(0xFFF1F5F9);
 final PdfColor _pGreen = PdfColor.fromInt(0xFF047857); // DashUi.emeraldText
 final PdfColor _pRed = PdfColor.fromInt(0xFFDC2626);
 final PdfColor _pAmber = PdfColor.fromInt(0xFFB45309); // DashUi.amberText
 
-/// Typographic punctuation the built-in fonts lack, swapped for plain equivalents ("O’Brien" prints as "O'Brien").
-const Map<int, String> _pdfPlain = {
-  0x2018: "'", 0x2019: "'", 0x201A: "'", 0x201B: "'", 0x2032: "'", // single quotes, prime
-  0x201C: '"', 0x201D: '"', 0x201E: '"', 0x2033: '"', // double quotes
-  0x2010: '-', 0x2011: '-', 0x2012: '-', 0x2013: '-', 0x2014: '-', 0x2015: '-', 0x2212: '-', // dashes, minus
-  0x2026: '...', 0x2022: '-', 0x2009: ' ', 0x202F: ' ', 0x200B: '', // ellipsis, bullet, thin and zero-width spaces
+/// The built-in PDF fonts use WinAnsi, which has these typographic characters at 0x80-0x9F. The pdf package writes
+/// a string's Latin-1 bytes, so each one is written as the code point with that byte value and prints as itself.
+const Map<int, int> _winAnsi = {
+  0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85, 0x2020: 0x86, 0x2021: 0x87, // € ‚ ƒ „ … † ‡
+  0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A, 0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, // ˆ ‰ Š ‹ Œ Ž
+  0x2018: 0x91, 0x2019: 0x92, 0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97, // ‘ ’ “ ” • – —
+  0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C, 0x017E: 0x9E, 0x0178: 0x9F, // ˜ ™ š › œ ž Ÿ
 };
 
-/// The built-in PDF fonts only cover Latin-1. Common punctuation is swapped for a plain equivalent; anything else
-/// prints as a question mark.
+/// Characters the fonts have no glyph for, swapped for a plain equivalent.
+const Map<int, String> _pdfPlain = {
+  0x201B: "'", 0x2032: "'", 0x2033: '"', // reversed quote, primes
+  0x2010: '-', 0x2011: '-', 0x2012: '-', 0x2015: '-', 0x2212: '-', // hyphens, figure dash, minus
+  0x2009: ' ', 0x202F: ' ', 0x200B: '', 0x200C: '', 0x200D: '', 0xFEFF: '', // thin and zero-width spaces
+  0x0132: 'IJ', 0x0133: 'ij', 0x0149: "'n", 0x01A0: 'O', 0x01A1: 'o', 0x01AF: 'U', 0x01B0: 'u',
+};
+
+/// Latin Extended-A (U+0100 to U+017F) without accents, one letter per character; '#' = handled elsewhere. So
+/// "Łukasz Wójcik" prints as "Lukasz Wójcik" rather than "?ukasz Wójcik".
+const String _latinExtA =
+    'AaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIi' // U+0100-0131
+    '##JjKkkLlLlLlLlLlNnNnNn#NnOoOoOo##RrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs'; // U+0132-017F
+
+/// Vietnamese letters with stacked accents (U+1EA0 to U+1EF9) without them: "Nguyễn" prints as "Nguyen".
+final String _latinVietnamese = '${'Aa' * 12}${'Ee' * 8}${'Ii' * 2}${'Oo' * 12}${'Uu' * 7}${'Yy' * 4}';
+
+/// Makes [v] printable in the built-in fonts: Latin-1 as is, typographic punctuation through WinAnsi, accented letters
+/// outside Latin-1 as their plain letter, combining accents dropped. Anything else prints as a question mark.
 String _pdfSafe(String v) {
   final out = StringBuffer();
   for (final c in v.runes) {
+    if (c < 0x80 || (c >= 0xA0 && c < 0x100)) {
+      out.writeCharCode(c);
+      continue;
+    }
+    final win = _winAnsi[c];
+    if (win != null) {
+      out.writeCharCode(win);
+      continue;
+    }
     final plain = _pdfPlain[c];
     if (plain != null) {
       out.write(plain);
+    } else if (c >= 0x100 && c <= 0x17F && _latinExtA[c - 0x100] != '#') {
+      out.write(_latinExtA[c - 0x100]);
+    } else if (c >= 0x1EA0 && c <= 0x1EF9) {
+      out.write(_latinVietnamese[c - 0x1EA0]);
+    } else if (c >= 0x300 && c <= 0x36F) {
+      // A combining accent (a name typed as "e" + accent): keep the letter, drop the mark.
     } else {
-      out.writeCharCode(c < 256 ? c : 0x3F);
+      out.write('?');
     }
   }
   return out.toString();
@@ -49,6 +84,7 @@ pw.Widget _pt(
   bool bold = false,
   PdfColor? color,
   pw.TextAlign align = pw.TextAlign.left,
+  double? letterSpacing,
 }) {
   return pw.Text(
     _pdfSafe(text),
@@ -57,12 +93,15 @@ pw.Widget _pt(
       fontSize: size,
       fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
       color: color ?? _pInk,
+      letterSpacing: letterSpacing,
     ),
   );
 }
 
 /// A table with a shaded header row that repeats at the top of every page it runs onto, right-aligned [right]
-/// columns and an optional bold footer. Zero amounts in the body print light so the real figures stand out.
+/// columns and an optional bold footer. [boldCols] prints those body columns bold (subtotals); [boldRows] prints those
+/// body rows bold under a darker rule (a running subtotal inside a ledger). With [dashZeros] a zero amount in the body
+/// prints as a light dash, as on the screen, so the real figures stand out.
 pw.Widget _pdfTable(
   List<String> heads,
   List<List<String>> rows, {
@@ -71,11 +110,15 @@ pw.Widget _pdfTable(
   List<String>? foot,
   double size = 8.5,
   double? headSize,
+  double padH = 5,
+  Set<int> boldCols = const {},
+  Set<int> boldRows = const {},
+  bool dashZeros = false,
 }) {
   final defaultSize = size;
   final zero = _fmt(0);
   pw.Widget cell(String text, int i, {bool bold = false, PdfColor? color, double? size}) => pw.Padding(
-    padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+    padding: pw.EdgeInsets.symmetric(horizontal: padH, vertical: 4),
     child: _pt(
       text,
       size: size ?? defaultSize,
@@ -96,8 +139,23 @@ pw.Widget _pdfTable(
           for (var i = 0; i < heads.length; i++) cell(heads[i], i, bold: true, color: _pSlate, size: headSize),
         ],
       ),
-      for (final r in rows)
-        pw.TableRow(children: [for (var i = 0; i < r.length; i++) cell(r[i], i, color: r[i] == zero ? _pMuted : null)]),
+      for (var n = 0; n < rows.length; n++)
+        pw.TableRow(
+          decoration: boldRows.contains(n)
+              ? pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: _pRule, width: 0.8)))
+              : null,
+          children: [
+            for (var i = 0; i < rows[n].length; i++)
+              rows[n][i] == zero && dashZeros
+                  ? cell('—', i, color: _pMuted)
+                  : cell(
+                      rows[n][i],
+                      i,
+                      bold: boldRows.contains(n) || boldCols.contains(i),
+                      color: rows[n][i] == zero || rows[n][i] == '—' ? _pMuted : null,
+                    ),
+          ],
+        ),
       if (foot != null)
         pw.TableRow(
           decoration: pw.BoxDecoration(color: _pFaint),
@@ -122,46 +180,14 @@ class _PdfMeta {
       '${generatedBy.trim().isEmpty ? '' : ' by ${generatedBy.trim()}'}';
 }
 
-/// One figure column of a register. The cover (one row per person) and each person's summary share these, so both
-/// reconcile the same way.
-class _PdfCol {
-  final String head;
-  final double Function(_Tech) value;
-  const _PdfCol(this.head, this.value);
-}
-
-/// Column widths for the registers, relative to one figure column. Worked out from Helvetica's widths for the widest
-/// case, eleven figure columns on Letter landscape: each figure column then fits "-$37,427.01" in bold at 8pt and
-/// "commission" in bold at 7.2pt, and the name column fits "Montgomery-Alexander" at 8pt without breaking it.
-const double _pdfNameFlex = 1.9;
-const double _pdfJobsFlex = 0.55;
-
-/// Registers with more figure columns than this print in the smaller sizes so every column keeps its words whole.
-const int _pdfDenseAfter = 9;
-
-double _weeksSum(_Tech t, double Function(_Week) f) => t.weeks.fold<double>(0, (s, w) => s + f(w));
-
-/// The register's figure columns. Sales commission, retainage held, other adjustments and owed recovered only appear
-/// when someone has them; with them in, the parts of every row add up to its gross and its total due.
-List<_PdfCol> _pdfColumns(List<_Tech> techs) {
-  bool any(double Function(_Tech) f) => techs.any((t) => f(t).abs() >= 0.005);
-  double held(_Tech t) => _weeksSum(t, (w) => w.hurdleCredit);
-  double other(_Tech t) => _weeksSum(t, (w) => w.otherAdjustments);
-  double recovered(_Tech t) => -_weeksSum(t, (w) => w.carryRecovered);
-  return [
-    _PdfCol('Closed-job net', (t) => t.jobNet),
-    _PdfCol('Advances', (t) => t.totals.advancesPaid),
-    _PdfCol('Callbacks', (t) => t.totals.callbackPay),
-    if (any((t) => t.repPay)) _PdfCol('Sales commission', (t) => t.repPay),
-    if (any(held)) _PdfCol('Retainage held', held),
-    if (any(other)) _PdfCol('Other', other),
-    _PdfCol('Gross', (t) => t.totals.weeklyGross),
-    _PdfCol('Hurdle', (t) => -t.totals.hurdleApplied),
-    _PdfCol('Cash pay', (t) => t.totals.cashPay),
-    _PdfCol('Retainage released', (t) => t.totals.retainageReleased),
-    if (any(recovered)) _PdfCol('Owed recovered', recovered),
-    _PdfCol('Total due', (t) => t.totals.totalDue),
-  ];
+/// The register's type sizes and widths for its number of figure columns (Letter landscape, 720 pt across, a Jobs
+/// column of 0.55). Worked out from Helvetica's widths: each figure column must fit "-$12,345.67" in bold (5.34 em)
+/// and its heading's longest word ("commission", 5.84 em bold) unbroken, and the name column "Montgomery-Alexander"
+/// (10.3 em). At 13 figure columns (every optional column present) a unit is 46.5 pt: 40.5 pt of text at 3 pt padding.
+({double size, double head, double pad, double nameFlex}) _registerType(int figures) {
+  if (figures <= 9) return (size: 8.5, head: 8.5, pad: 5, nameFlex: 1.9);
+  if (figures <= 11) return (size: 8, head: 7.2, pad: 4, nameFlex: 1.9);
+  return (size: 7.4, head: 6.8, pad: 3, nameFlex: 1.95);
 }
 
 /// The export's file name: what it is and which pay weeks, e.g. "IOHD Payroll Commission Report Oct 12-18, 2026.pdf",
@@ -184,6 +210,9 @@ String payrollPdfFileName(String start, String end) {
   return '$base $dates.pdf';
 }
 
+/// [_buildPayrollPdf] for `compute`: one argument, so it can run on a background isolate.
+Future<Uint8List> _buildPayrollPdfJob((_Report, _PdfMeta) job) => _buildPayrollPdf(job.$1, job.$2);
+
 Future<Uint8List> _buildPayrollPdf(_Report r, _PdfMeta meta) async {
   final doc = pw.Document(
     title: payrollPdfFileName(r.start, r.end).replaceAll(RegExp(r'\.pdf$'), ''),
@@ -196,9 +225,10 @@ Future<Uint8List> _buildPayrollPdf(_Report r, _PdfMeta meta) async {
   pw.Widget footer(pw.Context ctx) => pw.Padding(
     padding: const pw.EdgeInsets.only(top: 8),
     child: pw.Row(
-      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: pw.CrossAxisAlignment.end,
       children: [
-        _pt('Payroll commission report  |  $range  |  ${meta.stamp}', size: 7.5, color: _pSubtle),
+        pw.Expanded(child: _pt('Payroll commission report  |  $range  |  ${meta.stamp}', size: 7.5, color: _pSubtle)),
+        pw.SizedBox(width: 12),
         _pt('${copyrightLine()}  |  Confidential  |  Page ${ctx.pageNumber} of ${ctx.pagesCount}',
             size: 7.5, color: _pSubtle),
       ],
@@ -246,9 +276,54 @@ Future<Uint8List> _buildPayrollPdf(_Report r, _PdfMeta meta) async {
 /// US Letter, landscape: the paper office printers here take.
 const PdfPageFormat _pdfPageFormat = PdfPageFormat(11 * PdfPageFormat.inch, 8.5 * PdfPageFormat.inch);
 
+/// A register (the cover's, one row per person, or a person's own one-row summary) from the shared columns.
+pw.Widget _pdfRegister(List<_Tech> techs, List<_RegCol> cols, {bool names = true, bool total = true}) {
+  final figures = cols.where((c) => !c.count).length;
+  final type = _registerType(figures + (names ? 0 : -2)); // a summary row has no name column: more room per figure
+  double sum(double Function(_Tech) f) => techs.fold<double>(0, (s, t) => s + f(t));
+  // A zero count is a dash, like a zero amount (and like the screen's register).
+  String cellFor(_RegCol c, double v) => c.count ? (v.round() == 0 ? '—' : '${v.round()}') : _fmt(v);
+  final offset = names ? 1 : 0;
+  return _pdfTable(
+    [if (names) 'Technician', for (final c in cols) c.pdfHead],
+    [
+      for (final t in techs) [if (names) t.name, for (final c in cols) cellFor(c, c.value(t))],
+    ],
+    flex: [if (names) type.nameFlex, for (final c in cols) c.count ? 0.55 : 1],
+    size: type.size,
+    headSize: type.head,
+    padH: type.pad,
+    right: {for (var i = 0; i < cols.length; i++) i + offset},
+    boldCols: {
+      for (var i = 0; i < cols.length; i++)
+        if (cols[i].kind == _ColKind.subtotal || cols[i].kind == _ColKind.total) i + offset,
+    },
+    dashZeros: true,
+    foot: total ? [if (names) 'Total', for (final c in cols) cellFor(c, sum(c.value))] : null,
+  );
+}
+
 List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
-  final cols = _pdfColumns(r.techs);
-  double sum(double Function(_Tech) f) => r.techs.fold<double>(0, (s, t) => s + f(t));
+  final cols = _registerColumns(r.techs);
+  final due = r.techs.fold<double>(0, (s, t) => s + t.totals.totalDue);
+  final jobs = r.techs.fold<int>(0, (n, t) => n + t.jobCount);
+  final weeks = r.start.isEmpty || r.end.isEmpty
+      ? 0
+      : (_daysBetween(_parseDay(r.start)!, _parseDay(r.end)!) + 1) ~/ 7;
+  bool has(String head) => cols.any((c) => c.head == head);
+
+  final notes = <String>[
+    _registerFooting(cols),
+    if (has('Retainage Held')) 'Retainage held counts toward the hurdle but is not paid until it is released.',
+    if (has('Rounding'))
+      'Rounding is the cent or two lost when each job is rounded to the cent; the weekly gross is worked out first.',
+    if (has('Other')) 'Other is pay the commission engine counted in the gross that is not one of the columns before it.',
+    'A payroll run pays the cash pay less any owed recovered'
+        '${has('Retainage Released') ? '; retainage released is listed here but is not part of the run' : ''}. '
+        'This report does not record or pay a run, and a job pays in the week it is closed.',
+    'The following pages break down every technician: pay weeks, closed jobs, commission line items, advances, '
+        'callbacks and retainage releases.',
+  ];
 
   return [
     pw.Row(
@@ -258,6 +333,8 @@ List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
         pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
+            _pt(kCompanyName.toUpperCase(), size: 8.5, bold: true, color: _pSlate, letterSpacing: 0.8),
+            pw.SizedBox(height: 4),
             _pt('Payroll Commission Report', size: 22, bold: true),
             pw.SizedBox(height: 4),
             _pt('Pay weeks $range', size: 11, color: _pSlate),
@@ -267,13 +344,22 @@ List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             _pt('Total due', size: 9, color: _pSlate),
-            _pt(_fmt(sum((t) => t.totals.totalDue)), size: 20, bold: true, color: _pGreen),
+            _pt(_fmt(due), size: 20, bold: true, color: due < 0 ? _pRed : _pGreen),
           ],
         ),
       ],
     ),
-    pw.SizedBox(height: 4),
-    _pt(meta.stamp, size: 8.5, color: _pSubtle),
+    pw.SizedBox(height: 6),
+    _pt(
+      [
+        '${r.techs.length} ${r.techs.length == 1 ? 'person' : 'people'}',
+        '$jobs closed ${jobs == 1 ? 'job' : 'jobs'}',
+        if (weeks > 0) '$weeks pay ${weeks == 1 ? 'week' : 'weeks'}',
+        meta.stamp,
+      ].join('   •   '),
+      size: 8.5,
+      color: _pSubtle,
+    ),
     pw.SizedBox(height: 3),
     _pt(
       'Pay weeks run Monday to Sunday. Weekly hurdle ${_fmt(r.weeklyThreshold)}, advance ${_fmt(r.dailyAdvance)} per day, '
@@ -285,35 +371,18 @@ List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
     pw.SizedBox(height: 16),
     _pt('Payroll register', size: 13, bold: true),
     pw.SizedBox(height: 6),
-    _pdfTable(
-      ['Technician', 'Jobs', for (final c in cols) c.head],
-      [
-        for (final t in r.techs) [t.name, '${t.jobCount}', for (final c in cols) _fmt(c.value(t))],
-      ],
-      flex: [_pdfNameFlex, _pdfJobsFlex, for (final _ in cols) 1],
-      size: cols.length > _pdfDenseAfter ? 8 : 8.5,
-      headSize: cols.length > _pdfDenseAfter ? 7.2 : 8.5,
-      right: {for (var i = 1; i < cols.length + 2; i++) i},
-      foot: ['Total', '${r.techs.fold<int>(0, (n, t) => n + t.jobCount)}', for (final c in cols) _fmt(sum(c.value))],
-    ),
+    _pdfRegister(r.techs, cols),
     pw.SizedBox(height: 12),
-    _pt(
-      'Each row adds up across: the parts make the gross, the gross less the weekly hurdle is the cash pay, and the cash '
-      'pay plus retainage released, less any advance shortfall still owed from an earlier week, is the total due. '
-      'Retainage held counts toward the hurdle but is not paid until it '
-      'is released. This report does not record or pay a payroll run; a job pays in the week it is closed. The '
-      'following pages break down every technician: pay weeks, closed jobs, commission line items, advances, '
-      'callbacks and retainage releases.',
-      size: 8.5,
-      color: _pSubtle,
-    ),
+    for (final n in notes) ...[
+      _pt(n, size: 8.5, color: _pSubtle),
+      pw.SizedBox(height: 3),
+    ],
   ];
 }
 
 List<pw.Widget> _pdfTech(_Tech t, _Report r, _PdfMeta meta) {
   final tot = t.totals;
   final out = <pw.Widget>[];
-  final cols = _pdfColumns([t]);
 
   out.add(
     pw.Container(
@@ -330,7 +399,8 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r, _PdfMeta meta) {
                 _pt(t.name, size: 18, bold: true),
                 pw.SizedBox(height: 2),
                 _pt(
-                  '${t.kindLabel}  |  ${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
+                  '${t.kindLabel.isEmpty ? 'Technician' : t.kindLabel}  |  '
+                  '${t.weeks.length} ${t.weeks.length == 1 ? 'pay week' : 'pay weeks'}, '
                   '${t.jobCount} ${t.jobCount == 1 ? 'job' : 'jobs'} closed',
                   size: 9,
                   color: _pSlate,
@@ -351,17 +421,8 @@ List<pw.Widget> _pdfTech(_Tech t, _Report r, _PdfMeta meta) {
     ),
   );
   out.add(pw.SizedBox(height: 8));
-
-  out.add(
-    _pdfTable(
-      [for (final c in cols) c.head],
-      [
-        [for (final c in cols) _fmt(c.value(t))],
-      ],
-      flex: [for (final _ in cols) 1],
-      right: {for (var i = 0; i < cols.length; i++) i},
-    ),
-  );
+  // The person's line of the cover register, with the same columns (those that are zero for them are left out).
+  out.add(_pdfRegister([t], _registerColumns([t], jobs: false), names: false, total: false));
 
   if (t.weeks.isEmpty && t.releases.isEmpty) {
     out.add(pw.SizedBox(height: 12));
@@ -418,18 +479,25 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
   final out = <pw.Widget>[];
   final status = meta.weekStatus[w.weekStart];
 
+  // Adds down: the pieces make the weekly gross; the gross less the hurdle and any advances recovered is the cash pay.
+  final rest = w.unexplained;
   final ledger = <List<String>>[
     ['Closed-job commission (net to tech)', _fmt(w.jobNet)],
     if (w.hurdleCredit > 0) ['Retainage held this week (counts toward the hurdle, not paid now)', _fmt(w.hurdleCredit)],
     if (w.advancesPaid != 0) ['Advances paid', _fmt(w.advancesPaid)],
     if (w.callbackPay != 0) ['Callback pay', _fmt(w.callbackPay)],
     if (w.repPay != 0) ['Sales commission (closed jobs)', _fmt(w.repPay)],
-    if (w.otherAdjustments != 0) ['Other adjustments', _fmt(w.otherAdjustments)],
-    ['Weekly gross', _fmt(w.weeklyGross)],
-    if (w.hurdleRule > 0)
-      ['Weekly hurdle', _fmt(-w.hurdleApplied)],
-    if (w.advanceShortfall > 0) ['Advance shortfall (recovered later)', _fmt(w.advanceShortfall)],
+    if (rest.abs() >= 0.05)
+      ['Other adjustments', _fmt(rest)]
+    else if (rest.abs() >= 0.005)
+      ['Rounding (each job is rounded to the cent)', _fmt(rest)],
   ];
+  final grossRow = ledger.length;
+  ledger.add(['Weekly gross', _fmt(w.weeklyGross)]);
+  if (w.hurdleRule > 0 || w.hurdleApplied != 0) ledger.add(['Weekly hurdle', _fmt(-w.hurdleApplied)]);
+  if (w.advanceRecovered > 0) {
+    ledger.add(["Advances recovered (a job's share didn't cover its advance days)", _fmt(-w.advanceRecovered)]);
+  }
 
   // The week's heading and its ledger move to the next page together rather than leaving the heading stranded.
   out.add(
@@ -460,12 +528,13 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
         ],
       ),
       pw.SizedBox(
-        width: 360,
+        width: 380,
         child: _pdfTable(
           const ['Pay week ledger', 'Amount'],
           ledger,
-          flex: const [3.4, 1.2],
+          flex: const [3.6, 1.2],
           right: const {1},
+          boldRows: {grossRow},
           foot: ['Cash pay for the week', _fmt(w.cashPay)],
         ),
       ),
@@ -474,27 +543,40 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
   );
 
   // Advance shortfall still owed from earlier weeks comes out of this week's run, as on the screen.
-  if (w.carryIn > 0) {
+  if (w.carryRecovered > 0) {
     out.add(pw.SizedBox(height: 6));
     out.add(
       pw.SizedBox(
-        width: 360,
+        width: 380,
         child: _pdfTable(
           const ['After earlier weeks', 'Amount'],
           [
-            ['Still owed from earlier weeks', _fmt(w.carryIn)],
-            if (w.carryRecovered > 0)
-              [
-                w.carryProjected ? "Recovered by this week's run (projected until finalized)" : "Recovered in this week's run",
-                _fmt(-w.carryRecovered),
-              ],
+            ['Cash pay for the week', _fmt(w.cashPay)],
+            [
+              'Owed from earlier weeks (${_fmt(w.carryIn)} coming in), '
+                  '${w.carryProjected ? "recovered by this week's run (projected until finalized)" : "recovered in this week's run"}',
+              _fmt(-w.carryRecovered),
+            ],
           ],
-          flex: const [3.4, 1.2],
+          flex: const [3.6, 1.2],
           right: const {1},
           foot: ['Paid after recovery', _fmt(w.cashPay - w.carryRecovered)],
         ),
       ),
     );
+  }
+
+  // Balances that are not part of this week's sum, said in words so nobody adds them in.
+  final owedNotes = [
+    if (w.carryIn > 0 && w.carryRecovered <= 0)
+      'Owed from earlier weeks: ${_fmt(w.carryIn)}. Nothing could be taken this week; a later run with pay recovers it.',
+    if (w.advanceShortfall > 0)
+      'Advance shortfall carried forward: ${_fmt(w.advanceShortfall)}. Not part of this week\'s pay; a later payroll '
+          'run recovers it.',
+  ];
+  for (final n in owedNotes) {
+    out.add(pw.SizedBox(height: 4));
+    out.add(_pt(n, size: 8.5, bold: true, color: _pAmber));
   }
 
   // Oldest finished job first: ordered by the last day worked (completion), not the day the job was closed.
@@ -517,6 +599,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
 
   if (w.advances.isNotEmpty || w.callbacks.isNotEmpty) {
     out.add(pw.SizedBox(height: 10));
+    final days = [...w.advances, ...w.callbacks];
     out.add(
       _pdfTable(
         const ['Date', 'Type', 'Job', 'Customer', 'Amount'],
@@ -526,6 +609,13 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
         ],
         flex: const [1, 1.4, 1.6, 4, 1.2],
         right: const {4},
+        foot: [
+          '',
+          '',
+          '',
+          days.length == 1 ? 'Total' : 'Total, ${days.length} days',
+          _fmt(days.fold<double>(0, (s, d) => s + d.amount)),
+        ],
       ),
     );
   }
@@ -540,6 +630,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
         ],
         flex: const [1, 1.6, 3, 3, 1.2, 0.8, 1.2],
         right: const {4, 5, 6},
+        foot: ['', '', '', 'Sales commission', '', '', _fmt(w.repPay)],
       ),
     );
   }
@@ -572,7 +663,8 @@ pw.Widget _pdfJob(_Job j, _Report r) {
       ],
     if (j.adjustment != 0)
       [j.adjustment < 0 ? 'Pool cap: held back, not paid out' : 'Adjustment', '', '', '', _fmt(j.adjustment)],
-    if (j.toCompanyPool > 0) ['Sent to company pool from this job', '', '', '', _fmt(j.toCompanyPool)],
+    // The whole job's deposit (every tech's slice), so it goes under Job line: under Tech share it read as pay.
+    if (j.toCompanyPool > 0) ['Sent to company pool from this job', '', _fmt(j.toCompanyPool), '', ''],
   ];
 
   final showPayout = j.retainage != 0 || j.advancesRepaid != 0;
@@ -631,3 +723,7 @@ Future<Uint8List> buildPayrollPdfForTest(
   _Report(report),
   _PdfMeta(generatedAt: generatedAt, generatedBy: generatedBy, weekStatus: weekStatus),
 );
+
+/// [_pdfSafe] for tests: what a string turns into in the PDF's built-in fonts.
+@visibleForTesting
+String payrollPdfSafeForTest(String v) => _pdfSafe(v);

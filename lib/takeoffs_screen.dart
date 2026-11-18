@@ -18,12 +18,21 @@ class TakeoffsScreen extends StatelessWidget {
             icon: accessIcon('takeoffs'),
             actions: [PageBanner.button(icon: Icons.add_rounded, label: 'New Takeoff', onPressed: () {})],
           ),
-          const Expanded(
-            child: Center(
-              child: FlatEmpty(
-                icon: Icons.architecture_outlined,
-                title: 'No takeoffs yet',
-                message: 'Start building a new material and labor takeoff for a commercial bid.',
+          Expanded(
+            child: PageSheet(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Expanded(
+                    child: Center(
+                      child: FlatEmpty(
+                        icon: Icons.architecture_outlined,
+                        title: 'No takeoffs yet',
+                        message: 'Start building a new material and labor takeoff for a commercial bid.',
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),

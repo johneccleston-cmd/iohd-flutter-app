@@ -283,3 +283,160 @@ String payrollReport(DateTime lastSunday, int weeks, {List<PayrollPerson> people
     'techs': techs,
   });
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Edge cases, worked out with the engine's own formulas (commissionRules.js weekly_payouts + payroll_detail.js
+// buildReport/applyCarry), so a register built from them must foot exactly like a real one:
+//   gross        = closed-job net + advances + callbacks + sales + retainage held + other   (+ cents of per-job rounding)
+//   pay_pre      = max(0, min(gross - held, gross - 750))   (no hurdle for sales, callback-only or install-rate people)
+//   recovered    = min(this week's new advance shortfall, max(0, pay_pre))   -> advanceRecovered
+//   cash pay     = pay_pre - recovered;  hurdleApplied = gross - cash - recovered;  advanceShortfall = the rest, carried
+//   total due    = cash pay + retainage released - shortfall from earlier weeks recovered by this run (carryRecovered)
+// ---------------------------------------------------------------------------------------------------------------------
+
+/// One edge-case override for a person's weeks. Amounts are in dollars.
+class PayrollEdge {
+  final double shortfallGross; // advance shortfall settled this week, before the week's own pay recovers it
+  final double carryIn; // owed from earlier weeks' finalized runs
+  final bool carryFinal; // the week already has a finalized run (else the recovery is projected)
+  final double other; // engine gross the parts don't explain
+  final double drift; // cents lost to per-job rounding (the server hides anything under 5 cents in "other")
+  final List<double> releases; // retainage releases and callback charges against retainage
+  const PayrollEdge({
+    this.shortfallGross = 0,
+    this.carryIn = 0,
+    this.carryFinal = false,
+    this.other = 0,
+    this.drift = 0,
+    this.releases = const [],
+  });
+}
+
+const payrollEdgePeople = [
+  PayrollPerson(21, 'Andrew Johnson', 'Technician', jobsPerWeek: 3, pct: 0.6),
+  PayrollPerson(22, 'Brett Miller', 'Lead Technician', jobsPerWeek: 3, pct: 0.5, commercial: true, advanceDays: 2),
+  PayrollPerson(23, 'Łukasz Wójcik-Nguyễn', 'Technician', jobsPerWeek: 1, pct: 0.05, advanceDays: 1),
+  PayrollPerson(24, 'Christopher Montgomery-Alexander', 'Technician', jobsPerWeek: 4, pct: 0.6, callbacks: 1),
+  PayrollPerson(25, 'Dennis Ortega', 'Warehouse Tech', callbackOnly: true, jobsPerWeek: 0, callbacks: 2),
+  PayrollPerson(26, 'Daniel Baty', 'Lead Technician', jobsPerWeek: 2, pct: 1),
+  PayrollPerson(27, 'María José Peña', 'Technician', jobsPerWeek: 0),
+  PayrollPerson(36, 'Zac Clemens', 'Sales Rep', sales: true, jobsPerWeek: 1, pct: 0.5),
+];
+
+const payrollEdges = <int, PayrollEdge>{
+  21: PayrollEdge(carryIn: 240), // owes $240 from an earlier week; this week's run will recover it
+  22: PayrollEdge(shortfallGross: 150), // a job didn't cover its advance days: recovered from this week's pay
+  23: PayrollEdge(shortfallGross: 120), // a small split leaves them under the hurdle: the shortfall carries forward
+  24: PayrollEdge(other: 37.5, drift: 0.01),
+  26: PayrollEdge(drift: -0.01, carryIn: 90, carryFinal: true),
+  27: PayrollEdge(releases: [50, -75]), // a callback charge bigger than the release: total due below zero
+};
+
+double _num(Object? v) => (v as num?)?.toDouble() ?? 0;
+
+/// Applies [edges] to a generated report and recomputes every derived figure with the engine's formulas.
+Map<String, dynamic> payrollApplyEdges(Map<String, dynamic> report, Map<int, PayrollEdge> edges) {
+  for (final t in (report['techs'] as List).cast<Map<String, dynamic>>()) {
+    final e = edges[t['userId']] ?? const PayrollEdge();
+    final sales = t['isSales'] == true;
+    final cbOnly = t['isCallbackOnly'] == true;
+    var carryLeft = e.carryIn;
+    var carryRecoveredTotal = 0.0;
+    for (final w in (t['weeks'] as List).cast<Map<String, dynamic>>()) {
+      final jobNet = _r2((w['jobs'] as List).fold<double>(0, (s, j) => s + _num((j as Map)['net'])));
+      final held = _num(w['hurdleCredit']);
+      final adv = _num(w['advancesPaid']);
+      final parts = _r2(jobNet + adv + _num(w['callbackPay']) + _num(w['repPay']) + held);
+      final gross = _r2(parts + e.other + e.drift);
+      final rule = _num(w['hurdleRule']);
+      final double payPre = sales || rule == 0
+          ? gross
+          : (cbOnly ? _r2(gross - adv) : math.max(0.0, math.min(_r2(gross - held), _r2(gross - rule))));
+      final recovered = _r2(math.min(e.shortfallGross, math.max(0.0, payPre)));
+      final cash = _r2(payPre - recovered);
+      final carryIn = carryLeft;
+      final carryRecovered = carryIn > 0 ? _r2(math.min(carryIn, math.max(0.0, cash))) : 0.0;
+      carryLeft = _r2(carryLeft - carryRecovered);
+      carryRecoveredTotal = _r2(carryRecoveredTotal + carryRecovered);
+      w
+        ..['jobNet'] = jobNet
+        ..['otherAdjustments'] = e.other
+        ..['weeklyGross'] = gross
+        ..['advanceRecovered'] = recovered
+        ..['advanceShortfall'] = _r2(e.shortfallGross - recovered)
+        ..['cashPay'] = cash
+        ..['hurdleApplied'] = _r2(gross - cash - recovered)
+        ..['carryIn'] = carryIn
+        ..['carryRecovered'] = carryRecovered
+        ..['carryProjected'] = !e.carryFinal && carryRecovered > 0;
+    }
+    if (e.releases.isNotEmpty) {
+      t['retainageReleases'] = [
+        for (final a in e.releases)
+          {
+            'jobId': '1094410022',
+            'type': a < 0 ? 'callback_deduction' : 'release',
+            'amount': a,
+            'releasedOn': (report['range'] as Map)['end'],
+          },
+      ];
+    }
+    // The engine has no weekly row for someone with nothing paid that week (e.g. paid only by a retainage release).
+    (t['weeks'] as List).removeWhere((w) {
+      final m = w as Map;
+      return (m['jobs'] as List).isEmpty &&
+          (m['advances'] as List).isEmpty &&
+          (m['callbacks'] as List).isEmpty &&
+          (m['repCommissions'] as List).isEmpty;
+    });
+    final weeks = (t['weeks'] as List).cast<Map<String, dynamic>>();
+    double sum(String k) => _r2(weeks.fold<double>(0, (s, w) => s + _num(w[k])));
+    final released = _r2((t['retainageReleases'] as List).fold<double>(0, (s, r) => s + _num((r as Map)['amount'])));
+    t['totals'] = {
+      'retainage': sum('retainage'),
+      'advancesPaid': sum('advancesPaid'),
+      'callbackPay': sum('callbackPay'),
+      'repPay': sum('repPay'),
+      'weeklyGross': sum('weeklyGross'),
+      'hurdleApplied': sum('hurdleApplied'),
+      'cashPay': sum('cashPay'),
+      'advanceShortfall': sum('advanceShortfall'),
+      'retainageReleased': released,
+      'carryRecovered': carryRecoveredTotal,
+      'totalDue': _r2(sum('cashPay') + released - carryRecoveredTotal),
+    };
+  }
+  return report;
+}
+
+/// A report (one pay week, Oct 12-18 2026, unless told otherwise) full of the cases that make a register hard to
+/// reconcile.
+Map<String, dynamic> payrollEdgeReport({DateTime? lastSunday, int weeks = 1}) => payrollApplyEdges(
+  jsonDecode(payrollReport(lastSunday ?? DateTime(2026, 10, 18), weeks, people: payrollEdgePeople, seed: 11))
+      as Map<String, dynamic>,
+  payrollEdges,
+);
+
+/// [count] generated technicians, for the big-payroll register and PDF.
+List<PayrollPerson> payrollCrowd(int count) => [
+  for (var i = 0; i < count; i++)
+    PayrollPerson(
+      100 + i,
+      '${const ['Alex', 'Jordan', 'Sam', 'Taylor', 'Morgan', 'Casey', 'Riley', 'Jamie'][i % 8]} '
+      '${const ['Garcia', 'Nguyen', 'Okafor', 'Schmidt', 'Rossi', 'Kowalski', 'Haddad', 'Brennan', 'Lindqvist', 'Moreau'][i % 10]}'
+      '${i >= 40 ? ' ${i ~/ 40 + 1}' : ''}',
+      i % 9 == 0 ? 'Lead Technician' : 'Technician',
+      jobsPerWeek: 1 + i % 4,
+      pct: 0.3 + (i % 5) * 0.15,
+      commercial: i % 6 == 0,
+      advanceDays: i % 7 == 0 ? 1 : 0,
+      callbacks: i % 5 == 0 ? 1 : 0,
+    ),
+];
+
+/// [count] generated technicians run through the engine formulas (no edge overrides), for big and long reports.
+Map<String, dynamic> payrollCrowdReport(int count, {int weeks = 1, DateTime? lastSunday}) => payrollApplyEdges(
+  jsonDecode(payrollReport(lastSunday ?? DateTime(2026, 10, 18), weeks, people: payrollCrowd(count), seed: 5))
+      as Map<String, dynamic>,
+  const {},
+);

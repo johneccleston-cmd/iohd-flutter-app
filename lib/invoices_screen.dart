@@ -575,36 +575,45 @@ class _InvoicesScreenState extends State<InvoicesScreen> with SingleTickerProvid
                 actions: [PageBanner.refresh(onPressed: _loading ? null : () => _load(_wantedPage))],
               ),
               Expanded(
-                child: CustomScrollView(
-                  controller: _scroll,
-                  slivers: [
-                    SliverToBoxAdapter(child: _statStrip(compact)),
-                    SliverToBoxAdapter(child: _toolbar()),
-                    if (_stale != null)
-                      SliverToBoxAdapter(
-                        child: FlatStaleNotice(
-                          message: '$_stale Showing the last loaded invoices.',
-                          busy: _loading,
-                          onRetry: () => _load(_wantedPage),
+                child: PageSheet(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: CustomScrollView(
+                          controller: _scroll,
+                          slivers: [
+                            SliverToBoxAdapter(child: _statStrip(compact)),
+                            SliverToBoxAdapter(child: _toolbar()),
+                            if (_stale != null)
+                              SliverToBoxAdapter(
+                                child: FlatStaleNotice(
+                                  message: '$_stale Showing the last loaded invoices.',
+                                  busy: _loading,
+                                  onRetry: () => _load(_wantedPage),
+                                ),
+                              ),
+                            ..._content(compact),
+                          ],
                         ),
                       ),
-                    ..._content(compact),
-                  ],
+                      if (_error == null && _rows.isNotEmpty)
+                        FlatPager(
+                          page: _page,
+                          totalPages: _totalPages,
+                          total: _total,
+                          firstRow: _firstRow,
+                          rowsShown: _rows.length,
+                          pageSize: _pageSize,
+                          busy: _loading,
+                          compact: compact,
+                          onPage: _load,
+                          onPageSize: _setPageSize,
+                        ),
+                    ],
+                  ),
                 ),
               ),
-              if (_error == null && _rows.isNotEmpty)
-                FlatPager(
-                  page: _page,
-                  totalPages: _totalPages,
-                  total: _total,
-                  firstRow: _firstRow,
-                  rowsShown: _rows.length,
-                  pageSize: _pageSize,
-                  busy: _loading,
-                  compact: compact,
-                  onPage: _load,
-                  onPageSize: _setPageSize,
-                ),
             ],
           );
         },

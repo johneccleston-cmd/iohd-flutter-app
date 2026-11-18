@@ -12,7 +12,7 @@ no drop shadows, brand red used sparingly for primary actions and the active nav
 
 | Where | What |
 |-------|------|
-| `lib/theme/app_theme.dart` → `AppTheme` | App chrome: `bgColor #E2E8F0` (the dashboards' slate), `primaryText #1A1C1E`, `secondaryText #4B5563`, `sectionLabel #9CA3AF`, `mutedText #6B7280` (readable muted), `strokeBorder #E5E7EB`, `brandRed #CC0007`, `successGreen`, notes (amber) colours |
+| `lib/theme/app_theme.dart` → `AppTheme` | App chrome: `bgColor #E0E0E0` (neutral grey, also the dashboards' page colour), `primaryText #1A1C1E`, `secondaryText #4B5563`, `sectionLabel #9CA3AF`, `mutedText #6B7280` (readable muted), `strokeBorder #E5E7EB`, `brandRed #CC0007`, `successGreen`, notes (amber) colours |
 | `lib/widgets/dashboard_kit.dart` → `DashUi` | Data UI: `ink`, `slate`, `muted`, `subtle #64748B`, `line`, `faint` + semantic `emerald`, `indigo`, `sky`, `blue`, `amber`, `red`, and AA-safe small-text variants `emeraldText`, `amberText`, `redText` |
 | `lib/main.dart` → `ThemeData` | Material 3, `ColorScheme.fromSeed(brandRed)`, card theme (radius 14, 1px border) |
 
@@ -74,6 +74,9 @@ and use dark text.
   hint. Search fields get a `prefixIcon: Icons.search`.
 - Cards: only on dashboards and KPI pages (`DashPanel`, `AnimatedMetricCard`). Other screens are flat full
   pages with hairline dividers (`flat_page.dart`).
+- Page edge (the standard since 2026-11-12): wrap everything under a full page's ribbon in `PageSheet`, a white sheet with
+  an 8 px (`PageSheet.edge`) margin of the backdrop on the left and right, none on top or bottom. The 3 px loading strip may
+  stay above it, full width. Pages built of blocks (Job detail) pad by `PageSheet.padding` and use the same 8 px as gutters.
 - Tabs / segmented controls: `DashSegmented` or `AppSegmented`; the selected label is `DashUi.ink`, never blue.
 - Section headers: `AppSectionLabel('Customer')`. Notes and warnings: `AppNotesCard`.
 - Icons: Material `*_rounded` variants, 18–20px inline and 24 in tiles.

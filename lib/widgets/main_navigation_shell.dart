@@ -17,6 +17,7 @@ import 'app_dialog.dart';
 import 'assistant_panel.dart';
 import 'dashboard_kit.dart';
 import 'global_search.dart';
+import 'leave_guard.dart';
 
 // --- Design tokens ---------------------------------------------------------
 // The bar is white and its menus are white panels, like the dashboards' pop-ups. Red marks the page you are on;
@@ -153,6 +154,7 @@ List<_NavModule> _navFor(AuthSession session) {
       group(null, [
         ('stock', Icons.stacked_bar_chart_rounded, 'Stock Levels', '/inventory'),
         ('catalog', Icons.category_rounded, 'Product Catalog', '/inventory/catalog'),
+        ('services_catalog', Icons.handyman_rounded, 'Services Catalog', '/inventory/services'),
       ]),
       group('Purchasing', [
         ('purchase_orders', Icons.shopping_cart_checkout_rounded, 'Purchase Orders', '/inventory/purchase-orders'),
@@ -331,12 +333,18 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     super.dispose();
   }
 
-  void _goBranch(int index) {
-    widget.navigationShell.goBranch(
-      index,
-      initialLocation: index == widget.navigationShell.currentIndex,
-    );
-  }
+  /// Every move to another page from the bar asks [LeaveGuard] first (an editing preview with changes on the job page).
+  void _go(String location, {Object? extra}) => LeaveGuard.leave(() {
+        if (mounted) context.go(location, extra: extra);
+      });
+
+  void _goBranch(int index) => LeaveGuard.leave(() {
+        if (!mounted) return;
+        widget.navigationShell.goBranch(
+          index,
+          initialLocation: index == widget.navigationShell.currentIndex,
+        );
+      });
 
   /// The list a search opens when nothing in the dropdown was chosen: a number is a job, anything else a customer.
   /// When the account can't open that list it tries the others; null when it can open none (and the search control
@@ -357,7 +365,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     if (query.isEmpty) return;
     final path = _searchPath(query);
     if (path == null) return;
-    context.go('$path?q=${Uri.encodeQueryComponent(query)}');
+    _go('$path?q=${Uri.encodeQueryComponent(query)}');
   }
 
   void _openPick(SearchPick pick) {
@@ -365,7 +373,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
     if (route == null) {
       _handleSearch(pick.query);
     } else {
-      context.go(route, extra: pick.extra);
+      _go(route, extra: pick.extra);
     }
   }
 
@@ -440,7 +448,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
         modules: modules,
         active: active,
         here: here,
-        onGo: (route) => context.go(route),
+        onGo: _go,
         onGoBranch: _goBranch,
       ),
       appBar: PreferredSize(
@@ -521,7 +529,7 @@ class _MainNavigationShellState extends State<MainNavigationShell> {
                       here: here,
                       labelWidth: labels[m.label]!,
                       compact: fit.compact,
-                      onGo: (route) => context.go(route),
+                      onGo: _go,
                     )
                   else
                     _NavTab(
@@ -1677,7 +1685,9 @@ class _AccountMenuState extends State<_AccountMenu> with _MenuKeys {
               MenuItemButton(
                 focusNode: entryFocus,
                 requestFocusOnHover: false,
-                onPressed: () => context.go('/profile'),
+                onPressed: () => LeaveGuard.leave(() {
+                  if (context.mounted) context.go('/profile');
+                }),
                 style: _menuRowStyle(here: GoRouterState.of(context).uri.path == '/profile'),
                 leadingIcon: const Icon(Icons.person_outline_rounded, size: 18, color: DashUi.slate),
                 child: const Text('My Profile',
@@ -1693,7 +1703,7 @@ class _AccountMenuState extends State<_AccountMenu> with _MenuKeys {
               ),
               MenuItemButton(
                 requestFocusOnHover: false,
-                onPressed: session.logout,
+                onPressed: () => LeaveGuard.leave(session.logout),
                 style: _menuRowStyle(here: false),
                 leadingIcon: const Icon(Icons.logout_rounded, size: 18, color: DashUi.redText),
                 child: const Text('Sign out',

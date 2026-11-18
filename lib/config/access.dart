@@ -70,7 +70,7 @@ const List<AccessGroup> kAccessGroups = [
     AccessResource('customers', 'Customers', Icons.groups_rounded, route: '/customers', help: 'Customer list and contact details.'),
     AccessResource('estimates', 'Estimates', Icons.request_quote_rounded, route: '/estimates', actions: _record, help: 'Update: notes, tasks, pictures and documents. Delete: remove one deleted in Service Fusion.'),
     AccessResource('jobs', 'Jobs', Icons.build_rounded, route: '/jobs', actions: _record, help: 'Update: notes, tasks, pictures and documents. Delete: remove one deleted in Service Fusion.'),
-    AccessResource('line_items', 'Line Items & Costs', Icons.list_alt_rounded, actions: _viewUpdate, defaultOff: true, help: 'View: costs, profit and margin on jobs, estimates and the catalog. Update: edit line items and options, accept, send to job.'),
+    AccessResource('line_items', 'Line Items & Costs', Icons.list_alt_rounded, actions: _viewUpdate, defaultOff: true, help: 'View: costs, profit and margin on jobs, estimates and the catalog. Update: edit line items and options, accept, send to job; add, edit and delete products, manage categories and change several products at once in the Product Catalog.'),
     AccessResource('communications', 'Calls & Texts', Icons.forum_rounded, actions: _crud, help: 'On job and customer pages. Create: send a text. Update: link a call, add call details. Delete: remove a call or text.'),
     AccessResource('statuses', 'Statuses', Icons.timeline_rounded, route: '/statuses', actions: _crud, help: 'Add, rename, recolor, reorder and remove job statuses.'),
     AccessResource('payments', 'Payments', Icons.payment_rounded, route: '/payments', actions: _payments, help: 'Payments from Service Fusion and Stripe. Create: send a card payment link.'),
@@ -82,13 +82,14 @@ const List<AccessGroup> kAccessGroups = [
   AccessGroup('Inventory', [
     AccessResource('stock', 'Stock Levels', Icons.stacked_bar_chart_rounded, route: '/inventory', help: 'What is on the shelves.'),
     AccessResource('catalog', 'Product Catalog', Icons.category_rounded, route: '/inventory/catalog', help: 'Products and prices.'),
+    AccessResource('services_catalog', 'Services Catalog', Icons.handyman_rounded, route: '/inventory/services', help: 'Services and what they usually charge.'),
     AccessResource('purchase_orders', 'Purchase Orders', Icons.shopping_cart_checkout_rounded, route: '/inventory/purchase-orders', actions: _crud, help: 'Add, change and remove purchase orders.'),
     AccessResource('vendors', 'Vendors', Icons.storefront_rounded, route: '/inventory/vendors', help: 'Vendor list.'),
   ]),
   AccessGroup('Other', [
     AccessResource('projects', 'Projects', Icons.folder_copy_rounded, route: '/projects', actions: _crud, help: 'Add (or import from the sheet), change and remove projects.'),
     AccessResource('calendar', 'Calendar', Icons.calendar_month_rounded, route: '/calendar', help: 'The schedule from Service Fusion.'),
-    AccessResource('jarvis', 'Ask Jarvis', Icons.auto_awesome_rounded, defaultOff: true, help: 'The assistant. It can read every report, profit and pay included.'),
+    AccessResource('jarvis', 'Ask Jarvis', Icons.auto_awesome_rounded, defaultOff: true, help: 'The assistant. It only looks up what their other switches allow: pay, profit, calls and the rest follow them.'),
   ]),
 ];
 

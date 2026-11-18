@@ -333,35 +333,44 @@ class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAli
                 actions: [PageBanner.refresh(onPressed: _loading ? null : _refresh)],
               ),
               Expanded(
-                child: CustomScrollView(
-                  controller: _scroll,
-                  slivers: [
-                    SliverToBoxAdapter(child: _toolbar(compact)),
-                    if (_stale != null)
-                      SliverToBoxAdapter(
-                        child: FlatStaleNotice(
-                          message: '$_stale Showing the last loaded customers.',
-                          busy: _loading,
-                          onRetry: _refresh,
+                child: PageSheet(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: CustomScrollView(
+                          controller: _scroll,
+                          slivers: [
+                            SliverToBoxAdapter(child: _toolbar(compact)),
+                            if (_stale != null)
+                              SliverToBoxAdapter(
+                                child: FlatStaleNotice(
+                                  message: '$_stale Showing the last loaded customers.',
+                                  busy: _loading,
+                                  onRetry: _refresh,
+                                ),
+                              ),
+                            ..._content(compact),
+                          ],
                         ),
                       ),
-                    ..._content(compact),
-                  ],
+                      if (_error == null && _customers.isNotEmpty)
+                        FlatPager(
+                          page: _page,
+                          totalPages: _totalPages,
+                          total: _total,
+                          firstRow: _firstRow,
+                          rowsShown: _customers.length,
+                          pageSize: _pageSize,
+                          busy: _loading,
+                          compact: compact,
+                          onPage: _load,
+                          onPageSize: _setPageSize,
+                        ),
+                    ],
+                  ),
                 ),
               ),
-              if (_error == null && _customers.isNotEmpty)
-                FlatPager(
-                  page: _page,
-                  totalPages: _totalPages,
-                  total: _total,
-                  firstRow: _firstRow,
-                  rowsShown: _customers.length,
-                  pageSize: _pageSize,
-                  busy: _loading,
-                  compact: compact,
-                  onPage: _load,
-                  onPageSize: _setPageSize,
-                ),
             ],
           );
         },

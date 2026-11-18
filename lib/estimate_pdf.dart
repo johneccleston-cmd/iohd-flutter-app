@@ -240,7 +240,9 @@ Future<Uint8List> buildProposalPdf(ProposalInput input, {bool compress = true}) 
       ),
       pw.Table(
         border: pw.TableBorder(horizontalInside: pw.BorderSide(color: _line, width: 0.6), bottom: pw.BorderSide(color: _line)),
-        columnWidths: const {0: pw.FlexColumnWidth(6), 1: pw.FixedColumnWidth(46), 2: pw.FixedColumnWidth(72), 3: pw.FixedColumnWidth(80)},
+        // Qty shows two decimals (user 2026-11-13) and goes up to 999,999.999 either way: 68 pt keeps "-999,999.999" on
+        // one line (at 58 "-999,999.99" broke into "-999,999.9" and "9").
+        columnWidths: const {0: pw.FlexColumnWidth(6), 1: pw.FixedColumnWidth(68), 2: pw.FixedColumnWidth(72), 3: pw.FixedColumnWidth(80)},
         children: [
           pw.TableRow(
             children: [

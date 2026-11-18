@@ -213,12 +213,16 @@ class AppSegmented<V> extends StatelessWidget {
   final List<(V, String)> options;
   final ValueChanged<V> onChanged;
 
+  /// A slimmer control for a thin bar (the table pager): about 30 px tall instead of 44.
+  final bool dense;
+
   /// The selected label is always ink, like every tab in the app.
   const AppSegmented({
     super.key,
     required this.value,
     required this.options,
     required this.onChanged,
+    this.dense = false,
   });
 
   @override
@@ -226,8 +230,8 @@ class AppSegmented<V> extends StatelessWidget {
     // Not selectable text: the app-wide selection's I-beam would replace the click cursor over the labels.
     return SelectionContainer.disabled(
       child: Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(10)),
+      padding: EdgeInsets.all(dense ? 2 : 3),
+      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(dense ? 8 : 10)),
       child: Row(
         children: [
           for (final o in options)
@@ -248,7 +252,7 @@ class AppSegmented<V> extends StatelessWidget {
                   ),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
-                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                    padding: EdgeInsets.symmetric(vertical: dense ? 3 : 8, horizontal: 4),
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
                       color: o.$1 == value ? Colors.white : Colors.white.withValues(alpha: 0),

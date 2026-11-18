@@ -226,6 +226,52 @@ void main() {
     });
   });
 
+  // --- phone and small-tablet widths (the panel takes the whole window; the chat list starts closed)
+  testWidgets(
+    'home_390x844',
+    (t) => _scene(t, const Size(390, 844), () => _save(t, 'home_390x844'), hideSidebar: true),
+  );
+  testWidgets('home_390x844_chats', (t) {
+    return _scene(t, const Size(390, 844), () async {
+      await t.tap(find.byTooltip('Show chats'));
+      await _pump(t, 400);
+      await _save(t, 'home_390x844_chats');
+      expect(find.byTooltip('Hide chats'), findsNWidgets(2), reason: 'the drawer can close itself; it covers the title bar');
+      await t.tap(find.byTooltip('Hide chats').last);
+      await _pump(t, 400);
+      expect(find.byTooltip('Show chats'), findsOneWidget);
+    }, hideSidebar: true);
+  });
+  testWidgets('answer_owed_390x844', (t) {
+    _replies.add('owed');
+    return _scene(t, const Size(390, 844), () async {
+      await _ask(t, 'Which customers owe us the most money, especially overdue balances?');
+      await _settle(t);
+      await t.drag(find.byType(SingleChildScrollView).first, const Offset(0, 3000));
+      await _pump(t, 600);
+      await _save(t, 'answer_owed_390x844');
+    }, hideSidebar: true);
+  });
+  testWidgets('answer_table_600x900', (t) {
+    _replies.add('stuck');
+    return _scene(t, const Size(600, 900), () async {
+      await _ask(t, 'Which jobs are stuck, and what is holding them up?');
+      await _settle(t);
+      await t.drag(find.byType(SingleChildScrollView).first, const Offset(0, 3000));
+      await _pump(t, 600);
+      await _save(t, 'answer_table_600x900');
+    }, hideSidebar: true);
+  });
+  // --- typing: the hint under the message box
+  testWidgets('composer_typing', (t) {
+    return _scene(t, const Size(1440, 900), () async {
+      final box = find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Ask Jarvis'));
+      await t.enterText(box, 'Which customers have balances over 90 days');
+      await _pump(t, 400);
+      await _save(t, 'composer_typing_1440x900');
+    });
+  });
+
   // --- answers
   testWidgets('answer_normal', (t) {
     _replies.add('owed');

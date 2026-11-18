@@ -1,0 +1,774 @@
+diff --git a/src/commissionRules.js b/src/commissionRules.js
+index 461b6fe1..3618484f 100644
+--- a/src/commissionRules.js
++++ b/src/commissionRules.js
+@@ -700,11 +700,14 @@ job_settlement AS (
+         GREATEST(0, x.share - x.retained - x.advances) AS job_net
+     FROM (
+         -- Money is rounded to the cent here, once per person per job (CENT_ROUNDING_FROM_WEEK on), so the repaid, shortfall
+-        -- and net above are exact cents too. services.js already rounds each retainage deposit this way.
++        -- and net above are exact cents too. ROUNDING POLICY (money.js, shared with the sync's retainage ledger): the exact
++        -- amount, with ONE division, rounded once half away from zero. share_exact / retained_exact divide once by the job's
++        -- total verified weight; share / retained above add up per-day slices that are each divided, so a half cent can land
++        -- a hair under the tie (0.025 as 0.02499999999999999999) and round down. Earlier weeks keep share / retained.
+         SELECT v.user_id, v.job_id, v.week_start_raw, v.last_work_date, v.pool_share, v.pool_retained, v.revenue,
+                v.install_rate, v.job_labor, v.weight_share, v.advances, v.week_start, v.cap_remainder,
+-               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.share, 2) ELSE v.share END AS share,
+-               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.retained, 2) ELSE v.retained END AS retained
++               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.share_exact, 2) ELSE v.share END AS share,
++               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.retained_exact, 2) ELSE v.retained END AS retained
+         FROM (
+         SELECT
+             y.*,
+@@ -726,7 +729,15 @@ job_settlement AS (
+             CASE WHEN y.install_rate IS NULL OR y.pool_share <= 0 THEN y.pool_retained
+                  ELSE y.pool_retained * LEAST(1, y.job_labor * y.install_rate * y.weight_share / y.pool_share) END AS retained,
+             CASE WHEN y.install_rate IS NULL THEN 0::numeric
+-                 ELSE GREATEST(0, y.pool_share - y.job_labor * y.install_rate * y.weight_share) END AS cap_remainder
++                 ELSE GREATEST(0, y.pool_share - y.job_labor * y.install_rate * y.weight_share) END AS cap_remainder,
++            -- The same share and retainage with one division (see the rounding policy above). The products are exact, and
++            -- weight_share = w_sum / w_total, pool_share = commission_w / w_total, so the cap test needs no division at all.
++            CASE WHEN y.install_rate IS NULL THEN y.commission_w / NULLIF(y.w_total, 0)
++                 ELSE LEAST(y.commission_w, y.job_labor * y.install_rate * y.w_sum) / NULLIF(y.w_total, 0) END AS share_exact,
++            CASE WHEN y.install_rate IS NULL OR y.commission_w <= 0
++                      OR y.job_labor * y.install_rate * y.w_sum >= y.commission_w
++                 THEN y.retained_w / NULLIF(y.w_total, 0)
++                 ELSE y.retained_w * y.job_labor * y.install_rate * y.w_sum / (NULLIF(y.w_total, 0) * y.commission_w) END AS retained_exact
+         FROM (
+             SELECT
+                 a.user_id, a.job_id,
+@@ -734,6 +745,10 @@ job_settlement AS (
+                 MAX(a.work_date) AS last_work_date,
+                 SUM(a.job_commission * a.day_weight / NULLIF(a.total_verified_weight, 0)) AS pool_share,
+                 SUM(a.retained_pool  * a.day_weight / NULLIF(a.total_verified_weight, 0)) AS pool_retained,
++                SUM(a.job_commission * a.day_weight) AS commission_w,
++                SUM(a.retained_pool  * a.day_weight) AS retained_w,
++                SUM(a.day_weight) AS w_sum,
++                MAX(a.total_verified_weight) AS w_total,
+                 SUM(a.job_revenue    * a.day_weight / NULLIF(a.total_verified_weight, 0)) AS revenue,
+                 MAX(a.install_rate) AS install_rate,
+                 MAX(a.job_labor) AS job_labor,
+diff --git a/src/services.js b/src/services.js
+index cbf8ae3d..3246c089 100644
+--- a/src/services.js
++++ b/src/services.js
+@@ -7,6 +7,8 @@ const {
+ } = require('./config');
+ 
+ const { COMMISSION_RULES, COMPLETED_STATUSES, isCompletedStatus } = require('./commissionRules');
++// Ledger amounts are worked out exactly and rounded once, half away from zero, like the engine's ROUND(numeric, 2).
++const money = require('./money');
+ const { renderSiteCheckPdf, siteCheckPdfName } = require('./site_check_pdf');
+ const { saveGeneratedJobFile } = require('./job_files');
+ 
+@@ -977,6 +979,14 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                     dayWeights.get(e.workDate).push(e.dayWeight);
+                 }
+             }
++            // The same weight as an exact fraction (money.js), for the ledger amounts: no double drift in the sums.
++            const poolWeightExact = (e) => {
++                const others = dayWeights.get(e.workDate);
++                if (installRateOf(e.techName) !== null && countsForPool(e) && others && others.length) {
++                    return money.div(money.sum(others), others.length);
++                }
++                return money.q(e.dayWeight);
++            };
+             const poolWeight = (e) => {
+                 const others = dayWeights.get(e.workDate);
+                 if (installRateOf(e.techName) !== null && countsForPool(e) && others && others.length) {
+@@ -987,9 +997,13 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+ 
+             let totalTechDays = 0;      // stored on jobs.total_tech_days (all weights, as before)
+             let verifiedWeight = 0;     // denominator for retainage (matches engine)
++            let verifiedWeightExact = money.ZERO;
+             for (const entry of uniqueWorkEntries.values()) {
+                 totalTechDays += entry.dayWeight;
+-                if (countsForPool(entry)) verifiedWeight += poolWeight(entry);
++                if (countsForPool(entry)) {
++                    verifiedWeight += poolWeight(entry);
++                    verifiedWeightExact = money.add(verifiedWeightExact, poolWeightExact(entry));
++                }
+             }
+  
+             // Money is earned ONLY when the job is in a closing status (or already latched), the same
+@@ -1009,6 +1023,12 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+             let poolLaborProjected = 0; // labor on percentage lines with projected / earned commission
+             let poolLaborEarned = 0;
+             let qualifyingLabor = 0; // labor on commission-table lines; the sales rep % is paid on this
++            // Exact twins of the sums above, for the ledger amounts (money.js): earned commission, pool labor, qualifying labor.
++            let totalProjectedExact = money.ZERO;
++            let totalEarnedExact = money.ZERO;
++            let poolLaborProjectedExact = money.ZERO;
++            let poolLaborEarnedExact = money.ZERO;
++            let qualifyingLaborExact = money.ZERO;
+             const commissionItemsToSave = [];
+  
+             const jobHasCommercialInstall = rawLineItems.some((it) => /^\s*commercial installation\b/i.test(String(it.service || '')));
+@@ -1034,15 +1054,18 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                 }
+                 totalProjected += proj;
+                 totalEarned += earn;
++                totalProjectedExact = money.add(totalProjectedExact, proj);
++                totalEarnedExact = money.add(totalEarnedExact, earn);
+                 // Labor on percentage lines is the base of the per-labor company pool (3.75). Fixed-dollar lines are not in it.
+                 if (comm?.type === 'percentage') {
+                     const lineLabor = Math.max(0, Number(comm?.labor) || 0);
+-                    if (proj > 0) poolLaborProjected += lineLabor;
+-                    if (earn > 0) poolLaborEarned += lineLabor;
++                    if (proj > 0) { poolLaborProjected += lineLabor; poolLaborProjectedExact = money.add(poolLaborProjectedExact, lineLabor); }
++                    if (earn > 0) { poolLaborEarned += lineLabor; poolLaborEarnedExact = money.add(poolLaborEarnedExact, lineLabor); }
+                 }
+                 if (category !== 'Unknown' && !COMMISSION_RULES.EXCLUDED_CATEGORIES.includes(category.toLowerCase())
+                     && !TECH_ONLY_NAMES.has(normalizeServiceName(itemName))) {
+                     qualifyingLabor += Number(comm?.labor) || 0;
++                    qualifyingLaborExact = money.add(qualifyingLaborExact, Number(comm?.labor) || 0);
+                 }
+ 
+                 if (proj > 0 || earn > 0) {
+@@ -1096,8 +1119,8 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+  
+             // The pool is 1% of the job's TOTAL COMMISSION (all commission lines, before the pool and before the tech
+             // split), not of the job's revenue. totalProjected / totalEarned are still the plain sums at this point.
+-            const poolBaseProjected = Math.max(0, totalProjected);
+-            const poolBaseEarned = finalIsEarned ? Math.max(0, totalEarned) : 0;
++            const poolBaseProjected = money.max(money.ZERO, totalProjectedExact);
++            const poolBaseEarned = finalIsEarned ? money.max(money.ZERO, totalEarnedExact) : money.ZERO;
+             // From the pay week of COMPANY_POOL_LABOR_START_WEEK the pool is 1% of the labor on the percentage lines instead
+             // (the techs' rate drops by a point). The week is the one the job first closed in (its lock, frozen by the
+             // trigger), or the current one while it is still open. A job closed in an earlier week keeps the old formula.
+@@ -1106,12 +1129,13 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                    FROM job_commission_locks WHERE job_id = $1`, [jobIdStr]);
+             const closeDay = lockRes.rows[0]?.closed_on || todayStr;
+             const poolOnLabor = closeDay >= COMMISSION_RULES.COMPANY_POOL_LABOR_START_WEEK;
++            // Rounded once to the cent, half away from zero (money.js), like every other amount the engine and ledger share.
+             const companyPoolProjected = poolOnLabor
+-                ? Number((poolLaborProjected * COMMISSION_RULES.COMPANY_POOL_LABOR_RATE).toFixed(2))
+-                : Number((poolBaseProjected * COMMISSION_RULES.COMPANY_POOL_RATE).toFixed(2));
++                ? money.cents(money.mul(poolLaborProjectedExact, COMMISSION_RULES.COMPANY_POOL_LABOR_RATE))
++                : money.cents(money.mul(poolBaseProjected, COMMISSION_RULES.COMPANY_POOL_RATE));
+             const companyPoolEarned = poolOnLabor
+-                ? (finalIsEarned ? Number((poolLaborEarned * COMMISSION_RULES.COMPANY_POOL_LABOR_RATE).toFixed(2)) : 0)
+-                : Number((poolBaseEarned * COMMISSION_RULES.COMPANY_POOL_RATE).toFixed(2));
++                ? (finalIsEarned ? money.cents(money.mul(poolLaborEarnedExact, COMMISSION_RULES.COMPANY_POOL_LABOR_RATE)) : 0)
++                : money.cents(money.mul(poolBaseEarned, COMMISSION_RULES.COMPANY_POOL_RATE));
+ 
+             if (poolApplies && companyPoolProjected > 0) {
+                 commissionItemsToSave.push({
+@@ -1122,7 +1146,10 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                     rate: 0, amountRetained: 0, retainagePayoutDate: null
+                 });
+                 totalProjected -= companyPoolProjected;
+-                if (finalIsEarned) totalEarned -= companyPoolEarned;
++                if (finalIsEarned) {
++                    totalEarned -= companyPoolEarned;
++                    totalEarnedExact = money.sub(totalEarnedExact, companyPoolEarned);
++                }
+             }
+  
+             // --- 3.9 OUT OF COMMISSION SCOPE ---
+@@ -1132,6 +1159,7 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                 commissionItemsToSave.length = 0;
+                 totalProjected = 0;
+                 totalEarned = 0;
++                totalEarnedExact = money.ZERO;
+             }
+ 
+             // --- 4. MASTER JOB UPSERT ---
+@@ -1273,19 +1301,20 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+             // A. Deposits (fund the accounts). Gated on completion, not on the "final invoice sent" string,
+             //    and nothing is deposited before the pool's start date (same idea as callbacks, 3.5).
+             //    Rows written earlier by an older rule are cleared by the delete above on the next sync.
++            // Each tech's verified weight on the job, as an exact fraction (money.js).
+             const weightByTech = new Map();
+             for (const e of uniqueWorkEntries.values()) {
+-                if (countsForPool(e)) weightByTech.set(e.techName, (weightByTech.get(e.techName) || 0) + poolWeight(e));
++                if (countsForPool(e)) weightByTech.set(e.techName, money.add(weightByTech.get(e.techName) || money.ZERO, poolWeightExact(e)));
+             }
+-            // Rule 14: an install-rate person's slice of the net pool is capped at rate * qualifying labor. `scale` shrinks
+-            // his retainage with it; `remainder` is what the cap holds back (not paid to anyone, not pooled).
+-            const netPoolEarned = Math.max(0, totalEarned);
+-            const installCap = (techName, w) => {
++            // Rule 14: an install-rate person's slice of the net pool is capped at rate * qualifying labor, and his
++            // retainage shrinks with it: scale = min(1, cap / slot). The weight share is on both sides, so it cancels:
++            // scale = min(1, qualifying labor * rate / net pool), the engine's LEAST(1, job_labor * rate * w / (commission * w)).
++            const netPoolEarnedExact = money.max(money.ZERO, totalEarnedExact);
++            const installCapScale = (techName) => {
+                 const rate = installRateOf(techName);
+-                if (rate === null || !(verifiedWeight > 0)) return null;
+-                const slot = netPoolEarned * (w / verifiedWeight);
+-                const cap = qualifyingLabor * rate * (w / verifiedWeight);
+-                return { scale: slot > 0 ? Math.min(1, cap / slot) : 1, remainder: Math.max(0, slot - cap) };
++                if (rate === null || !money.isPositive(verifiedWeightExact)) return null;
++                if (!money.isPositive(netPoolEarnedExact)) return money.ONE;
++                return money.min(money.ONE, money.div(money.mul(qualifyingLaborExact, rate), netPoolEarnedExact));
+             };
+ 
+             if (poolApplies && finalIsEarned && !depositsFrozen && todayStr >= COMMISSION_RULES.COMPANY_POOL_START_DATE) {
+@@ -1294,22 +1323,22 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                     await ledgerInsert(null, 'company_pool', 'deposit', companyPoolAmount, null);
+                 }
+  
+-                if (isCommercialJob && verifiedWeight > 0) {
+-                    let netRetainable = 0;
+-                    for (const item of commissionItemsToSave) {
+-                        if (item.category === 'Commercial Installation' || item.category === 'Company Pool Deduction') {
+-                            netRetainable += Number(item.earn) || 0;
+-                        }
+-                    }
+-                    netRetainable = Math.max(0, netRetainable);
+- 
++                if (isCommercialJob && money.isPositive(verifiedWeightExact)) {
++                    // The engine's job_retainage: commercial installation + company pool deduction lines, floored at 0.
++                    const netRetainable = money.sum(commissionItemsToSave
++                        .filter((item) => item.category === 'Commercial Installation' || item.category === 'Company Pool Deduction')
++                        .map((item) => Number(item.earn) || 0));
++
+                     for (const [techName, w] of weightByTech) {
+                         // Not commission eligible: no retainage held, and their slice is not paid or pooled (below).
+                         if (!eligibleOf(techName)) continue;
+-                        // Same formula as the engine: RATE * netRetainable * (my verified weight / total verified weight),
+-                        // scaled down by the cap for an install-rate person (rule 14).
+-                        const cap = installCap(techName, w);
+-                        const deposit = Number((COMMISSION_RULES.RETAINAGE_RATE * netRetainable * (w / verifiedWeight) * (cap ? cap.scale : 1)).toFixed(2));
++                        // Same formula and rounding as the engine (job_settlement): RATE * netRetainable * (my verified weight /
++                        // total verified weight), scaled by the cap for an install-rate person (rule 14), worked out exactly
++                        // and rounded once to the cent, half away from zero.
++                        const deposit = money.retainageDeposit({
++                            rate: COMMISSION_RULES.RETAINAGE_RATE, netRetainable, weight: w,
++                            totalWeight: verifiedWeightExact, capScale: installCapScale(techName),
++                        });
+                         if (deposit > 0) await ledgerInsert(techName, 'commercial_retainage', 'deposit', deposit, retainageUnlockDate);
+                     }
+                 }
+@@ -1348,12 +1377,15 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                     continue;
+                 }
+  
++                // Exact weights (money.js), so each tech's share of the penalty is rounded once to the cent like every
++                // other ledger amount. Three equal techs on $50 are charged 16.67 each (not 16.666666666666668).
++                const guiltyWeightExact = money.sum([...cb.originalTechs.values()]);
+                 for (const [techName, weight] of cb.originalTechs) {
+-                    const fullShare = (weight / totalGuiltyWeight) * penalty;
++                    const fullShare = money.cents(money.div(money.mul(weight, penalty), guiltyWeightExact));
+                     const key = techName.toLowerCase();
+                     const alreadyCharged = Math.min(releasedCb.get(key) || 0, fullShare);
+-                    if (alreadyCharged > 0) releasedCb.set(key, (releasedCb.get(key) || 0) - alreadyCharged);
+-                    const share = fullShare - alreadyCharged;
++                    if (alreadyCharged > 0) releasedCb.set(key, money.cents(money.sub(releasedCb.get(key) || 0, alreadyCharged)));
++                    const share = money.cents(money.sub(fullShare, alreadyCharged));
+                     if (share <= 0.004) continue;
+  
+                     {
+@@ -1368,7 +1400,7 @@ async function autoLogWorkDaysFromSF(freshJobs, isEstimate = false) {
+                         if (fromCommercial > 0) {
+                             await ledgerInsert(techName, 'commercial_retainage', 'callback_deduction', -fromCommercial, retainageUnlockDate);
+                         }
+-                        const remainder = share - fromCommercial;
++                        const remainder = money.cents(money.sub(share, fromCommercial));
+                         if (remainder > 0.004) {
+                             await ledgerInsert(techName, 'company_pool', 'callback_deduction', -remainder, null);
+                         }
+diff --git a/src/assistant.js b/src/assistant.js
+index 6c7915b9..620a3a0a 100644
+--- a/src/assistant.js
++++ b/src/assistant.js
+@@ -1344,6 +1344,8 @@ const TOOLS = [
+                     return { week_start: w, people: r.length, job_commission: sum(r, 'job_commission'), weekly_gross: sum(r, 'weekly_gross'), pay: sum(r, 'pay') };
+                 });
+                 let jobs;
++                let jobsTruncated = false;
++                const JOB_DETAIL_LIMIT = 150;
+                 if (a.detail || asIf) {
+                     jobs = (await db.query(
+                         `WITH ${usersAs}${WEEKLY_PAYOUTS_CTE}
+@@ -1352,12 +1354,20 @@ const TOOLS = [
+                                 p.retained::float8 AS retainage_held, p.flat_rate_pay::float8 AS advance, p.net_pay::float8 AS net
+                            FROM pay_rows p
+                            JOIN users u ON u.id = p.user_id
+-                                AND (${ON_COMMISSION_IN_WEEK_SQL('u.id', 'p.week_start', 'u.is_commission_eligible')} OR (u.is_callback_eligible = true AND p.kind = 'callback'))
++                                -- Same rule as weekly_base and the saved run items (payroll_runs.js): off technician
++                                -- commission, a person's pay is their callbacks plus their sales commission, so those rows
++                                -- are the detail behind it (a sales-only person's pay used to come back with no rows).
++                                AND (${ON_COMMISSION_IN_WEEK_SQL('u.id', 'p.week_start', 'u.is_commission_eligible')} OR p.kind IN ('callback', 'rep_commission'))
+                            LEFT JOIN jobs j ON j.job_id = p.job_id::text
+                           WHERE p.week_start >= $1::date AND p.week_start <= $2::date AND ($3::text IS NULL OR u.name ILIKE $3)
+                             AND (p.raw_commission <> 0 OR p.flat_rate_pay <> 0 OR p.net_pay <> 0)
+-                          ORDER BY p.week_start, u.name, p.job_id LIMIT 150`,
++                          ORDER BY p.week_start, u.name, p.job_id LIMIT ${JOB_DETAIL_LIMIT + 1}`,
+                         [range.start, range.end, personFilter])).rows;
++                    // One sales person can have 130+ rows in a single pay week, so say when the list is cut short.
++                    if (jobs.length > JOB_DETAIL_LIMIT) {
++                        jobs = jobs.slice(0, JOB_DETAIL_LIMIT);
++                        jobsTruncated = true;
++                    }
+                 }
+                 // The jobs a what-if person worked in the range that the engine gives nothing for, and why (read off the
+                 // engine's own tables: its commission total, its resolved day weights, the job's closed state).
+@@ -1390,7 +1400,9 @@ const TOOLS = [
+                     nothing = { jobs: list.length, by_reason: Object.entries(reasons).map(([reason, n]) => ({ reason, jobs: n })), list: list.slice(0, 60), jobs_worked: worked.length, jobs_that_paid: worked.length - list.length };
+                 }
+                 return { ...(asIf ? { hypothetical: `What ${asIf.name} would have earned had they been on commission for these weeks${asIf.is_commission_eligible ? ' (they already are, so this is their normal computed pay)' : ''}. Nothing here was paid. It uses the day weights and commission lines on file and changes nobody else's pay.` } : {}),
+-                         range, total_pay: sum(rows, 'pay'), total_job_commission: sum(rows, 'job_commission'), by_week: weeks, rows, jobs, jobs_that_paid_nothing: nothing,
++                         range, total_pay: sum(rows, 'pay'), total_job_commission: sum(rows, 'job_commission'), by_week: weeks, rows, jobs,
++                         ...(jobsTruncated ? { jobs_truncated: `Only the first ${JOB_DETAIL_LIMIT} job rows are listed (by week, then name). Narrow the weeks or name one person for the rest; the totals above cover everything.` } : {}),
++                         jobs_that_paid_nothing: nothing,
+                          note: rows.length === 0 ? 'Nothing computed for this range (commission go-live was 2026-10-05; jobs pay in the week they close).' : undefined };
+             } catch (e) {
+                 if (e && e.code === '42501') return { error: 'The assistant database role cannot read the users table columns the commission engine needs (id, name, role, is_commission_eligible, is_callback_eligible). The owner must run the column grant, then this tool works.' };
+diff --git a/src/money.js b/src/money.js
+new file mode 100644
+index 00000000..da59fb8f
+--- /dev/null
++++ b/src/money.js
+@@ -0,0 +1,80 @@
++// money.js
++// Exact decimal arithmetic for pay amounts, so the sync's retainage ledger and the payroll engine round alike.
++//
++// THE ROUNDING POLICY (one rule everywhere money is split):
++//   A person's amount on a job is worked out EXACTLY from the stored decimal inputs (commission lines, day weights,
++//   rates), with one division at the end, and rounded ONCE to the cent, half away from zero. That is what Postgres
++//   ROUND(numeric, 2) does, which is what the engine (commissionRules.js) and sales commission already use.
++//
++// Why not Number(x.toFixed(2)): toFixed rounds the binary double, not the decimal. 0.2 * 0.15 * 0.5 is 0.015 on paper
++// but 0.01499999... as a double, so toFixed gives 0.01 while Postgres gives 0.02. Sums of doubles drift the same way
++// (0.1 + 0.2 = 0.30000000000000004). Here every input is read as the decimal it prints as (String(x)), which is also
++// exactly what node-pg writes into a numeric column, and all arithmetic is on BigInt fractions.
++
++// A fraction n / d with d > 0, kept in lowest terms.
++function gcd(a, b) {
++    a = a < 0n ? -a : a;
++    b = b < 0n ? -b : b;
++    while (b) [a, b] = [b, a % b];
++    return a;
++}
++function frac(n, d) {
++    if (d === 0n) throw new RangeError('money: division by zero');
++    if (d < 0n) { n = -n; d = -d; }
++    const g = gcd(n, d) || 1n;
++    return Object.freeze({ n: n / g, d: d / g });
++}
++
++const DECIMAL = /^([+-]?)(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i;
++
++// number | numeric string | bigint | fraction -> fraction. A number is read as the decimal it prints as.
++function q(x) {
++    if (x && typeof x === 'object' && typeof x.n === 'bigint' && typeof x.d === 'bigint') return x;
++    if (typeof x === 'bigint') return frac(x, 1n);
++    if (x === null || x === undefined || x === '') return frac(0n, 1n);
++    if (typeof x === 'number' && !Number.isFinite(x)) throw new RangeError(`money: not a finite amount: ${x}`);
++    const s = String(x).trim();
++    const m = DECIMAL.exec(s);
++    if (!m || (m[2] === '' && (m[3] === undefined || m[3] === ''))) throw new RangeError(`money: not a decimal: ${s}`);
++    const [, sign, int, fracPart = '', exp = '0'] = m;
++    let n = BigInt((int || '0') + fracPart);
++    let scale = fracPart.length - Number(exp);
++    if (sign === '-') n = -n;
++    return scale >= 0 ? frac(n, 10n ** BigInt(scale)) : frac(n * 10n ** BigInt(-scale), 1n);
++}
++
++const ZERO = q(0);
++const ONE = q(1);
++const add = (a, b) => { a = q(a); b = q(b); return frac(a.n * b.d + b.n * a.d, a.d * b.d); };
++const sub = (a, b) => { b = q(b); return add(a, frac(-b.n, b.d)); };
++const mul = (a, b) => { a = q(a); b = q(b); return frac(a.n * b.n, a.d * b.d); };
++const div = (a, b) => { a = q(a); b = q(b); if (b.n === 0n) throw new RangeError('money: division by zero'); return frac(a.n * b.d, a.d * b.n); };
++const cmp = (a, b) => { a = q(a); b = q(b); const l = a.n * b.d, r = b.n * a.d; return l < r ? -1 : l > r ? 1 : 0; };
++const min = (a, b) => (cmp(a, b) <= 0 ? q(a) : q(b));
++const max = (a, b) => (cmp(a, b) >= 0 ? q(a) : q(b));
++const sum = (list) => list.reduce((t, x) => add(t, x), ZERO);
++const isPositive = (a) => q(a).n > 0n;
++
++// Round to whole cents, half away from zero (Postgres ROUND(numeric, 2)). Returns a plain Number such as 0.03.
++function cents(x) {
++    const { n, d } = q(x);
++    const neg = n < 0n;
++    const a = (neg ? -n : n) * 100n;
++    let c = a / d;
++    if ((a % d) * 2n >= d) c += 1n;
++    if (c === 0n) return 0;
++    const v = Number(c) / 100; // c is an integer number of cents, so this is the nearest double to the cent value
++    return neg ? -v : v;
++}
++
++// A person's commercial retainage deposit on one job (services.js ledger, same formula as the engine's job_settlement):
++//   RETAINAGE_RATE x max(0, net retainable) x (their verified weight / total verified weight) x install-cap scale,
++// worked out exactly and rounded once. `capScale` is null, or the fraction min(1, cap / slot) for an install-rate person.
++function retainageDeposit({ rate, netRetainable, weight, totalWeight, capScale = null }) {
++    if (!isPositive(totalWeight)) return 0;
++    let x = mul(mul(rate, max(ZERO, netRetainable)), div(weight, totalWeight));
++    if (capScale !== null) x = mul(x, capScale);
++    return cents(x);
++}
++
++module.exports = { q, ZERO, ONE, add, sub, mul, div, cmp, min, max, sum, isPositive, cents, retainageDeposit };
+diff --git a/test/money.test.js b/test/money.test.js
+new file mode 100644
+index 00000000..305ee678
+--- /dev/null
++++ b/test/money.test.js
+@@ -0,0 +1,92 @@
++// The one rounding policy (src/money.js): exact decimal amounts, rounded once to the cent, half away from zero, exactly
++// like Postgres ROUND(numeric, 2). These are the edge cases where Number(x.toFixed(2)) (the ledger's old rounding) and
++// the engine disagreed. payroll_tie_rounding_sql.test.js checks the same values against a real Postgres.
++
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const M = require('../src/money');
++
++test('reads numbers as the decimal they print as, including exponents and signs', () => {
++    assert.deepEqual(M.q('1.005'), { n: 201n, d: 200n });
++    assert.deepEqual(M.q(1e-7), { n: 1n, d: 10000000n });
++    assert.deepEqual(M.q('-0.50'), { n: -1n, d: 2n });
++    assert.deepEqual(M.q(1.5e21), { n: 1500000000000000000000n, d: 1n });
++    assert.deepEqual(M.q('12'), { n: 12n, d: 1n });
++    assert.deepEqual(M.q(null), M.ZERO);
++    // A double that already drifted is taken as printed: that is what node-pg would store in a numeric column too.
++    assert.equal(M.cmp(M.q(0.1 + 0.2), '0.3'), 1);
++    assert.equal(M.cmp(M.add(0.1, 0.2), '0.3'), 0, 'adding the decimals themselves does not drift');
++    for (const bad of ['abc', '1.2.3', '.', 'e5', NaN, Infinity]) assert.throws(() => M.q(bad), RangeError, String(bad));
++    assert.throws(() => M.div(1, 0), RangeError);
++});
++
++test('rounds half a cent away from zero, as Postgres ROUND(numeric, 2) does', () => {
++    const cases = [
++        ['0.005', 0.01], ['0.015', 0.02], ['1.005', 1.01], ['2.675', 2.68], ['1.015', 1.02], ['29.715', 29.72],
++        ['-0.005', -0.01], ['-1.005', -1.01], ['-29.715', -29.72],
++        ['0.0049999999999', 0], ['-0.0049999999999', 0], ['0.004', 0], ['1.0049', 1], ['1.0051', 1.01],
++        ['1234567.895', 1234567.9], ['99999999.995', 100000000], ['0', 0], ['12.3', 12.3], ['7', 7],
++    ];
++    for (const [x, want] of cases) assert.equal(M.cents(x), want, x);
++    assert.ok(Object.is(M.cents('-0.001'), 0), 'never returns -0');
++    // The bug this replaces: the binary double for 1.005 is a hair under it, so toFixed goes down.
++    assert.equal((1.005).toFixed(2), '1.00');
++    assert.equal((2.675).toFixed(2), '2.67');
++    assert.equal(M.cents(1.005), 1.01);
++    assert.equal(M.cents(2.675), 2.68);
++});
++
++test('the results are plain cents that print and add as cents', () => {
++    for (let c = -2000; c <= 2000; c++) {
++        const v = M.cents(M.div(c, 100));
++        assert.equal(v, c / 100);
++        assert.equal(String(v), String(c / 100));
++    }
++});
++
++test('retainage deposit: one exact formula, rounded once, matching the engine', () => {
++    const rate = '0.20';
++    // Job S (one shared day, two techs at weight 1): 20% x 297.15 / 2 = 29.715 -> 29.72. The old ledger wrote 29.71.
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 297.15, weight: 1, totalWeight: 2 }), 29.72);
++    assert.equal(Number((0.2 * 297.15 * (1 / 2)).toFixed(2)), 29.71, 'the old ledger rounding, for the record');
++    // Job M (three days each, weight 3 of 6): 20% x 297.05 x 3/6 = 29.705 -> 29.71, whichever way the weights are summed.
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 297.05, weight: 3, totalWeight: 6 }), 29.71);
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 297.05, weight: M.sum([1, 1, 1]), totalWeight: M.sum([1, 1, 1, 1, 1, 1]) }), 29.71);
++    // Half-day weights and drifting sums: 0.1 + 0.2 of 0.6 is exactly half.
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 0.15, weight: M.add(0.1, 0.2), totalWeight: 0.6 }), 0.02);
++    // Nothing to hold, or nobody verified: nothing deposited.
++    assert.equal(M.retainageDeposit({ rate, netRetainable: -40, weight: 1, totalWeight: 2 }), 0);
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 100, weight: 1, totalWeight: 0 }), 0);
++    // Install-rate cap (rule 14): the cap scale multiplies before the single rounding.
++    assert.equal(M.retainageDeposit({ rate, netRetainable: 297.15, weight: 1, totalWeight: 2, capScale: M.div(1, 2) }), 14.86); // 14.8575
++});
++
++test('the policy agrees with exact half-up-away rounding on every split of every cent up to $2,000', () => {
++    // Reference: integer cents arithmetic, independent of money.js. Splits are the day weights seen in production.
++    const splits = [[1, 2], [1, 3], [2, 3], [1, 4], [3, 4], [1, 5], [2, 5], [1, 6], [5, 6], [1, 8], [3, 8]];
++    let ties = 0, oldWrong = 0;
++    for (const [w, V] of splits) {
++        for (let c = 1; c <= 200000; c++) {
++            const num = 2n * BigInt(c) * BigInt(w) * 100n, den = 1000n * BigInt(V); // 0.2 x c/100 x w/V, in cents
++            const q = num / den, twice = (num % den) * 2n;
++            const ref = Number(twice >= den ? q + 1n : q) / 100;
++            if (twice === den) ties++;
++            const got = M.retainageDeposit({ rate: '0.2', netRetainable: M.div(c, 100), weight: w, totalWeight: V });
++            if (got !== ref) assert.fail(`net ${c / 100}, weight ${w}/${V}: ${got} != ${ref}`);
++            if (Number((0.2 * (c / 100) * (w / V)).toFixed(2)) !== ref) oldWrong++;
++        }
++    }
++    assert.ok(ties > 50000, `exercised ${ties} exact half-cent ties`);
++    assert.ok(oldWrong > 5000, `the old toFixed rounding got ${oldWrong} of them wrong`);
++});
++
++test('callback penalty split: each tech is charged their share rounded once to the cent', () => {
++    const split = (penalty, weights) => {
++        const total = M.sum(weights);
++        return weights.map((w) => M.cents(M.div(M.mul(w, penalty), total)));
++    };
++    assert.deepEqual(split(50, [1, 1, 1]), [16.67, 16.67, 16.67]);     // was 16.666666666666668 each
++    assert.deepEqual(split(50, [1, 1]), [25, 25]);
++    assert.deepEqual(split(50, [0.5, 1, 1]), [10, 20, 20]);
++    assert.deepEqual(split(50, [0.1, 0.2]), [16.67, 33.33]);           // 0.1 + 0.2 sums to exactly 0.3
++});
+diff --git a/test/payroll_tie_rounding_sql.test.js b/test/payroll_tie_rounding_sql.test.js
+new file mode 100644
+index 00000000..0b9d2b52
+--- /dev/null
++++ b/test/payroll_tie_rounding_sql.test.js
+@@ -0,0 +1,178 @@
++// Half-cent ties: the payroll engine (commissionRules.js) and the sync's retainage ledger (services.js, via money.js)
++// must hold the same retainage, cent for cent, under the one rounding policy: exact amount, one division, rounded once,
++// half away from zero (Postgres ROUND(numeric, 2)).
++//
++// Two commercial jobs, two techs, each job worth exactly half a cent too much to split evenly:
++//   S  one shared day (weights 1 + 1):  install 300.15, pool -3.00 -> net 297.15, each 20% held = 29.715 -> 29.72.
++//      The old ledger rounding (toFixed on a double) wrote 29.71; the engine said 29.72.
++//   M  three days each (weights 1+1+1 / 6): install 300.25, pool -3.00 -> net 297.25, each held 29.725 -> 29.73.
++//      The ledger said 29.73; the engine added three per-day slices of 1/6 and got 29.7249999999999999 -> 29.72.
++// The same jobs a week before CENT_ROUNDING_FROM_WEEK keep the old full-precision figures (paid history never moves), so
++// the pre-cutover copy of M also shows exactly what the old engine held.
++//
++// Opt-in: skipped unless TEST_DATABASE_URL points at a throwaway Postgres (NEVER production).
++//   TEST_DATABASE_URL=postgres://postgres@127.0.0.1:55441/postgres node --test test/payroll_tie_rounding_sql.test.js
++
++require('./support');
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { COMMISSION_RULES, WEEKLY_PAYOUTS_CTE } = require('../src/commissionRules');
++const money = require('../src/money');
++
++const URL_ = process.env.TEST_DATABASE_URL;
++const skip = URL_ ? false : 'set TEST_DATABASE_URL to run (a throwaway Postgres, never production)';
++
++const DDL = `
++    CREATE TABLE users (id integer PRIMARY KEY, name varchar, role varchar, avatar_url text,
++                        is_commission_eligible boolean, is_callback_eligible boolean, is_sales_commission_eligible boolean,
++                        install_rate_pct numeric, sales_rate_pct numeric, sales_account_rate_pct numeric, sales_builder_rate_pct numeric);
++    CREATE TABLE commission_eligibility_changes (id serial PRIMARY KEY, user_id integer, was_eligible boolean, now_eligible boolean,
++                                                 changed_at timestamptz);
++    CREATE TABLE jobs (job_id varchar PRIMARY KEY, is_estimate boolean DEFAULT false, status varchar, start_date date,
++                       total_revenue numeric, qualifying_labor numeric, customer_name varchar, location varchar,
++                       sf_created_at timestamptz, opportunity_owner varchar, category varchar, sales_agents varchar,
++                       raw_items jsonb DEFAULT '[]', sf_details jsonb DEFAULT '{}');
++    CREATE TABLE job_status_history (job_id varchar, new_status varchar, changed_at timestamptz);
++    CREATE TABLE customers (customer_name varchar, first_seen_at timestamptz);
++    CREATE TABLE job_commission_items (id serial PRIMARY KEY, job_id varchar, service_name varchar, category varchar,
++                                       commission_earned numeric, commission_projected numeric, amount_retained numeric);
++    CREATE TABLE job_commission_locks (job_id varchar PRIMARY KEY, locked_at timestamptz, total_revenue numeric);
++    CREATE TABLE job_commission_lock_items (job_id varchar, line_item_id integer, service_name varchar, category varchar,
++                                            commission_earned numeric);
++    CREATE TABLE commission_work_days (user_id integer, tech_name varchar, job_id varchar, work_date date, day_weight numeric,
++                                       is_verified boolean, is_callback boolean DEFAULT false);
++    CREATE TABLE payroll_runs (id serial PRIMARY KEY, week_start date, status varchar);
++    CREATE TABLE payroll_run_items (id serial PRIMARY KEY, run_id integer, line_id integer, user_id integer, kind varchar,
++                                    job_id varchar, work_date date);
++    INSERT INTO users VALUES
++        (101, 'Alice Tech', 'Technician', NULL, true, true, false, NULL, NULL, NULL, NULL),
++        (102, 'Bob Tech',   'Technician', NULL, true, true, false, NULL, NULL, NULL, NULL);`;
++
++const JOBS = {
++    S: { install: 300.15, pool: -3.00, days: 1 },
++    M: { install: 300.25, pool: -3.00, days: 3 },
++};
++const WEEKS = {
++    pre: { monday: '2026-10-26', locked: '2026-10-30 15:00:00-05' },
++    post: { monday: COMMISSION_RULES.CENT_ROUNDING_FROM_WEEK, locked: null },
++};
++const addDays = (iso, n) => new Date(Date.parse(`${iso}T12:00:00Z`) + n * 864e5).toISOString().slice(0, 10);
++
++async function seed(db) {
++    for (const [tag, w] of Object.entries(WEEKS)) {
++        const locked = w.locked || `${addDays(w.monday, 4)} 15:00:00-06`;
++        for (const [key, job] of Object.entries(JOBS)) {
++            const jobId = `${tag}-${key}`;
++            await db.query(`INSERT INTO jobs (job_id, status, start_date, total_revenue, qualifying_labor, customer_name, raw_items)
++                            VALUES ($1, 'Paid & Closed', $2, 5000, 1000, 'Acme Warehouse', '[{"service": "Commercial Installation"}]')`,
++                [jobId, w.monday]);
++            await db.query(`INSERT INTO job_commission_locks VALUES ($1, $2, 5000)`, [jobId, locked]);
++            await db.query(`INSERT INTO job_commission_lock_items VALUES ($1, 1, 'Commercial Door', 'Commercial Installation', $2),
++                                                                        ($1, 2, 'Company pool (1%)', 'Company Pool Deduction', $3)`,
++                [jobId, job.install, job.pool]);
++            for (let d = 0; d < job.days; d++) {
++                for (const [id, name] of [[101, 'Alice Tech'], [102, 'Bob Tech']]) {
++                    await db.query(`INSERT INTO commission_work_days VALUES ($1, $2, $3, $4, 1, true, false)`,
++                        [id, name, jobId, addDays(w.monday, 1 + d)]);
++                }
++            }
++        }
++    }
++}
++
++async function withSchema(fn) {
++    const { Pool } = require('pg');
++    const name = `payroll_ties_${process.pid}_${Date.now()}`;
++    const root = new Pool({ connectionString: URL_, max: 1 });
++    await root.query(`CREATE SCHEMA ${name}`);
++    const db = new Pool({ connectionString: URL_, max: 2, options: `-c search_path=${name} -c TimeZone=UTC` });
++    try {
++        await db.query(DDL);
++        await seed(db);
++        return await fn(db);
++    } finally {
++        await db.end();
++        await root.query(`DROP SCHEMA ${name} CASCADE`);
++        await root.end();
++    }
++}
++
++// What the ledger deposits for one tech on one of these jobs (services.js calls exactly this).
++const ledgerDeposit = (job) => money.retainageDeposit({
++    rate: COMMISSION_RULES.RETAINAGE_RATE,
++    netRetainable: money.sum([job.install, job.pool]),
++    weight: money.sum(Array(job.days).fill(1)),
++    totalWeight: money.sum(Array(job.days * 2).fill(1)),
++});
++// What the ledger used to deposit (services.js before this change), for the record.
++const oldLedgerDeposit = (job) => {
++    const w = job.days, total = job.days * 2;
++    return Number((COMMISSION_RULES.RETAINAGE_RATE * Math.max(0, job.install + job.pool) * (w / total)).toFixed(2));
++};
++
++test('half-cent ties: the engine holds exactly what the ledger deposits; weeks before the cutover are unchanged', { skip }, async () => {
++    await withSchema(async (db) => {
++        const { rows } = await db.query(
++            `WITH ${WEEKLY_PAYOUTS_CTE}
++             SELECT p.user_id, p.job_id, p.week_start::text AS week, p.raw_commission::text AS share, p.retained::text AS retained,
++                    p.net_pay::text AS net
++               FROM pay_rows p WHERE p.kind = 'settlement' ORDER BY p.job_id, p.user_id`,
++            ['2026-10-26', '2026-11-15']);
++        const at = (jobId, userId) => rows.find((r) => r.job_id === jobId && r.user_id === userId);
++        assert.equal(rows.length, 8, JSON.stringify(rows));
++
++        // ── From the cutover: whole cents, the policy's answer, and the ledger's deposit ──────────────────────────────
++        const expected = {
++            S: { share: '148.58', retained: '29.72', net: '118.86' }, // 297.15 / 2 = 148.575; 59.43 / 2 = 29.715
++            M: { share: '148.63', retained: '29.73', net: '118.90' }, // 297.25 / 2 = 148.625; 59.45 / 2 = 29.725
++        };
++        for (const [key, job] of Object.entries(JOBS)) {
++            for (const userId of [101, 102]) {
++                const r = at(`post-${key}`, userId);
++                assert.equal(r.week, COMMISSION_RULES.CENT_ROUNDING_FROM_WEEK);
++                assert.deepEqual([Number(r.share), Number(r.retained), Number(r.net)].map(String),
++                    [expected[key].share, expected[key].retained, expected[key].net].map((v) => String(Number(v))), `post-${key} ${userId}`);
++                assert.equal(Number(r.retained), ledgerDeposit(job), `post-${key} ${userId}: engine retainage = ledger deposit`);
++            }
++        }
++        // ── Before the cutover: the old full-precision arithmetic, exactly as the paid runs were computed ──────────────
++        for (const userId of [101, 102]) {
++            const s = at('pre-S', userId), m = at('pre-M', userId);
++            assert.equal(s.week, '2026-10-26');
++            assert.equal(s.share, '148.5750000000000000', 'S: one slice, exact, not rounded');
++            assert.equal(s.retained, '29.7150000000000000');
++            // M: three per-day slices of 1/6, summed: the retainage lands a hair UNDER the half cent and the share a hair
++            // OVER it, exactly as before this change (the per-day error goes either way).
++            assert.equal(m.share, '148.6250000000000001');
++            assert.equal(m.retained, '29.7249999999999999');
++        }
++
++        // ── The two ways engine and ledger used to disagree, so this test catches a return to either ──────────────────
++        // S: the old ledger (toFixed on a double) deposited a cent less than the engine held.
++        assert.equal(oldLedgerDeposit(JOBS.S), 29.71);
++        assert.equal(Number(at('post-S', 101).retained), 29.72);
++        // M: the old ledger was right (29.73), but the old engine's per-day slices rounded to 29.72.
++        assert.equal(oldLedgerDeposit(JOBS.M), 29.73);
++        const { rows: [r] } = await db.query(`SELECT ROUND($1::numeric, 2)::text AS v`, [at('pre-M', 101).retained]);
++        assert.equal(r.v, '29.72', 'old engine, rounded by Postgres: a cent under the ledger');
++    });
++});
++
++test('the policy and Postgres ROUND(numeric, 2) agree on 60,000 retainage splits, ties included', { skip }, async () => {
++    const { Pool } = require('pg');
++    const db = new Pool({ connectionString: URL_, max: 1 });
++    try {
++        const splits = [[1, 2], [1, 3], [3, 8], [1, 6], [2, 5], [5, 6]];
++        for (const [w, V] of splits) {
++            const { rows } = await db.query(
++                `SELECT c, ROUND(0.20 * GREATEST(0, c / 100.0) * $1::numeric / $2::numeric, 2)::text AS pg
++                   FROM generate_series(-50, 9950) c`, [w, V]);
++            for (const r of rows) {
++                const js = money.retainageDeposit({ rate: COMMISSION_RULES.RETAINAGE_RATE, netRetainable: money.div(r.c, 100), weight: w, totalWeight: V });
++                if (js !== Number(r.pg)) assert.fail(`net ${r.c / 100}, ${w}/${V}: money.js ${js} vs Postgres ${r.pg}`);
++            }
++        }
++    } finally {
++        await db.end();
++    }
++});
+diff --git a/test/assistant_payroll_sales_rows_sql.test.js b/test/assistant_payroll_sales_rows_sql.test.js
+new file mode 100644
+index 00000000..51bd04c9
+--- /dev/null
++++ b/test/assistant_payroll_sales_rows_sql.test.js
+@@ -0,0 +1,83 @@
++// Jarvis payroll_preview detail for someone paid only sales commission (not on technician commission, not callback
++// eligible), like Heather Vera in payroll run 8: the pay comes from her rep_commission rows, so the detail must list them.
++// Before the fix the detail filter kept only technician-commission people and callbacks, so it returned no rows at all
++// for a $1,589.42 week. Same rule as weekly_base and the saved run items (payroll_runs.js).
++//
++// Opt-in: skipped unless TEST_DATABASE_URL points at a throwaway Postgres (NEVER production).
++
++require('./support');
++const test = require('node:test');
++const assert = require('node:assert/strict');
++
++const { withFixture, seedInsights, seedCommission, NOW_JS } = require('./assistant_eval_fixture');
++const assistant = require('../src/assistant');
++const { runTool, setClock } = assistant._internals;
++
++const URL_ = process.env.TEST_DATABASE_URL;
++const skip = URL_ ? false : 'set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)';
++
++async function call(db, name, input = {}) {
++    const r = await runTool(db, name, input, {});
++    assert.ok(!r.is_error, `${name}: ${r.content}`);
++    return JSON.parse(r.content);
++}
++
++// Lennar builder jobs closed Oct 8: a 2% builder rate is paid in the pay week of Oct 26 (first Friday of November).
++async function seedSalesJobs(db, from, count) {
++    for (let i = from; i < from + count; i++) {
++        const jobId = String(1098800000 + i);
++        await db.query(`INSERT INTO jobs (job_id, is_estimate, customer_name, status, start_date, end_date, total_revenue, total_profit,
++                                          due_total, raw_items, sf_created_at, qualifying_labor)
++                        VALUES ($1, false, 'Lennar', 'Paid & Closed', '2026-10-06', '2026-10-08', 900, 300, 0, '[]'::jsonb,
++                                '2026-09-01T12:00:00Z', 100)`, [jobId]);
++        await db.query(`INSERT INTO job_commission_locks (job_id, locked_at, locked_status, total_revenue, total_tech_days)
++                        VALUES ($1, '2026-10-08 12:00-05', 'Paid & Closed', 900, 0)`, [jobId]);
++    }
++}
++
++test('payroll detail lists a sales-only person\'s sales commission rows, and says when the list is cut short', { skip }, async (t) => {
++    setClock(() => new Date(NOW_JS));
++    try {
++        await withFixture(URL_, async (db) => {
++            await seedInsights(db);
++            await seedCommission(db);
++            // The engine reads eligibility history (2026-11-13); the shared fixture does not create this table yet.
++            await db.query(`CREATE TABLE IF NOT EXISTS commission_eligibility_changes (id serial PRIMARY KEY, user_id integer,
++                                was_eligible boolean, now_eligible boolean, changed_at timestamptz)`);
++            await db.query(`INSERT INTO users (id, name, role, status, year_joined, is_lead, inventory_strikes, warehouse_strikes, five_star,
++                                               no_recalls, is_commission_eligible, is_callback_eligible, is_sales_commission_eligible,
++                                               sales_builder_rate_pct)
++                            VALUES (950, 'Hana Sales', 'Office Manager', 'active', 2024, false, 0, 0, false, false, false, false, true, 2)`);
++            const week = { start: '2026-10-26', end: '2026-10-26', tech: 'Hana Sales', detail: true };
++
++            await t.test('two jobs: the detail is the two sales rows and adds up to the pay', async () => {
++                await seedSalesJobs(db, 0, 2);
++                const r = await call(db, 'payroll_preview', week);
++                assert.deepEqual(r.rows.map((x) => [x.tech_name, x.week_start, x.pay]), [['Hana Sales', '2026-10-26', 4]]);
++                assert.equal(r.jobs.length, 2, 'before the fix this was 0');
++                assert.ok(r.jobs.every((j) => j.kind === 'rep_commission' && j.tech_name === 'Hana Sales'));
++                assert.equal(r.jobs.reduce((s, j) => s + j.net, 0), r.total_pay);
++                assert.equal(r.jobs_truncated, undefined);
++            });
++
++            await t.test('151 jobs: 150 rows listed, flagged as cut short, totals still cover all of them', async () => {
++                await seedSalesJobs(db, 2, 149);
++                const r = await call(db, 'payroll_preview', week);
++                assert.equal(r.total_pay, 302);
++                // The query stops at 150 rows and says so; fitResult may then shorten the list further to fit the
++                // message (its note counts from 150, so without jobs_truncated Jarvis would think 150 was all of them).
++                assert.ok(r.jobs.length <= 150 && r.jobs.length > 0);
++                assert.match(r.jobs_truncated, /first 150 job rows/);
++                if (r.jobs.length < 150) assert.match(r.shortened, /of 150 rows/);
++            });
++
++            await t.test('technicians on commission are unchanged: no sales rows appear for them', async () => {
++                const r = await call(db, 'payroll_preview', { start: '2026-10-05', end: '2026-10-27', tech: 'Alex Rivera', detail: true });
++                assert.ok(r.jobs.length > 0);
++                assert.ok(r.jobs.every((j) => j.kind !== 'rep_commission'));
++            });
++        });
++    } finally {
++        setClock(null);
++    }
++});

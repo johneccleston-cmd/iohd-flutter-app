@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 
 class AppTheme {
   // --- Exact Color Palette ---
-  /// The page background of the whole app: the same slate the dashboards use (DashboardLayout).
-  static const Color bgColor = Color(0xFFE2E8F0);
+  /// The page background of the whole app: a neutral grey, also used by the dashboards (DashboardLayout).
+  static const Color bgColor = Color(0xFFE0E0E0);
   static const Color surfaceColor = Colors.white;
   static const Color primaryText = Color(0xFF1A1C1E);
   static const Color secondaryText = Color(0xFF4B5563);

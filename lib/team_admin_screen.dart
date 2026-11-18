@@ -20,6 +20,7 @@ import 'widgets/animated_select.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/flat_page.dart' show PageSheet;
 
 part 'team_admin_widgets.dart';
 
@@ -1336,25 +1337,34 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _header(),
-                if (_loading)
-                  const Expanded(child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
-                else if (_error != null && _users.isEmpty)
-                  Expanded(child: _errorState())
-                else
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, c) {
-                        final rosterW = c.maxWidth >= 1200 ? 340.0 : 296.0;
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            SizedBox(width: rosterW, child: _roster()),
-                            Expanded(child: _detail()),
-                          ],
-                        );
-                      },
+                Expanded(
+                  child: PageSheet(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_loading)
+                          const Expanded(child: Center(child: CircularProgressIndicator(strokeWidth: 2.5)))
+                        else if (_error != null && _users.isEmpty)
+                          Expanded(child: _errorState())
+                        else
+                          Expanded(
+                            child: LayoutBuilder(
+                              builder: (context, c) {
+                                final rosterW = c.maxWidth >= 1200 ? 340.0 : 296.0;
+                                return Row(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    SizedBox(width: rosterW, child: _roster()),
+                                    Expanded(child: _detail()),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                      ],
                     ),
                   ),
+                ),
               ],
             ),
           ),

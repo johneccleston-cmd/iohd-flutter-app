@@ -3,6 +3,7 @@
 // sent to a job once, costs only for people who may see them), plus the catalog search. Used by
 // job_page_shots_test.dart and job_page_behavior_test.dart.
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
@@ -218,6 +219,9 @@ class FakeJobServer {
 
   /// Plays a backend that doesn't have the line-item routes yet (not deployed): they answer 404.
   bool optionsDown = false;
+
+  /// While set, the line-items list waits for it (for pictures of the block while its lines load).
+  Completer<void>? holdOptions;
   bool notesDown = false; // saving a note fails with a server error
   bool filesEnabled = true;
   final history = <Map<String, dynamic>>[];
@@ -388,7 +392,10 @@ class FakeJobServer {
     final om = RegExp(r'^/options(?:/(\w+))?(?:/(items|accept|unaccept|convert))?$').firstMatch(rest)!;
     final id = om.group(1);
     final verb = om.group(2);
-    if (id == null && req.method == 'GET') return _ok(_state(jobId));
+    if (id == null && req.method == 'GET') {
+      if (holdOptions case final hold?) await hold.future;
+      return _ok(_state(jobId));
+    }
     if (!canEdit) return _err(403, 'Admin access required.');
     if (id == null && req.method == 'POST') {
       final existing = optionsOf(jobId);
@@ -542,6 +549,9 @@ Future<PageErrors> pumpJobPage(
 
   /// Wraps the page in the app's own select-to-copy layer, as main.dart does (it changes the cursor over text).
   bool appSelection = false,
+
+  /// The reader's "reduce motion" setting.
+  bool reduceMotion = false,
 }) async {
   t.view.devicePixelRatio = 1;
   t.view.physicalSize = size;
@@ -553,7 +563,9 @@ Future<PageErrors> pumpJobPage(
     if (text.contains('overflowed')) {
       final full = d.toString().split('\n');
       final at = full.indexWhere((l) => l.contains('The relevant error-causing widget was'));
-      errors.messages.add('${text.split('\n').first}${at >= 0 && at + 1 < full.length ? ' at ${full[at + 1].trim()}' : ''}');
+      // The widget, and the line after it (where it was made: file and line), so a test can tell whose it is.
+      final where = at < 0 ? '' : full.skip(at + 1).take(2).map((l) => l.trim()).where((l) => l.isNotEmpty).join(' ');
+      errors.messages.add('${text.split('\n').first}${where.isEmpty ? '' : ' at $where'}');
     } else {
       previous?.call(d);
     }
@@ -564,7 +576,7 @@ Future<PageErrors> pumpJobPage(
       await t.pumpWidget(const SizedBox());
       await t.pumpWidget(
         MediaQuery(
-          data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+          data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale), disableAnimations: reduceMotion),
           child: RepaintBoundary(
             key: _pageKey,
             child: MaterialApp(

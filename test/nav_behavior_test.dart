@@ -339,7 +339,7 @@ void main() {
     testWidgets('a restricted account sees only its pages; a menu with nothing left goes', (t) async {
       await navSignIn(
         admin: false,
-        denied: denyViews(['stock', 'catalog', 'purchase_orders', 'vendors', 'hr_payroll', 'projects', 'payments']),
+        denied: denyViews(['stock', 'catalog', 'services_catalog', 'purchase_orders', 'vendors', 'hr_payroll', 'projects', 'payments']),
       );
       await pumpNav(t, _wide);
       expect(find.text('Inventory'), findsNothing);

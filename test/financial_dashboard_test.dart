@@ -80,9 +80,9 @@ void main() {
     testWidgets('trend lines show where the words still fit beside them', (t) async {
       await pumpDashboard(t, const ReportsScreen(), api: DashFakeApi(), size: const Size(1920, 940));
       final cards = t.widgetList<AnimatedMetricCard>(find.byType(AnimatedMetricCard)).toList();
-      expect(cards.where((c) => c.trend != null), hasLength(5), reason: 'the five main cards have a line to show');
+      expect(cards.where((c) => c.trend != null), hasLength(6), reason: 'the six main cards have a line to show');
       final lines = find.descendant(of: find.byType(AnimatedMetricCard), matching: find.byType(CustomPaint));
-      expect(lines, findsAtLeastNWidgets(5), reason: 'at 1920 px each main card has room for its line');
+      expect(lines, findsAtLeastNWidgets(6), reason: 'at 1920 px each main card has room for its line');
     });
   });
 
@@ -233,9 +233,11 @@ void main() {
         expect(find.text('Jan 1 – today'), findsOneWidget);
         expect(find.text('Completed · Jan 1 – today'), findsOneWidget);
         expect(find.text('Of revenue · Jan 1 – today'), findsOneWidget);
+        expect(find.text('Net income margin'), findsOneWidget);
+        expect(find.text('After costs · Jan 1 – today'), findsOneWidget);
         expect(find.text('2026 jobs, finished or not'), findsOneWidget);
         expect(find.text('Yearly projection'), findsOneWidget);
-        expect(find.byType(AnimatedMetricCard), findsNWidgets(5));
+        expect(find.byType(AnimatedMetricCard), findsNWidgets(6));
         await t.tap(dashYearArrow('Previous year'));
         await settleDashboard(t);
         expect(find.text('All of 2025'), findsOneWidget);
@@ -243,7 +245,7 @@ void main() {
         expect(find.text('2025 jobs, finished or not'), findsOneWidget);
         expect(find.textContaining('today'), findsNothing, reason: 'a finished year never reads as running to today');
         expect(find.text('Yearly projection'), findsNothing);
-        expect(find.byType(AnimatedMetricCard), findsNWidgets(4));
+        expect(find.byType(AnimatedMetricCard), findsNWidgets(5));
         expect(find.text('Oct so far'), findsNothing, reason: 'a past year has no month in progress');
       });
     });

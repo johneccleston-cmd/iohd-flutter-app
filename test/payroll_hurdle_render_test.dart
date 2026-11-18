@@ -27,7 +27,8 @@ Map<String, dynamic> _tech(int id, String name, double gross, {double rule = 750
       'isCallbackOnly': false,
       'totals': {'weeklyGross': gross, 'cashPay': gross > rule ? gross - rule : 0, 'totalDue': gross > rule ? gross - rule : 0, 'hurdleApplied': gross > rule ? rule : gross},
       'weeks': [
-        {'weekStart': '2026-11-02', 'weekEnd': '2026-11-08', 'weeklyGross': gross, 'hurdleRule': rule, 'cashPay': gross > rule ? gross - rule : 0, 'jobs': []},
+        // The gross is all closed-job net (or sales commission for the rep), so the pieces add up to it like real data.
+        {'weekStart': '2026-11-02', 'weekEnd': '2026-11-08', 'weeklyGross': gross, if (sales) 'repPay': gross else 'jobNet': gross, 'hurdleRule': rule, 'cashPay': gross > rule ? gross - rule : 0, 'jobs': []},
       ],
       'retainageReleases': [],
     };
@@ -53,7 +54,8 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
-        home: const Scaffold(body: PayrollScreen()),
+        // The fixture's week, not "last week": the default range follows today's date and would drift from the data.
+        home: const Scaffold(body: PayrollScreen(initialStart: '2026-11-02', initialEnd: '2026-11-08')),
       ));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 150));

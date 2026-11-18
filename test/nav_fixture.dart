@@ -111,7 +111,7 @@ GoRouter navTestRouter({String initial = '/calendar'}) => GoRouter(
             StatefulShellBranch(routes: [_stub('/jobs', routes: [_stub(':id')])]),
             StatefulShellBranch(routes: [_stub('/calendar')]),
             StatefulShellBranch(routes: [
-              _stub('/inventory', routes: [_stub('catalog'), _stub('purchase-orders'), _stub('vendors')]),
+              _stub('/inventory', routes: [_stub('catalog'), _stub('services'), _stub('purchase-orders'), _stub('vendors')]),
             ]),
             StatefulShellBranch(routes: [
               GoRoute(

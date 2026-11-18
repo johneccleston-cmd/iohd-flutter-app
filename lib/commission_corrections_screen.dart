@@ -12,6 +12,7 @@ import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/dashboard_kit.dart';
+import 'widgets/flat_page.dart' show PageSheet;
 import 'widgets/status_pill.dart';
 
 // Fixes for commission data that Service Fusion statuses cannot undo on their own:
@@ -609,37 +610,46 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
             children: [
               _banner(narrow),
               Expanded(
-                child: narrow
-                    ? (detailOnly
-                          ? Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                                  child: TextButton.icon(
-                                    onPressed: () => setState(() => _jobId = null),
-                                    icon: const Icon(Icons.arrow_back_rounded, size: 18),
-                                    label: const Text('Back to search'),
-                                    style: TextButton.styleFrom(foregroundColor: _slate),
+                child: PageSheet(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: narrow
+                            ? (detailOnly
+                                  ? Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Padding(
+                                          padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+                                          child: TextButton.icon(
+                                            onPressed: () => setState(() => _jobId = null),
+                                            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                                            label: const Text('Back to search'),
+                                            style: TextButton.styleFrom(foregroundColor: _slate),
+                                          ),
+                                        ),
+                                        const Divider(height: 1, color: _line),
+                                        Expanded(child: _buildDetailPanel()),
+                                      ],
+                                    )
+                                  : _buildSearchPanel())
+                            : Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  DecoratedBox(
+                                    decoration: const BoxDecoration(
+                                      border: Border(right: BorderSide(color: _line)),
+                                    ),
+                                    child: SizedBox(width: sideWidth, child: _buildSearchPanel()),
                                   ),
-                                ),
-                                const Divider(height: 1, color: _line),
-                                Expanded(child: _buildDetailPanel()),
-                              ],
-                            )
-                          : _buildSearchPanel())
-                    : Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          DecoratedBox(
-                            decoration: const BoxDecoration(
-                              border: Border(right: BorderSide(color: _line)),
-                            ),
-                            child: SizedBox(width: sideWidth, child: _buildSearchPanel()),
-                          ),
-                          Expanded(child: _buildDetailPanel()),
-                        ],
+                                  Expanded(child: _buildDetailPanel()),
+                                ],
+                              ),
                       ),
+                    ],
+                  ),
+                ),
               ),
             ],
           );

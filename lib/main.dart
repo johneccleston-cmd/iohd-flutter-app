@@ -8,6 +8,8 @@ import 'config/access.dart';
 import 'config/api_config.dart';
 import 'package:go_router/go_router.dart';
 import 'product_catalog_screen.dart';
+import 'product_detail_screen.dart';
+import 'services_catalog_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
 import 'jobs_screen.dart';
@@ -132,8 +134,14 @@ final GoRouter _router = GoRouter(
             builder: (context, state) => const InventoryScreen(), // "Stock Levels"
             routes: [
               GoRoute(
-                path: 'catalog', 
-                builder: (context, state) => const ProductCatalogScreen(), 
+                path: 'catalog',
+                builder: (context, state) => const ProductCatalogScreen(),
+                // A product's own page (/inventory/catalog/<id>, ?edit=1 to edit) and /inventory/catalog/new.
+                routes: productDetailRoutes(),
+              ),
+              GoRoute(
+                path: 'services',
+                builder: (context, state) => const ServicesCatalogScreen(),
               ),
               // 🔥 UPDATED: Live Purchase Orders Screen
               GoRoute(

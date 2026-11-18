@@ -3,6 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'config/access.dart';
+import 'config/auth_session.dart';
+import 'widgets/commercial_pool_dialog.dart';
+import 'widgets/company_pool_dialog.dart';
 import 'widgets/dashboard_data.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/dashboard_layout.dart';
@@ -313,7 +316,11 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent>
         onRetry: dashReload,
       );
     }
-    return _FinancialPage(data: _data, year: widget.selectedYear);
+    return _FinancialPage(
+      data: _data,
+      year: widget.selectedYear,
+      onPoolChanged: () => dashReload(fresh: true),
+    );
   }
 }
 
@@ -324,7 +331,10 @@ class _FinancialDashboardContentState extends State<FinancialDashboardContent>
 class _FinancialPage extends StatelessWidget {
   final _FinancialSummary data;
   final int year;
-  const _FinancialPage({required this.data, required this.year});
+
+  /// After a company pool entry is added from the pool's log, so the figure updates.
+  final VoidCallback? onPoolChanged;
+  const _FinancialPage({required this.data, required this.year, this.onPoolChanged});
 
   /// Twelve months, January first, whatever the server sent (missing months have no data).
   List<_MonthlyFinancials> get _months => [
@@ -354,6 +364,9 @@ class _FinancialPage extends StatelessWidget {
 
     // The scorecards: title, figure, caption and the full definition. A past year has no projection card: the server
     // sends that year's actual revenue + deposits in its place, the same figure as the first card.
+    final opexTotal = data.expenses.fold<double>(0, (s, e) => s + e.amount);
+    final net = _buildNetSeries(months, opexTotal);
+    final netMargin = totalRev > 0 ? net.last.cumulative / totalRev * 100 : 0.0;
     final cards = <({
       String title,
       double value,
@@ -363,6 +376,19 @@ class _FinancialPage extends StatelessWidget {
       Color color,
       List<double>? trend,
     })>[
+      (
+        // The first card: what is left of each dollar of completed revenue after operating expenses. The line is the
+        // month's own net margin (a month with no revenue reads 0).
+        title: 'Net income margin',
+        value: netMargin,
+        format: _pct,
+        caption: 'After costs · $period',
+        definition:
+            'Net income divided by revenue on completed jobs that started in $year ($period). Net income is gross '
+            'profit less operating expenses (the Net income tab). The line shows each finished month on its own.',
+        color: netMargin >= 0 ? DashUi.emeraldText : DashUi.redText,
+        trend: dashTrend([for (final p in net) p.revenue > 0 ? p.net / p.revenue * 100 : 0.0], year),
+      ),
       (
         // Completed-job revenue plus deposits received on jobs not finished yet, so it is higher than the chart,
         // which is completed jobs only. The line is the monthly completed revenue.
@@ -448,7 +474,6 @@ class _FinancialPage extends StatelessWidget {
         ),
     ];
 
-    final opexTotal = data.expenses.fold<double>(0, (s, e) => s + e.amount);
     return _Grid(
       tiles: tiles,
       pools: _PoolsPanel(
@@ -457,6 +482,13 @@ class _FinancialPage extends StatelessWidget {
         commercial: data.commercialPool,
         companyHistory: data.companyPoolHistory,
         commercialHistory: data.commercialPoolHistory,
+        // The log needs the Payroll switch; without it the figure stays a plain number.
+        onOpenCompany: AuthSession.instance.canView('hr_payroll')
+            ? () async {
+                if (await showCompanyPoolDialog(context)) onPoolChanged?.call();
+              }
+            : null,
+        onOpenCommercial: AuthSession.instance.canView('hr_payroll') ? () => showCommercialPoolDialog(context) : null,
       ),
       chart: _FinancialChart(months: months, year: year, opexTotal: opexTotal),
       segments: _SegmentsStrip(g: g, data: data, year: year),
@@ -885,12 +917,20 @@ class _PoolsPanel extends StatelessWidget {
   final double commercial;
   final List<double> companyHistory;
   final List<double> commercialHistory;
+
+  /// Opens the company pool's log (null when this person may not see it).
+  final VoidCallback? onOpenCompany;
+
+  /// Opens the commercial retainage log (null when this person may not see it).
+  final VoidCallback? onOpenCommercial;
   const _PoolsPanel({
     required this.g,
     required this.company,
     required this.commercial,
     required this.companyHistory,
     required this.commercialHistory,
+    this.onOpenCompany,
+    this.onOpenCommercial,
   });
 
   /// The pot and the two figures: a label, the amount and its caption.
@@ -922,8 +962,10 @@ class _PoolsPanel extends StatelessWidget {
                 color: DashUi.indigo,
                 definition:
                     "The company's share set aside from each commissioned job, less the callback charges taken "
-                    "from the pool, since commissions began. A job counts once its pay week's payroll run is "
-                    'finalized. Callback charges can take it below zero.',
+                    "from the pool, plus or minus entries made by hand, since commissions began. A job counts once "
+                    "its pay week's payroll run is finalized. Callback charges can take it below zero."
+                    '${onOpenCompany == null ? '' : ' Click to see every entry or add one.'}',
+                onTap: onOpenCompany,
               ),
             ),
             Container(width: 1, height: body * 0.7, color: DashUi.line),
@@ -937,7 +979,9 @@ class _PoolsPanel extends StatelessWidget {
                 color: DashUi.ink,
                 definition:
                     "Commercial retainage still locked for the techs, from jobs whose pay week's payroll run is "
-                    'finalized. It is paid out at the quarterly release (Apr 1, Jul 1 and Oct 1).',
+                    'finalized. It is paid out at the quarterly release (Apr 1, Jul 1 and Oct 1).'
+                    '${onOpenCommercial == null ? '' : ' Click to see every entry.'}',
+                onTap: onOpenCommercial,
               ),
             ),
           ],
@@ -964,11 +1008,33 @@ class _PoolFigure extends StatelessWidget {
     required this.history,
     required this.color,
     required this.definition,
+    this.onTap,
   });
+
+  /// Opens the figure's log. Null leaves it a plain figure.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final tap = onTap;
+    if (tap == null) return _figure(context, false);
+    return DashPressable(
+      onTap: tap,
+      label: '$label: ${_moneyFull(value)}, $caption, all time',
+      hint: 'Opens every entry in the $label',
+      radius: BorderRadius.circular(10),
+      builder: (hover) => _figure(context, hover, tappable: true),
+    );
+  }
+
+  Widget _figure(BuildContext context, bool hover, {bool tappable = false}) {
     final reduce = MediaQuery.disableAnimationsOf(context);
+    final title = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: DashText.label,
+    );
     return DashHoverCard(
       title: label,
       value: _moneyFull(value),
@@ -984,12 +1050,16 @@ class _PoolFigure extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: DashText.label,
-                  ),
+                  if (!tappable)
+                    title
+                  else
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Flexible(child: title),
+                        Icon(Icons.chevron_right_rounded, size: 17, color: hover ? color : DashUi.subtle),
+                      ],
+                    ),
                   TweenAnimationBuilder<double>(
                     tween: Tween(begin: 0, end: value),
                     duration: reduce

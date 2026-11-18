@@ -2,8 +2,7 @@ part of 'assistant_panel.dart';
 
 // =============================================================================
 // Jarvis workspace (2026-10-27): the welcome screen with the daily briefing and the questions Jarvis can answer, links
-// to the records an answer names, the live checklist of lookups, and the answer blocks for priorities, comparisons and
-// the dates-and-definitions note.
+// to the records an answer names, the live checklist of lookups, and the answer blocks for priorities and comparisons.
 // =============================================================================
 
 /// The daily briefing's question. The welcome screen asks it, and spots an earlier answer to it from today.
@@ -269,7 +268,8 @@ class _RecordLinkState extends State<_RecordLink> {
       router = GoRouter.of(context);
     } catch (_) {}
     Navigator.of(context).pop(); // the panel sits on top of the page, so close it first
-    router?.go(widget.route);
+    final go = router;
+    if (go != null) LeaveGuard.leave(() => go.go(widget.route));
   }
 
   @override
@@ -296,15 +296,18 @@ class _RecordLinkState extends State<_RecordLink> {
           },
           child: GestureDetector(
             onTap: _open,
+            // Ink with a faint underline at rest, red on hover or focus (2026-11-12): red on every job and customer named
+            // made a ranked list or a table read as all alarms. The underline says "link" without colour.
             child: DecoratedBox(
               decoration: BoxDecoration(color: _focus ? _tint : null, borderRadius: BorderRadius.circular(3)),
               child: Text(
                 widget.label,
                 style: widget.style.copyWith(
-                  color: _brandRed,
+                  color: lit ? _brandRed : _navy,
                   fontWeight: FontWeight.w600,
-                  decoration: lit ? TextDecoration.underline : TextDecoration.none,
-                  decorationColor: _brandRed,
+                  decoration: TextDecoration.underline,
+                  decorationColor: lit ? _brandRed : _navy.withValues(alpha: 0.28),
+                  decorationThickness: lit ? 1.6 : 1.2,
                 ),
               ),
             ),
@@ -355,11 +358,19 @@ class _JarvisHomeState extends State<_JarvisHome> {
         final tabs = _AreaTabs(selected: _area, onSelect: (i) => setState(() => _area = i));
         const explore = Text(
           'Explore what Jarvis can look up',
-          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _navy),
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _navy, height: 1.3),
         );
+        final top = view.maxHeight < 640 ? 20.0 : 36.0;
         return SingleChildScrollView(
-          padding: EdgeInsets.fromLTRB(side, view.maxHeight < 640 ? 20 : 36, side, 24),
-          child: Center(
+          padding: EdgeInsets.fromLTRB(side, top, side, 24),
+          // When it all fits, the welcome sits just above the middle of the space over the message box instead of at the
+          // top with a tall empty gap below it (2026-11-10 review): the greeting, questions and box read as one group. It
+          // moved down a little on 2026-11-12, when the gap above the greeting had become the biggest thing on the screen.
+          // Taller than the space (big text, a page's own questions), it scrolls from the top as before.
+          child: ConstrainedBox(
+            constraints: BoxConstraints(minHeight: math.max(0, view.maxHeight - top - 24)),
+            child: Align(
+            alignment: const Alignment(0, -0.12),
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: _homeWidth),
               child: Column(
@@ -379,7 +390,7 @@ class _JarvisHomeState extends State<_JarvisHome> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 28),
+                    const SizedBox(height: 32),
                     // the heading and the group switcher share a row when there is room for both
                     _Arrive(
                       begin: 0.38,
@@ -400,7 +411,7 @@ class _JarvisHomeState extends State<_JarvisHome> {
                               ],
                             ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     _Arrive(
                       begin: 0.42,
                       end: 0.9,
@@ -415,6 +426,7 @@ class _JarvisHomeState extends State<_JarvisHome> {
                 ],
               ),
             ),
+          ),
           ),
         );
       },
@@ -530,14 +542,18 @@ class _HomeHeader extends StatelessWidget {
           end: 0.86,
           pop: true,
           child: Container(
-            width: 44,
-            height: 44,
-            decoration: const BoxDecoration(color: _fill, shape: BoxShape.circle),
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+              border: Border.all(color: _stroke),
+            ),
             alignment: Alignment.center,
-            child: const JarvisMark(size: 24),
+            child: const JarvisMark(size: 26),
           ),
         ),
-        const SizedBox(width: 14),
+        const SizedBox(width: 16),
         Expanded(
           child: _Arrive(
             begin: 0.28,
@@ -550,14 +566,21 @@ class _HomeHeader extends StatelessWidget {
                   child: Text(
                     greeting,
                     style: _serifStyle.copyWith(
-                      fontSize: 24,
+                      fontSize: 25,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: -0.5,
+                      letterSpacing: -0.6,
                       height: 1.2,
                       color: _navy,
                     ),
                   ),
                 ),
+                if (canAsk) ...[
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Ask about jobs, customers, money, sales, the team or stock. Every answer is looked up in live company data.',
+                    style: TextStyle(fontSize: 14, color: _slate, height: 1.45),
+                  ),
+                ],
                 if (!canAsk) ...[
                   const SizedBox(height: 3),
                   const Text(
@@ -637,7 +660,8 @@ class _PageQuestions extends StatelessWidget {
   }
 }
 
-/// The question groups (Money, Jobs, Sales, Team, Stock) as a small switcher; the open group is navy.
+/// The question groups (Money, Jobs, Sales, Team, Stock) as a small segmented switcher, styled like the app's other
+/// segmented controls (DashSegmented): the open group is a white pill with ink text on a light track.
 class _AreaTabs extends StatelessWidget {
   final int selected;
   final ValueChanged<int> onSelect;
@@ -649,7 +673,7 @@ class _AreaTabs extends StatelessWidget {
     return SelectionContainer.disabled(
       child: Container(
         padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10), border: Border.all(color: _stroke)),
         child: Wrap(
           spacing: 2,
           runSpacing: 2,
@@ -679,34 +703,45 @@ class _AreaChipState extends State<_AreaChip> {
   @override
   Widget build(BuildContext context) {
     final on = widget.selected;
-    final fg = on ? Colors.white : (_hover ? _navy : _slate);
+    final fg = on || _hover ? _navy : _slate;
+    final still = MediaQuery.disableAnimationsOf(context);
+    final radius = BorderRadius.circular(7);
     return Semantics(
       button: true,
       selected: on,
       label: '${widget.area.name} questions',
       excludeSemantics: true,
-      child: Material(
-        color: on ? _navy : (_hover ? Colors.white : Colors.transparent),
-        borderRadius: BorderRadius.circular(7),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(7),
-          onTap: widget.onTap,
-          mouseCursor: SystemMouseCursors.click,
-          onHover: (v) => setState(() => _hover = v),
-          hoverColor: Colors.transparent,
-          focusColor: on ? Colors.white.withValues(alpha: 0.14) : _navy.withValues(alpha: 0.06),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(9, 5, 11, 5),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(widget.area.icon, size: 15, color: fg),
-                const SizedBox(width: 6),
-                Text(
-                  widget.area.name,
-                  style: TextStyle(fontSize: 13, fontWeight: on ? FontWeight.w600 : FontWeight.w500, color: fg, height: 1.3),
-                ),
-              ],
+      child: AnimatedContainer(
+        duration: still ? Duration.zero : const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        decoration: BoxDecoration(
+          color: on ? Colors.white : (_hover ? Colors.white.withValues(alpha: 0.6) : Colors.white.withValues(alpha: 0)),
+          borderRadius: radius,
+          border: Border.all(color: on ? _stroke : _stroke.withValues(alpha: 0)),
+          boxShadow: [BoxShadow(color: _navy.withValues(alpha: on ? 0.06 : 0), blurRadius: 4, offset: const Offset(0, 1))],
+        ),
+        child: Material(
+          type: MaterialType.transparency,
+          child: InkWell(
+            borderRadius: radius,
+            onTap: widget.onTap,
+            mouseCursor: SystemMouseCursors.click,
+            onHover: (v) => setState(() => _hover = v),
+            hoverColor: Colors.transparent,
+            focusColor: _navy.withValues(alpha: 0.06),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(9, 4, 11, 4),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(widget.area.icon, size: 15, color: on ? _navy : DashUi.subtle),
+                  const SizedBox(width: 6),
+                  Text(
+                    widget.area.name,
+                    style: TextStyle(fontSize: 13, fontWeight: on ? FontWeight.w700 : FontWeight.w500, color: fg, height: 1.3),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -767,32 +802,34 @@ class _QuestionCardState extends State<_QuestionCard> {
   @override
   Widget build(BuildContext context) {
     final s = widget.suggestion;
-    final radius = BorderRadius.circular(10);
+    final radius = BorderRadius.circular(12);
+    final still = MediaQuery.disableAnimationsOf(context);
+    final quick = still ? Duration.zero : const Duration(milliseconds: 160);
     return Material(
       color: Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: radius,
-        side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.3) : _stroke),
+        side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.28) : _stroke),
       ),
       child: InkWell(
         onTap: widget.onTap,
         onHover: (v) => setState(() => _lit = v),
         onFocusChange: (v) => setState(() => _lit = v),
         borderRadius: radius,
-        hoverColor: _navy.withValues(alpha: 0.02),
+        hoverColor: _navy.withValues(alpha: 0.025),
         focusColor: _navy.withValues(alpha: 0.04),
         child: Semantics(
           button: true,
           label: 'Ask: ${s.question}',
           excludeSemantics: true,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 12, 14),
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 13),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   children: [
-                    Icon(s.icon, size: 16, color: _navy),
+                    Icon(s.icon, size: 16, color: _lit ? _navy : DashUi.subtle),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
@@ -800,10 +837,20 @@ class _QuestionCardState extends State<_QuestionCard> {
                         style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _navy, height: 1.3),
                       ),
                     ),
-                    Icon(Icons.chevron_right_rounded, size: 17, color: _lit ? _brandRed : DashUi.muted),
+                    // Says "this asks it" on hover or focus, then gets out of the way: a column of chevrons was noise.
+                    AnimatedSlide(
+                      duration: quick,
+                      curve: Curves.easeOutCubic,
+                      offset: _lit ? Offset.zero : const Offset(-0.4, 0),
+                      child: AnimatedOpacity(
+                        duration: quick,
+                        opacity: _lit ? 1 : 0,
+                        child: const Icon(Icons.arrow_forward_rounded, size: 16, color: _navy),
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 5),
                 Text(s.question, style: const TextStyle(fontSize: 13, color: _slate, height: 1.45)),
               ],
             ),
@@ -1043,9 +1090,10 @@ class _PriorityRow extends StatelessWidget {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Advice in quiet ink: red stays for links and for what is urgent (the High chip), so it still stands out.
                         const Padding(
                           padding: EdgeInsets.only(top: 2, right: 6),
-                          child: Icon(Icons.lightbulb_outline_rounded, size: 15, color: _brandRed),
+                          child: Icon(Icons.lightbulb_outline_rounded, size: 15, color: _slate),
                         ),
                         Expanded(
                           child: Text.rich(
@@ -1054,7 +1102,7 @@ class _PriorityRow extends StatelessWidget {
                               children: [
                                 const TextSpan(
                                   text: 'Suggested: ',
-                                  style: TextStyle(fontWeight: FontWeight.w600, color: _brandRed),
+                                  style: TextStyle(fontWeight: FontWeight.w700, color: _ink),
                                 ),
                                 ..._inlineSpans(item.next, next, links: links),
                               ],
@@ -1101,7 +1149,7 @@ class _CompareView extends StatelessWidget {
   Widget build(BuildContext context) {
     final cur = compare.periods.isNotEmpty && compare.periods[0].isNotEmpty ? compare.periods[0] : 'Now';
     final prev = compare.periods.length > 1 && compare.periods[1].isNotEmpty ? compare.periods[1] : 'Before';
-    const head = TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, letterSpacing: 0.5, color: _slate);
+    const head = _tableHeadStyle;
     const cellPad = EdgeInsets.symmetric(horizontal: 12, vertical: 9);
     const nums = [FontFeature.tabularFigures()];
     Widget headCell(String t, {bool end = true}) => Padding(
@@ -1123,7 +1171,7 @@ class _CompareView extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
               child: Text(
                 compare.title,
-                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600, color: _ink),
+                style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: _ink, height: 1.35),
               ),
             ),
           Table(
@@ -1220,52 +1268,6 @@ class _CompareView extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-/// `::: basis`: the dates an answer covers and how its measures are defined, so a figure can be checked and is not
-/// mistaken for a different one ("money owed" here is invoiced jobs only).
-class _BasisNote extends StatelessWidget {
-  final List<String> lines;
-  final Set<String> links;
-  const _BasisNote({required this.lines, required this.links});
-
-  @override
-  Widget build(BuildContext context) {
-    const style = TextStyle(fontSize: 12.5, color: _slate, height: 1.45);
-    return Container(
-      margin: const EdgeInsets.only(top: 2, bottom: 12),
-      padding: const EdgeInsets.fromLTRB(12, 9, 12, 9),
-      decoration: BoxDecoration(color: _fill, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 1),
-            child: Icon(Icons.info_outline_rounded, size: 15, color: _slate),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Dates and definitions',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: _slate, height: 1.4),
-                ),
-                for (final l in lines)
-                  Text.rich(
-                    TextSpan(
-                      style: style,
-                      children: _inlineSpans(l, style, links: links),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

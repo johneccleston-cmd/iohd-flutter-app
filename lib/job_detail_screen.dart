@@ -13,7 +13,6 @@ import 'package:url_launcher/url_launcher.dart';
 import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
-import 'estimate_pdf.dart';
 import 'services/line_items_api.dart';
 import 'theme/app_theme.dart';
 import 'utils/job_statuses.dart';
@@ -25,10 +24,12 @@ import 'widgets/quo_activity_panel.dart';
 import 'widgets/stripe_mark.dart';
 import 'widgets/dashboard_data.dart' show DashClock;
 import 'widgets/dashboard_kit.dart';
-import 'widgets/dashboard_panels.dart' show DashPressable;
+import 'widgets/dashboard_panels.dart' show DashPressable, DashSegmented;
 import 'widgets/file_viewer.dart';
-import 'widgets/flat_page.dart' show PageBanner;
+import 'widgets/flat_page.dart' show BannerMenuItem, PageBanner, PageSheet;
+import 'widgets/leave_guard.dart';
 import 'widgets/line_items_editor.dart';
+import 'widgets/ps_menu.dart';
 import 'widgets/record_list_view.dart' show recordDeleted;
 
 part 'job_detail_items.dart';
@@ -37,6 +38,8 @@ part 'job_detail_items.dart';
 /// without a key a different job would reuse the old page's state and keep showing the previous job.
 GoRoute jobDetailRoute() => GoRoute(
   path: ':id',
+  // Back, or a link to another record in the same section, asks first while an editing preview has changes in it.
+  onExit: (context, state) => LeaveGuard.confirm(),
   builder: (context, state) {
     final id = state.pathParameters['id'] ?? '';
     return JobDetailScreen(key: ValueKey('job-$id'), jobId: id, initial: state.extra is Map ? Map<String, dynamic>.from(state.extra as Map) : null);
@@ -57,8 +60,13 @@ class JobDetailScreen extends StatefulWidget {
 
 class _JobDetailScreenState extends State<JobDetailScreen> {
   static const _link = Color(0xFF2563EB);
-  static const _headerBar = Color(0xFFF3F4F6);
-  static const double _maxPageWidth = 1600; // same cap as the dashboards (_DashTokens.maxContentWidth) and Payroll
+
+  /// The gutter between the blocks, the same both ways: the page is one surface cut into blocks, not cards on a backdrop.
+  /// The same width as the standard page edge.
+  static const double _gap = PageSheet.edge;
+
+  /// A block: plain white, square, no outline. The gutters around it do the separating.
+  static const _blockFill = BoxDecoration(color: Colors.white);
 
   Map<String, dynamic>? _job;
   Map<String, dynamic>? _customer;
@@ -90,17 +98,67 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   String? _linesError;
   String? _option; // the estimate option on show, or 'sf' for Service Fusion's own items
   bool _showSfItems = false; // a job with its own items: look at Service Fusion's copy instead
-  final Set<String> _dirty = {}; // option ids with unsaved edits
+  final Set<String> _dirty = {}; // option ids with changes in the preview
+  // Each option's total and margin as its table works them out (its draft's, while the preview changes it), so its tab
+  // shows what its totals show.
+  final Map<String, (int, double?)> _liveFigures = {};
+
+  // Edit Job / Edit Estimate: a preview. The lines can be changed on screen, nothing is saved or sent anywhere, and
+  // Cancel (or leaving the page) puts back what was there.
+  bool _editing = false;
+  bool _saveAsked = false; // Save was pressed: the bar says saving isn't available
+  List<LineDraft>? _editSfLines; // Service Fusion's lines as they were when editing started, so the draft holds still
+  List<int>? _editSfAmounts;
+  final _itemsKey = GlobalKey(debugLabel: 'line items');
   String? _busy; // an option action in flight
   LineItemsApi get _api => LineItemsApi(widget.jobId);
 
   final _money = NumberFormat.currency(symbol: r'$');
 
+  /// Removes this page's leave check (see [_confirmLeave]).
+  late final VoidCallback _unguard;
+
   @override
   void initState() {
     super.initState();
     _job = widget.initial;
+    _unguard = LeaveGuard.register(canLeave: _confirmLeave, holdsWork: () => mounted && _editing && _dirty.isNotEmpty);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _unguard();
+    super.dispose();
+  }
+
+  /// Leaving the page (any page change in the app) while the editing preview has changes in it asks first. Saving
+  /// isn't available yet (the preview is never saved, user rule 2026-11-12), so the choice is to keep editing or to
+  /// drop the changes and go. A preview with no changes in it is left without a question.
+  Future<bool> _confirmLeave() async {
+    if (!mounted || !_editing || _dirty.isEmpty) return true;
+    final what = _isEstimate ? 'estimate' : 'job';
+    final leave = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'Leave without saving?',
+        icon: Icons.edit_note_rounded,
+        iconColor: DashUi.amber,
+        body: Text(
+          "You have changes to this $what's products and services. Editing is a preview for now and can't be saved yet, "
+          'so leaving this page drops them and puts back what was there.',
+          style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
+        ),
+        actions: [
+          Focus(autofocus: true, skipTraversal: true, child: AppButton.ghost('Keep editing', () => Navigator.pop(ctx, false))),
+          AppButton.ink('Discard changes', () => Navigator.pop(ctx, true), danger: true),
+        ],
+      ),
+    );
+    if (leave != true || !mounted) return false;
+    _dirty.clear(); // no "Preview closed" note: the person is on their way to another page
+    _stopEditing();
+    return true;
   }
 
   /// setState for the part file (setState itself is protected).
@@ -126,6 +184,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       _option = null;
       _showSfItems = false;
       _dirty.clear();
+      _editing = false;
+      _saveAsked = false;
+      _editSfLines = null;
+      _editSfAmounts = null;
       _payments = const [];
       _stripePayments = const [];
       _history = const [];
@@ -191,6 +253,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _stripePayments = rows('stripePayments');
         _history = rows('history');
         _loading = false;
+        // A Refresh during the preview: Service Fusion's lines on show follow what was loaded, unless they were changed
+        // in the preview (then the draft stays, as an option's does). Otherwise the table showed the old lines beside
+        // the new record's totals.
+        if (_editing && !_dirty.contains('sf')) {
+          _editSfLines = _sfLines;
+          _editSfAmounts = _sfAmounts;
+        }
       });
       _showInRightSection();
     } catch (_) {
@@ -216,10 +285,15 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   }
 
   /// After a load or a change, the option on show still exists, or the best one is picked: the accepted one, then
-  /// the recommended one, then the first; Service Fusion's items when there are none yet.
+  /// the recommended one, then the first; Service Fusion's items when there are none yet. (Service Fusion's items have
+  /// no tab of their own beside options, so they only stay on show once options exist while a preview of them is open.)
   void _keepOptionInView() {
     final opts = _lines?.options ?? const <LineOption>[];
-    _dirty.removeWhere((id) => !opts.any((o) => o.id == id));
+    _dirty.removeWhere((id) => id != 'sf' && !opts.any((o) => o.id == id));
+    // The estimate's own option (Service Fusion's lines, "Estimate Option") has a tab of its own now (round 3,
+    // 2026-11-13), so once it is on show it stays on show through a reload; it used to be hidden, with no way back to
+    // it, as soon as the estimate had an option of ours. Which option opens first is unchanged: the accepted one, the
+    // recommended one, the first, or the estimate's own when there are none.
     if (_option == 'sf') return;
     if (_option != null && opts.any((o) => o.id == _option)) return;
     final pick = opts.where((o) => o.accepted).firstOrNull ?? opts.where((o) => o.isRecommended).firstOrNull ?? opts.firstOrNull;
@@ -237,7 +311,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   bool get _canRequestPayment => AuthSession.instance.can('payments', AccessAction.create);
 
   /// Opens another record's page: an estimate under /estimates, a job under /jobs (so the right nav item stays lit).
-  void _openRecord(String id, {required bool estimate}) => context.go('/${estimate ? 'estimates' : 'jobs'}/${Uri.encodeComponent(id)}');
+  void _openRecord(String id, {required bool estimate}) =>
+      LeaveGuard.leave(() => context.go('/${estimate ? 'estimates' : 'jobs'}/${Uri.encodeComponent(id)}'));
 
   /// Links and lists can't always know whether a number is a job or an estimate (the calendar, dashboard lists). Once the
   /// record is loaded we know, so if the address is in the wrong section, move it to the right one (same page, no flash).
@@ -245,6 +320,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final router = GoRouter.maybeOf(context);
     if (router == null || _job == null) return;
     final path = router.routerDelegate.currentConfiguration.uri.path;
+    // Only for the page on show: a page kept alive in another section (the nav keeps each section's last page) that
+    // finishes loading late must not pull the person back to it.
+    if (path != '/jobs/${Uri.encodeComponent(widget.jobId)}' && path != '/estimates/${Uri.encodeComponent(widget.jobId)}') return;
     final wrongSection = (_isEstimate && path.startsWith('/jobs/')) || (!_isEstimate && path.startsWith('/estimates/'));
     if (wrongSection) router.go('/${_isEstimate ? 'estimates' : 'jobs'}/${Uri.encodeComponent(widget.jobId)}', extra: _job);
   }
@@ -285,11 +363,21 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _banner(),
-          SizedBox(
-            height: 3,
-            child: _loading ? const LinearProgressIndicator(minHeight: 3, color: DashUi.ink, backgroundColor: DashUi.line) : null,
+          // The loading bar floats over the top of the body, so the blocks start right under the ribbon.
+          Expanded(
+            child: Stack(
+              children: [
+                Positioned.fill(child: job == null ? _bodyWithoutJob() : _content(job)),
+                if (_loading)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(minHeight: 3, color: DashUi.ink, backgroundColor: DashUi.line),
+                  ),
+              ],
+            ),
           ),
-          Expanded(child: job == null ? _bodyWithoutJob() : _content(job)),
         ],
       ),
     );
@@ -322,12 +410,26 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             label: matchLabel,
             onPressed: () => _openRecord(_matchId!, estimate: !estimate),
           ),
-        // For a record that was deleted in Service Fusion: the Jobs (or Estimates) Delete switch; the server checks too.
-        if (_job != null && _canDelete)
+        // Opens the line items for a preview edit (job_detail_items.dart). Same switch as before: Jobs/Estimates Update.
+        if (_job != null && _canEditLines)
           PageBanner.button(
-            icon: Icons.delete_outline_rounded,
-            label: _deleting ? 'Deleting…' : 'Delete',
-            onPressed: _deleting ? null : _deleteRecord,
+            icon: Icons.edit_outlined,
+            label: _editing ? 'Editing' : (estimate ? 'Edit Estimate' : 'Edit Job'),
+            onPressed: _editing ? null : _startEditing,
+          ),
+        // Less-used actions under More (user 2026-11-13). Delete is for a record that was deleted in Service Fusion: the
+        // Jobs (or Estimates) Delete switch; the server checks too.
+        if (_job != null && _canDelete)
+          PageBanner.more(
+            label: _deleting ? 'Deleting…' : 'More',
+            items: [
+              BannerMenuItem(
+                icon: Icons.delete_outline_rounded,
+                label: estimate ? 'Delete estimate' : 'Delete job',
+                danger: true,
+                onPressed: _deleting ? null : _deleteRecord,
+              ),
+            ],
           ),
         PageBanner.refresh(onPressed: _loading ? null : _load),
       ],
@@ -535,74 +637,70 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     );
 
     // Its own card under Details, outside the tabs, so the notes stay up whichever tab is open.
-    final notesCard = Container(decoration: DashUi.panel(radius: 10), clipBehavior: Clip.antiAlias, child: _notesSection());
+    final notesCard = Container(decoration: _blockFill, child: _notesSection());
 
-    // Same sizing as the dashboards and Payroll: content capped at 1600 px, side padding 12 / 16 / 24 by window width.
+    // A full page, edge to edge like the other full pages: square white blocks that run to the window's edges, split by
+    // thin gutters instead of floating as cards. Below the ribbon the page is all blocks, with no margin around them.
     return LayoutBuilder(
       builder: (context, constraints) {
-        final w = constraints.maxWidth;
-        final pad = w < 600 ? 12.0 : (w < 1000 ? 16.0 : 24.0);
-        return Align(
-          alignment: Alignment.topCenter,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: _maxPageWidth),
-            child: ListView(
-              padding: EdgeInsets.fromLTRB(pad, (pad * 0.6).roundToDouble() + 4, pad, 24),
-              children: [
-                if (_error != null)
-                  Container(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.notesBg,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(color: AppTheme.notesStroke),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Text('$_error Showing what we already have.', style: const TextStyle(color: AppTheme.notesText)),
-                        ),
-                        TextButton(onPressed: _load, child: const Text('Retry')),
-                      ],
-                    ),
-                  ),
-                LayoutBuilder(
-                  builder: (context, c) {
-                    final wide = c.maxWidth >= 900;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (wide)
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                                  children: [detailsPanel, const SizedBox(height: 16), notesCard],
-                                ),
-                              ),
-                              const SizedBox(width: 20),
-                              Expanded(child: infoPanel),
-                            ],
-                          )
-                        else ...[
-                          detailsPanel,
-                          const SizedBox(height: 16),
-                          notesCard,
-                          const SizedBox(height: 16),
-                          infoPanel,
-                        ],
-                        const SizedBox(height: 16),
-                        _isEstimate ? _proposalPanel() : _jobItemsPanel(),
-                      ],
-                    );
-                  },
+        return ListView(
+          // The page edge on the sides only: no padding above the first block or below the last (user, 2026-11-13).
+          padding: const EdgeInsets.symmetric(horizontal: PageSheet.edge),
+          children: [
+            if (_error != null)
+              Container(
+                margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.notesBg,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.notesStroke),
                 ),
-              ],
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('$_error Showing what we already have.', style: const TextStyle(color: AppTheme.notesText)),
+                    ),
+                    TextButton(onPressed: _load, child: const Text('Retry')),
+                  ],
+                ),
+              ),
+            LayoutBuilder(
+              builder: (context, c) {
+                final wide = c.maxWidth >= 900;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (wide)
+                      // Each block ends where its content ends: no white padding under the shorter column just to
+                      // line its bottom up with the other one (user, 2026-11-12).
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [detailsPanel, const SizedBox(height: _gap), notesCard],
+                            ),
+                          ),
+                          const SizedBox(width: _gap),
+                          Expanded(child: infoPanel),
+                        ],
+                      )
+                    else ...[
+                      detailsPanel,
+                      const SizedBox(height: _gap),
+                      notesCard,
+                      const SizedBox(height: _gap),
+                      infoPanel,
+                    ],
+                    const SizedBox(height: _gap),
+                    _isEstimate ? _proposalPanel() : _jobItemsPanel(),
+                  ],
+                );
+              },
             ),
-          ),
+          ],
         );
       },
     );
@@ -811,15 +909,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   }
 
   /// Click-to-change status. Shows every status in a list; picking one is not saved yet (nothing is written to the
-  /// database or Service Fusion), so the screen keeps showing the real value and says so.
+  /// database or Service Fusion), so the screen keeps showing the real value and says so. The status and sub-status
+  /// are drawn as the same pill as a tech's status on a visit (user, 2026-11-12).
   Widget _statusPicker(String current, {required bool sub}) {
     final has = current.trim().isNotEmpty && current != 'No status';
-    final Widget face = sub
-        ? (has ? _pill(current) : const Text('set sub-status', style: TextStyle(fontSize: 13, color: _link)))
-        : Text(
-            current,
-            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: statusColor(current)),
-          );
+    final Widget face = has
+        ? _visitPill(current)
+        : Text(sub ? 'set sub-status' : 'set status', style: const TextStyle(fontSize: 13, color: _link));
     return PopupMenuButton<String>(
       tooltip: sub ? 'Change sub-status' : 'Change status',
       constraints: const BoxConstraints(maxHeight: 460, minWidth: 240),
@@ -883,7 +979,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Uri _mapsUri(String address) => Uri.https('www.google.com', '/maps/search/', {'api': '1', 'query': address});
 
   /// The Customers screen, searched for this customer's name (the same hand-off the nav bar search uses).
-  void _openCustomer() => context.go('/customers?q=${Uri.encodeQueryComponent(_s('customer_name'))}');
+  void _openCustomer() => LeaveGuard.leave(() => context.go('/customers?q=${Uri.encodeQueryComponent(_s('customer_name'))}'));
 
   /// Money actually received and recorded on the job: the same transaction types Collections counts as cash.
   double get _paid => _payments.fold<double>(0, (s, p) {
@@ -919,12 +1015,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(6)),
     );
     Widget card({int rows = 6}) => Container(
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.strokeBorder),
-      ),
-      padding: const EdgeInsets.all(18),
+      decoration: _blockFill,
+      padding: const EdgeInsets.all(20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -943,30 +1035,25 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         ],
       ),
     );
-    return Align(
-      alignment: Alignment.topCenter,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: _maxPageWidth),
+    // The same edge-to-edge blocks as the page itself.
+    return LayoutBuilder(
+      builder: (context, c) => SkeletonPulse(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(24, 20, 24, 24),
-          child: SkeletonPulse(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                LayoutBuilder(
-                  builder: (context, c) => c.maxWidth >= 900
-                      ? Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(child: card()),
-                            const SizedBox(width: 20),
-                            Expanded(child: card(rows: 8)),
-                          ],
-                        )
-                      : card(),
-                ),
-              ],
-            ),
+          padding: const EdgeInsets.symmetric(horizontal: PageSheet.edge),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              c.maxWidth - PageSheet.edge * 2 >= 900
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(child: card(rows: 8)),
+                        const SizedBox(width: _gap),
+                        Expanded(child: card(rows: 8)),
+                      ],
+                    )
+                  : card(),
+            ],
           ),
         ),
       ),
@@ -981,18 +1068,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     ),
   );
 
-  /// Solid, Service-Fusion-style pill (white text on the status colour), for sub-status and per-tech status.
-  Widget _pill(String text) {
-    final c = statusColor(text);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-      decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(20)),
-      child: Text(
-        text,
-        style: TextStyle(color: c.computeLuminance() > 0.55 ? const Color(0xFF111827) : Colors.white, fontWeight: FontWeight.w800, fontSize: 12),
-      ),
-    );
-  }
 
   // ---- the Details block -----------------------------------------------------------------------------------------
 
@@ -1020,8 +1095,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.2),
     );
     return Container(
-      decoration: DashUi.panel(radius: 10),
-      clipBehavior: Clip.antiAlias,
+      decoration: _blockFill,
+      clipBehavior: Clip.hardEdge,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1144,40 +1219,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     padding: const EdgeInsets.only(bottom: 2),
     child: _DetailLink(text: text, onTap: onTap, tip: tip, icon: icon, strong: strong),
   );
-
-  /// The original grey-titled panel, still used by Line Items: a grey title bar, then rows separated by hairlines.
-  Widget _panel(String title, List<Widget> rows, {Widget? action}) {
-    return Container(
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceColor,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.strokeBorder),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            color: _headerBar,
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    title,
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: AppTheme.primaryText),
-                  ),
-                ),
-                ?action,
-              ],
-            ),
-          ),
-          const Divider(height: 1, color: AppTheme.strokeBorder),
-          for (var i = 0; i < rows.length; i++) ...[if (i > 0) const Divider(height: 1, color: AppTheme.strokeBorder), rows[i]],
-        ],
-      ),
-    );
-  }
 
   /// Pictures / documents Service Fusion has on the job. null = the sync hasn't brought them in yet (so we can say
   /// "not synced yet" instead of claiming there are none).

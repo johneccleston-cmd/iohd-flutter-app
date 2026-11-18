@@ -87,7 +87,8 @@ void main() {
       await tester.pumpWidget(MaterialApp(
         debugShowCheckedModeBanner: false,
         theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
-        home: const Scaffold(body: PayrollScreen()),
+        // The fixture's week, not "last week": the default range follows today's date and would drift from the data.
+        home: const Scaffold(body: PayrollScreen(initialStart: '2026-11-02', initialEnd: '2026-11-08')),
       ));
       for (var i = 0; i < 8; i++) {
         await tester.pump(const Duration(milliseconds: 150));

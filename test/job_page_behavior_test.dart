@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:iohd_desktop/widgets/dashboard_data.dart' show DashClock;
+import 'package:iohd_desktop/widgets/dashboard_panels.dart' show DashSegmented;
 
 import 'job_page_fixture.dart';
 
@@ -36,79 +37,101 @@ void _today(int month, int day) {
 void main() {
   setUpAll(jobPageSetUp);
 
-  group('line items from the catalog', () {
-    testWidgets('a new estimate option: add products, change quantity, override a price, see cost and margin, save', (t) async {
-      final s = FakeJobServer();
-      final errors = await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        // No options yet: Service Fusion's items, read-only, and a way to start.
-        expect(find.textContaining('Service Fusion\'s items, read-only'), findsOneWidget);
-        expect(_search, findsNothing);
-        await t.tap(find.text('New option'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Blank option'));
-        await settle(t);
-        expect(find.text('Option 1'), findsWidgets);
-        expect(find.text('No lines in Option 1 yet'), findsOneWidget);
+  // Line items are a preview (the ribbon's Edit Job / Edit Estimate): they can be changed on screen and the totals follow,
+  // but no line is ever saved (user, 2026-11-12). The option actions (new, rename, recommend, notes, accept, send to
+  // job, delete) do save, to our own database.
+  Iterable<String> lineSaves(FakeJobServer s) => s.requests.where((r) => r.endsWith('/items'));
 
+  Future<void> editEstimate(WidgetTester t) async {
+    await t.tap(find.text('Edit Estimate'));
+    await settle(t, frames: 6);
+  }
+
+  Future<void> optionMenu(WidgetTester t, String item) async {
+    await t.tap(find.byKey(const ValueKey('option-actions')));
+    await settle(t, frames: 4);
+    await t.tap(find.text(item).last);
+    await settle(t, frames: 6);
+  }
+
+  testWidgets('the ribbon\'s More menu holds Delete (user 2026-11-13): no Delete button of its own', (t) async {
+    final s = FakeJobServer();
+    await pumpJobPage(
+      t,
+      s,
+      size: const Size(1500, 900),
+      body: () async {
+        expect(find.widgetWithText(FilledButton, 'Delete'), findsNothing);
+        await t.tap(find.text('More'));
+        await settle(t, frames: 4);
+        await saveJobShot(t, 'ribbon_more_menu');
+        expect(find.text('Delete job'), findsOneWidget);
+        await t.tap(find.text('Delete job'));
+        await settle(t, frames: 6);
+        await saveJobShot(t, 'ribbon_more_delete');
+      },
+    );
+  });
+
+  group('line items from the catalog (preview)', () {
+    testWidgets('add products to an option, change the quantity, override a price: amounts, cost, margin and totals follow, and nothing is saved', (t) async {
+      final s = FakeJobServer();
+      s.addOption(kEstimateId, 'Option 1', [], taxRate: 10.5);
+      final errors = await pumpJobPage(t, s, id: kEstimateId, body: () async {
+        expect(find.text('No lines in Option 1 yet'), findsOneWidget);
+        expect(_search, findsNothing, reason: 'read-only until Edit Estimate');
+        await editEstimate(t);
         await _pick(t, 'TS-250', 'Torsion Spring | 0.250 x 2" x 32"');
         await _pick(t, 'opener', 'LiftMaster 87504 Smart Opener');
         // Catalog defaults: quantity 1, the catalog's price and cost.
         expect(find.text(r'$89.00'), findsWidgets);
         expect(find.text(r'$19.50'), findsWidgets);
         expect(find.text(r'$689.00'), findsWidgets);
-        expect(find.text('Unsaved changes'), findsOneWidget);
+        expect(find.text('Changed, not saved'), findsOneWidget);
 
-        // Quantity 3 and a price override on the spring: the line and the totals follow at once.
-        await t.tap(find.text(r'$89.00').first);
+        // Quantity 3 and a price override on the spring: the line and the totals follow at once. (A rate box shows its
+        // "$" at its left and the figure at its right, as the field it opens into does.)
+        await t.tap(find.text('89.00').first);
         await settle(t, frames: 2);
         await _type(t, _cell(0, 'qty'), '3');
         await _type(t, _cell(0, 'rate'), '95');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await settle(t, frames: 4);
         expect(find.text(r'$285.00'), findsWidgets, reason: '3 x \$95');
-        expect(find.text(r'$58.50'), findsWidgets, reason: 'extended cost 3 x \$19.50');
-        // Items 285 + 689 = 974; cost 58.50 + 401.37 = 459.87; profit 514.13; margin 52.8%.
-        expect(find.text(r'$974.00'), findsWidgets);
-        expect(find.text(r'$459.87'), findsWidgets);
-        expect(find.text(r'$514.13'), findsWidgets);
-        expect(find.text('52.8%'), findsWidgets);
+        // No margin per line (user 2026-11-13): neither the spring's (79.5%) nor the opener's (41.7%).
+        expect(find.text('79.5%'), findsNothing);
+        expect(find.text('41.7%'), findsNothing);
+        expect(find.text('MARGIN'), findsNothing);
+        // Items 285 + 689 = 974; cost 58.50 + 401.37 = 459.87; profit 514.13; margin 52.8%; tax 10.5% of 974 = 102.27.
+        expect(find.text(r'$974.00'), findsOneWidget);
+        expect(find.text(r'$459.87'), findsOneWidget);
+        expect(find.text(r'$514.13'), findsOneWidget);
+        expect(find.text('52.8%'), findsOneWidget);
+        expect(find.text(r'$102.27'), findsOneWidget);
+        expect(find.text(r'$1,076.27'), findsNWidgets(2), reason: 'the receipt, and the option\'s tab, which follows the draft (round 4)');
 
-        await t.enterText(find.byKey(const ValueKey('tax-rate')), '10.5');
+        // No Save to press: nothing can be kept yet. Ctrl+S from a field says so in the strip.
+        expect(find.text('Save'), findsNothing);
+        await t.tap(find.text('95.00').first);
         await settle(t, frames: 2);
-        // Both lines taxable: 10.5% of 974 = 102.27; total 1076.27.
-        expect(find.text(r'$102.27'), findsWidgets);
-        expect(find.text(r'$1,076.27'), findsWidgets);
-
-        await t.tap(find.text('Save'));
-        await settle(t);
-        expect(find.text('Unsaved changes'), findsNothing);
+        await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await t.sendKeyEvent(LogicalKeyboardKey.keyS);
+        await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await settle(t, frames: 4);
+        expect(find.textContaining('Not saved: saving isn\'t available yet'), findsOneWidget);
       });
       expect(errors.messages, isEmpty);
-      final put = s.saves.last;
-      expect(put['taxRate'], 10.5);
-      final items = (put['items'] as List).cast<Map>();
-      expect(items, hasLength(2));
-      expect(items[0]['name'], 'Torsion Spring | 0.250 x 2" x 32"');
-      expect(items[0]['quantity'], 3);
-      expect(items[0]['rate'], 95);
-      expect(items[0]['cost'], 19.5);
-      expect(items[0]['catalogRate'], 89, reason: 'the catalog price it was added at is kept, even after the override');
-      expect(items[0]['catalogCost'], 19.5);
-      expect(items[0]['inventoryItemId'], 7);
-      expect(items[0]['sku'], 'TS-25032');
-      expect(items[0]['source'], 'catalog');
-      expect(items[1]['quantity'], 1);
+      expect(lineSaves(s), isEmpty, reason: 'no line is ever saved: ${s.requests}');
+      expect(s.optionsOf(kEstimateId).single.items, isEmpty, reason: 'the option on the server is unchanged');
       // Adding to an estimate never touches stock.
       expect(s.requests.where((r) => r.contains('checkout') || r.contains('inventory')), isEmpty);
     });
 
-    testWidgets('a catalog entry with no price on file comes in unpriced, and the option can\'t be accepted until it is priced', (t) async {
+    testWidgets('a catalog entry with no price comes in unpriced and is flagged under the lines', (t) async {
       final s = FakeJobServer();
+      s.addOption(kEstimateId, 'Option 1', [], taxRate: 10.5);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        await t.tap(find.text('New option'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Blank option'));
-        await settle(t);
+        await editEstimate(t);
         await t.enterText(_search, 'rolling');
         await settle(t, frames: 4);
         expect(find.textContaining('Price varies'), findsOneWidget, reason: 'the range is shown, no made-up default');
@@ -116,256 +139,289 @@ void main() {
         await settle(t, frames: 4);
         expect(find.text('Not priced'), findsOneWidget);
         expect(find.textContaining('1 line not priced yet'), findsOneWidget);
-        await t.tap(find.text('Save'));
-        await settle(t);
-        await t.tap(find.text('Accept'));
-        await settle(t, frames: 4);
-        await t.tap(find.text('Accept option'));
-        await settle(t);
-        expect(find.textContaining('no price yet'), findsOneWidget, reason: 'the server refuses and says why');
       });
-      expect((s.saves.last['items'] as List).single['rate'], isNull);
+      expect(lineSaves(s), isEmpty);
     });
 
-    testWidgets('a custom line and a discount: the custom line opens on its price, the discount comes off the total', (t) async {
+    testWidgets('a custom line and a discount (from the Tax, discounts & fees menu): the custom line opens on its price, the discount comes off the total', (t) async {
       final s = FakeJobServer();
+      s.addOption(kEstimateId, 'Option 1', []);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        await t.tap(find.text('New option'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Blank option'));
-        await settle(t);
+        await editEstimate(t);
         await t.enterText(_search, 'Haul away old door');
         await settle(t, frames: 4);
         await t.tap(find.textContaining('Add a custom line'));
         await settle(t, frames: 3);
         await _type(t, _cell(0, 'rate'), '59');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
-        await settle(t, frames: 2);
-        await t.tap(find.text('Discount'));
+        await settle(t, frames: 3);
+        expect(find.text('Discount'), findsNothing, reason: 'the discount is behind the Tax, discounts & fees menu');
+        await t.tap(find.text('Tax, discounts & fees'));
+        await settle(t, frames: 3);
+        await t.tap(find.text('Discount').first);
         await settle(t, frames: 3);
         await _type(t, _cell(1, 'rate'), '9');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await settle(t, frames: 3);
+        expect(find.text('Discount'), findsNWidgets(2), reason: 'the line (named Discount) and its Discount tag');
         expect(find.text(r'-$9.00'), findsWidgets);
-        expect(find.text(r'$50.00'), findsWidgets, reason: 'total 59 - 9');
-        await t.tap(find.text('Save'));
-        await settle(t);
+        expect(find.text(r'$50.00'), findsWidgets, reason: 'total 59 - 9, no tax on this option');
       });
-      final items = (s.saves.last['items'] as List).cast<Map>();
-      expect(items[0]['name'], 'Haul away old door');
-      expect(items[0]['source'], 'manual');
-      expect(items[1]['kind'], 'discount');
-      expect(items[1]['rate'], 9);
+      expect(lineSaves(s), isEmpty);
     });
 
-    testWidgets('an invalid number blocks Save and says which line', (t) async {
+    testWidgets('a number that doesn\'t parse is marked on its line and changes nothing', (t) async {
       final s = FakeJobServer();
+      s.addOption(kEstimateId, 'Option 1', [
+        {'kind': 'item', 'name': 'Torsion Spring', 'quantity': 2, 'rate': 89, 'cost': 19.5, 'taxable': false, 'source': 'catalog'},
+      ]);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        await t.tap(find.text('New option'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Blank option'));
-        await settle(t);
-        await _pick(t, 'spring', 'Torsion Spring | 0.250 x 2" x 32"');
-        await t.tap(find.text(r'$89.00').first);
+        await editEstimate(t);
+        await t.tap(find.text('Torsion Spring'));
         await settle(t, frames: 2);
         await _type(t, _cell(0, 'qty'), '2..5');
-        await t.tap(find.text('Save'));
-        await settle(t, frames: 4);
-        expect(find.textContaining("Line 1: quantity isn't a valid number"), findsOneWidget);
+        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await settle(t, frames: 3);
+        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget, reason: 'the closed line says it has a bad number');
+        expect(find.text(r'$178.00'), findsWidgets, reason: 'the last good quantity (2) still counts');
       });
-      expect(s.saves, isEmpty, reason: 'nothing bad was sent');
     });
   });
 
-  group('job line items', () {
-    testWidgets('Service Fusion\'s items are read-only until copied; then edit, reorder, remove (with undo), add from the catalog, save, and it is all there after a reload', (t) async {
+  group('job line items (preview)', () {
+    testWidgets('Service Fusion\'s figures: each line shows the record\'s own tax, and its discount comes off the profit', (t) async {
+      final s = FakeJobServer();
+      final errors = await pumpJobPage(t, s, body: () async {
+        // Its lines say just "Sales Tax"; the record's one tax line is Prairie Grove's.
+        expect(find.text('Prairie Grove 10.5%'), findsNWidgets(2));
+        expect(find.text('Sales tax 10.5%'), findsOneWidget);
+        expect(find.text(r'$1,735.97'), findsOneWidget);
+        // Items 1,673.28 less the $50 builder discount = 1,623.28; cost 1,032.16; profit 591.12 (36.4%).
+        expect(find.text(r'$1,032.16'), findsOneWidget);
+        expect(find.text(r'$591.12'), findsOneWidget, reason: 'the discount Service Fusion keeps as a charge comes off the profit');
+        expect(find.text('36.4%'), findsOneWidget);
+      });
+      expect(errors.messages, isEmpty);
+    });
+
+    testWidgets('a preview of Service Fusion\'s items keeps its changed mark and draft through a refresh', (t) async {
       final s = FakeJobServer();
       await pumpJobPage(t, s, body: () async {
-        expect(find.textContaining('Service Fusion\'s line items, read-only'), findsOneWidget);
-        // Service Fusion's own figures, as it has them, add up to its total.
-        expect(find.text('Sales tax 10.5%'), findsOneWidget);
-        expect(find.text(r'$1,735.97'), findsWidgets);
-        await t.tap(find.text('Edit line items here'));
-        await settle(t);
-        expect(s.requests, contains('POST /api/jobs/$kJobId/options'));
-        expect(_search, findsOneWidget);
-        // The copy totals what Service Fusion says (the discount came across as a discount line).
-        expect(find.text('Builder Relationship Discount'), findsOneWidget);
-        expect(find.text(r'$1,735.97'), findsWidgets);
-
-        // Stop mold: 4 -> 6.
-        await t.tap(find.text(r'$17.84').first);
+        await t.tap(find.text('Edit Job'));
+        await settle(t, frames: 6);
+        await t.tap(find.text("Stop Mold | 7' Sandtone"));
         await settle(t, frames: 2);
         await _type(t, _cell(2, 'qty'), '6');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
-        await settle(t, frames: 2);
+        await settle(t, frames: 3);
         expect(find.text(r'$26.76'), findsWidgets);
-
-        // Move the install below the door, remove the stop mold, then undo the removal.
-        await t.tap(find.byTooltip('Line 1 actions'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Move down'));
-        await settle(t, frames: 2);
-        await t.tap(find.byTooltip('Line 3 actions'));
-        await settle(t, frames: 3);
-        await t.tap(find.text('Remove line'));
+        expect(find.text('Changed, not saved'), findsOneWidget);
+        await t.tap(find.byTooltip('Refresh'));
         await settle(t, frames: 8);
+        expect(find.text(r'$26.76'), findsWidgets, reason: 'the draft is kept');
+        expect(find.text('Changed, not saved'), findsOneWidget, reason: 'and still says it is changed');
+      });
+      expect(lineSaves(s), isEmpty);
+    });
+
+    testWidgets('the job\'s own items: a preview draft survives a look at Service Fusion\'s copy and back', (t) async {
+      final s = FakeJobServer();
+      final id = s.addOption(kJobId, 'Job items', [
+        {'kind': 'item', 'name': 'Torsion Spring | 0.250 x 2" x 32"', 'quantity': 2, 'rate': 89, 'cost': 19.5, 'taxable': true, 'source': 'copy'},
+        {'kind': 'item', 'name': 'Spring Replacement | Labor', 'quantity': 1, 'rate': 150, 'taxable': false, 'source': 'copy'},
+      ], taxRate: 10.5, source: 'estimate');
+      s.optionsOf(kJobId).firstWhere((o) => o.id == id).sourceEstimateId = kEstimateId;
+      await pumpJobPage(t, s, body: () async {
+        expect(find.text('From estimate #$kEstimateId'), findsOneWidget);
+        await t.tap(find.text('Edit Job'));
+        await settle(t, frames: 6);
+        await t.tap(find.text('Spring Replacement | Labor'));
+        await settle(t, frames: 2);
+        await _type(t, _cell(1, 'rate'), '175');
+        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await settle(t, frames: 3);
+        expect(find.text(r'$175.00'), findsWidgets);
+        await t.tap(find.descendant(of: find.byWidgetPredicate((w) => w is DashSegmented), matching: find.text('Service Fusion')));
+        await settle(t, frames: 4);
+        expect(find.text("Stop Mold | 7' Sandtone"), findsOneWidget, reason: 'Service Fusion\'s copy');
+        await t.tap(find.text('This job'));
+        await settle(t, frames: 4);
+        expect(find.text(r'$175.00'), findsWidgets, reason: 'the draft is still there');
+        expect(find.text('Changed, not saved'), findsOneWidget);
+      });
+      expect(lineSaves(s), isEmpty);
+    });
+
+    testWidgets('reorder with Alt+Down, remove with Undo, add from the catalog; Cancel brings back the original', (t) async {
+      final s = FakeJobServer();
+      await pumpJobPage(t, s, body: () async {
+        await t.tap(find.text('Edit Job'));
+        await settle(t, frames: 6);
+        // The install (first) moves below the door.
+        await t.tap(find.text('SMH Installation | Gallery Steel | 16x7 | Sandtone'));
+        await settle(t, frames: 2);
+        await t.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+        await t.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        await t.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+        await settle(t, frames: 3);
+        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await settle(t, frames: 3);
+        final door = t.getTopLeft(find.text('SMH | Gallery Steel | GD5S | Complete Door | Sandtone (Clay)')).dy;
+        final install = t.getTopLeft(find.text('SMH Installation | Gallery Steel | 16x7 | Sandtone')).dy;
+        expect(install, greaterThan(door));
+        // Remove the stop mold, then Undo.
+        await t.tap(find.byKey(const ValueKey('line-2-actions')));
+        await settle(t, frames: 3);
+        await t.tap(find.text('Delete').last);
+        await settle(t, frames: 4);
         expect(find.text("Stop Mold | 7' Sandtone"), findsNothing);
         await t.tap(find.text('Undo'));
         await settle(t, frames: 3);
         expect(find.text("Stop Mold | 7' Sandtone"), findsOneWidget);
-
         await _pick(t, 'spring', 'Spring Replacement | Labor');
-        await t.tap(find.text('Save'));
-        await settle(t);
+        expect(find.text('Spring Replacement | Labor'), findsOneWidget);
+        await t.tap(find.text('Exit preview'));
+        await settle(t, frames: 6);
+        expect(find.text('Spring Replacement | Labor'), findsNothing);
+        expect(find.text(r'$1,735.97'), findsOneWidget);
+        expect(find.text('Undo'), findsNothing, reason: 'Exit preview clears a pending Undo: there is no draft to put a line back into');
       });
-      final items = (s.saves.last['items'] as List).cast<Map>();
-      expect(items.map((i) => i['name']).toList(), [
-        'SMH | Gallery Steel | GD5S | Complete Door | Sandtone (Clay)',
-        'SMH Installation | Gallery Steel | 16x7 | Sandtone',
-        "Stop Mold | 7' Sandtone",
-        'Builder Relationship Discount',
-        'Spring Replacement | Labor',
-      ]);
-      expect(items[2]['quantity'], 6);
-      expect(items[0]['cost'], 507.16, reason: 'Service Fusion\'s extended cost became a unit cost');
-
-      // A fresh page (a refresh, or opening the job again) shows what was saved.
-      final again = await pumpJobPage(t, s);
-      expect(again.messages, isEmpty);
-      expect(find.text('Spring Replacement | Labor'), findsOneWidget);
-      expect(find.text(r'$26.76'), findsWidgets);
-      expect(find.textContaining('Edited here'), findsOneWidget);
-    });
-
-    testWidgets('an unsaved draft survives a look at another tab, and Ctrl+S saves it', (t) async {
-      final s = FakeJobServer();
-      await pumpJobPage(t, s, body: () async {
-        await t.tap(find.text('Edit line items here'));
-        await settle(t);
-        await _pick(t, 'opener', 'LiftMaster 87504 Smart Opener');
-        // Switching the panels' tabs above (Pics, Payment) and back leaves the draft alone.
-        await t.tap(find.text('Payment').first);
-        await settle(t, frames: 4);
-        await t.tap(find.textContaining('Pics').first);
-        await settle(t, frames: 4);
-        expect(find.text('Unsaved changes'), findsOneWidget);
-        await t.tap(find.text('Scheduling').first);
-        await t.tap(find.text('Summary').first);
-        await settle(t, frames: 4);
-        expect(find.text('LiftMaster 87504 Smart Opener'), findsOneWidget);
-        await t.tap(find.text('LiftMaster 87504 Smart Opener'));
-        await settle(t, frames: 2);
-        await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
-        await t.sendKeyEvent(LogicalKeyboardKey.keyS);
-        await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-        await settle(t);
-        expect(find.text('Unsaved changes'), findsNothing);
-      });
-      expect((s.saves.single['items'] as List).length, 5);
-    });
-
-    testWidgets('a save refused because someone else saved first keeps the draft and says what to do', (t) async {
-      final s = FakeJobServer();
-      await pumpJobPage(t, s, body: () async {
-        await t.tap(find.text('Edit line items here'));
-        await settle(t);
-        s.optionsOf(kJobId).first.version += 1; // someone else saved meanwhile
-        await _pick(t, 'opener', 'LiftMaster 87504 Smart Opener');
-        await t.tap(find.text('Save'));
-        await settle(t);
-        expect(find.textContaining('Someone else changed these lines'), findsOneWidget);
-        expect(find.text('LiftMaster 87504 Smart Opener'), findsOneWidget, reason: 'the draft is still there');
-        await t.tap(find.text('Save'));
-        await settle(t);
-        expect(find.text('Unsaved changes'), findsNothing, reason: 'saving again replaces their version');
-      });
+      expect(lineSaves(s), isEmpty);
     });
   });
 
   group('estimate options', () {
-    testWidgets('options stay independent: duplicate, change the copy, rename, recommend, delete', (t) async {
+    testWidgets('the tabs compare the options: total, lines and margin, with the recommended one open', (t) async {
       final s = FakeJobServer();
-      await pumpJobPage(t, s, id: kEstimateId, size: const Size(1500, 2400), body: () async {
-        await t.tap(find.text('Copy into Option 1'));
-        await settle(t);
-        expect(find.text(r'$907.75'), findsWidgets, reason: 'the copy totals what Service Fusion says, incl. 10.5% tax');
-        await t.tap(find.byTooltip('Duplicate as a new option'));
-        await settle(t);
-        expect(find.text('Option 1 (copy)'), findsWidgets);
-        await _pick(t, 'opener', 'LiftMaster 87504 Smart Opener');
-        await t.tap(find.text('Save'));
-        await settle(t);
-        // The copy: 907.75 + 689 + 10.5% of 689 (72.35) = 1669.10. The original is untouched.
-        expect(find.text(r'$1,669.10'), findsWidgets);
-        await t.tap(find.byTooltip('Rename'));
-        await settle(t, frames: 3);
-        await t.enterText(find.byType(TextField).last, 'Upgraded');
+      seedThreeOptions(s);
+      await pumpJobPage(t, s, id: kEstimateId, body: () async {
+        expect(find.text(r'$892.99'), findsOneWidget);
+        expect(find.text(r'$1,654.33'), findsNWidgets(2), reason: 'Upgraded: its tab and its total (it is open)');
+        expect(find.text(r'$1,776.02'), findsOneWidget);
+        // Three options of ours, and the estimate's own (Service Fusion's lines) first: "Estimate Option" (round 3).
+        expect(find.textContaining('% margin'), findsNWidgets(4));
+        expect(find.descendant(of: find.byKey(const ValueKey('option-tab-sf')), matching: find.text('Estimate Option')), findsOneWidget);
+        // Round 4: the open option's tab carries the star (the option header with its "Recommended" badge is gone).
+        final tabs = find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('option-tab-'));
+        expect(find.descendant(of: tabs, matching: find.byIcon(Icons.star_rounded)), findsOneWidget, reason: 'the recommended option\'s mark, on its tab');
+      });
+    });
+
+    testWidgets('options stay independent: duplicate, rename, recommend and delete from the option menu, and it is all there after a reload', (t) async {
+      final s = FakeJobServer();
+      seedThreeOptions(s);
+      await pumpJobPage(t, s, id: kEstimateId, body: () async {
+        await optionMenu(t, 'Duplicate as a new option');
+        expect(find.text('Upgraded (copy)'), findsWidgets);
+        await optionMenu(t, 'Rename');
+        await t.enterText(find.byType(TextField).last, 'Upgraded plus');
         await t.tap(find.text('Rename').last);
-        await settle(t);
-        await t.tap(find.byTooltip('Mark as recommended'));
-        await settle(t);
-        await t.tap(find.textContaining('Option 1').first);
+        await settle(t, frames: 6);
+        await optionMenu(t, 'Mark as recommended');
+        await optionMenu(t, 'Add notes for the customer');
+        await t.enterText(find.byType(TextField).last, 'Lead time 4 to 6 weeks.');
+        await t.tap(find.text('Save').last);
+        await settle(t, frames: 6);
+        expect(find.text('Lead time 4 to 6 weeks.'), findsOneWidget);
+        await t.tap(find.text('Standard').first);
         await settle(t, frames: 4);
-        expect(find.text('LiftMaster 87504 Smart Opener'), findsNothing, reason: 'Option 1 never got the opener');
-        await t.tap(find.byTooltip('Delete option'));
-        await settle(t, frames: 3);
+        await optionMenu(t, 'Delete option');
         expect(find.textContaining('The other options are not touched'), findsOneWidget);
-        await t.tap(find.text('Delete option'));
-        await settle(t);
+        await t.tap(find.text('Delete option').last);
+        await settle(t, frames: 6);
       });
       final left = s.optionsOf(kEstimateId);
-      expect(left.map((o) => o.name), ['Upgraded']);
-      expect(left.single.recommended, isTrue);
-      expect(left.single.items.length, 6);
+      expect(left.map((o) => o.name), ['Upgraded', 'Premium', 'Upgraded plus']);
+      expect(left.where((o) => o.recommended).map((o) => o.name), ['Upgraded plus'], reason: 'one recommended option');
+      expect(left.last.items.length, left.first.items.length, reason: 'the copy has the same lines');
+      expect(left.last.notes, 'Lead time 4 to 6 weeks.');
+      // A fresh page shows what was saved.
+      await pumpJobPage(t, s, id: kEstimateId, body: () async {
+        expect(find.text('Standard'), findsNothing);
+        expect(find.text('Upgraded plus'), findsWidgets);
+        expect(find.text('Lead time 4 to 6 weeks.'), findsOneWidget, reason: 'the recommended option opens first, with its notes');
+      });
+      expect(lineSaves(s), isEmpty);
+    });
+
+    testWidgets('Accept is held back, with the reason, for an option with nothing to sell, an unpriced line, or a preview open', (t) async {
+      final s = FakeJobServer();
+      s.addOption(kEstimateId, 'Blank', []);
+      s.addOption(kEstimateId, 'Unpriced', [
+        {'kind': 'item', 'name': 'Clopay Rolling Door', 'quantity': 1, 'rate': null, 'taxable': true, 'source': 'catalog'},
+      ]);
+      s.addOption(kEstimateId, 'Ready', [
+        {'kind': 'item', 'name': 'Torsion Spring', 'quantity': 1, 'rate': 89, 'taxable': true, 'source': 'catalog'},
+      ]);
+      await pumpJobPage(t, s, id: kEstimateId, body: () async {
+        // No hover text on the block (user 2026-11-13): clicking a held-back Accept says why, and accepts nothing.
+        Future<void> acceptSays(String why) async {
+          await t.tap(find.widgetWithText(OutlinedButton, 'Accept'));
+          await settle(t, frames: 4);
+          expect(find.text(why), findsOneWidget);
+          expect(find.text('Accept option'), findsNothing, reason: 'no confirm dialog');
+        }
+        await acceptSays('Add line items before accepting this option.');
+        await t.tap(find.text('Unpriced').first);
+        await settle(t, frames: 4);
+        await acceptSays('One line has no price yet. Price every line before accepting.');
+        await t.tap(find.text('Ready').first);
+        await settle(t, frames: 4);
+        await editEstimate(t);
+        await acceptSays('Exit the preview first: changes in it aren\'t part of Ready.');
+        // With a preview change, the menu's duplicate says it copies the saved lines.
+        await t.tap(find.text('Torsion Spring'));
+        await settle(t, frames: 2);
+        await _type(t, _cell(0, 'rate'), '99');
+        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await settle(t, frames: 3);
+        await t.tap(find.byKey(const ValueKey('option-actions')));
+        await settle(t, frames: 4);
+        expect(find.text('Duplicate (as saved)'), findsOneWidget);
+      });
+      expect(s.requests.where((r) => r.endsWith('/accept')), isEmpty);
     });
 
     testWidgets('accept one option, it locks, the others stay; send it to the job once', (t) async {
       final s = FakeJobServer();
       seedThreeOptions(s);
-      await pumpJobPage(t, s, id: kEstimateId, size: const Size(1500, 2400), body: () async {
-        // Each tab shows its own total.
-        expect(find.textContaining(r'$892.99'), findsWidgets);
-        expect(find.textContaining(r'$1,654.33'), findsWidgets);
-        expect(find.textContaining(r'$1,776.02'), findsWidgets);
+      await pumpJobPage(t, s, id: kEstimateId, body: () async {
         await t.tap(find.text('Accept'));
         await settle(t, frames: 4);
         expect(find.textContaining('Accept Upgraded for \$1,654.33?'), findsOneWidget);
         await t.tap(find.text('Accept option'));
         await settle(t);
-        expect(find.textContaining('Locked so the agreed price stays'), findsOneWidget);
-        expect(_search, findsNothing, reason: 'an accepted option is read-only');
+        // Round 4: the tabs' strip says it (there is no option header any more), and the tab is marked.
+        expect(find.textContaining('price locked'), findsOneWidget);
+        expect(find.text('Accepted'), findsOneWidget, reason: 'the mark on its tab');
         expect(find.text('Accept'), findsNothing, reason: 'only one option can be accepted');
+        await t.tap(find.text('Edit Estimate'));
+        await settle(t, frames: 6);
+        expect(_search, findsNothing, reason: 'an accepted option is read-only, even in the preview');
+        await t.tap(find.text('Exit preview'));
+        await settle(t, frames: 4);
 
         await t.tap(find.text('Send to job'));
         await settle(t, frames: 4);
         expect(find.widgetWithText(TextField, kJobId), findsOneWidget, reason: 'the likely job is suggested');
         await t.tap(find.text('Send to job').last);
         await settle(t);
-        expect(find.textContaining('sent to job #$kJobId'), findsWidgets);
-        expect(find.textContaining('and sent to job #$kJobId'), findsOneWidget);
+        expect(find.text('Open job #$kJobId'), findsOneWidget, reason: 'its next step, at the strip\'s end');
+        // Where it stands heads its menu.
+        await t.tap(find.byKey(const ValueKey('option-actions')));
+        await settle(t, frames: 4);
+        expect(find.textContaining('· sent to job #$kJobId'), findsOneWidget, reason: 'the menu\'s heading');
+        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await settle(t, frames: 4);
       });
       final upgraded = s.optionsOf(kEstimateId).firstWhere((o) => o.name == 'Upgraded');
       expect(upgraded.acceptedAt, isNotNull);
       expect(upgraded.convertedJobId, kJobId);
       final jobSet = s.optionsOf(kJobId).single;
       expect(jobSet.sourceOptionId, upgraded.id);
-      expect(jobSet.items.length, upgraded.items.length);
       expect(jobSet.items.map((i) => i['rate']), upgraded.items.map((i) => i['rate']));
       expect(s.optionsOf(kEstimateId).where((o) => o.acceptedAt != null).length, 1);
       expect(s.optionsOf(kEstimateId).length, 3, reason: 'the alternatives are kept');
-    });
-
-    testWidgets('the customer PDF of an estimate with no proposal offers to make one first', (t) async {
-      final s = FakeJobServer();
-      await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        await t.tap(find.text('Customer PDF'));
-        await settle(t, frames: 4);
-        expect(find.text('Make the proposal first?'), findsOneWidget);
-        await t.tap(find.text('Cancel'));
-        await settle(t, frames: 3);
-      });
-      expect(s.optionsOf(kEstimateId), isEmpty, reason: 'nothing made without asking');
     });
   });
 
@@ -374,11 +430,13 @@ void main() {
       final s = FakeJobServer(canSeeCost: false);
       seedThreeOptions(s);
       final errors = await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        expect(find.text('Cost'), findsNothing);
-        expect(find.text('Ext. cost'), findsNothing);
+        expect(find.text('COST'), findsNothing);
+        expect(find.text('MARGIN'), findsNothing);
+        expect(find.text('Job cost'), findsNothing);
         expect(find.text('Gross profit'), findsNothing);
-        expect(find.text('Margin'), findsNothing);
+        expect(find.textContaining('% margin'), findsNothing, reason: 'the tabs leave the margin out too');
         expect(find.text(r'$507.16'), findsNothing);
+        await editEstimate(t);
         await t.enterText(_search, 'spring');
         await settle(t, frames: 4);
         expect(find.textContaining('Cost \$'), findsNothing, reason: 'the catalog hides costs too');
@@ -390,14 +448,14 @@ void main() {
       final s = FakeJobServer(canEdit: false);
       seedThreeOptions(s);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        expect(_search, findsNothing);
+        expect(find.text('Edit Estimate'), findsNothing);
         expect(find.text('New option'), findsNothing);
         expect(find.text('Accept'), findsNothing);
-        expect(find.byTooltip('Rename'), findsNothing);
+        expect(find.byKey(const ValueKey('option-actions')), findsNothing);
       });
       final job = FakeJobServer(canEdit: false);
       await pumpJobPage(t, job, body: () async {
-        expect(find.text('Edit line items here'), findsNothing);
+        expect(find.text('Edit Job'), findsNothing);
       });
     });
   });

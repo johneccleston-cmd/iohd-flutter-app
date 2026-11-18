@@ -29,6 +29,9 @@ class DashUi {
   static const amber = Color(0xFFD97706);
   static const red = Color(0xFFDC2626);
 
+  /// A form box's resting outline: between `line` (too faint to read as a box) and `muted` (heavy on a grid of boxes).
+  static const fieldEdge = Color(0xFFB4C0CF);
+
   // Text-safe tones (at least 4.5:1 on white and on `faint`). `muted`,
   // `emeraldDeep` and `amber` fail as small text, so use these for readable
   // secondary text, money and warnings under 18px; keep the brighter ones for

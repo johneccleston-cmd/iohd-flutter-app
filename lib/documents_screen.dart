@@ -209,14 +209,23 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
             ],
           ),
           Expanded(
-            child: switch (_phase) {
-              _Phase.loading => const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
-              _Phase.error => _message_(Icons.cloud_off_rounded, 'Could not load Documents', _error ?? '', 'Retry', _loadStatus),
-              _Phase.notConfigured => _message_(Icons.settings_suggest_rounded, 'Google Drive is not set up yet',
-                  'The server needs its Google service account key before Documents can open. Ask whoever manages the backend.', 'Check again', _loadStatus),
-              _Phase.blocked => _message_(Icons.lock_outline_rounded, 'Drive is not available for your account', _error ?? '', 'Try again', _loadStatus),
-              _Phase.connected => _browser(),
-            },
+            child: PageSheet(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(
+                    child: switch (_phase) {
+                      _Phase.loading => const Center(child: CircularProgressIndicator(strokeWidth: 2.5)),
+                      _Phase.error => _message_(Icons.cloud_off_rounded, 'Could not load Documents', _error ?? '', 'Retry', _loadStatus),
+                      _Phase.notConfigured => _message_(Icons.settings_suggest_rounded, 'Google Drive is not set up yet',
+                          'The server needs its Google service account key before Documents can open. Ask whoever manages the backend.', 'Check again', _loadStatus),
+                      _Phase.blocked => _message_(Icons.lock_outline_rounded, 'Drive is not available for your account', _error ?? '', 'Try again', _loadStatus),
+                      _Phase.connected => _browser(),
+                    },
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

@@ -9,6 +9,14 @@
     -moz-osx-font-smoothing: grayscale !important;
     text-rendering: optimizeLegibility !important;
   }
+
+  /* The app picks the mouse cursor and Flutter sets it on <body>. The browser's own elements laid over the app (the
+     accessibility layer over buttons and text, and the hidden input behind a focused text box) would otherwise show
+     the browser's default I-beam over their text instead of the app's pointer. */
+  flt-semantics-host, flt-semantics-host *, flt-semantics, flt-semantics *,
+  flt-text-editing-host, flt-text-editing-host *, .flt-text-editing, form input, form textarea {
+    cursor: inherit !important;
+  }
 </style>
   <base href="$FLUTTER_BASE_HREF">
   <meta charset="UTF-8">

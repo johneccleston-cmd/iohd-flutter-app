@@ -40,7 +40,8 @@ void main() {
   });
   tearDown(unpinDashClock);
 
-  for (final size in const [Size(1280, 600), Size(1500, 800)]) {
+  // 1920 and 2560 wide: the body fills the window (no width cap), so wide screens must fit too.
+  for (final size in const [Size(1280, 600), Size(1500, 800), Size(1920, 1000), Size(2560, 1300)]) {
     for (final e in _screens.entries) {
       final tag = '${e.key}_${size.width.toInt()}x${size.height.toInt()}';
       testWidgets('$tag fits with no overflow', (t) async {

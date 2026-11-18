@@ -18,6 +18,7 @@ import 'utils/status_colors.dart';
 import 'widgets/dashboard_data.dart' show DashClock;
 import 'widgets/dashboard_kit.dart' show DashUi, SkeletonPulse;
 import 'widgets/dashboard_panels.dart' show DashPressable;
+import 'widgets/flat_page.dart' show PageSheet;
 
 // Kept public and unchanged in behavior: other screens may import it.
 Color getStatusColor(String? status) => statusColor(status);
@@ -43,11 +44,11 @@ const _mutedText = DashUi.subtle;
 const _line = DashUi.line;
 
 /// Gridlines and control borders: a step darker than [_line], so the days and the toolbar read as distinct pieces.
-const _grid = Color(0xFFD9DFE7);
+const _grid = Color(0xFFD4D4D4);
 
 /// Hover fills and tracks (the segmented controls), on the neutral page.
-const _faint = Color(0xFFEEF1F5);
-const _faintLight = Color(0xFFF8F9FB);
+const _faint = Color(0xFFEEEEEE);
+const _faintLight = Color(0xFFF8F8F8);
 const _brand = AppTheme.brandRed;
 
 /// Integrity red, restrained: today's date and weekday, nothing else.
@@ -61,13 +62,13 @@ const _todayBg = Colors.white;
 
 // The grid is laid out like the dashboards at small scale: white cards with a hairline border on a quiet page.
 /// A weekday of the period on screen.
-const _cellBg = Color(0xFFF5F7FA);
+const _cellBg = Color(0xFFF5F5F5);
 
 /// Saturdays and Sundays: a touch deeper, so the working week reads as one block.
-const _weekendBg = Color(0xFFF0F2F6);
+const _weekendBg = Color(0xFFF0F0F0);
 
 /// A day from the neighbouring month, a step darker again so the period on screen stands out.
-const _otherMonthBg = Color(0xFFE9ECF1);
+const _otherMonthBg = Color(0xFFE8E8E8);
 
 /// The calendar's six appointment colours. Service Fusion has ~40 statuses in a dozen saturated hues (lime, cyan,
 /// magenta...), which turned a busy day into a patchwork; here each status falls into one of six families with one
@@ -953,9 +954,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
       autofocus: true,
       onKeyEvent: _onKey,
       child: Scaffold(
-        // One full-bleed screen, not a card floating on a grey page.
+        // One full screen, not a card floating on a grey page, with the standard slight page edge on the sides and bottom.
         backgroundColor: Colors.white,
-        body: _panel(),
+        body: PageSheet(child: _panel()),
       ),
     );
   }

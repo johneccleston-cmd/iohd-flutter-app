@@ -1,0 +1,54 @@
+diff --git a/src/commissionRules.js b/src/commissionRules.js
+index 6856d63..461b6fe 100644
+--- a/src/commissionRules.js
++++ b/src/commissionRules.js
+@@ -150,6 +150,11 @@ const COMMISSION_RULES = Object.freeze({
+     // closed in an earlier pay week keep COMPANY_POOL_RATE of the job's commission (their lock snapshot is frozen).
+     COMPANY_POOL_LABOR_START_WEEK: '2026-10-26',
+     COMPANY_POOL_LABOR_RATE: 0.01,
++    // From the pay week starting on this Monday, each person's settlement on a job (share and retainage held) is rounded
++    // to the cent before anything is added up, so every weekly figure is a sum of cents and the register, the run's items,
++    // the retainage ledger and the amount paid all agree. Set it to the first pay week with no finalized run when this
++    // ships: earlier weeks keep full precision so they still match what their runs paid.
++    CENT_ROUNDING_FROM_WEEK: '2026-11-09',
+     RETAINAGE_RATE: 0.20,
+     CALLBACK_PAYOUT: 50,
+     // High-volume builders: callbacks on their jobs earn no callback pay. Matched on the job's
+@@ -694,6 +699,13 @@ job_settlement AS (
+         x.advances - LEAST(x.advances, GREATEST(0, x.share - x.retained)) AS advance_shortfall,
+         GREATEST(0, x.share - x.retained - x.advances) AS job_net
+     FROM (
++        -- Money is rounded to the cent here, once per person per job (CENT_ROUNDING_FROM_WEEK on), so the repaid, shortfall
++        -- and net above are exact cents too. services.js already rounds each retainage deposit this way.
++        SELECT v.user_id, v.job_id, v.week_start_raw, v.last_work_date, v.pool_share, v.pool_retained, v.revenue,
++               v.install_rate, v.job_labor, v.weight_share, v.advances, v.week_start, v.cap_remainder,
++               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.share, 2) ELSE v.share END AS share,
++               CASE WHEN v.week_start >= DATE '${R.CENT_ROUNDING_FROM_WEEK}' THEN ROUND(v.retained, 2) ELSE v.retained END AS retained
++        FROM (
+         SELECT
+             y.*,
+             -- A closed job whose pay week already has a finalized run that did not pay this tech for this job falls on the
+@@ -733,6 +745,7 @@ job_settlement AS (
+             WHERE a.job_complete AND a.is_verified IS TRUE
+             GROUP BY a.user_id, a.job_id
+         ) y
++        ) v
+     ) x
+ ),
+ 
+diff --git a/src/payroll_runs.js b/src/payroll_runs.js
+index f297159..151d155 100644
+--- a/src/payroll_runs.js
++++ b/src/payroll_runs.js
+@@ -73,8 +73,10 @@ async function computeWeek(client, week) {
+                 p.advance_shortfall, p.net_pay
+            FROM pay_rows p
+            JOIN users u ON u.id = p.user_id
++                 -- Same rule as weekly_base: off tech commission, a person's line is their callbacks plus their sales
++                 -- commission, so those are their items (a sales-only person's line used to be saved with no items).
+                  AND (${ON_COMMISSION_IN_WEEK_SQL('u.id', 'p.week_start', 'u.is_commission_eligible')}
+-                      OR (u.is_callback_eligible = true AND p.kind = 'callback'))
++                      OR p.kind IN ('callback', 'rep_commission'))
+           WHERE p.week_start = $1::date
+             AND $2::date IS NOT NULL
+             AND NOT (p.kind = 'advance' AND ${SALES_ONLY_TEST('u.role', 'u')})

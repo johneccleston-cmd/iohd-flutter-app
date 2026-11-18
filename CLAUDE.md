@@ -19,7 +19,8 @@ calendar, inventory, payroll/commissions and dashboards. Talks to a Node backend
   `record_list_view.dart` is the shared Jobs/Estimates list. `lib/widgets/app_dialog.dart`: `AppDialog`, `AppButton`, `appFieldDecoration`, `AppSegmented`.
 - `lib/widgets/app_components.dart` + `lib/theme/app_theme.dart`: light-theme tokens and small shared components.
 - Screens live flat in `lib/*_screen.dart`. Part files: `payroll_pdf.dart` (of `payroll_screen.dart`), `employee_kpi_*.dart` (of `kpi_dashboard_screen.dart`),
-  `team_admin_widgets.dart`, `job_detail_items.dart`, `widgets/assistant_workspace.dart` (of `assistant_panel.dart`).
+  `team_admin_widgets.dart`, `job_detail_items.dart`, `widgets/assistant_workspace.dart` (of `assistant_panel.dart`),
+  `projects_list.dart`, `projects_detail.dart`, `projects_editor.dart` (of `projects_screen.dart`).
 - Tests: `test/` holds widget tests, per-screen `*_fixture.dart` fake APIs, `test/dashboard_fit.dart` (no-overflow sizes) and golden PNGs in `test/shots/`.
   Many goldens are stale; don't regenerate them (`--update-goldens`) without the user's OK.
 
@@ -55,7 +56,8 @@ analyze or tests passed.
   only the pages allowed in `lib/config/access.dart`, enforced by the router redirect and the nav bar. Don't weaken either check.
 - Never write to Service Fusion: the sync is read-only and edits are saved to our own database only.
 - UI conventions the user set: dashboards and KPI pages fit the window with no scrolling; other screens are flat full pages (cards only on
-  dashboards/KPIs); selected tab text is `DashUi.ink`, never blue, and panel tabs sit flush right; every chart leads with a plain-English
+  dashboards/KPIs) whose body under the ribbon sits in `PageSheet` (`flat_page.dart`: an 8 px edge on the sides only, none on
+  top or bottom; block pages like Job detail pad by `PageSheet.padding`); selected tab text is `DashUi.ink`, never blue, and panel tabs sit flush right; every chart leads with a plain-English
   headline and callout; scorecards get a label plus a caption; motion is welcome but gated on reduced motion. Render UI changes and look
   at them before reporting.
 
