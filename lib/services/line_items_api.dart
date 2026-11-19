@@ -166,6 +166,31 @@ class ConvertResult {
   const ConvertResult(this.jobId, {this.alreadyDone = false, this.customerDiffers = false});
 }
 
+/// A billed (or quoted) price on a date, as the Services Catalog reports it.
+typedef CatalogPrice = ({String date, double price});
+
+/// A service's newest billed prices all sit well away from its 18-month median (Services Catalog Phase 2): no price is
+/// filled in, and the median and the recent prices are shown apart, with the server's [warning].
+class CatalogPriceChange {
+  final double median;
+  final List<CatalogPrice> prices; // newest first
+  final String direction; // up | down | mixed
+  final String? since;
+  final String warning;
+  const CatalogPriceChange({required this.median, this.prices = const [], this.direction = 'mixed', this.since, this.warning = ''});
+
+  static CatalogPriceChange? fromJson(Object? v) {
+    if (v is! Map || v['median'] is! num) return null;
+    return CatalogPriceChange(
+      median: (v['median'] as num).toDouble(),
+      prices: CatalogEntry._prices(v['prices']),
+      direction: (v['direction'] ?? 'mixed').toString(),
+      since: v['since']?.toString(),
+      warning: (v['warning'] ?? '').toString(),
+    );
+  }
+}
+
 /// One product or service the office can add. Rate and cost are null when the data doesn't support a default.
 class CatalogEntry {
   final String key;
@@ -211,6 +236,51 @@ class CatalogEntry {
   /// so a product someone else changed in the meantime is noticed. Null from a server older than Phase 3.
   final String? updatedAt;
 
+  // Services only (the Services Catalog, Phase 2). A server older than that sends none of these: null / empty.
+
+  /// How sure its price is: `settled` ([rate] is filled in), `recent_change` (the newest prices moved: not filled in,
+  /// [recentChange] says how), `varies`, `single` (billed once), `quote_only` (only ever quoted) or `none`.
+  final String? priceStatus;
+
+  /// The 18-month billed median, given whenever it was billed at all (shown even when it isn't filled in).
+  final double? medianPrice;
+  final CatalogPrice? lastBilled;
+
+  /// Up to the 3 newest billed prices, newest first.
+  final List<CatalogPrice> recentPrices;
+  final CatalogPriceChange? recentChange;
+
+  /// What it was quoted at on estimates, kept apart from what was billed.
+  final double? quoteMedian;
+  final int quoteCount;
+
+  /// `taxed`, `untaxed` or `mixed` on its billed lines (null: not known). [taxable] is true only for `taxed`; for
+  /// `mixed`, [taxWarning] says so in words.
+  final String? taxDefault;
+  final String? taxWarning;
+
+  /// The Service Fusion service type ("Residential Service"), the same as [category].
+  final String group;
+
+  /// Other names seen on the same Service Fusion item.
+  final List<String> aliases;
+
+  /// Service Fusion's service_rate_id, for tracing it back.
+  final String? rateId;
+
+  /// A renamed line with its own price: the item it was split from. Null on an item.
+  final ({String key, String name})? variantOf;
+
+  /// On an item: its priced variants.
+  final List<({String key, String name})> variants;
+
+  /// A service a renamed line of the same Service Fusion item has taken over from (2026-11-19): the entry that replaced
+  /// it. Such a service is inactive, so the picker never offers it; the Services Catalog page keeps it, with its history.
+  final ({String key, String name})? supersededBy;
+
+  /// The services this one has taken over from (they are no longer offered; their names still find this one).
+  final List<({String key, String name})> replaces;
+
   /// Kept in inventory: the price list says so, or (without the flag) it has an inventory row.
   bool get inInventory => inventoryItem ?? (inventoryItemId != null);
 
@@ -241,7 +311,25 @@ class CatalogEntry {
     this.inventoryConflict,
     this.inventoryLink,
     this.updatedAt,
+    this.priceStatus,
+    this.medianPrice,
+    this.lastBilled,
+    this.recentPrices = const [],
+    this.recentChange,
+    this.quoteMedian,
+    this.quoteCount = 0,
+    this.taxDefault,
+    this.taxWarning,
+    this.group = '',
+    this.aliases = const [],
+    this.rateId,
+    this.variantOf,
+    this.variants = const [],
+    this.supersededBy,
+    this.replaces = const [],
   });
+
+  bool get isService => kind == 'service';
 
   /// The catalog_products row behind it (`cat:<id>`), or null for services and the old sources.
   int? get productId => kind == 'product' && key.startsWith('cat:') ? int.tryParse(key.substring(4)) : null;
@@ -278,11 +366,38 @@ class CatalogEntry {
     inventoryConflict: inventoryConflict,
     inventoryLink: inventoryLink,
     updatedAt: updatedAt ?? this.updatedAt,
+    priceStatus: priceStatus,
+    medianPrice: medianPrice,
+    lastBilled: lastBilled,
+    recentPrices: recentPrices,
+    recentChange: recentChange,
+    quoteMedian: quoteMedian,
+    quoteCount: quoteCount,
+    taxDefault: taxDefault,
+    taxWarning: taxWarning,
+    group: group,
+    aliases: aliases,
+    rateId: rateId,
+    variantOf: variantOf,
+    variants: variants,
+    supersededBy: supersededBy,
+    replaces: replaces,
   );
+
+  /// The price a service's new line starts at: the catalog's, only once it is settled (a server older than Phase 2 sends
+  /// no status, and its rate is its usual price), and never $0.00, so a line can't come in as a silent no-charge line.
+  double? get _serviceRate {
+    final r = rate;
+    if (r == null || (r * 100).round() == 0) return null;
+    return priceStatus == null || priceStatus == 'settled' ? r : null;
+  }
 
   /// The new line this entry becomes: quantity 1, the catalog's price and cost as the starting values (and kept as
   /// the record of what the catalog said), nothing filled in that the catalog doesn't have.
-  LineDraft toLine() => LineDraft(
+  ///
+  /// A service (Services Catalog Phase 2): its price only when settled (otherwise the line starts unpriced, never at
+  /// $0), its cost only when known, no unit, and taxed only when its billed lines all were (`taxed`).
+  LineDraft toLine() => isService ? _serviceLine() : LineDraft(
     name: name,
     description: description,
     sku: sku,
@@ -296,6 +411,32 @@ class CatalogEntry {
     catalogCost: cost,
     source: 'catalog',
   );
+
+  LineDraft _serviceLine() {
+    final r = _serviceRate;
+    return LineDraft(
+      name: name,
+      description: description,
+      sku: sku,
+      quantity: 1,
+      rate: r,
+      cost: cost,
+      taxable: taxDefault == null ? taxable : taxDefault == 'taxed',
+      inventoryItemId: inventoryItemId,
+      catalogKey: key,
+      catalogRate: r,
+      catalogCost: cost,
+      source: 'catalog',
+    );
+  }
+
+  static List<CatalogPrice> _prices(Object? v) => [
+    for (final p in (v is List ? v : const []).whereType<Map>())
+      if (p['price'] is num) (date: (p['date'] ?? '').toString(), price: (p['price'] as num).toDouble()),
+  ];
+
+  static ({String key, String name})? _ref(Object? v) =>
+      v is Map && v['key'] != null ? (key: v['key'].toString(), name: (v['name'] ?? '').toString()) : null;
 
   factory CatalogEntry.fromJson(Map<String, dynamic> j) => CatalogEntry(
     key: j['key'].toString(),
@@ -327,6 +468,31 @@ class CatalogEntry {
     inventoryConflict: j['inventoryConflict']?.toString(),
     inventoryLink: j['inventoryLink']?.toString(),
     updatedAt: j['updatedAt']?.toString(),
+    priceStatus: j['priceStatus']?.toString(),
+    medianPrice: (j['medianPrice'] as num?)?.toDouble(),
+    lastBilled: j['lastBilled'] is Map && (j['lastBilled'] as Map)['price'] is num
+        ? (date: ((j['lastBilled'] as Map)['date'] ?? '').toString(), price: ((j['lastBilled'] as Map)['price'] as num).toDouble())
+        : null,
+    recentPrices: _prices(j['recentPrices']),
+    recentChange: CatalogPriceChange.fromJson(j['recentChange']),
+    quoteMedian: (j['quoteMedian'] as num?)?.toDouble(),
+    quoteCount: (j['quoteCount'] as num?)?.toInt() ?? 0,
+    taxDefault: j['taxDefault']?.toString(),
+    taxWarning: (j['taxWarning'] ?? '').toString().trim().isEmpty ? null : j['taxWarning'].toString().trim(),
+    group: (j['group'] ?? j['category'] ?? '').toString(),
+    aliases: [
+      for (final a in (j['aliases'] as List? ?? const []))
+        if (a != null && a.toString().trim().isNotEmpty) a.toString().trim(),
+    ],
+    rateId: j['rateId']?.toString(),
+    variantOf: _ref(j['variantOf']),
+    variants: [
+      for (final v in (j['variants'] as List? ?? const [])) ?_ref(v),
+    ],
+    supersededBy: _ref(j['supersededBy']),
+    replaces: [
+      for (final v in (j['replaces'] as List? ?? const [])) ?_ref(v),
+    ],
   );
 }
 
@@ -700,6 +866,17 @@ class LineItemsApi {
 
   Future<LineItemsState> accept(String id, int version) async =>
       LineItemsState.fromJson(await _call('POST', Uri.parse('$_base/${Uri.encodeComponent(id)}/accept'), body: {'version': version}));
+
+  /// Records that line [itemId] of option [optionId], a $0.00 line, is no charge (the signed-in person and the time are
+  /// the server's). It changes nothing else on the line. Refused while the option is accepted or [version] is stale
+  /// (409), when the line isn't in the option (404) or isn't a $0 line (400).
+  Future<LineItemsState> confirmZero(String optionId, String itemId, int version) async => LineItemsState.fromJson(
+    await _call(
+      'POST',
+      Uri.parse('$_base/${Uri.encodeComponent(optionId)}/items/${Uri.encodeComponent(itemId)}/confirm-zero'),
+      body: {'version': version},
+    ),
+  );
 
   Future<LineItemsState> unaccept(String id) async =>
       LineItemsState.fromJson(await _call('POST', Uri.parse('$_base/${Uri.encodeComponent(id)}/unaccept'), body: const {}));

@@ -546,6 +546,9 @@ void main() {
     expect(find.text('Gross profit'), findsOneWidget);
     expect(find.text('—'), findsWidgets, reason: 'the keypad has no cost');
     expect(find.text('Discount'), findsOneWidget, reason: 'the discount line is marked');
-    expect(find.text('1 line with no cost (profit is overstated)'), findsOneWidget);
+    // Services Catalog Phase 2 (2026-11-18): a line with no cost leaves the gross profit unknown, and the profit panel says
+    // how many lines have none (it used to work the profit out as if they cost \$0, with a warning that it was overstated).
+    expect(find.text('1 line has no cost'), findsOneWidget);
+    expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
   });
 }

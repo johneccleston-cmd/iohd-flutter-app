@@ -77,7 +77,7 @@ void main() {
     expect(text, contains('Includes the smart opener'));
 
     // Internal figures never print: not the words, not the unit costs, not the cost or profit totals.
-    for (final hidden in ['Cost', 'cost', 'Profit', 'profit', 'Margin', 'margin', r'$507.16', r'$211.11', r'$401.37', centsMoney(s.costCents), centsMoney(p.profitCents)]) {
+    for (final hidden in ['Cost', 'cost', 'Profit', 'profit', 'Margin', 'margin', r'$507.16', r'$211.11', r'$401.37', centsMoney(s.costCents), centsMoney(p.profitCents!)]) {
       expect(text.contains(hidden), isFalse, reason: '"$hidden" must not be on the customer PDF');
     }
   });
