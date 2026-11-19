@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import '../config/auth_session.dart';
 import '../services/line_items_api.dart';
 import '../utils/line_item_math.dart';
+import 'app_dialog.dart';
 import 'catalog_search_field.dart';
 import 'dashboard_kit.dart';
 import 'ps_menu.dart';
@@ -32,6 +34,13 @@ import 'ps_menu.dart';
 // Under the lines: anything the page puts beside the totals ([LineItemsEditor.aside], an estimate option's notes for the
 // customer) and the warnings about the figures on the left; on the right what the customer is charged, then on a light
 // slate panel of its own what the work costs us and the gross profit, then the total.
+//
+// Services Catalog Phase 2 (2026-11-18): the gross profit and its margin are only shown while every line's cost is known
+// (a line with no cost made it read 100%); otherwise "—" and how many lines have none. A line at $0.00 with a quantity
+// carries an amber "Confirm no charge" under its name until someone confirms it (in the preview, for the draft only, and
+// taken off again when the line's name, quantity or price changes; on a saved option, through the server). A line just
+// added from a service says what the catalog knows about its price and tax (mixed tax, a recent price change, no settled
+// price), for as long as the draft lasts; none of that is kept with the line.
 
 /// What a figure in a source's own summary is, so the editor can work out the money before tax from it.
 enum SummaryKind {
@@ -144,6 +153,11 @@ class LineItemsEditor extends StatefulWidget {
   /// can show a changed draft's figures elsewhere too (an estimate option's tab). Called after the frame.
   final void Function(int totalCents, double? marginPct)? onFigures;
 
+  /// Saved lines shown outside the preview (an option, a job's set): confirms that [line], a $0.00 line, is no charge.
+  /// The page asks the server, which records who and when, and the lines come back confirmed. Null where it can't be
+  /// done (no Update switch, an accepted option): an unconfirmed $0 line then only says so.
+  final Future<void> Function(LineDraft line)? onConfirmZero;
+
   const LineItemsEditor({
     super.key,
     required this.lines,
@@ -165,6 +179,7 @@ class LineItemsEditor extends StatefulWidget {
     this.taxOptions = const [],
     this.totalLabel = 'Total',
     this.onFigures,
+    this.onConfirmZero,
   });
 
   @override
@@ -483,6 +498,10 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 
   /// Lines on their way out (Delete): they fold away, then go (see _finishRemove).
   final Set<int> _leaving = {};
+
+  /// The service each line just added from the catalog came from, for what it says about its price and tax (see
+  /// [_lineNotes]). Only while this draft lasts: never part of the line, never saved.
+  final Map<int, CatalogEntry> _added = {};
   final _searchFocus = FocusNode(debugLabel: 'catalog search');
 
   @override
@@ -521,6 +540,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     _taxText.text = _tax == null ? '' : _trimRate(_tax!);
     _taxBad = false;
     _leaving.clear();
+    _added.clear();
     _active = null;
     _invalid.clear();
     _error = null;
@@ -630,8 +650,9 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     if (open != null) _open(row.uid, open);
   }
 
-  void _add(LineDraft line) {
+  void _add(LineDraft line, {CatalogEntry? from}) {
     final added = _Row(_nextUid++, line);
+    if (from != null && from.isService) _added[added.uid] = from;
     _insert(added);
     // The new line, and the search under it, stay in view clear of the page's save bar: the page scrolls just enough.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -662,7 +683,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 
   void _pick(CatalogChoice c) {
     if (c.entry != null) {
-      _add(c.entry!.toLine());
+      _add(c.entry!.toLine(), from: c.entry);
     } else if (c.custom != null) {
       _insert(_Row(_nextUid++, LineDraft(name: c.custom!, quantity: 1, source: 'manual')), open: 'rate');
     }
@@ -795,6 +816,60 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   }
 
   void _duplicate(int index) => _insert(_Row(_nextUid++, _rows[index].line.copyWith(id: null)), at: index + 1);
+
+  // ---- $0.00 lines ------------------------------------------------------------------------------------------------
+
+  /// Whether this table asks for $0.00 lines to be confirmed: our own lines (an option, a job's set) and any preview
+  /// draft. Service Fusion's own lines, read-only, are shown as Service Fusion has them.
+  bool get _zeroChecks => widget.editable || widget.summary == null;
+
+  /// A $0 line can be confirmed here: in the preview (for the draft), or on saved lines through the page.
+  bool _canConfirm(LineDraft line) => widget.editable || (widget.onConfirmZero != null && line.id != null);
+
+  /// "Charge nothing for ...?": the person says it is no charge, or goes to enter a price. Confirming is explicit, one
+  /// line at a time. In the preview it is the draft's (with who confirmed it), and comes off again if the line's name,
+  /// quantity or price changes; on saved lines the page asks the server.
+  Future<void> _askZero(_Row r) async {
+    final name = r.line.name.trim().isEmpty ? 'this line' : r.line.name.trim();
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: "Charge nothing for '$name'?",
+        icon: Icons.money_off_rounded,
+        iconColor: DashUi.amberText,
+        body: const Text('It will show \$0.00 to the customer.', style: TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45)),
+        actions: [
+          AppButton.ghost('Enter a price', () => Navigator.pop(ctx, false)),
+          AppButton.ink('Confirm no charge', () => Navigator.pop(ctx, true)),
+        ],
+      ),
+    );
+    if (!mounted || confirm == null || !_rows.contains(r)) return;
+    if (!confirm) {
+      // To the line's price, in a line opened afresh (an open one only focuses its field when it opens).
+      if (!widget.editable) return;
+      setState(() => _active = null);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.editable && _rows.contains(r)) _open(r.uid, 'rate');
+      });
+      return;
+    }
+    if (widget.editable) {
+      final by = AuthSession.instance.name.trim();
+      _changed(() => r.line = r.line.copyWith(zeroPriceConfirmed: true, zeroPriceConfirmedBy: by.isEmpty ? null : by));
+    } else {
+      await widget.onConfirmZero?.call(r.line);
+    }
+  }
+
+  /// A hint's one-tap price ("Use last billed $X"): the person's own pick, never filled in for them.
+  void _usePrice(_Row r, double price) {
+    if (!widget.editable || !_rows.contains(r) || !lineAmountFits(r.line.quantity, price)) return;
+    _changed(() {
+      r.line = r.line.copyWith(rate: price);
+      if (_active == r.uid) _active = null; // an open line's price field would still show the old figure
+    });
+  }
 
   void _setInvalid(int uid, String field, bool bad) {
     final set = _invalid.putIfAbsent(uid, () => <String>{});
@@ -1192,6 +1267,28 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               onOpen: widget.editable ? (f) => _open(r.uid, f) : null,
               onMenu: (a) => _menu(a, i),
             );
+      // Under the line, from where its name starts: its $0.00 confirmation, and what the catalog said about a service
+      // just added (see [_lineNotes]).
+      final notes = _lineNotes(
+        r.line,
+        from: _added[r.uid],
+        zero: _zeroChecks,
+        onConfirm: _canConfirm(r.line) ? () => _askZero(r) : null,
+        onUsePrice: widget.editable ? (price) => _usePrice(r, price) : null,
+      );
+      final body = notes == null
+          ? child
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                child,
+                Padding(
+                  padding: EdgeInsets.fromLTRB(_side + cols.lead + (widget.editable ? _cellX : 0), 0, _side + cols.trail, widget.editable ? 8 : 10),
+                  child: notes,
+                ),
+              ],
+            );
       return KeyedSubtree(
         key: ValueKey(r.uid),
         child: _RowShell(
@@ -1205,7 +1302,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
           // lines by their boxes, and a small window's stacked editable lines by a rule from where the items start.
           stripe: !widget.editable && i.isOdd,
           ruleLeft: widget.editable && cols.stacked ? _side : null,
-          child: child,
+          child: body,
         ),
       );
     }
@@ -1248,12 +1345,21 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   /// discounts. Under a source's own figures ([summary], Service Fusion's) it is its items, discounts and other charges,
   /// so a discount Service Fusion keeps as a charge (not as a line) comes off the profit too. Sales tax is never profit,
   /// and money the source doesn't itemize is left out, since what it is isn't known.
+  ///
+  /// Profit and margin are unknown (null) while any line's cost is (t.missingCostLines > 0, the server's rule): a cost
+  /// nobody entered read as $0 and showed a 100% margin.
   _Profit? _profit(LineTotals t, List<LineSummaryRow>? summary) {
     if (!widget.showCost) return null;
-    if (summary == null) return _Profit(t.costCents, t.profitCents, t.marginPct, fromSource: false);
+    if (summary == null) return _Profit(t.costCents, t.profitCents, t.marginPct, missingCostLines: t.missingCostLines, fromSource: false);
     final net = summary.where((r) => r.beforeTax).fold<int>(0, (s, r) => s + r.cents);
-    final profit = net - t.costCents;
-    return _Profit(t.costCents, profit, net > 0 ? (profit / net * 1000).round() / 10 : null, fromSource: true);
+    final profit = t.missingCostLines > 0 ? null : net - t.costCents;
+    return _Profit(
+      t.costCents,
+      profit,
+      profit != null && net > 0 ? (profit / net * 1000).round() / 10 : null,
+      missingCostLines: t.missingCostLines,
+      fromSource: true,
+    );
   }
 
   /// Under the lines: the warnings about the figures and the [LineItemsEditor.aside] on the left, the summary on the
@@ -1301,18 +1407,13 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
         _TotalsRow(widget.totalLabel, t.totalCents, strong: true),
       ];
     }
-    // Lines whose missing cost overstates the profit: priced items that bring money in. A line that takes money off (a
-    // credit, a return, Service Fusion's "10% Discount" item at -$0.10) has no cost to miss, so it isn't one (it was
-    // counted, and warned about on every job with such a line; found in round 2, 2026-11-13).
-    var noCost = 0;
-    for (var i = 0; i < _rows.length && i < t.lines.length; i++) {
-      final l = _rows[i].line;
-      if (!l.isDiscount && l.cost == null && (l.quantity * 1000).round() != 0 && t.lines[i].amountCents >= 0) noCost++;
-    }
+    // Lines with no cost no longer overstate the profit: while any line's cost is unknown the profit panel shows none,
+    // and says how many lines have no cost (Services Catalog Phase 2; see _ProfitLines).
+    final zero = _zeroChecks ? t.zeroUnconfirmedLines : 0;
     final notes = [
       if (summary == null && editable && _taxBad) _taxRateRule,
       if (summary == null && t.unpricedLines > 0) '${t.unpricedLines} line${t.unpricedLines == 1 ? '' : 's'} not priced yet',
-      if (widget.showCost && noCost > 0) '$noCost line${noCost == 1 ? '' : 's'} with no cost (profit is overstated)',
+      if (zero > 0) '$zero line${zero == 1 ? '' : 's'} at \$0.00 not confirmed',
     ];
     final card = _Summary(rows: rows, profit: _profit(t, summary));
     final warning = notes.isEmpty ? null : _Warning(notes.join('  ·  '));
@@ -3399,13 +3500,17 @@ class _TotalsRow {
 
 /// What the lines cost us and what is left after it (see _LineItemsEditorState._profit).
 class _Profit {
+  /// The costs that are known.
   final int costCents;
-  final int profitCents;
+
+  /// Null while [missingCostLines] > 0: what is left can't be told.
+  final int? profitCents;
   final double? marginPct;
+  final int missingCostLines;
 
   /// Worked out on a source's own figures (Service Fusion's charges and discounts), not only our lines.
   final bool fromSource;
-  const _Profit(this.costCents, this.profitCents, this.marginPct, {required this.fromSource});
+  const _Profit(this.costCents, this.profitCents, this.marginPct, {this.missingCostLines = 0, required this.fromSource});
 }
 
 /// The summary under the lines. What the customer is charged, one figure a line on white; for people who can see costs,
@@ -3525,9 +3630,11 @@ class _ProfitLines extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final p = profit;
-    final m = p.marginPct;
-    final losing = p.profitCents < 0;
+    final known = p.profitCents;
+    final m = known == null ? null : p.marginPct;
+    final losing = (known ?? 0) < 0;
     final tone = losing ? DashUi.redText : DashUi.emeraldText;
+    final missing = p.missingCostLines;
     final reduce = MediaQuery.disableAnimationsOf(context);
     final pill = m == null
         ? null
@@ -3556,15 +3663,27 @@ class _ProfitLines extends StatelessWidget {
         line('Job cost', _CountUp(text: centsMoney(p.costCents), style: value)),
         line(
           'Gross profit',
-          _CountUp(
-            text: centsMoney(p.profitCents),
-            style: value.copyWith(color: tone, fontWeight: FontWeight.w700),
-          ),
+          // Unknown while a line has no cost: a dash, never a profit (or a 100% margin) worked out as if it cost $0.
+          known == null
+              ? Text('—', key: const ValueKey('gross-profit-unknown'), semanticsLabel: 'not known', style: value.copyWith(color: DashUi.slate, fontWeight: FontWeight.w700))
+              : _CountUp(
+                  text: centsMoney(known),
+                  style: value.copyWith(color: tone, fontWeight: FontWeight.w700),
+                ),
           extra: pill,
           tip: p.fromSource
               ? 'Gross profit %: what is left of the price before tax (items, discounts and other charges) after cost. Sales tax, and anything Service Fusion doesn\'t itemize, is left out.'
               : 'Gross profit %: items less discounts, less cost, as a share of items less discounts. Sales tax is not profit.',
         ),
+        if (known == null && missing > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              '$missing line${missing == 1 ? ' has' : 's have'} no cost',
+              key: const ValueKey('missing-cost-note'),
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.amberText, height: 1.35),
+            ),
+          ),
         if (m != null)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -3615,6 +3734,181 @@ class _Warning extends StatelessWidget {
           style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.amberText, height: 1.35),
         ),
       ),
+    ],
+  );
+}
+
+/// What goes under a line, from where its name starts: its $0.00 confirmation ([zero]: the table asks for one), and what
+/// the catalog said about the service it was just added from ([from]). Null when there is nothing to say.
+Widget? _lineNotes(LineDraft line, {CatalogEntry? from, required bool zero, VoidCallback? onConfirm, ValueChanged<double>? onUsePrice}) {
+  final items = <Widget>[
+    if (zero && line.isZeroPrice) line.zeroPriceConfirmed ? _NoChargeNote(by: line.zeroPriceConfirmedBy) : _ZeroChip(onTap: onConfirm),
+    if (from != null) ..._catalogHints(from, line, onUsePrice),
+  ];
+  if (items.isEmpty) return null;
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      for (var i = 0; i < items.length; i++) Padding(padding: EdgeInsets.only(top: i == 0 ? 0 : 5), child: items[i]),
+    ],
+  );
+}
+
+/// What the Services Catalog says about a service just added (Phase 2), shown under its line in the preview: a tax that
+/// differs from job to job, a recent price change (the 18-month median and the newest prices, apart, and nothing filled
+/// in), and for a price that isn't settled, that the line is not priced and what is known. Only a price billed once
+/// offers itself as a one-tap pick ("Use last billed"); nothing is ever filled in for the person.
+List<Widget> _catalogHints(CatalogEntry e, LineDraft line, ValueChanged<double>? onUsePrice) {
+  String m(double v) => centsMoney((v * 100).round());
+  final out = <Widget>[];
+  if (e.priceStatus == 'recent_change') {
+    final change = e.recentChange;
+    final median = change?.median ?? e.medianPrice;
+    final recent = change != null && change.prices.isNotEmpty ? change.prices : e.recentPrices;
+    final parts = [
+      if (median != null) '18-month median ${m(median)}',
+      if (recent.isNotEmpty) 'recent ${recent.map((p) => m(p.price)).join(', ')}',
+    ];
+    out.add(
+      _Hint(
+        key: const ValueKey('hint-recent-change'),
+        title: 'Recent price change',
+        text: parts.isEmpty ? (change?.warning ?? 'No price is filled in; check it before quoting.') : '${parts.join(' · ')}. No price is filled in; check it before quoting.',
+      ),
+    );
+  } else if (line.rate == null && e.priceStatus != null && e.priceStatus != 'settled') {
+    final last = e.lastBilled?.price ?? e.medianPrice;
+    final (String text, double? pick) = switch (e.priceStatus) {
+      'varies' when e.rateMin != null && e.rateMax != null => ('Billed ${m(e.rateMin!)} – ${m(e.rateMax!)}, no settled price. Enter the price.', null),
+      'single' when last != null => ('Billed once, at ${m(last)}. Enter the price.', last),
+      'quote_only' when e.quoteMedian != null => ('Never billed; quoted ${m(e.quoteMedian!)}. Enter the price.', null),
+      _ => ('No price on file. Enter the price.', null),
+    };
+    out.add(
+      _Hint(
+        key: const ValueKey('hint-not-priced'),
+        title: 'Not priced',
+        text: text,
+        action: pick == null || onUsePrice == null ? null : ('Use last billed ${m(pick)}', () => onUsePrice(pick)),
+      ),
+    );
+  }
+  if (e.taxDefault == 'mixed') {
+    out.add(_Hint(key: const ValueKey('hint-tax'), title: 'Check the tax', text: e.taxWarning ?? 'Taxed on some billed jobs and not others.'));
+  }
+  return out;
+}
+
+/// An unconfirmed $0.00 line's amber chip. With [onTap] it asks whether the line is no charge; without (no way to
+/// confirm it here) it only says it isn't confirmed.
+class _ZeroChip extends StatelessWidget {
+  final VoidCallback? onTap;
+  const _ZeroChip({this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final label = onTap == null ? '\$0.00 · Not confirmed as no charge' : '\$0.00 · Confirm no charge';
+    final chip = Container(
+      padding: const EdgeInsets.fromLTRB(7, 3, 9, 3),
+      decoration: BoxDecoration(
+        color: DashUi.amber.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: DashUi.amber.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.money_off_rounded, size: 13, color: DashUi.amberText),
+          const SizedBox(width: 4),
+          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.amberText, height: 1.3)),
+        ],
+      ),
+    );
+    if (onTap == null) return KeyedSubtree(key: const ValueKey('zero-chip'), child: chip);
+    return Material(
+      key: const ValueKey('zero-chip'),
+      type: MaterialType.transparency,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        hoverColor: DashUi.amber.withValues(alpha: 0.08),
+        splashFactory: NoSplash.splashFactory,
+        child: chip,
+      ),
+    );
+  }
+}
+
+/// A confirmed $0.00 line: quiet, who confirmed it.
+class _NoChargeNote extends StatelessWidget {
+  final String? by;
+  const _NoChargeNote({this.by});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    key: const ValueKey('no-charge-note'),
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Icon(Icons.check_circle_outline_rounded, size: 13, color: DashUi.slate),
+      const SizedBox(width: 4),
+      Flexible(
+        child: Text(
+          by == null || by!.trim().isEmpty ? 'No charge · confirmed' : 'No charge · confirmed by ${by!.trim()}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, color: DashUi.slate, height: 1.3),
+        ),
+      ),
+    ],
+  );
+}
+
+/// One thing the catalog says about a line (amber, as the warnings under the table are), with an optional one-tap
+/// [action] the person can choose.
+class _Hint extends StatelessWidget {
+  final String title;
+  final String text;
+  final (String, VoidCallback)? action;
+  const _Hint({super.key, required this.title, required this.text, this.action});
+
+  @override
+  Widget build(BuildContext context) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      const Padding(
+        padding: EdgeInsets.only(top: 1),
+        child: Icon(Icons.info_outline_rounded, size: 14, color: DashUi.amberText),
+      ),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: '$title  ', style: const TextStyle(fontWeight: FontWeight.w700)),
+              TextSpan(text: text),
+            ],
+          ),
+          style: const TextStyle(fontSize: 12.5, color: DashUi.amberText, height: 1.35),
+        ),
+      ),
+      if (action case (final label, final onTap)) ...[
+        const SizedBox(width: 10),
+        TextButton(
+          onPressed: onTap,
+          style: TextButton.styleFrom(
+            foregroundColor: DashUi.ink,
+            minimumSize: const Size(0, 24),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            visualDensity: VisualDensity.compact,
+            side: const BorderSide(color: DashUi.fieldEdge),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radius)),
+          ),
+          child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+      ],
     ],
   );
 }

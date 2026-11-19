@@ -299,7 +299,10 @@ void main() {
         expect(find.text(r'$1,654.33'), findsNWidgets(2), reason: 'Upgraded: its tab and its total (it is open)');
         expect(find.text(r'$1,776.02'), findsOneWidget);
         // Three options of ours, and the estimate's own (Service Fusion's lines) first: "Estimate Option" (round 3).
-        expect(find.textContaining('% margin'), findsNWidgets(4));
+        // The estimate's own shows no margin (Services Catalog Phase 2): its install line has a Service Fusion cost of 0,
+        // which is no cost entered, so its margin isn't known. Ours have every cost (their \$0 install cost was entered).
+        expect(find.textContaining('% margin'), findsNWidgets(3));
+        expect(find.descendant(of: find.byKey(const ValueKey('option-tab-sf')), matching: find.textContaining('% margin')), findsNothing);
         expect(find.descendant(of: find.byKey(const ValueKey('option-tab-sf')), matching: find.text('Estimate Option')), findsOneWidget);
         // Round 4: the open option's tab carries the star (the option header with its "Recommended" badge is gone).
         final tabs = find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.startsWith('option-tab-'));

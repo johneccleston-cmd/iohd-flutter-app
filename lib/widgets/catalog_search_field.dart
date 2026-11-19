@@ -221,6 +221,9 @@ class _ChoiceRow extends StatelessWidget {
       );
     }
     final e = choice.entry!;
+    // A service from the Services Catalog (Phase 2) says how sure its price is; a product, or a service from a server
+    // older than that (no price status), is shown as it always was.
+    if (e.isService && e.priceStatus != null) return _serviceRow(e);
     final meta = [
       if (e.sku.isNotEmpty) 'SKU ${e.sku}',
       if (e.category.isNotEmpty) e.category,
@@ -281,6 +284,107 @@ class _ChoiceRow extends StatelessWidget {
                   'Cost ${centsMoney((e.cost! * 100).round())}',
                   style: const TextStyle(fontSize: 12, color: DashUi.subtle, fontFeatures: [FontFeature.tabularFigures()]),
                 ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _money(double v) => centsMoney((v * 100).round());
+
+  static const _metaText = TextStyle(fontSize: 12, color: DashUi.subtle);
+  static const _figures = [FontFeature.tabularFigures()];
+
+  /// A service's row: its name; its group and how often it was billed (and a tax hint when its billed lines differ);
+  /// a renamed line with its own price says what it was split from; at the right, how sure its price is: the price
+  /// once settled, else why there is none (a recent change shows the 18-month median and the newest prices apart).
+  Widget _serviceRow(CatalogEntry e) {
+    final group = e.group.isNotEmpty ? e.group : e.category;
+    final billed = e.uses > 0 ? e.uses : e.rateUses;
+    final meta = [if (group.isNotEmpty) group, billed > 0 ? 'billed $billed×' : 'never billed'].join(' · ');
+    final variantOf = e.variantOf;
+    // A recent price change: the 18-month median and the newest billed prices, apart (neither is filled in).
+    final change = e.recentChange;
+    final median = change?.median ?? e.medianPrice;
+    final recent = change != null && change.prices.isNotEmpty ? change.prices : e.recentPrices;
+    final changeLine = e.priceStatus == 'recent_change'
+        ? [
+            if (median != null) '18-mo median ${_money(median)}',
+            if (recent.isNotEmpty) 'recent ${recent.map((p) => _money(p.price)).join(', ')}',
+          ].join(' · ')
+        : '';
+    const amberStrong = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.amberText, height: 1.3);
+    const quiet = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle);
+    final last = e.lastBilled?.price ?? e.medianPrice;
+    final Widget price = switch (e.priceStatus) {
+      'settled' when e.rate != null => Text(
+        _money(e.rate!),
+        style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: DashUi.ink, fontFeatures: _figures),
+      ),
+      'recent_change' => const Text('Recent price change', textAlign: TextAlign.right, style: amberStrong),
+      'varies' when e.rateMin != null && e.rateMax != null => Text(
+        'Price varies ${_money(e.rateMin!)} – ${_money(e.rateMax!)}',
+        textAlign: TextAlign.right,
+        style: amberStrong,
+      ),
+      'single' when last != null => Text('Billed once · ${_money(last)}', textAlign: TextAlign.right, style: quiet),
+      'quote_only' when e.quoteMedian != null => Text('No billed price · quoted ${_money(e.quoteMedian!)}', textAlign: TextAlign.right, style: quiet),
+      _ => const Text('No price on file', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle)),
+    };
+    return _tap(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      child: Row(
+        children: [
+          const Icon(Icons.handyman_outlined, size: 18, color: DashUi.slate),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  e.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
+                ),
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: meta),
+                      // Taxed on some of its billed jobs and not others: the line starts untaxed, so check it.
+                      if (e.taxDefault == 'mixed')
+                        const TextSpan(text: '  ·  tax varies', style: TextStyle(fontWeight: FontWeight.w600, color: DashUi.amberText)),
+                    ],
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: _metaText,
+                ),
+                if (variantOf != null)
+                  Text(
+                    'Renamed line of ${variantOf.name}, with its own price',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _metaText,
+                  ),
+                if (changeLine.isNotEmpty)
+                  Text(
+                    changeLine,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: _metaText.copyWith(color: DashUi.amberText, fontFeatures: _figures),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              price,
+              if (showCost && e.cost != null)
+                Text('Cost ${_money(e.cost!)}', style: const TextStyle(fontSize: 12, color: DashUi.subtle, fontFeatures: _figures)),
             ],
           ),
         ],

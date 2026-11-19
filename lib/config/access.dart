@@ -28,8 +28,9 @@ const int kAccessVersion = 2;
 /// One row of the permissions grid: a page (or a part of pages) and the actions it really has. The server checks every
 /// one of them, and an action only counts while View is on. Admin and Owner roles can do everything; for everyone else
 /// the Team screen decides, nothing is held back. [help] says in plain words what each ticked box lets the person do;
-/// the Team screen shows it under the row's name. [defaultOff] rows (pay, profit, Team, Jarvis) start switched off for
-/// someone whose permissions were never saved; everything else starts on. Same list as accessKeys.js in the backend.
+/// the Team screen shows it under the row's name. [defaultOff] rows (pay, profit, Team, Jarvis, the Services Catalog)
+/// start switched off for someone whose permissions were never saved; everything else starts on. Same list as
+/// accessKeys.js in the backend.
 class AccessResource {
   final String key;
   final String label;
@@ -82,7 +83,7 @@ const List<AccessGroup> kAccessGroups = [
   AccessGroup('Inventory', [
     AccessResource('stock', 'Stock Levels', Icons.stacked_bar_chart_rounded, route: '/inventory', help: 'What is on the shelves.'),
     AccessResource('catalog', 'Product Catalog', Icons.category_rounded, route: '/inventory/catalog', help: 'Products and prices.'),
-    AccessResource('services_catalog', 'Services Catalog', Icons.handyman_rounded, route: '/inventory/services', help: 'Services and what they usually charge.'),
+    AccessResource('services_catalog', 'Services Catalog', Icons.handyman_rounded, route: '/inventory/services', defaultOff: true, help: 'Services and what they are billed at. Anyone who can edit line items also gets services in the job/estimate add-line picker.'),
     AccessResource('purchase_orders', 'Purchase Orders', Icons.shopping_cart_checkout_rounded, route: '/inventory/purchase-orders', actions: _crud, help: 'Add, change and remove purchase orders.'),
     AccessResource('vendors', 'Vendors', Icons.storefront_rounded, route: '/inventory/vendors', help: 'Vendor list.'),
   ]),

@@ -97,6 +97,42 @@ void main() {
     expect(calls, 2);
   });
 
+  // Services Catalog Phase 2: the list answers 403 without the page's switch (Team > Services Catalog), and the page says
+  // so instead of showing a generic error; a refresh that is refused after access was taken away clears the list.
+  testWidgets('a 403 says there is no access, not that loading failed', (t) async {
+    const refused = LineItemsException('Not allowed.', status: 403);
+    for (final size in const [Size(1366, 768), Size(420, 800)]) {
+      await _pump(t, () async => throw refused, size: size);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull, reason: '$size');
+      expect(find.text("You don't have access to the Services Catalog"), findsOneWidget);
+      expect(find.text('Ask an admin to turn it on in Team.'), findsOneWidget);
+      expect(find.text('Could not load the services'), findsNothing);
+      expect(find.text('Try again'), findsNothing);
+      await _shot(t, 'no_access_${size.width.toInt()}');
+    }
+
+    var calls = 0;
+    await _pump(t, () async {
+      calls++;
+      if (calls > 1) throw refused;
+      return _ok();
+    });
+    await t.pumpAndSettle();
+    expect(find.text('Service Call'), findsOneWidget);
+    await t.tap(find.byTooltip('Refresh'));
+    await t.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('Service Call'), findsNothing, reason: 'nothing of the list stays on show');
+    expect(find.text("You don't have access to the Services Catalog"), findsOneWidget);
+
+    // Any other failure is still the ordinary error with Try again.
+    await _pump(t, () async => throw const LineItemsException('Server error (500).', status: 500));
+    await t.pumpAndSettle();
+    expect(find.text('Could not load the services'), findsOneWidget);
+    expect(find.text("You don't have access to the Services Catalog"), findsNothing);
+  });
+
   testWidgets('empty list and search with no match say so', (t) async {
     await _pump(t, () async => _ok(entries: const []));
     await t.pumpAndSettle();
