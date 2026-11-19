@@ -1,0 +1,38 @@
+{
+  "real": {
+    "chars": 18,
+    "typingWallMs": 2322,
+    "longTasksMs": [
+      68,
+      203,
+      308,
+      97,
+      120,
+      122,
+      68,
+      74,
+      119,
+      108,
+      75,
+      72,
+      62
+    ],
+    "longTaskTotalMs": 1496,
+    "worstMs": 308
+  },
+  "big": {
+    "chars": 18,
+    "typingWallMs": 1973,
+    "longTasksMs": [
+      55,
+      128,
+      199,
+      76,
+      69,
+      51,
+      83
+    ],
+    "longTaskTotalMs": 661,
+    "worstMs": 199
+  }
+}

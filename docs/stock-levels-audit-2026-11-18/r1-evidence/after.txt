@@ -1,0 +1,9 @@
+Backend: /Users/johneccleston/integrity-backend-stock-phase1
+[CORRECT] A. Checkout: Punched Angle 3 (job 1001) + 1 (job 1002), Sheet 40
+          HTTP 200; log rows 2 (4 units); writes Inventory!D2=36 (RAW); Sheet after 36.00 (expected 36.00)
+[CORRECT] B. Checkout: Operator and Keypad, 1 each on three jobs, Sheet 5 and 10
+          HTTP 200; log rows 6; Operator after 2.00 (expected 2.00), Keypad after 7.00 (expected 7.00)
+[CORRECT] C. 8:31 flush: Punched Angle staged 2 (job 2001) + 2 (job 2002), Sheet 40
+          staging answer "Items staged. Will auto-process at 8:31 AM."; log rows after flush 2; Sheet after 36.00 (expected 36.00)
+[CORRECT] D. Checkout: Back Hang Nut 1 from "1,250.00"
+          HTTP 200; writes Inventory!D2=1249 (RAW); Sheet after 1,249.00 (expected 1,249.00)

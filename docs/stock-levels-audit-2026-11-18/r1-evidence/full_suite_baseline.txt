@@ -1,0 +1,2746 @@
+TAP version 13
+# Subtest: admins and owners can do everything; nobody signed in gets 401
+ok 1 - admins and owners can do everything; nobody signed in gets 401
+  ---
+  duration_ms: 586.470722
+  ...
+# Subtest: office staff follow their switches, and an action needs View on too
+ok 2 - office staff follow their switches, and an action needs View on too
+  ---
+  duration_ms: 32.970091
+  ...
+# Subtest: a job or estimate is checked against its own switches, looked up only when they differ
+ok 3 - a job or estimate is checked against its own switches, looked up only when they differ
+  ---
+  duration_ms: 20.704215
+  ...
+# ❌ Access switch migration failed (it runs again on the next start): a refused change must not open a transaction
+# Subtest: calls and texts need the Communications switch and a job, estimate or customer page
+ok 4 - calls and texts need the Communications switch and a job, estimate or customer page
+  ---
+  duration_ms: 11.309547
+  ...
+# Subtest: canDo refuses anyone whose permissions were not read, and technicians
+ok 5 - canDo refuses anyone whose permissions were not read, and technicians
+  ---
+  duration_ms: 0.207702
+  ...
+# Subtest: saved switch lists: retired keys are dropped, unknown keys refused
+ok 6 - saved switch lists: retired keys are dropped, unknown keys refused
+  ---
+  duration_ms: 2.598496
+  ...
+# Subtest: the keys match the office app (lib/config/access.dart)
+ok 7 - the keys match the office app (lib/config/access.dart) # SKIP
+  ---
+  duration_ms: 0.078469
+  ...
+# Subtest: someone never saved gets pay, profit, Team and Jarvis off and everything else on
+ok 8 - someone never saved gets pay, profit, Team and Jarvis off and everything else on
+  ---
+  duration_ms: 0.25683
+  ...
+# Subtest: the Team switches: no admin roles, no editing admins, never your own permissions
+ok 9 - the Team switches: no admin roles, no editing admins, never your own permissions
+  ---
+  duration_ms: 162.20879
+  ...
+# Subtest: the key lists hang together
+ok 10 - the key lists hang together
+  ---
+  duration_ms: 0.224803
+  ...
+# Subtest: every tool is either in an access area or deliberately general
+ok 11 - every tool is either in an access area or deliberately general
+  ---
+  duration_ms: 8.230789
+  ...
+# Subtest: an admin and someone with every switch on get the full, shared tool list and no access note
+ok 12 - an admin and someone with every switch on get the full, shared tool list and no access note
+  ---
+  duration_ms: 380.751031
+  ...
+# Subtest: someone with Jarvis switched off is refused before anything is spent
+ok 13 - someone with Jarvis switched off is refused before anything is spent
+  ---
+  duration_ms: 51.593806
+  ...
+# Subtest: a limited person: only their lookups are offered, the prompt says what is off, and a forbidden lookup is refused
+ok 14 - a limited person: only their lookups are offered, the prompt says what is off, and a forbidden lookup is refused
+  ---
+  duration_ms: 107.747098
+  ...
+# Subtest: a composite lookup leaves out the parts the person may not see, and says so
+ok 15 - a composite lookup leaves out the parts the person may not see, and says so
+  ---
+  duration_ms: 30.440301
+  ...
+# Subtest: stripProfit removes profit, cost and margin at any depth and keeps everything else
+ok 16 - stripProfit removes profit, cost and margin at any depth and keeps everything else
+  ---
+  duration_ms: 0.294039
+  ...
+# Subtest: scopeFor: technicians and unknown people get nothing; admins everything
+ok 17 - scopeFor: technicians and unknown people get nothing; admins everything
+  ---
+  duration_ms: 0.241901
+  ...
+# Subtest: follow-ups: the lookups behind an answer go back to the app, and come back with that answer for the model
+ok 18 - follow-ups: the lookups behind an answer go back to the app, and come back with that answer for the model
+  ---
+  duration_ms: 32.495821
+  ...
+# Subtest: lookupNote: only known lookups, short inputs, and only the newest answers keep them
+ok 19 - lookupNote: only known lookups, short inputs, and only the newest answers keep them
+  ---
+  duration_ms: 0.617397
+  ...
+# Subtest: for a job: only the calls and texts on it and its paired records, each saying why it is there
+ok 20 - for a job: only the calls and texts on it and its paired records, each saying why it is there
+  ---
+  duration_ms: 354.766344
+  ...
+# Subtest: for a customer or a phone: every call and text, each with the job it is on, or "not on a job"
+ok 21 - for a customer or a phone: every call and text, each with the job it is on, or "not on a job"
+  ---
+  duration_ms: 2.42788
+  ...
+# Subtest: a name that matches two customers is matched one phone number at a time, never across customers
+ok 22 - a name that matches two customers is matched one phone number at a time, never across customers
+  ---
+  duration_ms: 1.218662
+  ...
+# Subtest: without the app matching, a job still answers the older way (the customer's calls plus hand links)
+ok 23 - without the app matching, a job still answers the older way (the customer's calls plus hand links)
+  ---
+  duration_ms: 0.746551
+  ...
+# Subtest: a window across all customers has no job per item (that would mean matching every customer)
+ok 24 - a window across all customers has no job per item (that would mean matching every customer)
+  ---
+  duration_ms: 0.912287
+  ...
+# Subtest: the tool description tells Jarvis what on_job and job_id mean
+ok 25 - the tool description tells Jarvis what on_job and job_id mean
+  ---
+  duration_ms: 0.164739
+  ...
+# Subtest: communications: calls and texts by customer, phone or job, missed and returned, with exact totals
+ok 26 - communications: calls and texts by customer, phone or job, missed and returned, with exact totals # SKIP set TEST_DATABASE_URL to run the communications tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 7.872701
+  ...
+# Subtest: the prompt sends calls and texts to communications and says recordings are never available
+ok 27 - the prompt sends calls and texts to communications and says recordings are never available
+  ---
+  duration_ms: 61.285598
+  ...
+# Subtest: door_counts: each door once, by model, size and color, with exact totals for every scope
+ok 28 - door_counts: each door once, by model, size and color, with exact totals for every scope # SKIP set TEST_DATABASE_URL to run the door count tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 1.189667
+  ...
+# Subtest: readDoor: "Sandstone" in the configurator description is the Sandtone color the line name gives
+ok 29 - readDoor: "Sandstone" in the configurator description is the Sandtone color the line name gives
+  ---
+  duration_ms: 33.764398
+  ...
+# Subtest: the prompt: named start dates go to door_counts as start_from, one figure per table cell, no talk about the tools
+ok 30 - the prompt: named start dates go to door_counts as start_from, one figure per table cell, no talk about the tools
+  ---
+  duration_ms: 134.830678
+  ...
+# Subtest: the grounding check catches a figure that was not looked up, and allows the prompt's rounding
+ok 31 - the grounding check catches a figure that was not looked up, and allows the prompt's rounding
+  ---
+  duration_ms: 4.856472
+  ...
+# Subtest: evaluation, retrieval: each business question gets the right facts from its lookup
+ok 32 - evaluation, retrieval: each business question gets the right facts from its lookup # SKIP set TEST_DATABASE_URL to run the Jarvis evaluation (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.103799
+  ...
+# Subtest: evaluation, whole path: question in, live progress out, grounded answer with links back
+ok 33 - evaluation, whole path: question in, live progress out, grounded answer with links back # SKIP set TEST_DATABASE_URL to run the Jarvis evaluation (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.089005
+  ...
+# Subtest: the sensitive-column rule: secrets by name on any table, sign-in fields on users
+ok 34 - the sensitive-column rule: secrets by name on any table, sign-in fields on users
+  ---
+  duration_ms: 3.474589
+  ...
+# Subtest: ensureAssistantGrants: every column but the sensitive ones, held-back tables revoked, idempotent
+ok 35 - ensureAssistantGrants: every column but the sensitive ones, held-back tables revoked, idempotent # SKIP set TEST_DATABASE_URL to run the grant tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.127174
+  ...
+# Subtest: new Jarvis lookups give the hand-worked figures
+ok 36 - new Jarvis lookups give the hand-worked figures # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 1.03882
+  ...
+# Subtest: payroll detail lists a sales-only person's sales commission rows, and says when the list is cut short
+ok 37 - payroll detail lists a sales-only person's sales commission rows, and says when the list is cut short # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 1.042496
+  ...
+# Subtest: figures and filters the model no longer has to work out for itself
+ok 38 - figures and filters the model no longer has to work out for itself # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 6.298853
+  ...
+# Subtest: the prompt carries every common date range and weekday ready-made
+ok 39 - the prompt carries every common date range and weekday ready-made
+  ---
+  duration_ms: 40.028213
+  ...
+# Subtest: amounts of $1,000 or more are rounded to the whole dollar before the model sees them; smaller ones keep their cents
+ok 40 - amounts of $1,000 or more are rounded to the whole dollar before the model sees them; smaller ones keep their cents
+  ---
+  duration_ms: 3.83445
+  ...
+# Subtest: the route sends rounded figures; a lookup called on its own keeps its cents
+ok 41 - the route sends rounded figures; a lookup called on its own keeps its cents # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.180527
+  ...
+# Subtest: what someone not on commission would have earned: the real engine with that one person switched on
+ok 42 - what someone not on commission would have earned: the real engine with that one person switched on # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.090072
+  ...
+# Subtest: a week that already has a finalized payroll run moves the what-if settlement to the next open week, as the engine does
+ok 43 - a week that already has a finalized payroll run moves the what-if settlement to the next open week, as the engine does # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.080537
+  ...
+# Subtest: date boundaries, filters, exclusions and totals hold
+ok 44 - date boundaries, filters, exclusions and totals hold # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.089401
+  ...
+# Subtest: nothing found gives zeros and empty lists, never an error or an invented row
+ok 45 - nothing found gives zeros and empty lists, never an error or an invented row # SKIP set TEST_DATABASE_URL to run these tests (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.077059
+  ...
+# Subtest: a result too long to send keeps its totals whole, stays valid JSON and says what was left out
+ok 46 - a result too long to send keeps its totals whole, stays valid JSON and says what was left out
+  ---
+  duration_ms: 181.398383
+  ...
+# Subtest: every lookup behind an answer comes back in `calls` (the app shows them under "How I got this")
+ok 47 - every lookup behind an answer comes back in `calls` (the app shows them under "How I got this")
+  ---
+  duration_ms: 333.154131
+  ...
+# Subtest: all results of one turn go back in ONE message, matched by id; bad tools and failed queries come back as errors
+ok 48 - all results of one turn go back in ONE message, matched by id; bad tools and failed queries come back as errors
+  ---
+  duration_ms: 92.12325
+  ...
+# Subtest: a long tool result is shortened to whole rows, stays valid JSON and says how many rows are shown
+ok 49 - a long tool result is shortened to whole rows, stays valid JSON and says how many rows are shown
+  ---
+  duration_ms: 78.291787
+  ...
+# Subtest: only signed-in admins and owners reach Jarvis; everyone else is refused before a single model call
+ok 50 - only signed-in admins and owners reach Jarvis; everyone else is refused before a single model call
+  ---
+  duration_ms: 85.608842
+  ...
+# Subtest: feedback needs an admin too, and only takes up / down
+ok 51 - feedback needs an admin too, and only takes up / down
+  ---
+  duration_ms: 21.389498
+  ...
+# Subtest: malformed conversations are refused with 400 and never reach the model
+ok 52 - malformed conversations are refused with 400 and never reach the model
+  ---
+  duration_ms: 155.477814
+  ...
+# Subtest: without a database or an API key the route says it is not configured (503)
+ok 53 - without a database or an API key the route says it is not configured (503)
+  ---
+  duration_ms: 9.840159
+  ...
+# Subtest: the page the person has open is passed on, cleaned, as a [Viewing: ...] prefix
+ok 54 - the page the person has open is passed on, cleaned, as a [Viewing: ...] prefix
+  ---
+  duration_ms: 12.12268
+  ...
+# Subtest: earlier answers are sent back trimmed: no stats / chart / follow-up blocks, at most 2,500 characters
+ok 55 - earlier answers are sent back trimmed: no stats / chart / follow-up blocks, at most 2,500 characters
+  ---
+  duration_ms: 12.167813
+  ...
+# Subtest: a refusal, a cut-off answer and a lookup loop that never ends each get a plain explanation
+ok 56 - a refusal, a cut-off answer and a lookup loop that never ends each get a plain explanation
+  ---
+  duration_ms: 42.213779
+  ...
+# Subtest: model errors map to clear messages without internal detail
+ok 57 - model errors map to clear messages without internal detail
+  ---
+  duration_ms: 107.601625
+  ...
+# Subtest: a streamed question shows progress, drops text from lookup turns, then delivers the answer and its lookups
+ok 58 - a streamed question shows progress, drops text from lookup turns, then delivers the answer and its lookups
+  ---
+  duration_ms: 73.888901
+  ...
+# Subtest: the app gets a live checklist: each lookup starts and finishes (with time and outcome), and a composite one reports its parts
+ok 59 - the app gets a live checklist: each lookup starts and finishes (with time and outcome), and a composite one reports its parts
+  ---
+  duration_ms: 66.69511
+  ...
+# Subtest: the newer answer blocks reach only apps that draw them; an older build gets plain markdown
+ok 60 - the newer answer blocks reach only apps that draw them; an older build gets plain markdown
+  ---
+  duration_ms: 26.759504
+  ...
+# Subtest: a streamed failure ends with an error event carrying the status
+ok 61 - a streamed failure ends with an error event carrying the status
+  ---
+  duration_ms: 7.462338
+  ...
+# Subtest: requests are built for prompt caching: tools, system prompt and conversation tail are cache breakpoints
+ok 62 - requests are built for prompt caching: tools, system prompt and conversation tail are cache breakpoints
+  ---
+  duration_ms: 9.732441
+  ...
+# Subtest: usage is added up over every model call and the audit line records calls, time and an estimated cost
+ok 63 - usage is added up over every model call and the audit line records calls, time and an estimated cost
+  ---
+  duration_ms: 27.22827
+  ...
+# Subtest: when the app goes away mid-question (Stop, closed panel), the server stops calling the model
+ok 64 - when the app goes away mid-question (Stop, closed panel), the server stops calling the model
+  ---
+  duration_ms: 5044.309205
+  ...
+# Subtest: a question that runs past the time limit is stopped with a clear message
+ok 65 - a question that runs past the time limit is stopped with a clear message
+  ---
+  duration_ms: 153.774468
+  ...
+# Subtest: text from the data reaches the model only inside tool results, and the rules say it is data, not instructions
+ok 66 - text from the data reaches the model only inside tool results, and the rules say it is data, not instructions
+  ---
+  duration_ms: 8.505192
+  ...
+# Subtest: the system prompt states the business rules the dashboards use
+ok 67 - the system prompt states the business rules the dashboards use
+  ---
+  duration_ms: 0.656141
+  ...
+# Subtest: the app is told exactly which Drive links the Drive tools returned; a link from any other data is not among them
+ok 68 - the app is told exactly which Drive links the Drive tools returned; a link from any other data is not among them
+  ---
+  duration_ms: 13.710897
+  ...
+# Subtest: the deadline holds even while a lookup hangs
+ok 69 - the deadline holds even while a lookup hangs
+  ---
+  duration_ms: 204.359049
+  ...
+# Subtest: a long custom query still shows up under "How I got this" with its purpose
+ok 70 - a long custom query still shows up under "How I got this" with its purpose
+  ---
+  duration_ms: 9.484826
+  ...
+# Subtest: every tool has sample inputs here, a progress phrase in the app, and a valid schema
+ok 71 - every tool has sample inputs here, a progress phrase in the app, and a valid schema
+  ---
+  duration_ms: 2.522216
+  ...
+# Subtest: every tool runs with no rows and sends exactly as many parameters as its SQL uses
+ok 72 - every tool runs with no rows and sends exactly as many parameters as its SQL uses
+  ---
+  duration_ms: 324.827845
+  ...
+# Subtest: every tool runs with a row and sends exactly as many parameters as its SQL uses
+ok 73 - every tool runs with a row and sends exactly as many parameters as its SQL uses
+  ---
+  duration_ms: 140.57602
+  ...
+# Subtest: Jarvis uses the Chicago date everywhere: no server or database clock in its own SQL
+ok 74 - Jarvis uses the Chicago date everywhere: no server or database clock in its own SQL
+  ---
+  duration_ms: 2.375348
+  ...
+# Subtest: run_sql accepts plain read-only SELECTs
+ok 75 - run_sql accepts plain read-only SELECTs
+  ---
+  duration_ms: 0.557645
+  ...
+# Subtest: run_sql refuses anything that writes, runs hidden SQL, reads the catalog or escapes the single statement
+ok 76 - run_sql refuses anything that writes, runs hidden SQL, reads the catalog or escapes the single statement
+  ---
+  duration_ms: 1.922517
+  ...
+# Subtest: run_sql runs inside a read-only transaction with a time limit and a row cap, and always rolls back
+ok 77 - run_sql runs inside a read-only transaction with a time limit and a row cap, and always rolls back
+  ---
+  duration_ms: 0.766073
+  ...
+# Subtest: tool arguments are checked before any query runs
+ok 78 - tool arguments are checked before any query runs
+  ---
+  duration_ms: 1.779268
+  ...
+# Subtest: Google Drive tools act as the person asking, and say so plainly when Drive is not set up
+ok 79 - Google Drive tools act as the person asking, and say so plainly when Drive is not set up
+  ---
+  duration_ms: 0.334517
+  ...
+# Subtest: estimates_summary quotes the Estimates dashboard's own open pipeline (every year), next to its year-filtered groups
+ok 80 - estimates_summary quotes the Estimates dashboard's own open pipeline (every year), next to its year-filtered groups
+  ---
+  duration_ms: 0.923369
+  ...
+# Subtest: customer_lookup finds the customer whose page is open by their number
+ok 81 - customer_lookup finds the customer whose page is open by their number
+  ---
+  duration_ms: 0.201857
+  ...
+# Subtest: payroll_runs no longer tells the model that unrun weeks cannot be previewed
+ok 82 - payroll_runs no longer tells the model that unrun weeks cannot be previewed
+  ---
+  duration_ms: 0.127553
+  ...
+# Subtest: daily_briefing gathers every section in one call, with activity since the last business day
+ok 83 - daily_briefing gathers every section in one call, with activity since the last business day
+  ---
+  duration_ms: 4.932875
+  ...
+# Subtest: a section that cannot be read is marked unavailable; the rest of the briefing still comes back
+ok 84 - a section that cannot be read is marked unavailable; the rest of the briefing still comes back
+  ---
+  duration_ms: 2.454302
+  ...
+# Subtest: compare_periods works out differences and % changes itself, with win rate in points
+ok 85 - compare_periods works out differences and % changes itself, with win rate in points
+  ---
+  duration_ms: 2.954935
+  ...
+# Subtest: compare_periods picks sensible previous ranges and refuses impossible ones
+ok 86 - compare_periods picks sensible previous ranges and refuses impossible ones
+  ---
+  duration_ms: 32.123583
+  ...
+# Subtest: history and page context are cleaned before they reach the model
+ok 87 - history and page context are cleaned before they reach the model
+  ---
+  duration_ms: 1.390352
+  ...
+# Subtest: the prompt gives exact date ranges for the usual periods, in Chicago time
+ok 88 - the prompt gives exact date ranges for the usual periods, in Chicago time
+  ---
+  duration_ms: 5.42794
+  ...
+# Subtest: the audit cost estimate uses list prices and stays quiet for unknown models
+ok 89 - the audit cost estimate uses list prices and stays quiet for unknown models
+  ---
+  duration_ms: 0.244141
+  ...
+# Subtest: the composite tools keep at most two queries on the 3-connection pool, so none times out waiting for one
+ok 90 - the composite tools keep at most two queries on the 3-connection pool, so none times out waiting for one
+  ---
+  duration_ms: 134.304982
+  ...
+# Subtest: compare_periods: one lookup failing leaves only its measures as n/a, says so, and skips the pipeline it does not use
+ok 91 - compare_periods: one lookup failing leaves only its measures as n/a, says so, and skips the pipeline it does not use
+  ---
+  duration_ms: 3.718705
+  ...
+# Subtest: compare_periods warns that status-based measures run low for a recent period, and not for an old one
+ok 92 - compare_periods warns that status-based measures run low for a recent period, and not for an old one
+  ---
+  duration_ms: 4.027528
+  ...
+# Subtest: estimates_summary puts open_pipeline first, so it survives when a long result is cut short
+ok 93 - estimates_summary puts open_pipeline first, so it survives when a long result is cut short
+  ---
+  duration_ms: 0.432753
+  ...
+# Subtest: "How I got this" gets valid JSON even for a long custom query
+ok 94 - "How I got this" gets valid JSON even for a long custom query
+  ---
+  duration_ms: 0.177217
+  ...
+# Subtest: only links the Drive tools returned count as Drive links, never one quoted inside a document or note
+ok 95 - only links the Drive tools returned count as Drive links, never one quoted inside a document or note
+  ---
+  duration_ms: 0.674246
+  ...
+# Subtest: dates given to the new tools must be real calendar days, and a bad one is refused without throwing
+ok 96 - dates given to the new tools must be real calendar days, and a bad one is refused without throwing
+  ---
+  duration_ms: 0.65601
+  ...
+# Subtest: status-change days and day boundaries are Chicago days, like "today"
+ok 97 - status-change days and day boundaries are Chicago days, like "today"
+  ---
+  duration_ms: 1.578539
+  ...
+# Subtest: history keeps priorities and comparisons (what a follow-up points back to) but drops footnotes, figures strips and charts
+ok 98 - history keeps priorities and comparisons (what a follow-up points back to) but drops footnotes, figures strips and charts
+  ---
+  duration_ms: 0.231099
+  ...
+# Subtest: the prompt asks for direct, grounded answers in the formats the app draws, and points each common question at its lookup
+ok 99 - the prompt asks for direct, grounded answers in the formats the app draws, and points each common question at its lookup
+  ---
+  duration_ms: 1.43371
+  ...
+# Subtest: a lookup counts as failed when it errors or answers with {"error"}, and as partly read when a part is marked unavailable
+ok 100 - a lookup counts as failed when it errors or answers with {"error"}, and as partly read when a part is marked unavailable
+  ---
+  duration_ms: 0.225933
+  ...
+# Subtest: upcoming_materials leaves out exactly what the pick list leaves out, and only matches stock on exact names
+ok 101 - upcoming_materials leaves out exactly what the pick list leaves out, and only matches stock on exact names
+  ---
+  duration_ms: 2.742899
+  ...
+# Subtest: what_changed counts from the last business day and refuses ranges it cannot answer
+ok 102 - what_changed counts from the last business day and refuses ranges it cannot answer
+  ---
+  duration_ms: 1.725407
+  ...
+# Subtest: tech_activity compares two ranges only when both are given in full
+ok 103 - tech_activity compares two ranges only when both are given in full
+  ---
+  duration_ms: 0.257396
+  ...
+# Subtest: an app that does not draw the newer blocks gets them as plain markdown; one that does gets them as they are
+ok 104 - an app that does not draw the newer blocks gets them as plain markdown; one that does gets them as they are
+  ---
+  duration_ms: 1.325494
+  ...
+# Subtest: calendar: one event per job per visit day, and a job with no dated visit shows on its start date
+ok 105 - calendar: one event per job per visit day, and a job with no dated visit shows on its start date # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.091845
+  ...
+# Subtest: job_payments start-up block: leaves a correct table alone, so a restart no longer rewrites it
+ok 106 - job_payments start-up block: leaves a correct table alone, so a restart no longer rewrites it # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.104632
+  ...
+# Subtest: job_payments start-up block: still upgrades an old table
+ok 107 - job_payments start-up block: still upgrades an old table # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.301241
+  ...
+# Subtest: invoice save: an unchanged invoice is not rewritten, a changed one is
+ok 108 - invoice save: an unchanged invoice is not rewritten, a changed one is # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.092943
+  ...
+# 🚫 Unauthorized request: GET /api/calendar/sync?start=2026-09-01&end=2026-12-01
+# Subtest: the shared app key alone, or no credentials, cannot read the schedule (401)
+ok 109 - the shared app key alone, or no credentials, cannot read the schedule (401)
+  ---
+  duration_ms: 249.497728
+  ...
+# Subtest: technicians' phone-app tokens and office staff with the Calendar switched off are refused (403)
+ok 110 - technicians' phone-app tokens and office staff with the Calendar switched off are refused (403)
+  ---
+  duration_ms: 34.500008
+  ...
+# Subtest: admins, owners and office staff with the Calendar on can read it
+ok 111 - admins, owners and office staff with the Calendar on can read it
+  ---
+  duration_ms: 67.637912
+  ...
+# Subtest: a range that is not two real yyyy-mm-dd days, runs backwards, or is too long is refused (400) before any query
+ok 112 - a range that is not two real yyyy-mm-dd days, runs backwards, or is too long is refused (400) before any query
+  ---
+  duration_ms: 60.936782
+  ...
+# Subtest: the range passes through as inclusive days; a missing end still means 30 days after start
+ok 113 - the range passes through as inclusive days; a missing end still means 30 days after start
+  ---
+  duration_ms: 45.338952
+  ...
+# Subtest: each day comes back as plain yyyy-mm-dd text, so the server time zone can never move a visit to another day
+ok 114 - each day comes back as plain yyyy-mm-dd text, so the server time zone can never move a visit to another day
+  ---
+  duration_ms: 26.113237
+  ...
+# ❌ DB Calendar Sync Error: relation "jobs" does not exist (secret detail)
+# Subtest: a database failure is a plain 500 with no details
+ok 115 - a database failure is a plain 500 with no details
+  ---
+  duration_ms: 4.989368
+  ...
+# Subtest: the generated SQL never truncates, deletes, drops or restarts ids, and the dry run ends with ROLLBACK
+ok 116 - the generated SQL never truncates, deletes, drops or restarts ids, and the dry run ends with ROLLBACK
+  ---
+  duration_ms: 7.46698
+  ...
+# Subtest: re-running the same export after the first import changes no product: same ids, nothing added; the identical pair is listed
+ok 117 - re-running the same export after the first import changes no product: same ids, nothing added; the identical pair is listed # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.112775
+  ...
+# Subtest: a product edited in the app keeps every edit; the export's different values are listed, not applied
+ok 118 - a product edited in the app keeps every edit; the export's different values are listed, not applied # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.082507
+  ...
+# Subtest: a product renamed in the app BEFORE export names were recorded is not added again: possible rename, for review
+ok 119 - a product renamed in the app BEFORE export names were recorded is not added again: possible rename, for review # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.08105
+  ...
+# Subtest: a price change in the export waits for approval; --accept-price-changes applies it; a text change applies
+ok 120 - a price change in the export waits for approval; --accept-price-changes applies it; a text change applies # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.09042
+  ...
+# Subtest: a new product is added with a new id (no id reused or shifted) and gets its own inventory row
+ok 121 - a new product is added with a new id (no id reused or shifted) and gets its own inventory row # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.077655
+  ...
+# Subtest: a product missing from the new export is kept and listed; a product added in the app is listed as such
+ok 122 - a product missing from the new export is kept and listed; a product added in the app is listed as such # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.077001
+  ...
+# Subtest: a new export row whose name is already in the catalog with a different part number is not added: review
+ok 123 - a new export row whose name is already in the catalog with a different part number is not added: review # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.106273
+  ...
+# Subtest: inventory: rows are linked by id, never renamed; the sheet count is taken only for products on the sheet
+ok 124 - inventory: rows are linked by id, never renamed; the sheet count is taken only for products on the sheet # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.746614
+  ...
+# Subtest: the dry run leaves the database exactly as it was, and the preview runs in a read-only transaction
+ok 125 - the dry run leaves the database exactly as it was, and the preview runs in a read-only transaction # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.111149
+  ...
+# Subtest: linking existing products to inventory: unique names linked, duplicates listed, existing links kept; preview is read-only
+ok 126 - linking existing products to inventory: unique names linked, duplicates listed, existing links kept; preview is read-only # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.078585
+  ...
+# Subtest: the link backfill also records the export name of imported products nobody has edited, so a later rename is still recognised
+ok 127 - the link backfill also records the export name of imported products nobody has edited, so a later rename is still recognised # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.066472
+  ...
+# Subtest: an explicit link survives a rename: the stock stays with the product
+ok 128 - an explicit link survives a rename: the stock stays with the product
+  ---
+  duration_ms: 1.605228
+  ...
+# Subtest: without a link, a single exact-name match is still used (spaces and case ignored)
+ok 129 - without a link, a single exact-name match is still used (spaces and case ignored)
+  ---
+  duration_ms: 0.191094
+  ...
+# Subtest: two products with the same name share nothing: neither gets the row, both are flagged for review
+ok 130 - two products with the same name share nothing: neither gets the row, both are flagged for review
+  ---
+  duration_ms: 0.156944
+  ...
+# Subtest: an explicitly linked duplicate keeps its row; the other one is flagged, not given the same row
+ok 131 - an explicitly linked duplicate keeps its row; the other one is flagged, not given the same row
+  ---
+  duration_ms: 0.142341
+  ...
+# Subtest: a row another product is linked to is never handed out by name
+ok 132 - a row another product is linked to is never handed out by name
+  ---
+  duration_ms: 0.258353
+  ...
+# Subtest: two products linked to the same row: both flagged, neither shows its stock
+ok 133 - two products linked to the same row: both flagged, neither shows its stock
+  ---
+  duration_ms: 0.149018
+  ...
+# Subtest: a link to a row that is gone (or inactive, so not loaded) is flagged, with no name guess
+ok 134 - a link to a row that is gone (or inactive, so not loaded) is flagged, with no name guess
+  ---
+  duration_ms: 0.244214
+  ...
+# Subtest: two inventory rows that only differ by case or spaces are ambiguous, not guessed
+ok 135 - two inventory rows that only differ by case or spaces are ambiguous, not guessed
+  ---
+  duration_ms: 0.134742
+  ...
+# Subtest: a product with no inventory row has no stock and nothing to review
+ok 136 - a product with no inventory row has no stock and nothing to review
+  ---
+  duration_ms: 0.290242
+  ...
+# Subtest: catalog entries: a renamed product keeps stock and its Service Fusion usage; duplicates show no stock and say why
+ok 137 - catalog entries: a renamed product keeps stock and its Service Fusion usage; duplicates show no stock and say why
+  ---
+  duration_ms: 2.088619
+  ...
+# Subtest: copying Service Fusion lines finds a renamed product by its export name, and skips products with no inventory link
+ok 138 - copying Service Fusion lines finds a renamed product by its export name, and skips products with no inventory link
+  ---
+  duration_ms: 0.307759
+  ...
+# Subtest: catalog entries carry the export name so a renamed product can still be found
+ok 139 - catalog entries carry the export name so a renamed product can still be found
+  ---
+  duration_ms: 0.162193
+  ...
+# Subtest: without Line Items & Costs > Update every management write is refused before the database is touched
+ok 140 - without Line Items & Costs > Update every management write is refused before the database is touched
+  ---
+  duration_ms: 227.90305
+  ...
+# Subtest: nobody signed in, or a technician, cannot read or change categories, reviews or the change log
+ok 141 - nobody signed in, or a technician, cannot read or change categories, reviews or the change log
+  ---
+  duration_ms: 73.786666
+  ...
+# Subtest: office staff with the page can read categories, reviews and the change log; canEdit follows the Update switch
+ok 142 - office staff with the page can read categories, reviews and the change log; canEdit follows the Update switch
+  ---
+  duration_ms: 15.037709
+  ...
+# Subtest: a bulk change never carries a price or cost, whoever sends it
+ok 143 - a bulk change never carries a price or cost, whoever sends it
+  ---
+  duration_ms: 61.068726
+  ...
+# Subtest: 2026-11-18 routes: sign-in and the page are needed to read; pricing marks need the cost switch; a typo category is refused
+ok 144 - 2026-11-18 routes: sign-in and the page are needed to read; pricing marks need the cost switch; a typo category is refused
+  ---
+  duration_ms: 31.375434
+  ...
+# Subtest: bulk move: only category and the change stamp move; prices, costs, names, part \#s and inventory links stay exactly
+ok 145 - bulk move: only category and the change stamp move; prices, costs, names, part \#s and inventory links stay exactly # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.610835
+  ...
+# Subtest: bulk refuses when any product changed since the list loaded: nothing written, nothing logged
+ok 146 - bulk refuses when any product changed since the list loaded: nothing written, nothing logged # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.097817
+  ...
+# Subtest: bulk refuses a product that is gone, an unknown category, and any field but category and status
+ok 147 - bulk refuses a product that is gone, an unknown category, and any field but category and status # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.071794
+  ...
+# Subtest: two bulk changes from the same list at the same moment: one goes through, the other is refused
+ok 148 - two bulk changes from the same list at the same moment: one goes through, the other is refused # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.075736
+  ...
+# Subtest: a product page opened before a bulk change cannot save over it (409 CHANGED)
+ok 149 - a product page opened before a bulk change cannot save over it (409 CHANGED) # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.086153
+  ...
+# Subtest: categories: counts with ids, create an empty one, refuse a twin, delete only when empty
+ok 150 - categories: counts with ids, create an empty one, refuse a twin, delete only when empty # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.071444
+  ...
+# Subtest: rename a category: every product moves in one go, nothing else changes; a clash or a stale view is refused
+ok 151 - rename a category: every product moves in one go, nothing else changes; a clash or a stale view is refused # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.068199
+  ...
+# Subtest: merge: products of the merged categories land in the target, the sources go, descriptions carry over, stale views are refused
+ok 152 - merge: products of the merged categories land in the target, the sources go, descriptions carry over, stale views are refused # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.139499
+  ...
+# Subtest: reviewed marks: saved, listed, cleared, logged
+ok 153 - reviewed marks: saved, listed, cleared, logged # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.082579
+  ...
+# Subtest: the change log: single edits are logged with before and after; cost values are hidden without the view switch
+ok 154 - the change log: single edits are logged with before and after; cost values are hidden without the view switch # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.586524
+  ...
+# Subtest: a product page can only file a product in an existing category, unless "Create a new category" was chosen
+ok 155 - a product page can only file a product in an existing category, unless "Create a new category" was chosen # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.085242
+  ...
+# Subtest: one product under one check: reviewed or follow up, with a note; every change of the mark is kept in its history
+ok 156 - one product under one check: reviewed or follow up, with a note; every change of the mark is kept in its history # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.073795
+  ...
+# Subtest: two people marking the same finding at the same moment: one mark is saved, the other is told
+ok 157 - two people marking the same finding at the same moment: one mark is saved, the other is told # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.064048
+  ...
+# Subtest: pricing-check marks stay with people who can see costs
+ok 158 - pricing-check marks stay with people who can see costs # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.128294
+  ...
+# Subtest: the change log filters by person, time, product and kind of change
+ok 159 - the change log filters by person, time, product and kind of change # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.117816
+  ...
+# Subtest: sales across all history: last job and estimate by name or the export name, with the linked stock row
+ok 160 - sales across all history: last job and estimate by name or the export name, with the linked stock row # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.064423
+  ...
+# Subtest: a create needs a name; an edit does not
+ok 161 - a create needs a name; an edit does not
+  ---
+  duration_ms: 2.652449
+  ...
+# Subtest: only the fields sent come back, trimmed and mapped to columns
+ok 162 - only the fields sent come back, trimmed and mapped to columns
+  ---
+  duration_ms: 0.474981
+  ...
+# Subtest: bad numbers, flags and vendor lists are refused in plain words
+ok 163 - bad numbers, flags and vendor lists are refused in plain words
+  ---
+  duration_ms: 22.898748
+  ...
+# Subtest: money keeps every decimal it was given: a 5-decimal cost is not rounded (prod has 113 sub-cent costs)
+ok 164 - money keeps every decimal it was given: a 5-decimal cost is not rounded (prod has 113 sub-cent costs)
+  ---
+  duration_ms: 0.437779
+  ...
+# Subtest: more than 6 decimal places is refused rather than rounded
+ok 165 - more than 6 decimal places is refused rather than rounded
+  ---
+  duration_ms: 0.209272
+  ...
+# Subtest: vendors keep the named ones, with prices as numbers
+ok 166 - vendors keep the named ones, with prices as numbers
+  ---
+  duration_ms: 0.207424
+  ...
+# Subtest: without the costs switch: costs, vendors and pay are refused, price and text are not
+ok 167 - without the costs switch: costs, vendors and pay are refused, price and text are not
+  ---
+  duration_ms: 2.256657
+  ...
+# Subtest: the product record leaves costs, vendors and pay out without the switch
+ok 168 - the product record leaves costs, vendors and pay out without the switch
+  ---
+  duration_ms: 0.529536
+  ...
+# Subtest: parses quotes, doubled quotes and newlines inside fields
+ok 169 - parses quotes, doubled quotes and newlines inside fields
+  ---
+  duration_ms: 1.7974
+  ...
+# Subtest: reads the export: active rows only, money, flags, vendors, cleanups
+ok 170 - reads the export: active rows only, money, flags, vendors, cleanups
+  ---
+  duration_ms: 2.194903
+  ...
+# Subtest: rejects a file with different columns
+ok 171 - rejects a file with different columns
+  ---
+  duration_ms: 0.451802
+  ...
+# Subtest: the import script writes a preview, a dry run and an apply file; none of them truncates or renumbers
+ok 172 - the import script writes a preview, a dry run and an apply file; none of them truncates or renumbers
+  ---
+  duration_ms: 14.938714
+  ...
+# Subtest: catalog from the price list: list price/cost, stock from inventory, services kept, SF products dropped
+ok 173 - catalog from the price list: list price/cost, stock from inventory, services kept, SF products dropped
+  ---
+  duration_ms: 2.548007
+  ...
+# Subtest: catalog entries carry active and inventoryItem so the page can filter on them
+ok 174 - catalog entries carry active and inventoryItem so the page can filter on them
+  ---
+  duration_ms: 0.207289
+  ...
+# Subtest: a save that lands while the catalog is being rebuilt is not lost: the next read shows it
+ok 175 - a save that lands while the catalog is being rebuilt is not lost: the next read shows it
+  ---
+  duration_ms: 145.929363
+  ...
+# Subtest: after a save the catalog list and the estimate picker read the change straight away
+ok 176 - after a save the catalog list and the estimate picker read the change straight away
+  ---
+  duration_ms: 46.574347
+  ...
+# Subtest: without Line Items & Costs > Update nobody can add, edit or delete products
+ok 177 - without Line Items & Costs > Update nobody can add, edit or delete products
+  ---
+  duration_ms: 193.245243
+  ...
+# Subtest: without Line Items & Costs > View a cost cannot be changed, and costs never come back
+ok 178 - without Line Items & Costs > View a cost cannot be changed, and costs never come back
+  ---
+  duration_ms: 56.251155
+  ...
+# Subtest: a 6-plus-decimal cost is refused with a plain message and nothing is written
+ok 179 - a 6-plus-decimal cost is refused with a plain message and nothing is written
+  ---
+  duration_ms: 14.299806
+  ...
+# Subtest: the migration adds the inventory link and export-name columns to the existing table, keeping rows and ids
+ok 180 - the migration adds the inventory link and export-name columns to the existing table, keeping rows and ids # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.464247
+  ...
+# Subtest: editing one field leaves the 5-decimal cost exactly as stored; a typed cost is stored exactly
+ok 181 - editing one field leaves the 5-decimal cost exactly as stored; a typed cost is stored exactly # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.097398
+  ...
+# Subtest: a renamed product keeps its stock: the page and the list both still show 16
+ok 182 - a renamed product keeps its stock: the page and the list both still show 16 # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 38.568082
+  ...
+# Subtest: two products with the same name: neither page nor list shows the shared row's stock, both say it needs review
+ok 183 - two products with the same name: neither page nor list shows the shared row's stock, both say it needs review # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.221599
+  ...
+# Subtest: two saves from the same starting point at the same moment: one is saved, the other is refused (409), nothing merged
+ok 184 - two saves from the same starting point at the same moment: one is saved, the other is refused (409), nothing merged # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.099152
+  ...
+# Subtest: adding a product whose name or part number is already used asks first (409 DUPLICATE); confirming adds it
+ok 185 - adding a product whose name or part number is already used asks first (409 DUPLICATE); confirming adds it # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.078119
+  ...
+# Subtest: renaming onto another product's name asks first; saving a product that is already a duplicate does not nag
+ok 186 - renaming onto another product's name asks first; saving a product that is already a duplicate does not nag # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.079756
+  ...
+# Subtest: log: totals split counted rows (the dashboard figure) from rows waiting for payroll
+ok 187 - log: totals split counted rows (the dashboard figure) from rows waiting for payroll
+  ---
+  duration_ms: 297.742323
+  ...
+# Subtest: log and entries: technicians and the shared key alone are refused before any ledger query
+ok 188 - log and entries: technicians and the shared key alone are refused before any ledger query
+  ---
+  duration_ms: 161.149471
+  ...
+# Subtest: entry: money out is saved negative, as a manual adjustment, with the note and who saved it
+ok 189 - entry: money out is saved negative, as a manual adjustment, with the note and who saved it
+  ---
+  duration_ms: 14.179121
+  ...
+# Subtest: entry: money in with no job or date saves a positive amount for today
+ok 190 - entry: money in with no job or date saves a positive amount for today
+  ---
+  duration_ms: 7.035602
+  ...
+# Subtest: entry: bad input is a 400 and writes nothing
+ok 191 - entry: bad input is a 400 and writes nothing
+  ---
+  duration_ms: 236.877508
+  ...
+# Subtest: entry: a payment spread over weeks saves one row per week, a week apart, sharing a plan
+ok 192 - entry: a payment spread over weeks saves one row per week, a week apart, sharing a plan
+  ---
+  duration_ms: 8.416174
+  ...
+# Subtest: entry: uneven percents still add up to the amount to the cent (the last week takes the rounding)
+ok 193 - entry: uneven percents still add up to the amount to the cent (the last week takes the rounding)
+  ---
+  duration_ms: 4.619409
+  ...
+# ❌ Company Pool Entry Error: disk full
+# Subtest: a failed week rolls the whole spread back
+ok 194 - a failed week rolls the whole spread back
+  ---
+  duration_ms: 5.705451
+  ...
+# Subtest: company pool log and manual entries on a real Postgres
+ok 195 - company pool log and manual entries on a real Postgres # SKIP set TEST_DATABASE_URL to run
+  ---
+  duration_ms: 1.021948
+  ...
+# Subtest: a phone number finds the customer however either side typed it
+ok 196 - a phone number finds the customer however either side typed it # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 7.30315
+  ...
+# Subtest: words still search as before, and short digit strings are not phone searches
+ok 197 - words still search as before, and short digit strings are not phone searches # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.239372
+  ...
+# Subtest: jobs are counted by name, ignoring case and spaces
+ok 198 - jobs are counted by name, ignoring case and spaces # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.091924
+  ...
+# 🚫 Unauthorized request: GET /financial_dashboard?year=2026
+# 🚫 Unauthorized request: GET /commissions_stats?year=2026
+# 🚫 Unauthorized request: GET /tech_stats?year=2026
+# 🚫 Unauthorized request: GET /api/dashboards/jobs?year=2026
+# 🚫 Unauthorized request: GET /api/dashboards/jobs/drill?status=Scheduled
+# 🚫 Unauthorized request: GET /dashboards/inventory
+# 🚫 Unauthorized request: GET /dashboards/sales?year=2026
+# 🚫 Unauthorized request: GET /dashboards/sales/estimates?year=2026&owner=Zac%20Clemens&filter=won
+# 🚫 Unauthorized request: GET /dashboards/sales/door-estimates?year=2026&type=Classic%20Steel
+# 🚫 Unauthorized request: GET /dashboards/estimates?year=2026
+# 🚫 Unauthorized request: GET /dashboards/estimates/drill?year=2026&kind=lost&reason=price
+# 🚫 Unauthorized request: GET /dashboards/collections?year=2026
+# 🚫 Unauthorized request: GET /dashboards/collections/jobs?stage=90
+# Subtest: no credentials at all: 401 everywhere, database untouched
+ok 199 - no credentials at all: 401 everywhere, database untouched
+  ---
+  duration_ms: 452.665987
+  ...
+# Subtest: the shared app key alone is not an identity: 401 everywhere, database untouched
+ok 200 - the shared app key alone is not an identity: 401 everywhere, database untouched
+  ---
+  duration_ms: 122.681007
+  ...
+# 🚫 Unauthorized request: GET /financial_dashboard?year=2026
+# 🚫 Unauthorized request: GET /commissions_stats?year=2026
+# 🚫 Unauthorized request: GET /tech_stats?year=2026
+# 🚫 Unauthorized request: GET /api/dashboards/jobs?year=2026
+# 🚫 Unauthorized request: GET /api/dashboards/jobs/drill?status=Scheduled
+# 🚫 Unauthorized request: GET /dashboards/inventory
+# 🚫 Unauthorized request: GET /dashboards/sales?year=2026
+# 🚫 Unauthorized request: GET /dashboards/sales/estimates?year=2026&owner=Zac%20Clemens&filter=won
+# 🚫 Unauthorized request: GET /dashboards/sales/door-estimates?year=2026&type=Classic%20Steel
+# 🚫 Unauthorized request: GET /dashboards/estimates?year=2026
+# 🚫 Unauthorized request: GET /dashboards/estimates/drill?year=2026&kind=lost&reason=price
+# 🚫 Unauthorized request: GET /dashboards/collections?year=2026
+# 🚫 Unauthorized request: GET /dashboards/collections/jobs?stage=90
+# Subtest: a user token without the app key: 401
+ok 201 - a user token without the app key: 401
+  ---
+  duration_ms: 76.536216
+  ...
+# Subtest: expired, tampered and app-key-signed tokens: 401
+ok 202 - expired, tampered and app-key-signed tokens: 401
+  ---
+  duration_ms: 165.602308
+  ...
+# Subtest: a deactivated account: 401 even with an unexpired admin token
+ok 203 - a deactivated account: 401 even with an unexpired admin token
+  ---
+  duration_ms: 104.65937
+  ...
+# Subtest: admin-only dashboards refuse non-admins (403), whatever the page switches say
+ok 204 - admin-only dashboards refuse non-admins (403), whatever the page switches say
+  ---
+  duration_ms: 54.563749
+  ...
+# Subtest: page-permission dashboards refuse a person whose page is switched off (403)
+ok 205 - page-permission dashboards refuse a person whose page is switched off (403)
+  ---
+  duration_ms: 25.004437
+  ...
+# Subtest: technicians (phone app tokens) are refused office dashboards even with nothing switched off
+ok 206 - technicians (phone app tokens) are refused office dashboards even with nothing switched off
+  ---
+  duration_ms: 31.175617
+  ...
+# ❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+#     at /Users/johneccleston/integrity-backend-stock-phase1/src/commissions.js:409:72
+#     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+# ❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+#     at /Users/johneccleston/integrity-backend-stock-phase1/src/commissions.js:409:72
+#     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+# ❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+# ❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+# Subtest: admins and owners reach every dashboard
+ok 207 - admins and owners reach every dashboard
+  ---
+  duration_ms: 103.952437
+  ...
+# Subtest: a non-admin whose page is switched on reaches the page-permission dashboards
+ok 208 - a non-admin whose page is switched on reaches the page-permission dashboards
+  ---
+  duration_ms: 30.623078
+  ...
+# ❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+#     at /Users/johneccleston/integrity-backend-stock-phase1/src/commissions.js:409:72
+#     at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+# ❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+# Subtest: the server warm-up token passes (it never leaves the process)
+ok 209 - the server warm-up token passes (it never leaves the process)
+  ---
+  duration_ms: 65.830577
+  ...
+# Subtest: technicians get only the callback leaderboard from /tech_stats (no revenue, penalties or profit)
+ok 210 - technicians get only the callback leaderboard from /tech_stats (no revenue, penalties or profit)
+  ---
+  duration_ms: 19.08081
+  ...
+# Subtest: technicians get only the strike leaderboard from /dashboards/inventory (no stock values)
+ok 211 - technicians get only the strike leaderboard from /dashboards/inventory (no stock values)
+  ---
+  duration_ms: 7.318446
+  ...
+# Subtest: an admin-cached body is never served whole to anyone else
+ok 212 - an admin-cached body is never served whole to anyone else
+  ---
+  duration_ms: 25.165512
+  ...
+# Subtest: no third-party avatar URLs are produced
+ok 213 - no third-party avatar URLs are produced
+  ---
+  duration_ms: 9.68994
+  ...
+# ❌ Inventory Dashboard API Error: simulated database failure
+# ❌ Inventory Dashboard API Error: simulated database failure
+# ❌ Inventory Dashboard API Error: simulated database failure
+# Subtest: inventory: a failed query is a 500, not $0, and nothing is written to the snapshot history
+ok 214 - inventory: a failed query is a 500, not $0, and nothing is written to the snapshot history
+  ---
+  duration_ms: 11.059416
+  ...
+# ❌ Financial Dashboard Fetch Error: simulated database failure
+# Subtest: financial: a failed expenses query is a 500, not "no expenses"
+ok 215 - financial: a failed expenses query is a 500, not "no expenses"
+  ---
+  duration_ms: 7.84548
+  ...
+# Subtest: inventory: a healthy load still saves today's valuation
+ok 216 - inventory: a healthy load still saves today's valuation
+  ---
+  duration_ms: 3.770751
+  ...
+# Subtest: cached dashboards say when their numbers were computed, and a cache hit keeps that time
+ok 217 - cached dashboards say when their numbers were computed, and a cache hit keeps that time
+  ---
+  duration_ms: 24.634129
+  ...
+# Subtest: average per commission recipient: everyone on the pool, the install-rate rep included, sales-only left out
+ok 218 - average per commission recipient: everyone on the pool, the install-rate rep included, sales-only left out
+  ---
+  duration_ms: 246.03775
+  ...
+# Subtest: average per recipient with nobody on the pool is 0, not a division by zero
+ok 219 - average per recipient with nobody on the pool is 0, not a division by zero
+  ---
+  duration_ms: 13.549511
+  ...
+# Subtest: commission %: payouts ÷ completed revenue over the same finalized weeks, and the parts add up
+ok 220 - commission %: payouts ÷ completed revenue over the same finalized weeks, and the parts add up
+  ---
+  duration_ms: 7.953961
+  ...
+# Subtest: commission %: no finalized week since go-live (an empty period) means no figure at all
+ok 221 - commission %: no finalized week since go-live (an empty period) means no figure at all
+  ---
+  duration_ms: 19.348479
+  ...
+# Subtest: commission %: finalized weeks with no completed revenue in them is no figure either, not ∞ or 0%
+ok 222 - commission %: finalized weeks with no completed revenue in them is no figure either, not ∞ or 0%
+  ---
+  duration_ms: 8.704893
+  ...
+# Subtest: callback rate: strikes ÷ completed jobs since go-live, not ÷ every completed job of the year
+ok 223 - callback rate: strikes ÷ completed jobs since go-live, not ÷ every completed job of the year
+  ---
+  duration_ms: 30.201221
+  ...
+# Subtest: callback rate: each callback counts once, not once per tech who worked the job
+ok 224 - callback rate: each callback counts once, not once per tech who worked the job
+  ---
+  duration_ms: 77.556423
+  ...
+# Subtest: callback rate: no completed job since go-live (an empty period) is no rate, not 0%
+ok 225 - callback rate: no completed job since go-live (an empty period) is no rate, not 0%
+  ---
+  duration_ms: 14.486858
+  ...
+# Subtest: callback rate period: a year before go-live and a future year have no period
+ok 226 - callback rate period: a year before go-live and a future year have no period
+  ---
+  duration_ms: 41.475194
+  ...
+# Subtest: profit leaves out Jarred's share, and Actual / day's days count Zac's installs and former techs
+ok 227 - profit leaves out Jarred's share, and Actual / day's days count Zac's installs and former techs
+  ---
+  duration_ms: 30.293285
+  ...
+# Subtest: the phone-app leaderboard projection is unchanged by the new per-tech field
+ok 228 - the phone-app leaderboard projection is unchanged by the new per-tech field
+  ---
+  duration_ms: 5.810419
+  ...
+# Subtest: pipeline: every open estimate counts whatever its year, and the same total shows for any selected year
+ok 229 - pipeline: every open estimate counts whatever its year, and the same total shows for any selected year
+  ---
+  duration_ms: 11.796311
+  ...
+# Subtest: pipeline: an empty pipeline is zeros, and old estimates are only ever read
+ok 230 - pipeline: an empty pipeline is zeros, and old estimates are only ever read
+  ---
+  duration_ms: 30.250969
+  ...
+# Subtest: pipeline trend: saved as a new series, so readings of the old this-year-only value never mix in
+ok 231 - pipeline trend: saved as a new series, so readings of the old this-year-only value never mix in
+  ---
+  duration_ms: 8.58949
+  ...
+# Subtest: aging drill-down covers every year; the lost drill-down stays in the selected year
+ok 232 - aging drill-down covers every year; the lost drill-down stays in the selected year
+  ---
+  duration_ms: 10.412282
+  ...
+# Subtest: commission %: only finalized weeks since go-live, revenue locked in those same weeks (Chicago midnight), eligible jobs only
+ok 233 - commission %: only finalized weeks since go-live, revenue locked in those same weeks (Chicago midnight), eligible jobs only # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.904784
+  ...
+# Subtest: commission %: finalized weeks whose jobs have not closed yet give no figure (empty period)
+ok 234 - commission %: finalized weeks whose jobs have not closed yet give no figure (empty period) # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.107973
+  ...
+# Subtest: callback rate: completed jobs that started on/after Oct 5 and by today, in the selected year; strikes reconcile
+ok 235 - callback rate: completed jobs that started on/after Oct 5 and by today, in the selected year; strikes reconcile # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.080009
+  ...
+# Subtest: pipeline: every open estimate of any year, prior-year ones called out, aging and drill-down lists reconcile, nothing changed
+ok 236 - pipeline: every open estimate of any year, prior-year ones called out, aging and drill-down lists reconcile, nothing changed # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.079145
+  ...
+# Subtest: the full sync expands agents
+ok 237 - the full sync expands agents
+  ---
+  duration_ms: 1.95589
+  ...
+# Subtest: deletes a job with no money history, keeps a backup and forgets it
+ok 238 - deletes a job with no money history, keeps a backup and forgets it
+  ---
+  duration_ms: 10.432744
+  ...
+# Subtest: refuses a job with payments or paid commission and deletes nothing
+ok 239 - refuses a job with payments or paid commission and deletes nothing
+  ---
+  duration_ms: 3.295109
+  ...
+# Subtest: a missing table is not a blocker; other errors roll back
+ok 240 - a missing table is not a blocker; other errors roll back
+  ---
+  duration_ms: 15.240478
+  ...
+# Subtest: unknown or malformed numbers
+ok 241 - unknown or malformed numbers
+  ---
+  duration_ms: 1.008995
+  ...
+# Subtest: withoutDeleted drops deleted numbers and keeps the page counts
+ok 242 - withoutDeleted drops deleted numbers and keeps the page counts
+  ---
+  duration_ms: 0.810394
+  ...
+# Subtest: a technician on the job reads its notes, pictures and documents
+ok 243 - a technician on the job reads its notes, pictures and documents
+  ---
+  duration_ms: 367.009685
+  ...
+# Subtest: technicians named on a visit, or with a work day, read it too; office staff read any job
+ok 244 - technicians named on a visit, or with a work day, read it too; office staff read any job
+  ---
+  duration_ms: 58.392186
+  ...
+# Subtest: a technician not on the job is refused before anything is read or written
+ok 245 - a technician not on the job is refused before anything is read or written
+  ---
+  duration_ms: 55.32082
+  ...
+# 🚫 Unauthorized request: GET /api/field/jobs/1087520135/records
+# Subtest: the shared app key alone, a signed-out or deactivated person, bad and unknown jobs
+ok 246 - the shared app key alone, a signed-out or deactivated person, bad and unknown jobs
+  ---
+  duration_ms: 31.871707
+  ...
+# Subtest: a technician on the job adds a note, under their own name
+ok 247 - a technician on the job adds a note, under their own name
+  ---
+  duration_ms: 26.260754
+  ...
+# Subtest: a technician on the job uploads a picture or a document; other types are refused
+ok 248 - a technician on the job uploads a picture or a document; other types are refused
+  ---
+  duration_ms: 38.346546
+  ...
+# Subtest: without file storage the read still works (no files) and an upload says it is not set up
+ok 249 - without file storage the read still works (no files) and an upload says it is not set up
+  ---
+  duration_ms: 14.960887
+  ...
+# Subtest: technicians cannot delete: no field delete route, and the office ones refuse them
+ok 250 - technicians cannot delete: no field delete route, and the office ones refuse them
+  ---
+  duration_ms: 18.872119
+  ...
+# 🚫 Unauthorized request: GET /api/field/jobs/1087520135/line-items
+# Subtest: the shared app key alone, or nothing at all: refused before the database
+ok 251 - the shared app key alone, or nothing at all: refused before the database
+  ---
+  duration_ms: 171.490944
+  ...
+# Subtest: a technician named on the job gets its items, without any cost
+ok 252 - a technician named on the job gets its items, without any cost
+  ---
+  duration_ms: 35.007867
+  ...
+# Subtest: the job's visits come along, in date order, with each tech's status and photo and nothing else
+ok 253 - the job's visits come along, in date order, with each tech's status and photo and nothing else
+  ---
+  duration_ms: 42.062587
+  ...
+# Subtest: a job with no synced visits answers an empty list
+ok 254 - a job with no synced visits answers an empty list
+  ---
+  duration_ms: 10.736758
+  ...
+# Subtest: a technician named only on a visit (not the job) gets it too
+ok 255 - a technician named only on a visit (not the job) gets it too
+  ---
+  duration_ms: 10.801398
+  ...
+# Subtest: a technician with a work day on the job (not named in Service Fusion) gets it too
+ok 256 - a technician with a work day on the job (not named in Service Fusion) gets it too
+  ---
+  duration_ms: 11.270459
+  ...
+# Subtest: a technician who is not on the job is refused, and sees none of it
+ok 257 - a technician who is not on the job is refused, and sees none of it
+  ---
+  duration_ms: 26.428652
+  ...
+# Subtest: a deactivated technician is signed out
+ok 258 - a deactivated technician is signed out
+  ---
+  duration_ms: 19.337548
+  ...
+# Subtest: office staff get any job; admins too, but still without cost on this read
+ok 259 - office staff get any job; admins too, but still without cost on this read
+  ---
+  duration_ms: 43.392389
+  ...
+# Subtest: bad and unknown job numbers
+ok 260 - bad and unknown job numbers
+  ---
+  duration_ms: 14.27217
+  ...
+# Subtest: the office-only routes keep refusing technicians
+ok 261 - the office-only routes keep refusing technicians
+  ---
+  duration_ms: 42.015689
+  ...
+# Subtest: Ryan's direct line is an ignored line
+ok 262 - Ryan's direct line is an ignored line
+  ---
+  duration_ms: 2.499907
+  ...
+# Subtest: notIgnoredSql filters the number and the line on the same table alias
+ok 263 - notIgnoredSql filters the number and the line on the same table alias
+  ---
+  duration_ms: 0.326067
+  ...
+# Subtest: notIgnoredSql works on an unqualified column
+ok 264 - notIgnoredSql works on an unqualified column
+  ---
+  duration_ms: 0.194004
+  ...
+# Subtest: ingest still only drops ignored numbers, not lines
+ok 265 - ingest still only drops ignored numbers, not lines
+  ---
+  duration_ms: 0.210967
+  ...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# 🚨 WAREHOUSE MISSED: No staging done for Brett Miller's jobs.
+# ⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# Subtest: the tech strike runs at 4:00 PM Chicago time and the 8:30 AM run stays for the warehouse
+ok 266 - the tech strike runs at 4:00 PM Chicago time and the 8:30 AM run stays for the warehouse
+  ---
+  duration_ms: 1.189114
+  ...
+# Subtest: 4 PM: only a tech who checked out nothing for any of today's stock jobs gets a strike
+ok 267 - 4 PM: only a tech who checked out nothing for any of today's stock jobs gets a strike
+  ---
+  duration_ms: 2.574204
+  ...
+# Subtest: 4 PM: a checkout counts whatever way the sheet writes the date; another day does not
+ok 268 - 4 PM: a checkout counts whatever way the sheet writes the date; another day does not
+  ---
+  duration_ms: 1.105867
+  ...
+# Subtest: 8:30 AM: no tech strikes any more; a warehouse strike when a tech's stock was neither checked out nor staged
+ok 269 - 8:30 AM: no tech strikes any more; a warehouse strike when a tech's stock was neither checked out nor staged
+  ---
+  duration_ms: 0.774841
+  ...
+# Subtest: pickDateKey reads the date forms the sheet can hold
+ok 270 - pickDateKey reads the date forms the sheet can hold
+  ---
+  duration_ms: 0.2894
+  ...
+# Subtest: termDays reads the terms Service Fusion really sends
+ok 271 - termDays reads the terms Service Fusion really sends
+  ---
+  duration_ms: 1.57325
+  ...
+# Subtest: toRow sets the due date from terms, because payment_terms comes back empty
+ok 272 - toRow sets the due date from terms, because payment_terms comes back empty
+  ---
+  duration_ms: 2.662151
+  ...
+# Subtest: invoices: each one is tied to its job on the best evidence, and never on a guess
+ok 273 - invoices: each one is tied to its job on the best evidence, and never on a guess # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.083384
+  ...
+# Subtest: invoices: the amount beats the PO when they disagree
+ok 274 - invoices: the amount beats the PO when they disagree # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.084163
+  ...
+# Subtest: invoices: search finds a job number however the invoice was tied to it
+ok 275 - invoices: search finds a job number however the invoice was tied to it # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.082411
+  ...
+# Subtest: invoices: overdue goes by the stored day, not that day shifted into Chicago
+ok 276 - invoices: overdue goes by the stored day, not that day shifted into Chicago # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.069453
+  ...
+# Subtest: invoices: a written-off job's invoice is neither overdue nor awaiting payment, but stays listed
+ok 277 - invoices: a written-off job's invoice is neither overdue nor awaiting payment, but stays listed # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.067655
+  ...
+# Subtest: invoices: what counts is what is still owed, matching the job balance Collections uses
+ok 278 - invoices: what counts is what is still owed, matching the job balance Collections uses # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.13852
+  ...
+# Subtest: invoices: sorts by amount, customer, due date and issue date, and ignores anything else
+ok 279 - invoices: sorts by amount, customer, due date and issue date, and ignores anything else # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.081091
+  ...
+# Subtest: a new job is saved, and saving the same job again writes nothing, not even a row lock
+ok 280 - a new job is saved, and saving the same job again writes nothing, not even a row lock # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.951838
+  ...
+# Subtest: a value that rounds on the way in is not seen as a change
+ok 281 - a value that rounds on the way in is not seen as a change # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.116817
+  ...
+# Subtest: every saved column counts as a change
+ok 282 - every saved column counts as a change # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.083267
+  ...
+# Subtest: JSON with the keys in another order is the same value
+ok 283 - JSON with the keys in another order is the same value # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.082797
+  ...
+# Subtest: a partial response keeps what is saved and is not a change
+ok 284 - a partial response keeps what is saved and is not a change # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.223952
+  ...
+# Subtest: a locked job's labor stays frozen, and a new labor figure alone is not a change
+ok 285 - a locked job's labor stays frozen, and a new labor figure alone is not a change # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.126752
+  ...
+# Subtest: force writes an unchanged row, which is what lets the trigger re-lock a closed job
+ok 286 - force writes an unchanged row, which is what lets the trigger re-lock a closed job # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.085394
+  ...
+# Subtest: work days: identical rows need no write
+ok 287 - work days: identical rows need no write
+  ---
+  duration_ms: 0.370815
+  ...
+# Subtest: work days: any difference that a save would change means write
+ok 288 - work days: any difference that a save would change means write
+  ---
+  duration_ms: 0.475057
+  ...
+# Subtest: work days: rows a save would keep anyway do not force a write
+ok 289 - work days: rows a save would keep anyway do not force a write
+  ---
+  duration_ms: 0.233819
+  ...
+# Subtest: the default order is unchanged: newest start date first, and it says it can sort
+ok 290 - the default order is unchanged: newest start date first, and it says it can sort # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.203485
+  ...
+# Subtest: each sort, both ways
+ok 291 - each sort, both ways # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.700438
+  ...
+# Subtest: an unknown sort is the default, never SQL
+ok 292 - an unknown sort is the default, never SQL # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.231648
+  ...
+# Subtest: sorting works with search, status and Estimates
+ok 293 - sorting works with search, status and Estimates # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.100486
+  ...
+# Subtest: pages of rows sharing one date hold every row exactly once
+ok 294 - pages of rows sharing one date hold every row exactly once # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.19552
+  ...
+# Subtest: request timing: overlapping queries count once, route and bytes are logged, Server-Timing only for signed-in callers
+ok 295 - request timing: overlapping queries count once, route and bytes are logged, Server-Timing only for signed-in callers
+  ---
+  duration_ms: 229.21059
+  ...
+# Subtest: request timing: queries outside a request and callback-style queries pass straight through
+ok 296 - request timing: queries outside a request and callback-style queries pass straight through
+  ---
+  duration_ms: 0.335352
+  ...
+# Subtest: static assets: content ETag survives a redeploy, gzip copy is built once and served, no escaping the folder
+ok 297 - static assets: content ETag survives a redeploy, gzip copy is built once and served, no escaping the folder
+  ---
+  duration_ms: 322.758351
+  ...
+# Subtest: tracked work returns its own result and logs one 🧠 line naming the operation
+ok 298 - tracked work returns its own result and logs one 🧠 line naming the operation
+  ---
+  duration_ms: 44.294697
+  ...
+# Subtest: while it runs it is listed as active (warnings and the heartbeat name it); a throw is still logged and rethrown
+ok 299 - while it runs it is listed as active (warnings and the heartbeat name it); a throw is still logged and rethrown
+  ---
+  duration_ms: 2.390159
+  ...
+# Subtest: quiet work (the every-minute sync) only logs when memory rose by the given amount
+ok 300 - quiet work (the every-minute sync) only logs when memory rose by the given amount
+  ---
+  duration_ms: 0.519271
+  ...
+# Subtest: crossing a mark logs a ⚠️ line with what was running, once, then says when memory is back
+ok 301 - crossing a mark logs a ⚠️ line with what was running, once, then says when memory is back
+  ---
+  duration_ms: 0.537679
+  ...
+# Subtest: the marks come from the memory the service may use (86% warn, about 96% critical), and fits() is measured against critical
+ok 302 - the marks come from the memory the service may use (86% warn, about 96% critical), and fits() is measured against critical
+  ---
+  duration_ms: 7.681847
+  ...
+# Subtest: relieve runs a full collection when memory is high, and not more than every 30 s
+ok 303 - relieve runs a full collection when memory is high, and not more than every 30 s
+  ---
+  duration_ms: 9.61577
+  ...
+# 🛠️ [COMMISSION FIX] Office Admin job J1 Andrew Johnson · 2026-10-20: set_verified
+# Subtest: verifying an unverified visit as a missed completion tags the history row with the day and tech
+ok 304 - verifying an unverified visit as a missed completion tags the history row with the day and tech
+  ---
+  duration_ms: 79.293642
+  ...
+# 🛠️ [COMMISSION FIX] Office Admin job J1 Andrew Johnson · 2026-10-20: set_verified, set_weight
+# Subtest: other fixes record the day and tech but never count as a missed completion
+ok 305 - other fixes record the day and tech but never count as a missed completion
+  ---
+  duration_ms: 18.764526
+  ...
+# Subtest: a missed completion is refused unless the visit goes from Not verified to Verified
+ok 306 - a missed completion is refused unless the visit goes from Not verified to Verified
+  ---
+  duration_ms: 54.983428
+  ...
+# Subtest: the per-tech list is year-scoped and totals the counts
+ok 307 - the per-tech list is year-scoped and totals the counts
+  ---
+  duration_ms: 155.885212
+  ...
+# Subtest: reads numbers as the decimal they print as, including exponents and signs
+ok 308 - reads numbers as the decimal they print as, including exponents and signs
+  ---
+  duration_ms: 12.352516
+  ...
+# Subtest: rounds half a cent away from zero, as Postgres ROUND(numeric, 2) does
+ok 309 - rounds half a cent away from zero, as Postgres ROUND(numeric, 2) does
+  ---
+  duration_ms: 0.435482
+  ...
+# Subtest: the results are plain cents that print and add as cents
+ok 310 - the results are plain cents that print and add as cents
+  ---
+  duration_ms: 120.140506
+  ...
+# Subtest: retainage deposit: one exact formula, rounded once, matching the engine
+ok 311 - retainage deposit: one exact formula, rounded once, matching the engine
+  ---
+  duration_ms: 0.421845
+  ...
+# Subtest: the policy agrees with exact half-up-away rounding on every split of every cent up to $2,000
+ok 312 - the policy agrees with exact half-up-away rounding on every split of every cent up to $2,000
+  ---
+  duration_ms: 23625.1766
+  ...
+# Subtest: callback penalty split: each tech is charged their share rounded once to the cent
+ok 313 - callback penalty split: each tech is charged their share rounded once to the cent
+  ---
+  duration_ms: 0.376842
+  ...
+# Subtest: customer response time: call backs timed in working hours, texts and repeat callers handled, totals add up
+ok 314 - customer response time: call backs timed in working hours, texts and repeat callers handled, totals add up # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.161145
+  ...
+# 🚫 Unauthorized request: GET /payments?page=1&limit=50
+# 🚫 Unauthorized request: GET /api/jobs?status=All&q=&page=1&limit=50
+# 🚫 Unauthorized request: GET /api/jobs/status-counts
+# 🚫 Unauthorized request: GET /api/estimates?status=All&q=&page=1&limit=50
+# 🚫 Unauthorized request: GET /api/estimates/status-counts
+# 🚫 Unauthorized request: GET /api/jobs/123456
+# 🚫 Unauthorized request: GET /users
+# Subtest: no credentials, or the shared app key alone: 401, database untouched
+ok 315 - no credentials, or the shared app key alone: 401, database untouched
+  ---
+  duration_ms: 265.113893
+  ...
+# Subtest: expired, tampered, app-key-signed, id-less, fake-service and deactivated-account tokens: 401
+ok 316 - expired, tampered, app-key-signed, id-less, fake-service and deactivated-account tokens: 401
+  ---
+  duration_ms: 293.095875
+  ...
+# Subtest: technicians' phone-app tokens are refused (403): the office app doesn't let them in either
+ok 317 - technicians' phone-app tokens are refused (403): the office app doesn't let them in either
+  ---
+  duration_ms: 96.457046
+  ...
+# Subtest: a person whose page is switched off is refused that page (403) but keeps the people list
+ok 318 - a person whose page is switched off is refused that page (403) but keeps the people list
+  ---
+  duration_ms: 56.258005
+  ...
+# payments list failed: Cannot read properties of undefined (reading 'ok')
+# payments list failed: Cannot read properties of undefined (reading 'ok')
+# payments list failed: Cannot read properties of undefined (reading 'ok')
+# payments list failed: Cannot read properties of undefined (reading 'ok')
+# Subtest: office staff with the pages switched on, admins and owners reach everything
+ok 319 - office staff with the pages switched on, admins and owners reach everything
+  ---
+  duration_ms: 82.095008
+  ...
+# Subtest: job detail still hides phone and email unless someone is signed in (unchanged), and a found job loads
+ok 320 - job detail still hides phone and email unless someone is signed in (unchanged), and a found job loads
+  ---
+  duration_ms: 8.571471
+  ...
+# Subtest: the jobs and estimates lists cap ?limit= at 200
+ok 321 - the jobs and estimates lists cap ?limit= at 200
+  ---
+  duration_ms: 15.047975
+  ...
+# Subtest: index.js guards /users with requireAuth and requireOfficeUser
+ok 322 - index.js guards /users with requireAuth and requireOfficeUser
+  ---
+  duration_ms: 0.608147
+  ...
+# Subtest: snapshot splits memory into heap, Buffers and the rest, and says how much room is left
+ok 323 - snapshot splits memory into heap, Buffers and the rest, and says how much room is left
+  ---
+  duration_ms: 8.052003
+  ...
+# Subtest: tracked work is summed per kind for the window: runs, failures, time, the most memory one run added
+ok 324 - tracked work is summed per kind for the window: runs, failures, time, the most memory one run added
+  ---
+  duration_ms: 51.460767
+  ...
+# Subtest: work in progress is listed with how long it has been running
+ok 325 - work in progress is listed with how long it has been running
+  ---
+  duration_ms: 20.904575
+  ...
+# Subtest: requests in progress are counted, and outside-service time counts toward the request that caused it
+ok 326 - requests in progress are counted, and outside-service time counts toward the request that caused it
+  ---
+  duration_ms: 551.248695
+  ...
+# (node:48601) ExperimentalWarning: The MockTimers API is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the summary line carries memory, requests, the queue gauge, work and outside services; a broken gauge does not break it
+ok 327 - the summary line carries memory, requests, the queue gauge, work and outside services; a broken gauge does not break it
+  ---
+  duration_ms: 24.812612
+  ...
+# Subtest: a gauge that never answers is skipped after 5 s instead of holding the summary
+not ok 328 - a gauge that never answers is skipped after 5 s instead of holding the summary
+  ---
+  duration_ms: 4.322311
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/ops_monitor.test.js:100:1'
+  failureType: 'testCodeFailure'
+  error: 'The "timers" argument must be an instance of Array. Received an instance of Object'
+  code: 'ERR_INVALID_ARG_TYPE'
+  name: 'TypeError'
+  stack: |-
+    MockTimers.enable (node:internal/test_runner/mock/mock_timers:511:5)
+    TestContext.<anonymous> (/Users/johneccleston/integrity-backend-stock-phase1/test/ops_monitor.test.js:101:19)
+    Test.runInAsyncScope (node:async_hooks:206:9)
+    Test.run (node:internal/test_runner/test:631:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:374:18)
+    Test.postRun (node:internal/test_runner/test:715:19)
+    Test.run (node:internal/test_runner/test:673:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:374:7)
+  ...
+# Subtest: a call that never answers fails as "timeout" at its deadline, and the request itself is cancelled
+ok 329 - a call that never answers fails as "timeout" at its deadline, and the request itself is cancelled
+  ---
+  duration_ms: 98.442022
+  ...
+# Subtest: a write is NOT retried (it may have happened); a read is retried a bounded number of times with a growing wait
+ok 330 - a write is NOT retried (it may have happened); a read is retried a bounded number of times with a growing wait
+  ---
+  duration_ms: 2.342013
+  ...
+# Subtest: errors about the request itself (400, 401, 404) are never retried and never trip the breaker
+ok 331 - errors about the request itself (400, 401, 404) are never retried and never trip the breaker
+  ---
+  duration_ms: 1.516227
+  ...
+# Subtest: failures are classified from each client's error shape
+ok 332 - failures are classified from each client's error shape
+  ---
+  duration_ms: 0.618889
+  ...
+# Subtest: a late answer, after the deadline, is dropped: the caller never sees it and it is counted
+ok 333 - a late answer, after the deadline, is dropped: the caller never sees it and it is counted
+  ---
+  duration_ms: 53.62662
+  ...
+# Subtest: a late REJECTION after the deadline does not crash the process as an unhandled rejection
+ok 334 - a late REJECTION after the deadline does not crash the process as an unhandled rejection
+  ---
+  duration_ms: 61.428977
+  ...
+# Subtest: the caller's own stop signal ends the call at once ("aborted"), is not retried and does not trip the breaker
+ok 335 - the caller's own stop signal ends the call at once ("aborted"), is not retried and does not trip the breaker
+  ---
+  duration_ms: 31.125298
+  ...
+# Subtest: circuit breaker: after 3 outages in a row calls fail at once; after the cool-down one probe decides
+ok 336 - circuit breaker: after 3 outages in a row calls fail at once; after the cool-down one probe decides
+  ---
+  duration_ms: 466.29494
+  ...
+# Subtest: while the breaker is half open only ONE probe goes to the service
+ok 337 - while the breaker is half open only ONE probe goes to the service
+  ---
+  duration_ms: 231.929341
+  ...
+# Subtest: a hung service does not pile up work: 50 calls against it leave nothing in flight and at most a few real attempts
+ok 338 - a hung service does not pile up work: 50 calls against it leave nothing in flight and at most a few real attempts
+  ---
+  duration_ms: 88.983029
+  ...
+# Subtest: takeWindow() reports and then starts a fresh window; totals keep counting
+ok 339 - takeWindow() reports and then starts a fresh window; totals keep counting
+  ---
+  duration_ms: 21.331407
+  ...
+# Subtest: OUTBOUND_GUARD=off is a plain pass-through
+ok 340 - OUTBOUND_GUARD=off is a plain pass-through
+  ---
+  duration_ms: 0.723347
+  ...
+# Subtest: guardGoogle wraps promise calls on resources, picks the policy by method, and leaves the rest alone
+ok 341 - guardGoogle wraps promise calls on resources, picks the policy by method, and leaves the rest alone
+  ---
+  duration_ms: 42.558389
+  ...
+# Subtest: Sheets append to a server that never answers: fails at the deadline, the connection is closed, and it is not sent twice
+ok 342 - Sheets append to a server that never answers: fails at the deadline, the connection is closed, and it is not sent twice
+  ---
+  duration_ms: 582.58946
+  ...
+# Subtest: Sheets read: retried once after a timeout (it is safe), then gives up; a healthy server just works
+ok 343 - Sheets read: retried once after a timeout (it is safe), then gives up; a healthy server just works
+  ---
+  duration_ms: 608.185524
+  ...
+# Subtest: a late answer (after the deadline) never reaches the caller and does not disturb the next call
+ok 344 - a late answer (after the deadline) never reaches the caller and does not disturb the next call
+  ---
+  duration_ms: 876.971242
+  ...
+# Subtest: Drive photo upload (a stream body) to a server that never answers: cancelled at the deadline, sent once
+ok 345 - Drive photo upload (a stream body) to a server that never answers: cancelled at the deadline, sent once
+  ---
+  duration_ms: 322.830507
+  ...
+# Subtest: Drive errors keep their status for the callers that read it, and are classified
+ok 346 - Drive errors keep their status for the callers that read it, and are classified
+  ---
+  duration_ms: 8.121135
+  ...
+# Subtest: the caller's stop signal (a site check run out of time) cancels a Drive call in flight
+# (node:48603) Warning: NodeVersionSupportWarning: The AWS SDK for JavaScript (v3)
+# versions published after the first week of January 2027
+# will require node >=22. You are running node v20.9.0.
+# To continue receiving updates to AWS services, bug fixes,
+# and security updates please upgrade to node >=22.
+# More information can be found at: https://a.co/c895JFp
+# (Use `node --trace-warnings ...` to show where the warning was created)
+ok 347 - the caller's stop signal (a site check run out of time) cancels a Drive call in flight
+  ---
+  duration_ms: 163.563717
+  ...
+# Subtest: bucket upload to a server that never answers: fails at the deadline, connection closed, no database row left behind
+ok 348 - bucket upload to a server that never answers: fails at the deadline, connection closed, no database row left behind
+  ---
+  duration_ms: 1276.547301
+  ...
+# Subtest: the run's stop signal cancels a bucket upload in flight
+ok 349 - the run's stop signal cancels a bucket upload in flight
+  ---
+  duration_ms: 144.540057
+  ...
+# Subtest: one bucket client is shared: 30 saves do not make 30 clients
+ok 350 - one bucket client is shared: 30 saves do not make 30 clients
+  ---
+  duration_ms: 3.233517
+  ...
+# Subtest: the Google token request has a timeout (it had none; every call waits on the one shared token request)
+ok 351 - the Google token request has a timeout (it had none; every call waits on the one shared token request)
+  ---
+  duration_ms: 3.703147
+  ...
+# Subtest: payments list: pairing, hidden washes, Paid in SF, totals, filter and order
+ok 352 - payments list: pairing, hidden washes, Paid in SF, totals, filter and order # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.140965
+  ...
+# Subtest: payments list: sorts by amount, customer and date, and ignores anything else
+ok 353 - payments list: sorts by amount, customer and date, and ignores anything else # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.116792
+  ...
+# Subtest: payments list: the Final Invoice Sent $0 filter lists those jobs, with or without a payment
+ok 354 - payments list: the Final Invoice Sent $0 filter lists those jobs, with or without a payment # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.090264
+  ...
+# Subtest: payments list: without a stripe_payments table it lists Service Fusion alone
+ok 355 - payments list: without a stripe_payments table it lists Service Fusion alone # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.086364
+  ...
+# Subtest: the cutover is a Monday after the last paid week (2026-11-02) and is a plain date
+ok 356 - the cutover is a Monday after the last paid week (2026-11-02) and is a plain date
+  ---
+  duration_ms: 1.321032
+  ...
+# Subtest: per-job cent rounding from the cutover, sales items saved, paid weeks untouched (real Postgres)
+ok 357 - per-job cent rounding from the cutover, sales items saved, paid weeks untouched (real Postgres) # SKIP set TEST_DATABASE_URL to run
+  ---
+  duration_ms: 0.104726
+  ...
+# Subtest: half-cent ties: the engine holds exactly what the ledger deposits; weeks before the cutover are unchanged
+ok 358 - half-cent ties: the engine holds exactly what the ledger deposits; weeks before the cutover are unchanged # SKIP set TEST_DATABASE_URL to run (a throwaway Postgres, never production)
+  ---
+  duration_ms: 3.624868
+  ...
+# Subtest: the policy and Postgres ROUND(numeric, 2) agree on 60,000 retainage splits, ties included
+ok 359 - the policy and Postgres ROUND(numeric, 2) agree on 60,000 retainage splits, ties included # SKIP set TEST_DATABASE_URL to run (a throwaway Postgres, never production)
+  ---
+  duration_ms: 0.133505
+  ...
+# Subtest: company schedule: the shared app key alone and a technician are refused before the database is read
+ok 360 - company schedule: the shared app key alone and a technician are refused before the database is read
+  ---
+  duration_ms: 181.352233
+  ...
+# Subtest: company schedule: admins, owners and the office manager still get it
+ok 361 - company schedule: admins, owners and the office manager still get it
+  ---
+  duration_ms: 57.110906
+  ...
+# Subtest: a technician still gets their own schedule
+ok 362 - a technician still gets their own schedule
+  ---
+  duration_ms: 16.828342
+  ...
+# Subtest: schedule: a closed job someone is booked on that day still shows
+ok 363 - schedule: a closed job someone is booked on that day still shows
+  ---
+  duration_ms: 68.222257
+  ...
+# Subtest: job lookup sends what is still owed alongside the total
+ok 364 - job lookup sends what is still owed alongside the total
+  ---
+  duration_ms: 7.882108
+  ...
+# Subtest: job lookup: a job paid in full owes 0, and an unknown balance is null (not 0)
+ok 365 - job lookup: a job paid in full owes 0, and an unknown balance is null (not 0)
+  ---
+  duration_ms: 44.987918
+  ...
+# Subtest: cycle count: admins, owners and the warehouse1 login; nobody else who is signed in
+ok 366 - cycle count: admins, owners and the warehouse1 login; nobody else who is signed in
+  ---
+  duration_ms: 65.995148
+  ...
+# 🚫 Unauthorized request: GET /cycle_probe
+# Subtest: cycle count: an old app build with no user token is left alone until ENFORCE_USER_AUTH is switched on
+ok 367 - cycle count: an old app build with no user token is left alone until ENFORCE_USER_AUTH is switched on
+  ---
+  duration_ms: 11.918711
+  ...
+# Subtest: the three cycle count routes are behind that rule
+ok 368 - the three cycle count routes are behind that rule
+  ---
+  duration_ms: 0.57441
+  ...
+# Subtest: the list of every tool allowance is behind the office rule
+ok 369 - the list of every tool allowance is behind the office rule
+  ---
+  duration_ms: 0.431445
+  ...
+# Subtest: the lines the user asked to hide (2026-11-10) never reach the pick list
+ok 370 - the lines the user asked to hide (2026-11-10) never reach the pick list
+  ---
+  duration_ms: 1.589314
+  ...
+# Subtest: partKey matches what checkout writes to the sheet (sheetSafe), in any case
+ok 371 - partKey matches what checkout writes to the sheet (sheetSafe), in any case
+  ---
+  duration_ms: 1.624787
+  ...
+# Subtest: pickedTotals adds up the sheet by job and part and ignores rows that are not a job pick
+ok 372 - pickedTotals adds up the sheet by job and part and ignores rows that are not a job pick
+  ---
+  duration_ms: 0.205651
+  ...
+# Subtest: a part on two lines of one job is added up, and a partial pick leaves the rest on the list
+ok 373 - a part on two lines of one job is added up, and a partial pick leaves the rest on the list
+  ---
+  duration_ms: 0.977861
+  ...
+# Subtest: quantities are read as before: a missing or zero quantity counts as 1, fractions are kept
+ok 374 - quantities are read as before: a missing or zero quantity counts as 1, fractions are kept
+  ---
+  duration_ms: 0.363472
+  ...
+# Subtest: /get_job_materials: one row per part, stock read from the sheet, and whether the part is stocked at all
+ok 375 - /get_job_materials: one row per part, stock read from the sheet, and whether the part is stocked at all
+  ---
+  duration_ms: 10.253823
+  ...
+# Subtest: pendingPicks (the tech picker) counts what /get_job_materials would list
+ok 376 - pendingPicks (the tech picker) counts what /get_job_materials would list
+  ---
+  duration_ms: 0.603313
+  ...
+# Subtest: /get_job_materials: an item with no name does not break the whole list
+ok 377 - /get_job_materials: an item with no name does not break the whole list
+  ---
+  duration_ms: 0.280498
+  ...
+# Subtest: a save with ifUnchangedSince only updates the row as it was last seen
+ok 378 - a save with ifUnchangedSince only updates the row as it was last seen
+  ---
+  duration_ms: 182.614389
+  ...
+# Subtest: a project someone else changed in between is refused with 409 CHANGED, not overwritten
+ok 379 - a project someone else changed in between is refused with 409 CHANGED, not overwritten
+  ---
+  duration_ms: 217.831007
+  ...
+# Subtest: without ifUnchangedSince a save works as before, and a missing project is 404
+ok 380 - without ifUnchangedSince a save works as before, and a missing project is 404
+  ---
+  duration_ms: 32.783654
+  ...
+# Subtest: a bad ifUnchangedSince is refused before anything is written
+ok 381 - a bad ifUnchangedSince is refused before anything is written
+  ---
+  duration_ms: 7.484826
+  ...
+# Subtest: creating, saving and deleting a project clear the cached list, so the next open shows the change
+ok 382 - creating, saving and deleting a project clear the cached list, so the next open shows the change
+  ---
+  duration_ms: 38.670114
+  ...
+# Subtest: an address matches the way people write it, and nothing looser
+ok 383 - an address matches the way people write it, and nothing looser
+  ---
+  duration_ms: 4.445492
+  ...
+# Subtest: addresses with no house number or no street never match
+ok 384 - addresses with no house number or no street never match
+  ---
+  duration_ms: 0.265173
+  ...
+# Subtest: the customer view shows a text on the job whose address it names, and leaves the rest unlinked
+ok 385 - the customer view shows a text on the job whose address it names, and leaves the rest unlinked
+  ---
+  duration_ms: 177.816898
+  ...
+# Subtest: a job tab shows the texts that name its address, and not the customer's other texts
+ok 386 - a job tab shows the texts that name its address, and not the customer's other texts
+  ---
+  duration_ms: 22.238994
+  ...
+# quo auto-link finished {"running":false,"write":false,"all":false,"startedAt":"2026-11-18T20:55:30.695Z","finishedAt":"2026-11-18T20:55:30.983Z","numbers":1,"numbersDone":1,"items":8,"counts":{"address":1,"visit_day":0,"same_day":2,"thread":2,"lead_in":1,"recent":1,"recent_guess":0,"only_job":0,"none":1},"withoutCustomer":3,"deferred":0,"errors":0,"stopped":null}
+# Subtest: a dry run counts every layer, samples the answers, and stores nothing
+ok 387 - a dry run counts every layer, samples the answers, and stores nothing
+  ---
+  duration_ms: 350.758467
+  ...
+# quo auto-link finished {"running":false,"write":true,"all":false,"startedAt":"2026-11-18T20:55:31.003Z","finishedAt":"2026-11-18T20:55:31.243Z","numbers":1,"numbersDone":1,"items":8,"counts":{"address":1,"visit_day":0,"same_day":2,"thread":2,"lead_in":1,"recent":1,"recent_guess":0,"only_job":0,"none":1},"withoutCustomer":3,"deferred":0,"errors":0,"stopped":null}
+# Subtest: a real run stores one answer per item, "none" included
+ok 388 - a real run stores one answer per item, "none" included
+  ---
+  duration_ms: 254.201745
+  ...
+# quo address match: canceling statement due to statement timeout
+# quo auto-link finished {"running":false,"write":true,"all":false,"startedAt":"2026-11-18T20:55:31.257Z","finishedAt":"2026-11-18T20:55:31.290Z","numbers":1,"numbersDone":1,"items":0,"counts":{"address":0,"visit_day":0,"same_day":0,"thread":0,"lead_in":0,"recent":0,"recent_guess":0,"only_job":0,"none":0},"withoutCustomer":3,"deferred":8,"errors":0,"stopped":null}
+# Subtest: when the address check times out, nothing is decided or stored for those items
+ok 389 - when the address check times out, nothing is decided or stored for those items
+  ---
+  duration_ms: 65.214997
+  ...
+# Subtest: the customer view shows a stored answer with its reason, and a person's own link needs none
+ok 390 - the customer view shows a stored answer with its reason, and a person's own link needs none
+  ---
+  duration_ms: 8.784225
+  ...
+# Subtest: a customer with one job gets everything around it, even a conversation that started days earlier and a misspelled street
+ok 391 - a customer with one job gets everything around it, even a conversation that started days earlier and a misspelled street
+  ---
+  duration_ms: 10.041773
+  ...
+# Subtest: an estimate with no Service Fusion creation date is dated by its start date, a job is not
+ok 392 - an estimate with no Service Fusion creation date is dated by its start date, a job is not
+  ---
+  duration_ms: 7.090189
+  ...
+# Subtest: before 2026, a customer who only ever had one estimate has all of their history on it
+ok 393 - before 2026, a customer who only ever had one estimate has all of their history on it
+  ---
+  duration_ms: 26.397735
+  ...
+# Subtest: an estimate and the job it became count as one: each item goes to the one created closest
+ok 394 - an estimate and the job it became count as one: each item goes to the one created closest
+  ---
+  duration_ms: 12.75585
+  ...
+# Subtest: a customer with two unrelated jobs gets nothing from the only-job rule
+ok 395 - a customer with two unrelated jobs gets nothing from the only-job rule
+  ---
+  duration_ms: 6.408317
+  ...
+# Subtest: Jarvis gets the same job for every call as the job tab shows, from any of the three records
+ok 396 - Jarvis gets the same job for every call as the job tab shows, from any of the three records
+  ---
+  duration_ms: 209.506774
+  ...
+# Subtest: for a customer, the same answers as the customer tab, with labels
+ok 397 - for a customer, the same answers as the customer tab, with labels
+  ---
+  duration_ms: 7.713454
+  ...
+# quo: Test Admin deleted 3 calls/texts
+# Subtest: deleting remembers the ids, drops their links, then removes the rows, in one transaction
+ok 398 - deleting remembers the ids, drops their links, then removes the rows, in one transaction
+  ---
+  duration_ms: 87.946137
+  ...
+# quo delete: boom
+# Subtest: nothing to delete is a 400, and a failure rolls back
+ok 399 - nothing to delete is a 400, and a failure rolls back
+  ---
+  duration_ms: 116.670102
+  ...
+# Subtest: two jobs in play: the day one of them was created is not enough to pick it
+ok 400 - two jobs in play: the day one of them was created is not enough to pick it
+  ---
+  duration_ms: 548.460607
+  ...
+# Subtest: an older job still being worked blocks a guess onto a new estimate at another address
+ok 401 - an older job still being worked blocks a guess onto a new estimate at another address
+  ---
+  duration_ms: 118.625786
+  ...
+# Subtest: a technician visit that day picks the visited record among several at one address
+ok 402 - a technician visit that day picks the visited record among several at one address
+  ---
+  duration_ms: 127.461962
+  ...
+# Subtest: between records at one address, the one with something happening closest gets the call
+ok 403 - between records at one address, the one with something happening closest gets the call
+  ---
+  duration_ms: 40.25911
+  ...
+# Subtest: a job booked weeks out stays in play until after its visit
+ok 404 - a job booked weeks out stays in play until after its visit
+  ---
+  duration_ms: 11.699169
+  ...
+# Subtest: the estimate and every job paired with it show the same calls and texts, and the other address does not
+ok 405 - the estimate and every job paired with it show the same calls and texts, and the other address does not
+  ---
+  duration_ms: 491.365301
+  ...
+# Subtest: by default only slow, failed and cut-off requests get a timing line
+ok 406 - by default only slow, failed and cut-off requests get a timing line
+  ---
+  duration_ms: 1.33865
+  ...
+# Subtest: clearing a prefix makes the next request recompute
+ok 407 - clearing a prefix makes the next request recompute
+  ---
+  duration_ms: 6.209063
+  ...
+# Subtest: other routes keep their cached answers
+ok 408 - other routes keep their cached answers
+  ---
+  duration_ms: 0.266292
+  ...
+# Subtest: an answer computed before the correction is not kept after it
+ok 409 - an answer computed before the correction is not kept after it
+  ---
+  duration_ms: 0.443492
+  ...
+# Subtest: saving a day fix and unlocking a job both clear the pay caches
+ok 410 - saving a day fix and unlocking a job both clear the pay caches
+  ---
+  duration_ms: 1.519329
+  ...
+# Subtest: office hours are Monday to Saturday, 6 am to 8 pm in Chicago
+ok 411 - office hours are Monday to Saturday, 6 am to 8 pm in Chicago
+  ---
+  duration_ms: 148.55313
+  ...
+# Subtest: quiet hours follow Chicago time, not the server clock, across daylight saving
+ok 412 - quiet hours follow Chicago time, not the server clock, across daylight saving
+  ---
+  duration_ms: 0.749906
+  ...
+# Subtest: in office hours every tick warms; when quiet, once an hour and always the first time
+ok 413 - in office hours every tick warms; when quiet, once an hour and always the first time
+  ---
+  duration_ms: 0.200454
+  ...
+# Subtest: ENFORCE_USER_AUTH is off in these tests (the production setting), so nothing below depends on it
+ok 414 - ENFORCE_USER_AUTH is off in these tests (the production setting), so nothing below depends on it
+  ---
+  duration_ms: 62.809389
+  ...
+# 🚫 Unauthorized request: GET /my-ledger
+# 🚫 Unauthorized request: GET /dashboard/retainage-stats
+# Subtest: no credentials at all: 401, ledger untouched
+ok 415 - no credentials at all: 401, ledger untouched
+  ---
+  duration_ms: 183.439034
+  ...
+# Subtest: the shared app key alone (with or without ?techName=): 401, ledger untouched
+ok 416 - the shared app key alone (with or without ?techName=): 401, ledger untouched
+  ---
+  duration_ms: 248.924796
+  ...
+# 🚫 Unauthorized request: GET /my-ledger
+# 🚫 Unauthorized request: GET /dashboard/retainage-stats
+# Subtest: a valid user token without the app key: 401
+ok 417 - a valid user token without the app key: 401
+  ---
+  duration_ms: 183.902676
+  ...
+# Subtest: expired, tampered and app-key-signed tokens: 401
+ok 418 - expired, tampered and app-key-signed tokens: 401
+  ---
+  duration_ms: 95.629083
+  ...
+# Subtest: revoked accounts: a deactivated technician or admin is refused with an unexpired token (401)
+ok 419 - revoked accounts: a deactivated technician or admin is refused with an unexpired token (401)
+  ---
+  duration_ms: 128.371917
+  ...
+# Subtest: tokens that skip the users-table check are refused: no id, a forged service claim, the real warm-up token
+ok 420 - tokens that skip the users-table check are refused: no id, a forged service claim, the real warm-up token
+  ---
+  duration_ms: 91.502216
+  ...
+# Subtest: another technician's token cannot read Tech One's retainage (403), and never by swapping in their own
+ok 421 - another technician's token cannot read Tech One's retainage (403), and never by swapping in their own
+  ---
+  duration_ms: 130.503679
+  ...
+# Subtest: office staff who are not admins get only their own retainage; asking for a technician is a 403
+ok 422 - office staff who are not admins get only their own retainage; asking for a technician is a 403
+  ---
+  duration_ms: 22.660672
+  ...
+# Subtest: a technician gets exactly their own ledger, asked about by the users-table name and id, never another's rows
+ok 423 - a technician gets exactly their own ledger, asked about by the users-table name and id, never another's rows
+  ---
+  duration_ms: 12.507884
+  ...
+# Subtest: a technician gets only their own row from the retainage stats
+ok 424 - a technician gets only their own row from the retainage stats
+  ---
+  duration_ms: 8.615001
+  ...
+# Subtest: admins and owners may read anyone, by ?techName=, and the whole team from the stats
+ok 425 - admins and owners may read anyone, by ?techName=, and the whole team from the stats
+  ---
+  duration_ms: 260.126903
+  ...
+# Subtest: no shared cache: back-to-back callers each get their own rows from their own query, marked no-store
+ok 426 - no shared cache: back-to-back callers each get their own rows from their own query, marked no-store
+  ---
+  duration_ms: 96.165908
+  ...
+# Subtest: agent job queries count closed jobs only
+ok 427 - agent job queries count closed jobs only
+  ---
+  duration_ms: 3.776273
+  ...
+# Subtest: Sales revenue sums the job totals, not the commissionable lines
+ok 428 - Sales revenue sums the job totals, not the commissionable lines
+  ---
+  duration_ms: 5.683115
+  ...
+# Subtest: pairs a won estimate with a job by customer, address and a shared priced line; closed jobs only
+ok 429 - pairs a won estimate with a job by customer, address and a shared priced line; closed jobs only
+  ---
+  duration_ms: 2.861324
+  ...
+# Subtest: estimateVsJob: rows biggest change first, plus open / cancelled / unmatched counts
+ok 430 - estimateVsJob: rows biggest change first, plus open / cancelled / unmatched counts
+  ---
+  duration_ms: 0.937596
+  ...
+# Subtest: the job page button and the KPI chart share one matching rule
+ok 431 - the job page button and the KPI chart share one matching rule
+  ---
+  duration_ms: 2.286314
+  ...
+# Subtest: a pay week is paid on the Friday 11 days after its Monday
+ok 432 - a pay week is paid on the Friday 11 days after its Monday
+  ---
+  duration_ms: 5.840886
+  ...
+# Subtest: the pay week is worked out from the first Friday of the next month
+ok 433 - the pay week is worked out from the first Friday of the next month
+  ---
+  duration_ms: 0.349578
+  ...
+# Subtest: estimate, builder and agent commission all use the same pay week
+ok 434 - estimate, builder and agent commission all use the same pay week
+  ---
+  duration_ms: 0.215195
+  ...
+# Subtest: takeChanged keeps edits at or after since and says when the page reached older ones
+ok 435 - takeChanged keeps edits at or after since and says when the page reached older ones
+  ---
+  duration_ms: 3.276874
+  ...
+# Subtest: takeChanged never drops an item without a usable edit time
+ok 436 - takeChanged never drops an item without a usable edit time
+  ---
+  duration_ms: 0.259277
+  ...
+# Subtest: mergeById replaces changed items, adds new ones, keeps the rest, newest first
+ok 437 - mergeById replaces changed items, adds new ones, keeps the rest, newest first
+  ---
+  duration_ms: 0.293653
+  ...
+# Subtest: newestEdit moves forward only
+ok 438 - newestEdit moves forward only
+  ---
+  duration_ms: 0.182742
+  ...
+# Subtest: fingerprint follows saved content and ignores picture links
+ok 439 - fingerprint follows saved content and ignores picture links
+  ---
+  duration_ms: 10.815534
+  ...
+# Subtest: tracker reports jobs whose content changed without a new edit time
+ok 440 - tracker reports jobs whose content changed without a new edit time
+  ---
+  duration_ms: 0.446039
+  ...
+# Subtest: a sequence of syncs never misses an edit, including one stamped a little before the watermark
+ok 441 - a sequence of syncs never misses an edit, including one stamped a little before the watermark
+  ---
+  duration_ms: 0.292801
+  ...
+# Subtest: tracker.changed finds new jobs, edited jobs and jobs whose content changed with the same edit time
+ok 442 - tracker.changed finds new jobs, edited jobs and jobs whose content changed with the same edit time
+  ---
+  duration_ms: 0.6115
+  ...
+# Subtest: a payment added without a new edit time counts as a change (job 1100263579: paid Nov 2, job last edited Oct 28)
+ok 443 - a payment added without a new edit time counts as a change (job 1100263579: paid Nov 2, job last edited Oct 28)
+  ---
+  duration_ms: 0.395998
+  ...
+# Subtest: jobPaymentRows keys each payment like the payment sync: by invoice, else by job number, once each
+ok 444 - jobPaymentRows keys each payment like the payment sync: by invoice, else by job number, once each
+  ---
+  duration_ms: 0.455774
+  ...
+# Subtest: readMostlyFailed: a page or two failing is normal, losing a quarter of the read is worth retrying
+ok 445 - readMostlyFailed: a page or two failing is normal, losing a quarter of the read is worth retrying
+  ---
+  duration_ms: 0.456869
+  ...
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ⚠️ Site check PDF could not be added to the job docs: bucket down
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s)) (again: only what is missing)
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s)) (again: only what is missing)
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ⚠️ Site check PDF could not be added to the job docs: bucket down
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+# 📁 Created Folder for job 1101244876
+# ⚠️ Site check PDF for job 1101244876 not put on the Docs tab: storage_not_configured
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+# 📁 Created Folder for job 1101244876
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+# 📁 Created Folder for job 1101244876
+# ⚠️ 1 site check photo(s) not added to the job's Pics: bucket down
+# 🚀 SITE CHECK START: Job 1101244876 (2 door(s)) (again: only what is missing)
+# ✅ SITE CHECK DONE: Job 1101244876
+# 🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+# 📁 Created Folder for job 1101244876
+# ✅ SITE CHECK DONE: Job 1101244876
+# Subtest: the PDF just drawn goes on the job docs under this check's own key, and pdfUrl stays the Drive link
+ok 446 - the PDF just drawn goes on the job docs under this check's own key, and pdfUrl stays the Drive link
+  ---
+  duration_ms: 44.679585
+  ...
+# Subtest: two checks on the same job are two documents
+ok 447 - two checks on the same job are two documents
+  ---
+  duration_ms: 41.687873
+  ...
+# Subtest: a failed docs copy is retried without drawing or sending the Drive PDF again
+ok 448 - a failed docs copy is retried without drawing or sending the Drive PDF again
+  ---
+  duration_ms: 2.890018
+  ...
+# Subtest: on the last attempt a failing docs copy is reported, and the Sheet row is still written
+ok 449 - on the last attempt a failing docs copy is reported, and the Sheet row is still written
+  ---
+  duration_ms: 0.966692
+  ...
+# Subtest: storage not set up: the check still finishes, nothing is thrown
+ok 450 - storage not set up: the check still finishes, nothing is thrown
+  ---
+  duration_ms: 0.816062
+  ...
+# Subtest: saveGeneratedJobFile stores a PDF doc on the job, and a repeat keeps one copy
+ok 451 - saveGeneratedJobFile stores a PDF doc on the job, and a repeat keeps one copy
+  ---
+  duration_ms: 7.65868
+  ...
+# Subtest: saveGeneratedJobFile skips quietly without storage or with a job number the office app cannot open
+ok 452 - saveGeneratedJobFile skips quietly without storage or with a job number the office app cannot open
+  ---
+  duration_ms: 0.211623
+  ...
+# Subtest: photo names say the day, the door when there are several, what it shows, and its number in a group
+ok 453 - photo names say the day, the door when there are several, what it shows, and its number in a group
+  ---
+  duration_ms: 1.070053
+  ...
+# Subtest: every photo goes on the Pics tab with its name, listed first photo first, under this check's keys
+ok 454 - every photo goes on the Pics tab with its name, listed first photo first, under this check's keys
+  ---
+  duration_ms: 3.004418
+  ...
+# Subtest: a retry adds only the photos that did not make it
+ok 455 - a retry adds only the photos that did not make it
+  ---
+  duration_ms: 4.659034
+  ...
+# Subtest: without file storage the photos are skipped quietly and the check still finishes
+ok 456 - without file storage the photos are skipped quietly and the check still finishes
+  ---
+  duration_ms: 2.013178
+  ...
+# node:internal/modules/cjs/loader:1051
+#   throw err;
+#   ^
+# Error: Cannot find module '../build/Release/canvas.node'
+# Require stack:
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/canvas.js
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/index.js
+# - /Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf.test.js
+#     at Module._resolveFilename (node:internal/modules/cjs/loader:1048:15)
+#     at Module._load (node:internal/modules/cjs/loader:901:27)
+#     at Module.require (node:internal/modules/cjs/loader:1115:19)
+#     at require (node:internal/modules/helpers:130:18)
+#     at Object.<anonymous> (/Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js:3:18)
+#     at Module._compile (node:internal/modules/cjs/loader:1241:14)
+#     at Module._extensions..js (node:internal/modules/cjs/loader:1295:10)
+#     at Module.load (node:internal/modules/cjs/loader:1091:32)
+#     at Module._load (node:internal/modules/cjs/loader:938:12)
+#     at Module.require (node:internal/modules/cjs/loader:1115:19) {
+#   code: 'MODULE_NOT_FOUND',
+#   requireStack: [
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js',
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/lib/canvas.js',
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/index.js',
+#     '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf.test.js'
+#   ]
+# }
+# Node.js v20.9.0
+# Subtest: /Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf.test.js
+not ok 69 - /Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf.test.js
+  ---
+  duration_ms: 145.025104
+  location: 'undefined:undefined:undefined'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: a submitted check gets through the real PDF step and lands on the Sheet
+not ok 458 - a submitted check gets through the real PDF step and lands on the Sheet
+  ---
+  duration_ms: 34.165801
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf_path.test.js:63:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Cannot find module '../build/Release/canvas.node'
+    Require stack:
+    - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js
+    - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/canvas.js
+    - /Users/johneccleston/integrity-backend/node_modules/canvas/index.js
+    - /Users/johneccleston/integrity-backend-stock-phase1/src/site_check_pdf.js
+    - /Users/johneccleston/integrity-backend-stock-phase1/src/services.js
+    - /Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf_path.test.js
+  code: 'MODULE_NOT_FOUND'
+  stack: |-
+    Module._resolveFilename (node:internal/modules/cjs/loader:1048:15)
+    Module._load (/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf_path.test.js:43:20)
+    Module.require (node:internal/modules/cjs/loader:1115:19)
+    require (node:internal/modules/helpers:130:18)
+    Object.<anonymous> (/Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js:3:18)
+    Module._compile (node:internal/modules/cjs/loader:1241:14)
+    Module._extensions..js (node:internal/modules/cjs/loader:1295:10)
+    Module.load (node:internal/modules/cjs/loader:1091:32)
+    Module._load (node:internal/modules/cjs/loader:938:12)
+    Module._load (/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_pdf_path.test.js:46:25)
+  ...
+# 🚨 TOKEN_SECRET is not set (or equals API_SECRET): user tokens are signed with the key shipped in the apps. Set a separate TOKEN_SECRET.
+# Subtest: Drive stops answering part way: the run gives up after 3 photos in a row instead of waiting out every photo, and keeps what it did
+ok 459 - Drive stops answering part way: the run gives up after 3 photos in a row instead of waiting out every photo, and keeps what it did
+  ---
+  duration_ms: 200.323345
+  ...
+# Subtest: an upload that reached Drive but whose answer was lost is NOT uploaded again on the retry
+ok 460 - an upload that reached Drive but whose answer was lost is NOT uploaded again on the retry
+  ---
+  duration_ms: 357.587819
+  ...
+# Subtest: photos an EARLIER check put in the same job folder are never mistaken for this check's
+ok 461 - photos an EARLIER check put in the same job folder are never mistaken for this check's
+  ---
+  duration_ms: 363.093486
+  ...
+# Subtest: a Sheet append that was written but never answered is not appended a second time
+ok 462 - a Sheet append that was written but never answered is not appended a second time
+  ---
+  duration_ms: 46.731225
+  ...
+# Subtest: ...and when the run could not confirm it, the retry looks before it appends
+ok 463 - ...and when the run could not confirm it, the retry looks before it appends
+  ---
+  duration_ms: 303.059684
+  ...
+# Subtest: a check whose Sheet row is genuinely missing still gets it (the look-up only ever skips a row that is there)
+ok 464 - a check whose Sheet row is genuinely missing still gets it (the look-up only ever skips a row that is there)
+  ---
+  duration_ms: 301.469707
+  ...
+# Subtest: the bucket not answering: the run stops after 3 in a row; Drive photos already uploaded are not sent again
+ok 465 - the bucket not answering: the run stops after 3 in a row; Drive photos already uploaded are not sent again
+  ---
+  duration_ms: 314.772691
+  ...
+# Subtest: a stop signal ends the run at once, even on the last attempt, with what was finished kept
+ok 466 - a stop signal ends the run at once, even on the last attempt, with what was finished kept
+  ---
+  duration_ms: 81.329788
+  ...
+# Subtest: QUEUE: a check stuck on a silent service is stopped at the run limit, retried later, and the checks behind it are processed
+not ok 467 - QUEUE: a check stuck on a silent service is stopped at the run limit, retried later, and the checks behind it are processed
+  ---
+  duration_ms: 4.977378
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_resilience.test.js:261:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:514:28)
+  ...
+# Subtest: QUEUE: before this, the same stuck check held the queue for ever (a processor that is never told to stop)
+not ok 468 - QUEUE: before this, the same stuck check held the queue for ever (a processor that is never told to stop)
+  ---
+  duration_ms: 0
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_resilience.test.js:281:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:514:28)
+  ...
+# Subtest: QUEUE: a failing check does not block or fail the ones after it
+not ok 469 - QUEUE: a failing check does not block or fail the ones after it
+  ---
+  duration_ms: 0
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_resilience.test.js:292:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:514:28)
+  ...
+# Subtest: QUEUE: a restart (SIGTERM) in the middle of a check puts it straight back in line, uncounted, and starts nothing new
+not ok 470 - QUEUE: a restart (SIGTERM) in the middle of a check puts it straight back in line, uncounted, and starts nothing new
+  ---
+  duration_ms: 0
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_resilience.test.js:300:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:514:28)
+  ...
+# Subtest: QUEUE: depth is reported, and a pile-up is told to the office once, not every time it is read
+not ok 471 - QUEUE: depth is reported, and a pile-up is told to the office once, not every time it is read
+  ---
+  duration_ms: 0
+  location: '/Users/johneccleston/integrity-backend-stock-phase1/test/site_check_resilience.test.js:324:1'
+  failureType: 'cancelledByParent'
+  error: 'Promise resolution is still pending but the event loop has already resolved'
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    process.emit (node:events:514:28)
+  ...
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ❌ Error uploading Door_1_secPhotos_1_Job_1100999009.jpg: upload failed Door_1_secPhotos_1_Job_1100999009.jpg
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s)) (again: only what is missing)
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s)) (again: only what is missing)
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ⚠️ Google Sheets append failed (1/3): sheets busy
+# Subtest: everything works the first time: one folder, every photo, one pdf, one sheet row per door
+ok 472 - everything works the first time: one folder, every photo, one pdf, one sheet row per door
+  ---
+  duration_ms: 25.830668
+  ...
+# Subtest: a photo that fails makes the attempt fail, and the retry uploads ONLY the missing one
+ok 473 - a photo that fails makes the attempt fail, and the retry uploads ONLY the missing one
+  ---
+  duration_ms: 5.001213
+  ...
+# Subtest: a retry after the sheet was written does not write a second row
+ok 474 - a retry after the sheet was written does not write a second row
+  ---
+  duration_ms: 2.233998
+  ...
+# Subtest: an existing folder for the job is reused instead of making another
+ok 475 - an existing folder for the job is reused instead of making another
+  ---
+  duration_ms: 1.235058
+  ...
+# ⚠️ Google Sheets append failed (2/3): sheets busy
+# ⚠️ Google Sheets append failed (3/3): sheets busy
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ⚠️ Google Sheets append failed (1/3): sheets busy
+# ⚠️ Google Sheets append failed (2/3): sheets busy
+# ✅ SITE CHECK DONE: Job 1100999009
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ⚠️ PDF generation failed: adobe down
+# 🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+# 📁 Created Folder for job 1100999009
+# ❌ Error uploading Door_1_doorPhotos_1_Job_1100999009.jpg: upload failed Door_1_doorPhotos_1_Job_1100999009.jpg
+# ❌ Error uploading Door_1_doorPhotos_2_Job_1100999009.jpg: upload failed Door_1_doorPhotos_2_Job_1100999009.jpg
+# ❌ Error uploading Door_1_secPhotos_1_Job_1100999009.jpg: upload failed Door_1_secPhotos_1_Job_1100999009.jpg
+# ❌ Error uploading Door_2_doorPhotos_1_Job_1100999009.jpg: upload failed Door_2_doorPhotos_1_Job_1100999009.jpg
+# ⚠️ PDF generation failed: adobe down
+# ✅ SITE CHECK DONE: Job 1100999009
+# Subtest: the sheet is retried briefly, then the attempt fails (and is retried by the queue)
+ok 476 - the sheet is retried briefly, then the attempt fails (and is retried by the queue)
+  ---
+  duration_ms: 14.882746
+  ...
+# Subtest: on the last attempt a dead PDF service does not lose the data: the sheet row is still written
+ok 477 - on the last attempt a dead PDF service does not lose the data: the sheet row is still written
+  ---
+  duration_ms: 2.969091
+  ...
+# 🚨 TOKEN_SECRET is not set (or equals API_SECRET): user tokens are signed with the key shipped in the apps. Set a separate TOKEN_SECRET.
+# node:internal/modules/cjs/loader:1051
+#   throw err;
+#   ^
+# Error: Cannot find module '../build/Release/canvas.node'
+# Require stack:
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/lib/canvas.js
+# - /Users/johneccleston/integrity-backend/node_modules/canvas/index.js
+# - /Users/johneccleston/integrity-backend-stock-phase1/src/site_check_pdf.js
+# - /Users/johneccleston/integrity-backend-stock-phase1/test/site_checks.test.js
+#     at Module._resolveFilename (node:internal/modules/cjs/loader:1048:15)
+#     at Module._load (node:internal/modules/cjs/loader:901:27)
+#     at Module.require (node:internal/modules/cjs/loader:1115:19)
+#     at require (node:internal/modules/helpers:130:18)
+#     at Object.<anonymous> (/Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js:3:18)
+#     at Module._compile (node:internal/modules/cjs/loader:1241:14)
+#     at Module._extensions..js (node:internal/modules/cjs/loader:1295:10)
+#     at Module.load (node:internal/modules/cjs/loader:1091:32)
+#     at Module._load (node:internal/modules/cjs/loader:938:12)
+#     at Module.require (node:internal/modules/cjs/loader:1115:19) {
+#   code: 'MODULE_NOT_FOUND',
+#   requireStack: [
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/lib/bindings.js',
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/lib/canvas.js',
+#     '/Users/johneccleston/integrity-backend/node_modules/canvas/index.js',
+#     '/Users/johneccleston/integrity-backend-stock-phase1/src/site_check_pdf.js',
+#     '/Users/johneccleston/integrity-backend-stock-phase1/test/site_checks.test.js'
+#   ]
+# }
+# Node.js v20.9.0
+# Subtest: /Users/johneccleston/integrity-backend-stock-phase1/test/site_checks.test.js
+not ok 73 - /Users/johneccleston/integrity-backend-stock-phase1/test/site_checks.test.js
+  ---
+  duration_ms: 269.199839
+  location: 'undefined:undefined:undefined'
+  failureType: 'testCodeFailure'
+  exitCode: 1
+  error: 'test failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: a check cut off 3 times is set aside; office Retry runs it once more, and a 4th cut-off sets it aside again
+ok 479 - a check cut off 3 times is set aside; office Retry runs it once more, and a 4th cut-off sets it aside again # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 1.552853
+  ...
+# Subtest: a check that never failed keeps no cut-off count when retried; one cut-off (a deploy) is simply run again
+ok 480 - a check that never failed keeps no cut-off count when retried; one cut-off (a deploy) is simply run again # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.118534
+  ...
+# Subtest: only a check that fits in the memory left is started; a bigger one waits, saved, and the smaller one behind it still goes
+ok 481 - only a check that fits in the memory left is started; a bigger one waits, saved, and the smaller one behind it still goes # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.080285
+  ...
+# Subtest: the upload is saved byte for byte; bytes that are not UTF-8 are saved cleaned up instead of failing for ever
+ok 482 - the upload is saved byte for byte; bytes that are not UTF-8 are saved cleaned up instead of failing for ever # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.167182
+  ...
+# Subtest: sheet numbers: thousands separators, blanks and junk
+ok 483 - sheet numbers: thousands separators, blanks and junk
+  ---
+  duration_ms: 1.311944
+  ...
+# Subtest: rows: header skipped, every column read from its own letter
+ok 484 - rows: header skipped, every column read from its own letter
+  ---
+  duration_ms: 0.855121
+  ...
+# Subtest: /get_full_inventory returns the parsed rows (no "Part Name" item) and keeps name/category/qty for older apps
+ok 485 - /get_full_inventory returns the parsed rows (no "Part Name" item) and keeps name/category/qty for older apps
+  ---
+  duration_ms: 0.540611
+  ...
+# Subtest: callback rate denominator: only the jobs a tech worked originally since go-live; strikes and job totals unchanged
+ok 486 - callback rate denominator: only the jobs a tech worked originally since go-live; strikes and job totals unchanged # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 77.639825
+  ...
+# Subtest: employee page: labor days by month and for the year, and a team table that matches each tech's own page
+ok 487 - employee page: labor days by month and for the year, and a team table that matches each tech's own page # SKIP set TEST_DATABASE_URL to run the SQL tests
+  ---
+  duration_ms: 0.222119
+  ...
+1..487
+# tests 487
+# suites 0
+# pass 385
+# fail 4
+# cancelled 5
+# skipped 93
+# todo 0
+# duration_ms 34092.813543

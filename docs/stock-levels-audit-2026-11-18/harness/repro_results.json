@@ -1,0 +1,86 @@
+[
+  {
+    "id": "C1a",
+    "title": "Checkout of 1 Back Hang Nut from \"1,250.00\"",
+    "reproduced": true,
+    "detail": "Sheet D after checkout: 0.00 (expected 1,249.00). Write sent: {\"range\":\"Inventory!D2\",\"value\":0,\"input\":\"USER_ENTERED\"}"
+  },
+  {
+    "id": "C1b",
+    "title": "Scan ADD of 5 to \"1,250.00\"",
+    "reproduced": true,
+    "detail": "Sheet D after scan add: 6.00 (expected 1,255.00)"
+  },
+  {
+    "id": "C1c",
+    "title": "Cycle count of a part showing \"1,250.00\" that really has 1,250",
+    "reproduced": true,
+    "detail": "Log \"Previous\" column = 1 (expected 1250); accuracy row sent to DB: [{\"name\":\"Back Hang Nut\",\"system_qty\":1,\"counted_qty\":1250}]  -> counted as a 1,249-unit miss"
+  },
+  {
+    "id": "C1d",
+    "title": "Total Warehouse Value (Inventory!I3) with a \"1,250.00\" row",
+    "reproduced": true,
+    "detail": "Computed $649.00; correct $200489.00"
+  },
+  {
+    "id": "C2",
+    "title": "Two checkouts of the same part at the same moment",
+    "reproduced": true,
+    "detail": "Log shows 5 taken; Sheet D = 160.00 (expected 158.00). One decrement was silently lost."
+  },
+  {
+    "id": "C3",
+    "title": "Someone inserts/sorts a row while a checkout is in flight",
+    "reproduced": true,
+    "detail": "Write went to row-number address Inventory!D3. Stop Mold now 60.00 (should be 59.00); Light Bulb now 59.00 (should be 163.00, was overwritten)."
+  },
+  {
+    "id": "C4",
+    "title": "Checkout of a Service Fusion name that differs from the Sheet name (\"Stop Mold | 7' White\")",
+    "reproduced": true,
+    "detail": "Response {\"status\":\"success\",\"itemsUpdated\":1}; PickedItems logged it; Sheet \"Weather Seal | Stop Mold | 7' White\" still 60.00."
+  },
+  {
+    "id": "H-clamp",
+    "title": "Taking 5 when the Sheet says 2, then deleting that log row (Apps Script undo)",
+    "reproduced": true,
+    "detail": "After checkout: 0.00 (the 3-unit shortfall is not recorded anywhere). After undo: 5 (2 were there before: +3 phantom units)."
+  },
+  {
+    "id": "H-cc-input",
+    "title": "Cycle count with countedQty \"=10*10\"",
+    "reproduced": true,
+    "detail": "Write sent: {\"range\":\"Inventory!D2\",\"value\":\"=10*10\",\"input\":\"USER_ENTERED\"} (a formula lands in the quantity cell; -4, 2.5 or \"abc\" are written the same way). HTTP 200."
+  },
+  {
+    "id": "H-auth",
+    "title": "POST /scan_checkout with only the shared app key (ships in the public web build), no user token",
+    "reproduced": true,
+    "detail": "HTTP 200 {\"status\":\"success\",\"partName\":\"Back Hang Nut\",\"remaining\":501}: stock changed with no signed-in person; \"techName\" in the log is whatever the caller typed."
+  },
+  {
+    "id": "H-auth-cc",
+    "title": "POST /cycle_count_update with only the shared key while ENFORCE_USER_AUTH is off",
+    "reproduced": true,
+    "detail": "HTTP 200; Back Hang Nut overwritten to 7.00."
+  },
+  {
+    "id": "M-staging",
+    "title": "Checkout with a client-sent \"x-user-role: warehouse\" header (any time before 08:31 Chicago)",
+    "reproduced": true,
+    "detail": "Response: {\"status\":\"success\",\"itemsUpdated\":1}. Not staged now because the harness clock is past 08:31 Chicago; the branch is header-controlled (inventory.js:305,321)."
+  },
+  {
+    "id": "M-dup-part",
+    "title": "Scanning 4128527 (on two rows of the live Sheet: 893LM row 211 and 893MAX row 219)",
+    "reproduced": true,
+    "detail": "893LM 3.00, 893MAX 9.00: an 893MAX scan always comes off the 893LM row."
+  },
+  {
+    "id": "M-fraction",
+    "title": "Checkout of 0.5 and 2.5 units",
+    "reproduced": true,
+    "detail": "Response {\"status\":\"success\",\"itemsUpdated\":1}; Sheet 58.00 (0.5 dropped entirely, 2.5 taken as 2)."
+  }
+]

@@ -1,0 +1,628 @@
+<title>Stock Levels Audit</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~980px) with a sticky section index on wide screens; severity is carried by a left stripe + chip. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --ink:#0f1b2d; --muted:#556275; --line:#dde2ea; --navy:#13233d; --navy-ink:#ffffff;
+  --accent:#2f5d9e; --crit:#b42318; --crit-bg:#fdecea; --high:#b54708; --high-bg:#fef3e6; --med:#2f5d9e; --med-bg:#eaf1fb;
+  --low:#5b6576; --low-bg:#eef0f3; --ok:#067647; --ok-bg:#e7f6ee; --code-bg:#f0f2f6;
+  --f-display:"Archivo","Segoe UI",system-ui,sans-serif; --f-body:"Inter","Segoe UI",system-ui,sans-serif; --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c121c; --surface:#131c2a; --ink:#e7ecf3; --muted:#9aa7b8; --line:#26324a; --navy:#0a1424; --navy-ink:#e7ecf3;
+  --accent:#8fb4ea; --crit:#ff8a7a; --crit-bg:#3a1714; --high:#f7b267; --high-bg:#36230f; --med:#8fb4ea; --med-bg:#16253c;
+  --low:#a7b1c0; --low-bg:#1c2636; --ok:#6fd3a0; --ok-bg:#10291d; --code-bg:#1a2433; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0c121c; --surface:#131c2a; --ink:#e7ecf3; --muted:#9aa7b8; --line:#26324a; --navy:#0a1424; --navy-ink:#e7ecf3;
+  --accent:#8fb4ea; --crit:#ff8a7a; --crit-bg:#3a1714; --high:#f7b267; --high-bg:#36230f; --med:#8fb4ea; --med-bg:#16253c;
+  --low:#a7b1c0; --low-bg:#1c2636; --ok:#6fd3a0; --ok-bg:#10291d; --code-bg:#1a2433; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-body);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)} a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px;overflow-wrap:anywhere}
+.band{background:var(--navy);color:var(--navy-ink)}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.band .wrap{padding-block:36px 30px}
+.eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.09em;text-transform:uppercase;opacity:.75}
+h1{font:800 clamp(30px,4.4vw,44px)/1.1 var(--f-display);margin:.35em 0 .3em;text-wrap:balance;letter-spacing:-.01em}
+.lede{max-width:72ch;opacity:.9;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;font-size:13px;opacity:.8}
+.layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;padding-block:32px 64px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:13px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 0 5px 10px;border-left:2px solid var(--line)}
+nav.toc a:hover{color:var(--ink);border-left-color:var(--accent)}
+main{min-width:0}
+section{margin-bottom:56px;scroll-margin-top:16px}
+h2{font:700 24px/1.25 var(--f-display);margin:0 0 6px;text-wrap:balance}
+h3{font:700 17px/1.35 var(--f-display);margin:26px 0 8px}
+.sub{color:var(--muted);margin:0 0 20px;max-width:75ch}
+p{max-width:78ch}
+.callout{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--crit);border-radius:8px;padding:16px 18px;margin:18px 0}
+.callout.info{border-left-color:var(--accent)}
+.callout p{margin:.35em 0}
+.grades{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:18px 0}
+.grade{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 14px 12px}
+.grade .k{font-size:12.5px;color:var(--muted);font-weight:600}
+.grade .v{font:800 30px/1.1 var(--f-display);margin-top:4px;font-variant-numeric:tabular-nums}
+.grade .v small{font-size:14px;color:var(--muted);font-weight:600}
+.grade .c{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.4}
+.grade.overall{background:var(--navy);color:var(--navy-ink);border-color:var(--navy)}
+.grade.overall .k,.grade.overall .c,.grade.overall .v small{color:inherit;opacity:.8}
+.bar{height:5px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.grade.overall .bar{background:rgba(255,255,255,.2)} .grade.overall .bar i{background:#fff}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11.5px/1.3 var(--f-body);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--surface)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip{display:inline-block;font:600 11px/1 var(--f-body);letter-spacing:.04em;text-transform:uppercase;padding:4px 7px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+.s-crit{color:var(--crit);background:var(--crit-bg)} .s-high{color:var(--high);background:var(--high-bg)}
+.s-med{color:var(--med);background:var(--med-bg)} .s-low{color:var(--low);background:var(--low-bg)}
+.st-conf{color:var(--ok);background:var(--ok-bg)} .st-susp{color:var(--high);background:transparent;border:1px dashed currentColor;padding:3px 6px}
+.st-rec{color:var(--muted);background:transparent;border:1px solid var(--line);padding:3px 6px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 16px}
+.filters button{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.issue{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--low);border-radius:8px;padding:14px 18px 6px;margin:12px 0}
+.issue.crit{border-left-color:var(--crit)} .issue.high{border-left-color:var(--high)} .issue.med{border-left-color:var(--med)}
+.issue h4{font:700 15.5px/1.4 var(--f-display);margin:0 0 6px;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:baseline}
+.issue h4 .id{font:500 12.5px var(--f-mono);color:var(--muted)}
+.issue p,.issue li{font-size:14px}
+.issue ul,.issue ol{padding-left:20px;margin:.3em 0 .8em;max-width:78ch}
+.issue .ev{font-size:13px;color:var(--muted)}
+details{margin:4px 0 10px} summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--accent)}
+pre{background:var(--code-bg);border-radius:6px;padding:10px 12px;overflow-x:auto;font:12.5px/1.5 var(--f-mono);margin:8px 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{font:600 13px var(--f-body);border:0;background:transparent;color:var(--muted);padding:7px 14px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,460px),1fr));gap:18px;margin-top:16px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+figure a{display:block;line-height:0;background:#fff}
+figure img{width:100%;height:auto;display:block}
+figcaption{padding:10px 12px;font-size:13px;color:var(--muted);border-top:1px solid var(--line)}
+figcaption b{color:var(--ink)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card h4{margin:0 0 6px;font:700 15px var(--f-display)}
+.card ul{margin:.2em 0;padding-left:18px;font-size:14px}
+ol.phases{list-style:none;padding:0;margin:0;counter-reset:ph}
+ol.phases>li{counter-increment:ph;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 18px 10px 58px;margin:12px 0;position:relative}
+ol.phases>li::before{content:counter(ph);position:absolute;left:16px;top:14px;width:28px;height:28px;border-radius:50%;background:var(--navy);color:var(--navy-ink);font:700 14px/28px var(--f-display);text-align:center}
+ol.phases h4{margin:0 0 4px;font:700 15.5px var(--f-display)}
+ol.phases ul{margin:.3em 0 .5em;padding-left:18px;font-size:14px}
+.legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:13px;color:var(--muted);align-items:center}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-block:20px 40px}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)} nav.toc{display:none}}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<header class="band">
+  <div class="wrap">
+    <div class="eyebrow">Integrity office app · Phase 0 audit · 18 Nov 2026</div>
+    <h1>Stock Levels Audit</h1>
+    <p class="lede">What the Stock Levels screen shows, where each number comes from, and where stock can be lost, duplicated or misreported. This is an audit only. Nothing was fixed, committed, deployed or written to the Sheet or the database.</p>
+    <div class="meta">
+      <span>Screen: <code style="background:transparent;color:inherit">lib/inventory_screen.dart</code></span>
+      <span>Backend: <code style="background:transparent;color:inherit">src/inventory.js</code>, <code style="background:transparent;color:inherit">src/stockLevels.js</code></span>
+      <span>Data: IOHD Inventory Google Sheet + Render Postgres</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap layout">
+<nav class="toc" aria-label="Sections">
+  <a href="#summary">Summary</a>
+  <a href="#grades">Grades</a>
+  <a href="#flow">Where the numbers come from</a>
+  <a href="#issues">Issue list</a>
+  <a href="#screens">Screenshots</a>
+  <a href="#sheet">Sheet and sync answers</a>
+  <a href="#backend">Endpoints and permissions</a>
+  <a href="#perf">Performance</a>
+  <a href="#tests">Test baseline</a>
+  <a href="#direction">Redesign direction</a>
+  <a href="#phases">Implementation phases</a>
+  <a href="#files">Files and systems</a>
+  <a href="#method">Method and limits</a>
+</nav>
+
+<main>
+<section id="summary">
+  <h2>Summary</h2>
+  <p class="sub">Stock Levels is a read-only view of the Google Sheet. The screen itself is simple. Most of the risk sits in the write paths that change the Sheet: phone checkouts, barcode scans, cycle counts and the 8:31 AM staging flush.</p>
+
+  <div class="callout">
+    <p><b>Production is running the previous Stock Levels screen.</b> The web build the backend serves was published on 16 Nov at 11:19. The rewrite of <code>lib/inventory_screen.dart</code> (sidebar filters, reorder-point statuses) landed in commit <code>4c646bf</code> on 18 Nov and hasn't been published. The live screen applies a fixed "5 or fewer is low" rule and ignores reorder points, so today it shows <b>251 parts as Out of stock</b>. 194 of those are parts the warehouse doesn't keep.</p>
+  </div>
+
+  <h3>The five things that matter most</h3>
+  <ol>
+    <li><b>About 30% of logged checkout lines never reduce stock.</b> 142 of 470 job checkouts in PickedItems name a part with no Inventory row. Most are doors or service lines. Some are stocked parts under a different Service Fusion name: <code>Stop Mold | 7' White</code> has no row, while <code>Weather Seal | Stop Mold | 7' White</code> does. That part was missed 9 times (18 units), most recently today. The phone is told "success" anyway.</li>
+    <li><b>Quantities of 1,000 or more get destroyed on the next checkout.</b> Every write path reads the formatted cell with <code>parseInt</code>, which turns <code>"1,250.00"</code> into 1. Checking out one unit then writes 0. No part is over 1,000 today, but three Hardware parts have a reorder point of 3,000.</li>
+    <li><b>Two requests at once lose a decrement, and a row edit mid-request overwrites the wrong part.</b> Writes go to row numbers read a moment earlier, with no lock. Both cases reproduced against the real router code.</li>
+    <li><b>Anyone holding the shared app key can add or remove stock.</b> That key ships in the public web build. Barcode scan and checkout accept it with no signed-in person, and the "who" written to the log is whatever the caller sends.</li>
+    <li><b>Different pages show different stock for the same part.</b> The Inventory dashboard, Warehouse KPI page and Product Catalog read a Postgres copy last refreshed on 16 Nov. Stock Levels reads the live Sheet. Today 20 parts differ by 235 units in total. Example: Light Bulb for Operators is 163 on the Sheet and 0 on the dashboard.</li>
+  </ol>
+  <p>Supporting signal: only <b>147 of 230</b> cycle-counted parts (64%) matched what the system expected, and the misses added up to <b>1,201 units</b>.</p>
+
+  <div class="legend" aria-label="Legend">
+    <span><span class="chip st-conf">Confirmed</span> reproduced or measured</span>
+    <span><span class="chip st-susp">Suspected</span> evidence points to it, not proven</span>
+    <span><span class="chip st-rec">Recommendation</span> design judgement</span>
+  </div>
+</section>
+
+<section id="grades">
+  <h2>Grades</h2>
+  <p class="sub">Out of 10. The overall grade covers the system as it runs in production today. Where the unreleased rewrite changes a grade, both numbers are shown.</p>
+  <div class="grades">
+    <div class="grade overall"><div class="k">Overall</div><div class="v">3<small> /10</small></div><div class="bar"><i style="width:30%"></i></div><div class="c">Dragged down by data integrity. Shipping the rewrite alone moves this to about 4.</div></div>
+    <div class="grade"><div class="k">Visual design</div><div class="v">4<small> live</small> · 6.5<small> source</small></div><div class="bar"><i style="width:40%"></i></div><div class="c">Rewrite is clean and on-system; still heavier than Product Catalog.</div></div>
+    <div class="grade"><div class="k">Usability</div><div class="v">3<small> live</small> · 6<small> source</small></div><div class="bar"><i style="width:30%"></i></div><div class="c">Live statuses are wrong and multi-word search fails. Neither version shows how fresh the data is.</div></div>
+    <div class="grade"><div class="k">Inventory logic</div><div class="v">3</div><div class="bar"><i style="width:30%"></i></div><div class="c">Rewrite's status rule is right; write paths misread, clamp and truncate.</div></div>
+    <div class="grade"><div class="k">Data integrity</div><div class="v">2</div><div class="bar"><i style="width:20%"></i></div><div class="c">Silent misses, lost updates, wrong-row writes, two stores that disagree.</div></div>
+    <div class="grade"><div class="k">Backend</div><div class="v">3</div><div class="bar"><i style="width:30%"></i></div><div class="c">Shared-key writes, no validation, no locking, nothing tests the writes.</div></div>
+    <div class="grade"><div class="k">Performance</div><div class="v">6</div><div class="bar"><i style="width:60%"></i></div><div class="c">One small request; typing in search stutters on slower PCs.</div></div>
+  </div>
+</section>
+
+<section id="flow">
+  <h2>Where the numbers come from</h2>
+  <p class="sub">On-hand quantity lives in one cell per part: <code>Inventory!D</code> on the IOHD Inventory Sheet. No committed or reserved quantity exists anywhere, so "available" is the same number as "on hand".</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Number on screen</th><th>Source</th><th>Calculated where</th></tr></thead>
+    <tbody>
+      <tr><td>On hand</td><td>Sheet column D (formatted, e.g. <code>"65.00"</code>)</td><td><code>stockLevels.js sheetNumber</code> strips commas and truncates to a whole number</td></tr>
+      <tr><td>Reorder at</td><td>Sheet column E; blank is treated as 0</td><td>Same parser; 0 means the part isn't kept in stock</td></tr>
+      <tr><td>Status</td><td>Derived</td><td>Rewrite: out = reorder point set and none on hand; low = at or below the reorder point; no reorder point and none on hand = Not kept in stock. Live build: a fixed threshold of 5.</td></tr>
+      <tr><td>Units on hand</td><td>Derived</td><td>Sum of positive quantities in the app (4,366 today)</td></tr>
+      <tr><td>Part #, Location, Category</td><td>Sheet columns A, C, G</td><td>"N/A" part numbers are blanked; a blank category becomes "Uncategorized"</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>Who changes the quantity cell</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Writer</th><th>How</th><th>Logged?</th></tr></thead>
+    <tbody>
+      <tr><td>Phone checkout <code>POST /checkout_inventory</code></td><td>Appends to PickedItems, re-reads <code>Inventory!A:F</code>, writes <code>D{row}</code> = parseInt(cell) − qty, never below 0</td><td>Yes, before the stock write</td></tr>
+      <tr><td>Barcode scan <code>POST /scan_checkout</code></td><td>Finds the row by part number in column A, adds or deducts</td><td>Yes</td></tr>
+      <tr><td>Cycle count <code>POST /cycle_count_update</code></td><td>Overwrites D with the counted value, unvalidated, as USER_ENTERED</td><td>Yes, with the previous value in column F</td></tr>
+      <tr><td>8:31 AM staging flush (cron)</td><td>Same as checkout, for warehouse picks held in process memory since before 8:31</td><td>Yes</td></tr>
+      <tr><td>Apps Script <code>onPickedChange</code></td><td>When a PickedItems row is deleted, reverses its effect on D</td><td>No</td></tr>
+      <tr><td>People editing the Sheet</td><td>Any cell, any time; no protected ranges</td><td>Only in Google's version history</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>The second copy</h3>
+  <p>Postgres table <code>inventory_items</code> holds its own <code>qty</code> and <code>reorder_point</code>. The Inventory dashboard, Warehouse KPI page and Product Catalog read it. Only the manual catalog import writes it; the old Sheet-to-Postgres migration (<code>migrate_invnetory.js</code>) is never called. It was last refreshed on 16 Nov at 15:52 UTC, and 30 rows haven't changed since 29 Sep.</p>
+</section>
+
+<section id="issues">
+  <h2>Issue list</h2>
+  <p class="sub">Ranked by severity. Each confirmed bug has evidence and a way to reproduce it. Reproductions marked "harness" ran the real backend router against an in-memory fake Sheet (<code>repro_writes.js</code>), with nothing sent to Google or Postgres.</p>
+  <div class="filters" role="group" aria-label="Filter issues">
+    <button type="button" data-f="all" aria-pressed="true">All</button>
+    <button type="button" data-f="crit" aria-pressed="false">Critical</button>
+    <button type="button" data-f="high" aria-pressed="false">High</button>
+    <button type="button" data-f="med" aria-pressed="false">Medium</button>
+    <button type="button" data-f="low" aria-pressed="false">Low</button>
+  </div>
+
+  <div id="issue-list">
+  <!-- CRITICAL -->
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C1</span> Checkouts under a different name never reduce stock <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>Checkout matches the Service Fusion line name to Sheet column B exactly (lower-cased and trimmed). With no match, the PickedItems row is still written and the phone gets <code>{"status":"success","itemsUpdated":1}</code>, but no quantity changes.</p>
+    <ul>
+      <li>142 of 470 job checkout rows (30%) name a part with no Inventory row: 364 units across 67 names. Most are doors and service lines, which is expected.</li>
+      <li>Stocked parts missed under a short name. The matching Sheet row is my reading of the names: <code>Stop Mold | 7' White</code> (9 rows, 18 units, latest 18 Nov), <code>Stop Mold | 16' White</code> (10, 10), <code>Punched Angle | 1-1/4" x 1-1/4" | 8'</code> (11, 16), <code>Punched Angle | 2" x 2" | 10' | Taxable</code> (2, 6), <code>Operator Parts | PUSHER SPRING KIT QUIET…</code> (3, 7), <code>Keypads | 877LM | LiftMaster</code> (2, 3), <code>Stop Mold | 7' Black</code> (2, 4).</li>
+      <li>On the phone these show as "Not a stocked part", so nobody is prompted to fix the mapping.</li>
+    </ul>
+    <p class="ev">Evidence: read-only snapshot of Inventory and PickedItems; <code>inventory.js:343</code>; harness case C4. Repro: check out <code>Stop Mold | 7' White</code> qty 2. The response is success and the Weather Seal row stays at 60.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C2</span> Quantities of 1,000+ are misread as 1 on every write path <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed (latent)</span></h4>
+    <p>The Sheets API returns formatted values. <code>stockLevels.js</code> was fixed to handle <code>"3,000.00"</code>, but the write paths still use <code>parseInt</code>, which stops at the comma.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Path</th><th>Line</th><th>Cell <code>"1,250.00"</code> becomes</th></tr></thead>
+      <tbody>
+        <tr><td>Checkout of 1</td><td><code>inventory.js:345</code></td><td>0 (should be 1,249)</td></tr>
+        <tr><td>Scan add 5</td><td><code>inventory.js:382</code></td><td>6 (should be 1,255)</td></tr>
+        <tr><td>Staging flush</td><td><code>inventory.js:483</code></td><td>Same as checkout</td></tr>
+        <tr><td>Cycle count "previous"</td><td><code>inventory.js:238</code></td><td>1, so the accuracy KPI logs a 1,249-unit miss</td></tr>
+        <tr><td>Total Warehouse Value (I3)</td><td><code>services.js:1864</code></td><td>Counts the part as 1 unit ($649.00 vs $200,489.00 in the harness)</td></tr>
+        <tr><td>Apps Script undo</td><td><code>picked_items_undo.gs:70-71</code></td><td>Same misread</td></tr>
+      </tbody>
+    </table></div>
+    <p class="ev">Today the highest quantity is 206, so nothing has crossed 1,000. Back Hang Nut, Back Hang Bolt and Small Driller have reorder points of 3,000, and the backend's own test fixture recorded Back Hang Nut at 1,250 on 16 Nov. Repro: harness cases C1a to C1d.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C3</span> Simultaneous writes to the same part lose one <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>Each write reads the whole tab, computes a new value and writes it back, with no lock or version check. Two checkouts of the same part a few hundred milliseconds apart both start from the same number. The Apps Script undo also writes column D without coordinating with the backend.</p>
+    <p class="ev">Harness C2: Light Bulb at 163, checkouts of 2 and 3 at once. The log shows 5 taken; the Sheet ends at 160, not 158.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C4</span> A row inserted, deleted or sorted mid-request overwrites another part <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>The write address is <code>Inventory!D{index+1}</code>, taken from a read made earlier in the same request. If anyone changes row order on the Sheet in between, the new quantity lands on a different part. Nothing on the Sheet is protected.</p>
+    <p class="ev">Harness C3: a row was inserted above while a Stop Mold checkout was in flight. Light Bulb was overwritten from 163 to 59, and Stop Mold stayed at 60.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C5</span> The shared app key alone can change stock <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <p><code>requireAuth</code> lets a request through with only the shared Bearer key, which ships in every app build and in the public web build. <code>/scan_checkout</code> (add or deduct any quantity) and <code>/checkout_inventory</code> do no further check. <code>/cycle_count_update</code> also accepts it while <code>ENFORCE_USER_AUTH</code> is off. The person recorded in the log is the caller-supplied <code>techName</code>.</p>
+    <p class="ev">Harness H-auth using the real <code>auth.js</code>: scan add of 500 with no user token returned HTTP 200. I didn't read production environment variables, so whether <code>ENFORCE_USER_AUTH</code> is on is unverified. The checkout and scan routes don't depend on it.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C6</span> The live screen misreports status for 247 parts <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>The deployed build uses <code>_kLowStockThreshold = 5</code> for every part. Rendered against today's Sheet it shows 251 Out and 64 Low.</p>
+    <ul>
+      <li>194 of the 251 "Out of stock" have no reorder point (not kept in stock).</li>
+      <li>30 of the 64 "Low" aren't at or below their reorder point.</li>
+      <li>23 parts that are at or below their reorder point show "In stock".</li>
+    </ul>
+    <p>That's 247 parts in all. The Inventory dashboard uses reorder points, so the two pages disagree. The unreleased rewrite fixes this and shows 57 out, 57 low, 138 in stock and 194 not kept.</p>
+    <p class="ev">Evidence: the deployed <code>main.dart.js</code> rendered with the Sheet snapshot (screenshots below); code at <code>git show 4c646bf^:lib/inventory_screen.dart</code>, line 22.</p>
+  </article>
+
+  <article class="issue crit" data-s="crit">
+    <h4><span class="id">C7</span> Dashboard, KPI and Catalog stock disagree with Stock Levels <span class="chip s-crit">Critical</span><span class="chip st-conf">Confirmed</span></h4>
+    <ul>
+      <li>20 parts differ in quantity (235 units in total) and 7 in status. Light Bulb for Operators is 163 on the Sheet and 0 in the database, so the dashboard counts it as low stock and the Warehouse KPI page as empty. Weather Seal Stop Mold 18' Dark Finish is 3 on the Sheet and 15 in the database.</li>
+      <li>The database has 857 active rows to the Sheet's 446, so the dashboard's "items" and valuation cover a different set of parts.</li>
+      <li>12 Sheet parts have no database row by name, for example <code>Shaft |  Solid…</code> with a double space, so the Catalog shows no stock for them.</li>
+      <li>No job keeps the two in step; refreshing depends on someone running the catalog import.</li>
+    </ul>
+    <p class="ev">Evidence: read-only queries on <code>inventory_items</code> compared with the Sheet snapshot. Files: <code>inventory_dashboard.js:43-60</code>, <code>employee_kpis.js</code> (warehouse), <code>catalog.js:342,522,667</code>.</p>
+  </article>
+
+  <!-- HIGH -->
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H1</span> Over-checkouts erase the shortfall, and undo then creates phantom stock <span class="chip s-high">High</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>Taking 5 when the Sheet says 2 writes 0 and records the 3-unit gap nowhere. Deleting that log row runs the Apps Script undo, which adds all 5 back, leaving 3 more than before.</p>
+    <p class="ev">Harness H-clamp; <code>inventory.js:345</code>; <code>picked_items_undo.gs</code> <code>reverse_</code>.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H2</span> Cycle count values go into the quantity cell unchecked <span class="chip s-high">High</span><span class="chip st-conf">Confirmed</span></h4>
+    <p><code>countedQty</code> is written as sent with <code>USER_ENTERED</code>. Negative numbers, decimals, text and formulas all land in column D, and a formula such as <code>=10*10</code> is evaluated by Sheets. A non-string <code>name</code> or a null quantity crashes the request part-way through.</p>
+    <p class="ev">Harness H-cc-input; <code>inventory.js:233-247</code>.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H3</span> Cycle counts and their undo overwrite anything that happened since <span class="chip s-high">High</span><span class="chip st-conf">Confirmed (by code)</span></h4>
+    <p>A count sets an absolute value, so checkouts between the shelf count and the submit are wiped. Deleting a CYCLE COUNT log row restores the "previous" value and wipes everything since. I didn't measure how often either happens.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H4</span> Warehouse staging is lost on any restart before 8:31 AM <span class="chip s-high">High</span><span class="chip st-conf">Confirmed mechanism</span><span class="chip st-susp">Occurrence suspected</span></h4>
+    <ul>
+      <li>Early warehouse picks sit in a JavaScript <code>Map</code> until the 8:31 cron. A deploy or crash before then drops them: stock is never deducted, and the 8:30 audit can strike the warehouse.</li>
+      <li>Staging the same part for the same job twice replaces the first quantity instead of adding to it.</li>
+      <li>Whether a pick is staged depends on the client-sent <code>x-user-role</code> header or the typed <code>techName</code>.</li>
+      <li>91 of 667 backend commits since 15 Sep landed on weekdays before 8:31 Chicago time, and each push auto-deploys.</li>
+    </ul>
+    <p class="ev"><code>inventory.js:15, 305, 321-328, 464-501</code>.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H5</span> Retries can apply the same checkout or scan twice <span class="chip s-high">High</span><span class="chip st-susp">Suspected</span></h4>
+    <p>Neither route accepts a request id. The phone's scan "Retry" resends after a failure, and a checkout that times out after 30 s may already have been applied. PickedItems has 18 exact duplicate pairs (same date, job, part, quantity and person). Some may be genuine second picks.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H6</span> A failure mid-checkout leaves a pick logged but not deducted <span class="chip s-high">High</span><span class="chip st-conf">Confirmed (by code)</span></h4>
+    <p>The log append runs before the quantity read and write. If either fails, the log, the pick list and the 4 PM audit all treat the part as checked out while the Sheet still shows it on the shelf.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H7</span> Nobody can tell how fresh the numbers are <span class="chip s-high">High</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>The backend caches the Sheet for 60 s, and the screen stays alive in its tab and never refreshes itself. The live build shows "Updated 1:37 PM", which is when the app fetched, not when the Sheet was read. The rewrite removed even that. After a failed refresh, the rewrite says the list "may be out of date" but not from when.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H8</span> No way to correct stock from the office <span class="chip s-high">High</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>The screen is read-only: no part detail, no movement history, no adjust or receive action. Corrections mean editing the Google Sheet directly, which writes no PickedItems row and bypasses every check above.</p>
+  </article>
+  <article class="issue high" data-s="high">
+    <h4><span class="id">H9</span> Duplicate part numbers send scans to the wrong part <span class="chip s-high">High</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>Six part numbers appear on two rows each, for example <code>4128527</code> on both the 893LM (row 211) and 893MAX (row 219) remotes. Scanning always takes the first row, so an 893MAX scan comes off the 893LM count.</p>
+    <p class="ev">Sheet snapshot; harness M-dup-part; <code>inventory.js:377</code>.</p>
+  </article>
+
+  <!-- MEDIUM -->
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M1</span> Live search fails on multi-word queries <span class="chip s-med">Medium</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>"stop mold 7' white" finds nothing because the live build matches the query as one unbroken substring, and the name has a " | " in the middle. The rewrite matches word by word and finds it.</p>
+  </article>
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M2</span> Typing in search stutters <span class="chip s-med">Medium</span><span class="chip st-conf">Measured</span></h4>
+    <p>Typing 18 characters in the rewrite's search box produced 11 long tasks totalling 1.2 s, the worst 200 ms, with 446 parts (2.2 s and 256 ms with 5,000). The live build is similar, with a worst case of 308 ms. Every keystroke calls <code>setState</code> for the clear button (<code>inventory_screen.dart:664</code>), which re-filters, re-sorts and recounts the full list (<code>_shown</code>, <code>_statusCount</code>). Measured in headless Chrome on a 2017 Core i5; faster PCs will feel less.</p>
+  </article>
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M3</span> The rewrite is heavier than Product Catalog <span class="chip s-med">Medium</span><span class="chip st-rec">Recommendation</span></h4>
+    <ul>
+      <li>Rows are about 50 px against the Catalog's 42 px. The grey header band plus grey striping adds weight; the Catalog uses a white header with small uppercase labels.</li>
+      <li>All 43 categories are always expanded, and the status caption permanently takes about 70 px of the sidebar.</li>
+      <li>Location is blank for 284 of 446 parts (64%), so most of that column shows "—".</li>
+      <li>Out-of-stock rows are red twice, in the quantity and the status. Long names wrap to two lines and make rows uneven.</li>
+    </ul>
+  </article>
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M4</span> The live screen looks dated and wastes space <span class="chip s-med">Medium</span><span class="chip st-rec">Recommendation</span></h4>
+    <p>Four stat cards repeat the chip counts. The stock bar is quantity ÷ 20, which means nothing (anything at 20 or more is full). At 1280×600 only four rows fit above the fold. Loading is a lone brand-red spinner with no message during a Render cold start, which can take close to a minute.</p>
+  </article>
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M5</span> Fractional quantities are dropped or truncated <span class="chip s-med">Medium</span><span class="chip st-conf">Confirmed</span></h4>
+    <p><code>posInt</code> turns 0.5 into 0, so the line is dropped entirely, and 2.5 into 2. The display parser truncates too. Low impact today because every Sheet quantity is a whole number, but job lines can carry fractional multipliers.</p>
+  </article>
+  <article class="issue med" data-s="med">
+    <h4><span class="id">M6</span> Sheet data quality <span class="chip s-med">Medium</span><span class="chip st-susp">Partly suspected</span></h4>
+    <ul>
+      <li>58 names have leading or trailing spaces, and internal double spaces break name matching against the database.</li>
+      <li>34 reorder points are blank; 9 costs are blank.</li>
+      <li>Back Hang Nut, Back Hang Bolt and Small Driller have reorder points of 3,000 but costs of $120 to $175. That looks like a reorder point in pieces against a cost per box, which would also skew valuation.</li>
+    </ul>
+  </article>
+
+  <!-- LOW -->
+  <article class="issue low" data-s="low">
+    <h4><span class="id">L1</span> Stock endpoint has no page permission check and leaks error text <span class="chip s-low">Low</span><span class="chip st-conf">Confirmed</span></h4>
+    <p><code>GET /get_full_inventory</code> doesn't check <code>stock.view</code>, so anyone signed in, or holding the shared key, can read it. Cost isn't included. A 500 returns the raw Google error message.</p>
+  </article>
+  <article class="issue low" data-s="low">
+    <h4><span class="id">L2</span> Stock goldens are stale and the golden test only runs on Windows <span class="chip s-low">Low</span><span class="chip st-conf">Confirmed</span></h4>
+    <p><code>inventory_render_test.dart</code> reads <code>C:/Windows/Fonts</code> with no existence check, so it errors elsewhere. Its <code>inv_stock_*</code> images show the pre-18 Nov design, so on Windows those cases would fail against today's source.</p>
+  </article>
+  <article class="issue low" data-s="low">
+    <h4><span class="id">L3</span> Live build ignores 401 and reads a field the API never sends <span class="chip s-low">Low</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>An expired session shows "Couldn't load inventory (status 401)" instead of signing out. It also reads <code>sku</code>, which the backend doesn't send, so part numbers never appear. Both are fixed in the rewrite.</p>
+  </article>
+  <article class="issue low" data-s="low">
+    <h4><span class="id">L4</span> Error state repeats itself; mixed date formats in the log <span class="chip s-low">Low</span><span class="chip st-conf">Confirmed</span></h4>
+    <p>The rewrite's error state reads "Could not load stock levels" followed by "Could not load stock levels (server error 500)". PickedItems mixes <code>11/18/2026</code> and <code>11/18/26</code> (80 rows) because the date comes from the client.</p>
+  </article>
+  </div>
+</section>
+
+<section id="screens">
+  <h2>Screenshots</h2>
+  <p class="sub">Rendered in headless Chrome from the real web builds, at exact viewport sizes, with every API call answered locally from a read-only snapshot of today's Sheet passed through the backend's own <code>stockLevels.js</code>. "Live" is the build production serves (16 Nov). "Source" is today's <code>main</code> built with Flutter 3.47.4, the same engine as production. Web builds render in Roboto; the Windows desktop app uses Segoe UI. Select an image to open it full size.</p>
+  <div class="seg" role="group" aria-label="Build">
+    <button type="button" data-b="live" aria-pressed="true">Live build</button>
+    <button type="button" data-b="source" aria-pressed="false">Source (unreleased)</button>
+  </div>
+  <h3>Target desktop sizes</h3>
+  <div class="gallery" data-group="sizes"></div>
+  <h3>Narrow windows</h3>
+  <div class="gallery" data-group="narrow"></div>
+  <h3>States</h3>
+  <div class="gallery" data-group="states"></div>
+  <h3>Visual reference</h3>
+  <div class="gallery">
+    <figure><a href="shots/reference_product_catalog_1366.png" target="_blank" rel="noopener"><img src="shots/reference_product_catalog_1366.png" alt="Product Catalog at 1366 wide" loading="lazy"></a>
+      <figcaption><b>Product Catalog, 1366</b>: the repo's 18 Nov Windows render. 42 px rows, white uppercase header, collapsible filter groups, count aligned right.</figcaption></figure>
+  </div>
+</section>
+
+<section id="sheet">
+  <h2>Sheet and sync answers</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+    <tbody>
+      <tr><td>Fields from the Sheet</td><td>Part number, name, location, quantity, reorder point, cost, category, taxed (A to H). Stock Levels and the phone read only the Sheet.</td></tr>
+      <tr><td>Fields kept in the database</td><td><code>inventory_items</code> copies of the same fields; <code>cycle_count_zones</code>, <code>cycle_count_results</code> and <code>cycle_count_non_inventory</code>; catalog links (<code>catalog_products.inventory_item_id</code>).</td></tr>
+      <tr><td>Which wins when they disagree</td><td>Nobody decides. Each page shows its own source; the database only catches up when the catalog import runs.</td></tr>
+      <tr><td>Can imports overwrite manual changes?</td><td>The catalog import overwrites database quantities with its export's Sheet values. On the Sheet, a cycle count overwrites checkouts made since the shelf count, and deleting a count's log row overwrites everything since.</td></tr>
+      <tr><td>Duplicate rows possible?</td><td>Yes. Nothing enforces unique names or part numbers. No duplicate names today; six duplicate part numbers.</td></tr>
+      <tr><td>Partial updates after a failure?</td><td>Yes. Checkout logs first and writes stock second (H6). Cycle count writes the Sheet and then the database; if the database step fails, the phone sees an error though the Sheet changed.</td></tr>
+      <tr><td>Are repeated syncs safe?</td><td>Checkout and scan aren't idempotent (H5). Re-sending a cycle count mostly converges but appends duplicate log rows.</td></tr>
+      <tr><td>Can syncs run at once?</td><td>Yes. Requests, the 8:31 cron and the Apps Script trigger all write column D with no shared lock (C3).</td></tr>
+      <tr><td>Can users tell current data from stale?</td><td>No (H7).</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="backend">
+  <h2>Endpoints and permissions</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Route</th><th>Who can call</th><th>Validation</th><th>Atomic / locked</th><th>Idempotent</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /get_full_inventory</code></td><td>Shared key; no page check</td><td>n/a</td><td>n/a</td><td>Yes</td></tr>
+      <tr><td><code>POST /checkout_inventory</code></td><td>Shared key; identity from the body</td><td>Positive whole numbers only; names unchecked</td><td>No</td><td>No</td></tr>
+      <tr><td><code>POST /scan_checkout</code></td><td>Shared key; identity from the body</td><td>Quantity whole; any action other than "add" deducts</td><td>No</td><td>No</td></tr>
+      <tr><td><code>POST /cycle_count_update</code></td><td>Admin or warehouse1; shared key while enforcement is off</td><td>None on quantity</td><td>No</td><td>Partly</td></tr>
+      <tr><td>8:31 flush (cron)</td><td>Server</td><td>From staging</td><td>No</td><td>No</td></tr>
+    </tbody>
+  </table></div>
+  <p>Logging and audit: PickedItems is the only movement log. It's an editable Sheet tab, it isn't tied to a signed-in person, and deleting a row silently changes stock through the Apps Script. Errors go to the console and return <code>err.message</code> to the caller. Outside Stock Levels, but worth knowing: the Postgres instance's IP allow-list is open to <code>0.0.0.0/0</code>.</p>
+</section>
+
+<section id="perf">
+  <h2>Performance</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Measure</th><th class="num">Result</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>API calls made by the screen</td><td class="num">1</td><td><code>/get_full_inventory</code>; the shell adds <code>/health</code> and <code>/users</code> at app start</td></tr>
+      <tr><td>Payload, 446 parts</td><td class="num">65.6 KB</td><td>About 7 KB gzipped; compression is on</td></tr>
+      <tr><td>Backend parse time</td><td class="num">0.5 ms</td><td><code>stockRowsFromSheet</code> on the real 1,447-row read</td></tr>
+      <tr><td>Sheet reads per cache miss</td><td class="num">2</td><td>Also fetches PickedItems A:Z (718 rows, growing), which Stock Levels doesn't use; 1,000 of the 1,447 Inventory rows are blank</td></tr>
+      <tr><td>Backend cache</td><td class="num">60 s</td><td>In-process, cleared by every write</td></tr>
+      <tr><td>Open to first rows, local</td><td class="num">7–12 s</td><td>Includes downloading and starting CanvasKit in cold headless Chrome; this is app start-up, not the screen</td></tr>
+      <tr><td>Search typing, 446 parts</td><td class="num">200 ms</td><td>Worst long task; 1.2 s in total over 18 keystrokes (M2)</td></tr>
+      <tr><td>Status filter / sort, 5,000 parts</td><td class="num">≤107 ms</td><td>Paging at 50 rows keeps rendering flat</td></tr>
+      <tr><td>Production endpoint latency</td><td class="num">not measured</td><td>Render log search returned 503 and its latency metric is empty for this service</td></tr>
+    </tbody>
+  </table></div>
+  <p>Genuine bottleneck: the full-page rebuild on every keystroke. Harmless details: payload size, parse cost and the list of 446 parts; paging makes 5,000 parts render fine. The extra PickedItems fetch is waste but costs one parallel API call.</p>
+</section>
+
+<section id="tests">
+  <h2>Test baseline</h2>
+  <p class="sub">No golden images were regenerated. Flutter can't run on this Mac (Flutter 3.47 needs macOS 14 and this machine runs 13.7.8), so the Flutter checks ran in an Ubuntu VM on a copy of the repo.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Suite</th><th>Result</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>Backend, all (<code>node --test</code>)</td><td>385 pass · 4 fail · 5 cancelled · 93 skipped of 487</td><td>Failures are site-check PDF (native <code>canvas</code> not built) and ops-monitor timers (local Node 20). Skipped tests need a throwaway database. None are stock-related.</td></tr>
+      <tr><td>Backend, stock-related</td><td>All pass</td><td>stock_levels 3/3, phone_route_access 10/10, pick_list 8/8, inventory_strikes 5/5, catalog_inventory_link 12/12, dashboard_access 19/19</td></tr>
+      <tr><td><code>flutter analyze</code></td><td>22 issues (2 warnings)</td><td>None in Stock Levels files; the project rule wants it clean before committing</td></tr>
+      <tr><td><code>test/stock_levels_test.dart</code></td><td>13 / 13 pass</td><td>Includes real-data runs at 1920, 1366, 1280, 1000 and 420 with no overflow</td></tr>
+      <tr><td><code>test/inventory_render_test.dart</code></td><td>Errors in setUpAll</td><td>Windows-only font path; stock goldens stale (L2)</td></tr>
+      <tr><td>Flutter, full suite</td><td>946 pass · 375 fail · 12 skipped (127 files, Linux)</td><td>Not a usable baseline off Windows. 56 files stop in setUpAll on <code>C:/Windows/Fonts</code>, and most other failures are text-fit, overflow and golden checks tuned to Segoe UI. The Inventory dashboard's 6 failures are "no text cut short" checks of that kind. A true baseline needs a Windows run.</td></tr>
+    </tbody>
+  </table></div>
+  <h3>Missing coverage</h3>
+  <ul>
+    <li>No test exercises <code>/checkout_inventory</code>, <code>/scan_checkout</code>, cycle-count values, staging or warehouse value. The 14 harness cases are a ready-made starting point.</li>
+    <li>No test covers the Apps Script undo, or checks that the dashboard and Stock Levels agree.</li>
+    <li>No permission test for stock writes with only the shared key.</li>
+    <li>Responsive coverage stops at no-overflow checks; nothing checks the 1500×800 target or rows visible per size.</li>
+  </ul>
+</section>
+
+<section id="direction">
+  <h2>Redesign direction</h2>
+  <p class="sub">Start from the rewrite, which already has the right structure, and bring it to Product Catalog density without copying the Catalog's editing tools.</p>
+  <div class="two">
+    <div class="card"><h4>Header and toolbar</h4><ul>
+      <li>Ribbon shows when the Sheet was read ("Sheet read 1:37 PM") and warns past a few minutes</li>
+      <li>One toolbar line: search (with <code>/</code> to focus), Needs attention, count on the right</li>
+      <li>No stat cards; status counts live in the filter list</li></ul></div>
+    <div class="card"><h4>Table</h4><ul>
+      <li>42 px rows, white, hairline dividers; uppercase header like the Catalog</li>
+      <li>Part name with part number beneath in muted mono; Location shown only when set</li>
+      <li>One status signal per row: a pill; quantity bold only when it needs action</li>
+      <li>Tabular figures; "Reorder at" muted when 0</li></ul></div>
+    <div class="card"><h4>Filters</h4><ul>
+      <li>Collapsible groups and a collapsible sidebar, matching the Catalog</li>
+      <li>Status caption moves to a tooltip on the group title</li>
+      <li>Categories collapsed past the top 8, with a filter box</li></ul></div>
+    <div class="card"><h4>New, and where the value is</h4><ul>
+      <li>Part drawer: movement history, last count, linked catalog product, Sheet vs database mismatch</li>
+      <li>"Unmatched checkouts" view listing names that reduced nothing (C1)</li>
+      <li>Adjust, receive and count actions with reason codes, behind a <code>stock.adjust</code> permission</li></ul></div>
+  </div>
+</section>
+
+<section id="phases">
+  <h2>Implementation phases</h2>
+  <ol class="phases">
+    <li><h4>Stop silent stock loss (backend only)</h4><ul>
+      <li>Use one quantity parser everywhere: write paths, warehouse value and the Apps Script</li>
+      <li>Validate cycle-count input and write values as RAW numbers</li>
+      <li>Require a signed-in person for every stock write, and take identity from the token</li>
+      <li>Add request ids for checkout and scan; log only after the quantity write succeeds</li>
+      <li>Serialize writes per part (one instance makes an in-process lock enough for now), re-read the row by part key just before writing, and refuse when it moved</li>
+      <li>Persist staging in Postgres; add the write-path tests</li></ul></li>
+    <li><h4>One source of truth and real part links</h4><ul>
+      <li>Decide the system of record. Recommended: Postgres with an append-only stock movement ledger, the Sheet becoming a published view</li>
+      <li>Short of that, a scheduled Sheet-to-database mirror</li>
+      <li>Match checkouts by catalog product id (<code>inventory_item_id</code> exists) instead of name; report unmatched lines</li>
+      <li>Clean up duplicate part numbers, spacing and units</li></ul></li>
+    <li><h4>Ship and refine the Stock Levels screen</h4><ul>
+      <li>Freshness stamp, Catalog-density table, collapsible filters, the search rebuild fix</li>
+      <li>Part drawer and unmatched-checkouts view</li>
+      <li>Fit tests at all four sizes; golden refresh only with your OK</li></ul></li>
+    <li><h4>Office adjustments</h4><ul>
+      <li>Adjust, receive and count dialogs with confirmation, reason, permission and ledger entry, replacing direct Sheet edits</li></ul></li>
+    <li><h4>Release</h4><ul>
+      <li>Publish the web build and push the backend, each with your OK, then verify on production reads</li></ul></li>
+  </ol>
+</section>
+
+<section id="files">
+  <h2>Files and systems likely to change</h2>
+  <div class="two">
+    <div class="card"><h4>Office app</h4><ul>
+      <li><code>lib/inventory_screen.dart</code></li>
+      <li><code>lib/widgets/flat_page.dart</code> (row height, header style, if shared)</li>
+      <li><code>lib/config/access.dart</code> (<code>stock.adjust</code>)</li>
+      <li><code>test/stock_levels_test.dart</code>, <code>test/inventory_render_test.dart</code>, <code>test/dashboard_fit.dart</code>, <code>test/shots/inv_stock_*</code> (with OK)</li></ul></div>
+    <div class="card"><h4>Backend</h4><ul>
+      <li><code>src/inventory.js</code>, <code>src/stockLevels.js</code></li>
+      <li><code>src/services.js</code> (<code>getInventorySheets</code>, <code>updateWarehouseValue</code>, <code>posInt</code>)</li>
+      <li><code>src/auth.js</code> (stock-write guard)</li>
+      <li><code>src/inventory_dashboard.js</code>, <code>src/employee_kpis.js</code>, <code>src/catalog.js</code>, <code>src/catalogImport.js</code>, <code>src/pickRules.js</code></li>
+      <li>New: stock ledger and staging tables; <code>test/stock_writes.test.js</code></li></ul></div>
+    <div class="card"><h4>Other systems</h4><ul>
+      <li>IOHD Inventory Sheet: protect column D, unique part numbers</li>
+      <li><code>apps_script/picked_items_undo.gs</code></li>
+      <li>Android app: <code>PickList.kt</code>, <code>ScannerFragment.kt</code> (request ids, part ids)</li>
+      <li>Postgres: <code>inventory_items</code> and a new ledger</li></ul></div>
+  </div>
+</section>
+
+<section id="method">
+  <h2>Method and limits</h2>
+  <h3>Read-only production access</h3>
+  <ul>
+    <li>Google Sheets: spreadsheet metadata; <code>Inventory!A1:L1447</code>; <code>PickedItems!A1:H747</code>.</li>
+    <li>Render Postgres, in a read-only transaction: <code>inventory_items</code> summary and rows; <code>cycle_count_results</code>, <code>cycle_count_zones</code> and <code>cycle_count_non_inventory</code> counts.</li>
+    <li>Render API: service and database configuration, a latency metric (empty) and a log search (503).</li>
+  </ul>
+  <h3>Not verified</h3>
+  <ul>
+    <li>Production environment variables (<code>ENFORCE_USER_AUTH</code>, <code>TOKEN_SECRET</code>)</li>
+    <li>Production endpoint latency</li>
+    <li>Which build the Windows desktop installs run</li>
+    <li>Real phones</li>
+  </ul>
+  <h3>Left on this machine</h3>
+  <ul>
+    <li>Backend <code>node_modules</code>, installed with <code>npm ci</code> and gitignored. npm also touched <code>yarn.lock</code>; I restored it.</li>
+    <li>A Lima VM named <code>flutteraudit</code> holding Ubuntu and Flutter 3.47.4.</li>
+    <li>Harness scripts and screenshots in this report's folder.</li>
+  </ul>
+  <p>No tracked file in either repo was changed.</p>
+</section>
+</main>
+</div>
+<footer><div class="wrap">Stock Levels Phase 0 audit · 18 Nov 2026 · Waiting for approval before any implementation.</div></footer>
+
+<script>
+(function(){
+  var SHOTS = {
+    sizes: [["1280x600","1280 × 600"],["1366x768","1366 × 768"],["1500x800","1500 × 800"],["1920x940","1920 × 940"]],
+    narrow: [["1000x760","1000 × 760"],["420x800","420 × 800"],["narrow_filters_1000","1000 wide, filters open"]],
+    states: [["state_loading_slow_1366","Loading, slow server"],["state_error_1366","Error, nothing loaded"],["state_empty_1366","Empty Sheet"],["state_refresh_failed_1366","Refresh failed after a good load"],["filter_low_1366","Low stock filter"],["search_stopmold_1366","Search: stop mold 7' white"]]
+  };
+  var NOTES = {
+    live: {"1280x600":"Four rows above the fold. Out of stock 251 includes 194 parts not kept in stock.","1366x768":"Stat cards repeat the chip counts. The stock bar is quantity ÷ 20.","1500x800":"","1920x940":"Eleven rows. A wall of red for parts the warehouse doesn't stock.","state_loading_slow_1366":"A lone red spinner with no slow-server message.","search_stopmold_1366":"No match: the query has to be one unbroken substring.","filter_low_1366":"Low means 5 or fewer, whatever the reorder point."},
+    source: {"1280x600":"Seven rows above the fold; reorder points drive status.","1366x768":"Grey header band and striping; Location mostly blank.","1920x940":"Long names wrap; the category list runs past the fold.","state_loading_slow_1366":"Skeleton plus 'Waking up the server' after 8 s.","state_refresh_failed_1366":"Keeps the list and says it may be out of date, but not from when.","search_stopmold_1366":"Word-by-word search finds it."}
+  };
+  var build = "live";
+  try { var saved = localStorage.getItem("sl-audit-build"); if (saved === "source" || saved === "live") build = saved; } catch (e) {}
+  function fig(name, label){
+    var file = "shots/" + build + "_" + name + ".png";
+    if (build === "source" && name === "state_loading_slow_1366") file = "shots/source_state_loading_slow_1366.png";
+    var note = (NOTES[build] || {})[name] || "";
+    var f = document.createElement("figure");
+    var a = document.createElement("a"); a.href = file; a.target = "_blank"; a.rel = "noopener";
+    var img = document.createElement("img"); img.src = file; img.alt = (build === "live" ? "Live build, " : "Source build, ") + label; img.loading = "lazy";
+    a.appendChild(img); f.appendChild(a);
+    var c = document.createElement("figcaption"); var b = document.createElement("b"); b.textContent = label;
+    c.appendChild(b); if (note) c.appendChild(document.createTextNode(": " + note)); f.appendChild(c);
+    return f;
+  }
+  function render(){
+    document.querySelectorAll(".gallery[data-group]").forEach(function(g){
+      g.textContent = "";
+      SHOTS[g.getAttribute("data-group")].forEach(function(s){ g.appendChild(fig(s[0], s[1])); });
+    });
+    document.querySelectorAll(".seg button").forEach(function(btn){ btn.setAttribute("aria-pressed", String(btn.getAttribute("data-b") === build)); });
+  }
+  document.querySelectorAll(".seg button").forEach(function(btn){
+    btn.addEventListener("click", function(){ build = btn.getAttribute("data-b"); try { localStorage.setItem("sl-audit-build", build); } catch (e) {} render(); });
+  });
+  render();
+  var fbtns = document.querySelectorAll(".filters button");
+  fbtns.forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var f = btn.getAttribute("data-f");
+      fbtns.forEach(function(b){ b.setAttribute("aria-pressed", String(b === btn)); });
+      document.querySelectorAll("#issue-list .issue").forEach(function(el){ el.hidden = !(f === "all" || el.getAttribute("data-s") === f); });
+    });
+  });
+})();
+</script>

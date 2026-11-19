@@ -1,0 +1,103 @@
+{
+  "prefix": "source",
+  "sizes": {
+    "1280x600": {
+      "openMs": 12956,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    },
+    "1366x768": {
+      "openMs": 10824,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    },
+    "1500x800": {
+      "openMs": 11949,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    },
+    "1920x940": {
+      "openMs": 11796,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    },
+    "1000x760": {
+      "openMs": 11056,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    },
+    "420x800": {
+      "openMs": 11965,
+      "apiCalls": [
+        "/health",
+        "/get_full_inventory",
+        "/users"
+      ],
+      "inventoryCalls": 1
+    }
+  },
+  "states": {},
+  "perf": {
+    "real": {
+      "openMs": 8243,
+      "typeMsWall": 2924,
+      "typeLongTasks": [
+        72,
+        154,
+        54
+      ],
+      "filterLongTasks": [
+        65,
+        69
+      ],
+      "sortLongTasks": [
+        57
+      ],
+      "jsHeapMB": 50
+    },
+    "big": {
+      "openMs": 8504,
+      "typeMsWall": 3007,
+      "typeLongTasks": [
+        136,
+        53,
+        82
+      ],
+      "filterLongTasks": [
+        107,
+        69
+      ],
+      "sortLongTasks": [
+        67,
+        58
+      ],
+      "jsHeapMB": 52
+    }
+  },
+  "blocked": [],
+  "external": [
+    "https://www.gstatic.com/flutter-canvaskit/06a2e2a110089dff50fe635cffd2a61e1b24fbcd/chromium/canvaskit.wasm",
+    "https://www.gstatic.com/flutter-canvaskit/06a2e2a110089dff50fe635cffd2a61e1b24fbcd/chromium/canvaskit.js",
+    "https://fonts.gstatic.com/s/roboto/v32/KFOmCnqEu92Fr1Me4GZLCzYlKw.woff2"
+  ]
+}
