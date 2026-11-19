@@ -69,6 +69,54 @@ void main() {
     }
   });
 
+  testWidgets('a superseded service is kept with its history, after the offered ones, marked and not counted as offered', (t) async {
+    const replacement = CatalogEntry(
+      key: 'sfr:10792835~commercial-service-dispatch-evaluation',
+      name: 'Commercial Service Dispatch & Evaluation',
+      kind: 'service',
+      category: 'Commercial Service',
+      rate: 109,
+      rateMin: 109,
+      rateMax: 394,
+      uses: 22,
+      lastUsed: '2026-11-13',
+      replaces: [(key: 'sfr:10792835', name: 'Scope of Work | Commercial Service Call')],
+    );
+    const superseded = CatalogEntry(
+      key: 'sfr:10792835',
+      name: 'Scope of Work | Commercial Service Call',
+      kind: 'service',
+      category: 'Commercial Service',
+      rate: 199,
+      rateMin: 39.8,
+      rateMax: 14000,
+      uses: 159,
+      lastUsed: '2026-11-12',
+      active: false,
+      supersededBy: (key: 'sfr:10792835~commercial-service-dispatch-evaluation', name: 'Commercial Service Dispatch & Evaluation'),
+    );
+    // The server sends the most billed first: the superseded one (159 lines) ahead of the rest.
+    final entries = [superseded, ..._services, replacement];
+    for (final size in const [Size(1366, 768), Size(420, 800)]) {
+      await _pump(t, () async => _ok(entries: entries), size: size);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull, reason: '$size');
+      expect(find.text('Superseded by Commercial Service Dispatch & Evaluation'), findsOneWidget);
+      expect(find.text('Not offered'), findsOneWidget, reason: 'no usual price offered for it');
+      expect(find.text(r'$39.80 – $14,000.00'), findsOneWidget, reason: 'its billed history stays');
+      expect(find.text('159'), findsOneWidget);
+      expect(find.text('Replaces Scope of Work | Commercial Service Call'), findsOneWidget);
+      // Listed after every service still offered.
+      final old = t.getTopLeft(find.text('Scope of Work | Commercial Service Call')).dy;
+      for (final e in [..._services, replacement]) {
+        expect(t.getTopLeft(find.text(e.name)).dy, lessThan(old), reason: e.name);
+      }
+      // "Services" counts the ones offered (5, not 6); "With a Usual Price" leaves the superseded one out too.
+      expect(find.text('5'), findsWidgets);
+      await _shot(t, 'superseded_${size.width.toInt()}');
+    }
+  });
+
   testWidgets('hides the cost column without Line Items & Costs > View', (t) async {
     await _pump(t, () async => _ok(cost: false));
     await t.pumpAndSettle();

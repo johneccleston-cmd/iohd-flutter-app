@@ -274,6 +274,13 @@ class CatalogEntry {
   /// On an item: its priced variants.
   final List<({String key, String name})> variants;
 
+  /// A service a renamed line of the same Service Fusion item has taken over from (2026-11-19): the entry that replaced
+  /// it. Such a service is inactive, so the picker never offers it; the Services Catalog page keeps it, with its history.
+  final ({String key, String name})? supersededBy;
+
+  /// The services this one has taken over from (they are no longer offered; their names still find this one).
+  final List<({String key, String name})> replaces;
+
   /// Kept in inventory: the price list says so, or (without the flag) it has an inventory row.
   bool get inInventory => inventoryItem ?? (inventoryItemId != null);
 
@@ -318,6 +325,8 @@ class CatalogEntry {
     this.rateId,
     this.variantOf,
     this.variants = const [],
+    this.supersededBy,
+    this.replaces = const [],
   });
 
   bool get isService => kind == 'service';
@@ -367,6 +376,8 @@ class CatalogEntry {
     rateId: rateId,
     variantOf: variantOf,
     variants: variants,
+    supersededBy: supersededBy,
+    replaces: replaces,
   );
 
   /// The price a service's new line starts at: the catalog's, only once it is settled (a server older than Phase 2 sends
@@ -473,6 +484,10 @@ class CatalogEntry {
     variantOf: _ref(j['variantOf']),
     variants: [
       for (final v in (j['variants'] as List? ?? const [])) ?_ref(v),
+    ],
+    supersededBy: _ref(j['supersededBy']),
+    replaces: [
+      for (final v in (j['replaces'] as List? ?? const [])) ?_ref(v),
     ],
   );
 }

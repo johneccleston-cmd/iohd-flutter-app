@@ -65,6 +65,18 @@ final _entries = [
   _service('Spring Replacement - Commercial', 'settled', rate: 340, extra: {
     'variantOf': {'key': 'sfr:1', 'name': 'Spring Replacement'},
   }),
+  // A renamed line that has taken over (2026-11-19): the server no longer sends the entry it replaced to the picker.
+  _service('Commercial Service Dispatch & Evaluation', 'settled', rate: 109, extra: {
+    'key': 'sfr:10792835~commercial-service-dispatch-evaluation',
+    'group': 'Commercial Service',
+    'category': 'Commercial Service',
+    'uses': 22,
+    'rateUses': 22,
+    'variantOf': {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+    'replaces': [
+      {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+    ],
+  }),
   const CatalogEntry(key: 'inv:7', name: 'Torsion Spring | 0.250 x 2" x 32"', sku: 'TS-25032', category: 'Springs', inventoryItemId: 7, stock: 14, rate: 89, uses: 40, taxable: true),
 ];
 
@@ -131,6 +143,19 @@ void main() {
     await _type(t, 'torsion');
     expect(find.text('SKU TS-25032  ·  Springs  ·  14 in stock  ·  on 40 Service Fusion lines'), findsOneWidget);
     expect(find.text(r'$89.00'), findsOneWidget);
+  });
+
+  testWidgets('a replacement says what it replaces and is added at its own price', (t) async {
+    await _pump(t);
+    await _type(t, 'dispatch');
+    expect(t.takeException(), isNull);
+    expect(find.text('Replaces Scope of Work | Commercial Service Call'), findsOneWidget);
+    expect(find.textContaining('Renamed line of Scope of Work'), findsNothing, reason: 'it says what it replaced instead');
+    expect(find.text('Commercial Service · billed 22×'), findsOneWidget);
+    await t.tap(find.text('Commercial Service Dispatch & Evaluation').last);
+    await t.pumpAndSettle();
+    expect(find.text('Not priced'), findsNothing);
+    expect(find.text(r'$109.00'), findsWidgets, reason: 'its own settled price, filled in');
   });
 
   testWidgets('a recent price change: nothing filled in, the median and the newest prices shown apart, no one-tap price', (t) async {

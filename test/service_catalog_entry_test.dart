@@ -228,6 +228,51 @@ void main() {
     });
   });
 
+  group('a renamed line that has taken over (2026-11-19)', () {
+    test('the superseded entry is inactive and names its replacement; the replacement lists what it replaces', () {
+      final old = CatalogEntry.fromJson(_service(extra: {
+        'key': 'sfr:10792835',
+        'name': 'Scope of Work | Commercial Service Call',
+        'active': false,
+        'rateId': '10792835',
+        'variants': [
+          {'key': 'sfr:10792835~commercial-service-dispatch-evaluation', 'name': 'Commercial Service Dispatch & Evaluation'},
+        ],
+        'supersededBy': {'key': 'sfr:10792835~commercial-service-dispatch-evaluation', 'name': 'Commercial Service Dispatch & Evaluation'},
+        'replaces': <Object>[],
+      }));
+      expect(old.active, isFalse);
+      expect(old.supersededBy, (key: 'sfr:10792835~commercial-service-dispatch-evaluation', name: 'Commercial Service Dispatch & Evaluation'));
+      expect(old.replaces, isEmpty);
+      expect(old.rateId, '10792835', reason: 'its Service Fusion id is kept');
+      expect(old.variants.single.key, 'sfr:10792835~commercial-service-dispatch-evaluation', reason: 'and its variant link');
+      final replacement = CatalogEntry.fromJson(_service(rate: 109, extra: {
+        'key': 'sfr:10792835~commercial-service-dispatch-evaluation',
+        'name': 'Commercial Service Dispatch & Evaluation',
+        'active': true,
+        'variantOf': {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+        'replaces': [
+          {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+        ],
+        'supersededBy': null,
+      }));
+      expect(replacement.active, isTrue);
+      expect(replacement.supersededBy, isNull);
+      expect(replacement.replaces, [(key: 'sfr:10792835', name: 'Scope of Work | Commercial Service Call')]);
+      // Selectable: it becomes a line at its own price, keyed to itself.
+      final line = replacement.toLine();
+      expect(line.rate, 109);
+      expect(line.catalogKey, 'sfr:10792835~commercial-service-dispatch-evaluation');
+    });
+
+    test('a server without the fields: nothing superseded, nothing replaced', () {
+      final e = CatalogEntry.fromJson(_service());
+      expect(e.supersededBy, isNull);
+      expect(e.replaces, isEmpty);
+      expect(e.active, isTrue);
+    });
+  });
+
   test('a product becomes the same line it always did', () {
     const p = CatalogEntry(
       key: 'cat:812',

@@ -297,13 +297,19 @@ class _ChoiceRow extends StatelessWidget {
   static const _figures = [FontFeature.tabularFigures()];
 
   /// A service's row: its name; its group and how often it was billed (and a tax hint when its billed lines differ);
-  /// a renamed line with its own price says what it was split from; at the right, how sure its price is: the price
-  /// once settled, else why there is none (a recent change shows the 18-month median and the newest prices apart).
+  /// a renamed line says what it replaced (once it has taken over: the old entry is no longer offered) or what it was
+  /// split from; at the right, how sure its price is: the price once settled, else why there is none (a recent change
+  /// shows the 18-month median and the newest prices apart).
   Widget _serviceRow(CatalogEntry e) {
     final group = e.group.isNotEmpty ? e.group : e.category;
     final billed = e.uses > 0 ? e.uses : e.rateUses;
     final meta = [if (group.isNotEmpty) group, billed > 0 ? 'billed $billed×' : 'never billed'].join(' · ');
     final variantOf = e.variantOf;
+    final lineage = e.replaces.isNotEmpty
+        ? 'Replaces ${e.replaces.map((r) => r.name).join(', ')}'
+        : variantOf != null
+        ? 'Renamed line of ${variantOf.name}, with its own price'
+        : null;
     // A recent price change: the 18-month median and the newest billed prices, apart (neither is filled in).
     final change = e.recentChange;
     final median = change?.median ?? e.medianPrice;
@@ -361,13 +367,7 @@ class _ChoiceRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: _metaText,
                 ),
-                if (variantOf != null)
-                  Text(
-                    'Renamed line of ${variantOf.name}, with its own price',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: _metaText,
-                  ),
+                if (lineage != null) Text(lineage, maxLines: 1, overflow: TextOverflow.ellipsis, style: _metaText),
                 if (changeLine.isNotEmpty)
                   Text(
                     changeLine,

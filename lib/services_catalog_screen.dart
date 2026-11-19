@@ -67,10 +67,12 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
     });
     _activity.setRefreshing(true);
     try {
-      final r = await (widget.load ?? () => LineItemsApi.listCatalog(kind: 'service'))();
+      // Inactive too: a service a renamed line has taken over is kept here, with its history, though no longer offered.
+      final r = await (widget.load ?? () => LineItemsApi.listCatalog(kind: 'service', includeInactive: true))();
       if (!mounted || id != _request) return;
       setState(() {
-        _all = r.entries;
+        // The services offered first, in the server's order (most billed first); the superseded ones after them.
+        _all = [...r.entries.where((e) => e.supersededBy == null), ...r.entries.where((e) => e.supersededBy != null)];
         _canSeeCost = r.canSeeCost;
         _historyDays = r.historyDays;
         _loaded = true;
@@ -140,7 +142,28 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(e.name, style: flatCellBold),
+                Text(e.name, style: e.supersededBy == null ? flatCellBold : flatCellBold.copyWith(color: DashUi.subtle)),
+                // Superseded: kept with its history, no longer offered on new lines; say what replaced it.
+                if (e.supersededBy case final by?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Superseded by ${by.name}', // "Not offered" stands in its Usual Price column
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: flatCellMuted.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else if (e.replaces.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Replaces ${e.replaces.map((r) => r.name).join(', ')}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: flatCellMuted.copyWith(fontSize: 13),
+                    ),
+                  ),
                 if (e.description.trim().isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -148,7 +171,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
                   ),
               ],
             ),
-            _figure(_money(e.rate)),
+            if (e.supersededBy != null) Text('Not offered', style: flatCellMuted) else _figure(_money(e.rate)),
             _figure(_range(e)),
             if (_canSeeCost) _figure(_money(e.cost)),
             _figure('${e.uses}'),
@@ -214,7 +237,9 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
   @override
   Widget build(BuildContext context) {
     final shown = _shown;
-    final priced = _all.where((e) => e.rate != null).length;
+    // Counted among the services offered; a superseded one only adds its lines (its history) to the total.
+    final offered = _all.where((e) => e.supersededBy == null).toList();
+    final priced = offered.where((e) => e.rate != null).length;
     final months = (_historyDays / 30).round();
     return Scaffold(
       backgroundColor: Colors.white,
@@ -237,7 +262,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
                       if (_loaded)
                         FlatStats(
                           stats: [
-                            FlatStat('Services', '${_all.length}'),
+                            FlatStat('Services', '${offered.length}'),
                             FlatStat('With a Usual Price', '$priced'),
                             FlatStat('Lines in $months Months', '${_all.fold<int>(0, (s, e) => s + e.uses)}'),
                           ],

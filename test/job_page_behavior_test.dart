@@ -189,17 +189,21 @@ void main() {
   });
 
   group('job line items (preview)', () {
-    testWidgets('Service Fusion\'s figures: each line shows the record\'s own tax, and its discount comes off the profit', (t) async {
+    testWidgets('Service Fusion\'s figures: each line shows the record\'s own tax; no profit while a line has no cost', (t) async {
       final s = FakeJobServer();
       final errors = await pumpJobPage(t, s, body: () async {
         // Its lines say just "Sales Tax"; the record's one tax line is Prairie Grove's.
         expect(find.text('Prairie Grove 10.5%'), findsNWidgets(2));
         expect(find.text('Sales tax 10.5%'), findsOneWidget);
         expect(find.text(r'$1,735.97'), findsOneWidget);
-        // Items 1,673.28 less the $50 builder discount = 1,623.28; cost 1,032.16; profit 591.12 (36.4%).
+        // The known costs still add up (1,014.32 + 17.84 = 1,032.16), but the installation line's Service Fusion cost is 0,
+        // which means "not entered" (Services Catalog Phase 2): no profit or margin is worked out as if it cost $0. Before
+        // Phase 2 this showed $591.12 (36.4%).
         expect(find.text(r'$1,032.16'), findsOneWidget);
-        expect(find.text(r'$591.12'), findsOneWidget, reason: 'the discount Service Fusion keeps as a charge comes off the profit');
-        expect(find.text('36.4%'), findsOneWidget);
+        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+        expect(find.text('1 line has no cost'), findsOneWidget);
+        expect(find.text(r'$591.12'), findsNothing);
+        expect(find.text('36.4%'), findsNothing);
       });
       expect(errors.messages, isEmpty);
     });
