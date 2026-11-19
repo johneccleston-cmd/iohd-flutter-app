@@ -7,14 +7,15 @@ Job/Estimate line editing stays a preview (never saved). Merging and deploying e
 
 Approved on 2026-11-19: Decision A (the 5-newest-billed-lines / 30-day supersession rule, with the safeguards in
 section 2), Decision C (the five-tier ranking, as documented and tested in section 2), regenerating the two Team
-permissions goldens (help text only, section 10), and pushing both feature branches. One point in Decision C needs
-your decision before merge: see **"One safeguard needs a decision"** in section 2.
+permissions goldens (help text only, section 10), and pushing both feature branches. Approved after the push: the
+**final ranking rule**, under which a billed service always ranks above a never-billed one (section 2). It is built and
+tested, then committed and pushed to the feature branches after your review (backend `d311619e`).
 
 ## 1. What is being released
 
 | Repo | Branch (local = remote feature branch) | Head | Base it was cut from |
 |---|---|---|---|
-| integrity-backend | `services-catalog-phase1` → `origin/services-catalog-phase1` | `29b2d14d` | `030f3b90` (= `origin/main` on 2026-11-19) |
+| integrity-backend | `services-catalog-phase1` → `origin/services-catalog-phase1` | `d311619e` | `030f3b90` (= `origin/main` on 2026-11-19) |
 | iohd_desktop (app) | `services-catalog-phase1` → `origin/services-catalog-phase1` | `cba712a` (code and tests), plus the commit that adds this revision (docs only) | `26b798e5` (`origin/main` is `7a2d7f0`) |
 
 Backend commits on the branch, oldest first:
@@ -24,6 +25,7 @@ Backend commits on the branch, oldest first:
 | `9539f17e` | Services Catalog Phases 1-2 (2026-11-18) | yes (the remote branch's head this morning) |
 | `0e641757` | Decisions A and C (2026-11-19) | no |
 | `29b2d14d` | Decision C: the ranking comment states tier 5's floor (0) and the tie-breaks; three tests pin them. No behaviour change | no |
+| `d311619e` | The final ranking rule: `billedServicesFirst` in `src/catalog.js`; four tests updated and five added in `test/service_catalog_takeover_ranking.test.js` | no (pushed with this revision) |
 
 App commits on the branch, oldest first:
 
@@ -140,13 +142,20 @@ rename never outranks a match on an item's own name.
 catalog's build order (the sort is stable): most billed lines (not capped), then most quotes, then group A-Z
 (`serviceCatalog.js` `buildItems`).
 
-**Never-billed services.** Always found when every word matches, never hidden. A never-billed service never outranks a
-billed service that matches exactly or strongly (tiers 1-3). Searched on its own, it is the first result.
+**The final rule: billed services first** (approved 2026-11-19, after the push; `billedServicesFirst`). After the
+tier sort, every never-billed per-item service that sits above a billed per-item service moves down to just below the
+lowest-ranked billed one, keeping its order among the never-billed. Nothing else moves. In effect the service order is:
+tiers 1, 2, 3, the billed part of tier 5, then tier 4, then the never-billed part of tier 5. Scores, tiers, matching
+criteria and tie rules are unchanged, and the picker's limit (25, at most 40) is applied after the rule.
+
+**Never-billed services.** Always found when every word matches, never hidden, and always after **every** billed
+service in the results, whatever the match. When no billed service is in the results, they keep their old places
+(searched on its own, a never-billed service is the first result).
 
 **Exact-name collisions** (several services with the name = the search, e.g. the same name under two Service Fusion
 types): settled billed first (tier 1), then billed with a warning (tier 2), then billed strong matches (tier 3), then
-the never-billed exact names (tier 4). Inside a tier, more use first, then the tie rules. Case, extra spaces and
-leading symbols don't change the order.
+billed weak matches, then the never-billed exact names (tier 4), then never-billed strong and weak matches. Inside a
+tier, more use first, then the tie rules. Case, extra spaces and leading symbols don't change the order.
 
 **Recent price change.** Ranks in tier 2: below a settled exact match whatever its use, above every non-exact billed
 match. No price is filled in (`usualPrice`/`rate` null); the picker row says "Recent price change", and the line editor
@@ -159,40 +168,53 @@ Price varies, billed once and tax varies rank in tier 2 the same way and show th
 +1000, SKU starts with +600, name = search +500, name starts with +300, a word starts with the first search word +100,
 plus the same use bonus. The "Product Catalog boundary" test (`test/service_catalog_access.test.js`) compares 14
 queries against a copy of the pre-Phase-2 function and gets the same order. The service tiers sit on the products'
-scale, so a product named exactly as the search (500+) and a tier-1 service interleave by use.
+scale, so a product named exactly as the search (500+) and a tier-1 service interleave by use. The final rule never
+moves a product or a billed service: products keep their order among themselves and against every billed service, and
+the old per-type service rows (V2 off) are not touched by it.
 
-#### One safeguard needs a decision before merge
+#### Ranking before and after the final rule
 
-The safeguards say never-billed services "cannot outrank billed services". The approved five-tier model, as built,
-keeps that for every exact or strong billed match (tiers 1-3), but **not for billed weak matches in tier 5**:
+| Case | Before (`29b2d14d`) | After (`d311619e`) |
+|---|---|---|
+| Billed exact (tiers 1, 2) and billed strong (tier 3) | above every never-billed service | unchanged |
+| Billed weak (tier 5, 0-110) vs never-billed exact (tier 4, 150) | never-billed exact first | **billed weak first** |
+| Billed weak vs never-billed strong (tier 5, 80) | by score: never-billed first unless the billed one had more than 80 lines ("word starts") or 160 ("alias starts"); a group-only match never | **billed weak first, always** |
+| Billed weak vs never-billed weak (60 / 40 / 0) | by score: either could be first | **billed weak first, always** |
+| Never-billed among themselves | exact 150 > strong 80 > word 60 > alias 40 > 0, then A-Z | unchanged |
+| A never-billed service vs a product | by score | unchanged unless a billed service ranks below that product; then the never-billed service moves below the billed one (so below that product too) |
+| Products among themselves, and vs billed services | by score | unchanged |
+| Ties, recent price change, warnings | as above | unchanged |
+| V2 off (old per-type rows) | as before Phase 2 | unchanged |
 
-- a never-billed **exact** name (tier 4, 150) ranks above every billed tier-5 match (at most 110). Example pinned by
-  "C exact-name collisions": a never-billed "Service Call | Dispatch & Evaluation" above the billed
-  "Evaluation & Dispatch | Service Call" (every word, not the name);
-- inside tier 5, a never-billed **strong** match (80) ranks above a billed weak match with less use: a "word starts"
-  match with 80 billed lines or fewer (exactly 80 ties, then A-Z), an "alias starts" match with 160 or fewer, and any
-  match found only through the group or scattered words. Pinned by "C tier 5 floor".
+Examples: "service call \| dispatch & evaluation" used to list a never-billed exact name above the billed
+"Evaluation & Dispatch \| Service Call" (every word, not the name); it now lists the billed one first. For
+"commercial tune", a never-billed "Commercial Tune-Up Visit" (80) used to sit above the billed "Tune-Up \| Commercial"
+(60 + use) and the billed "Tune-Up" in group "Commercial Service" (0 + use); both billed ones now come first.
 
-Following the safeguard literally would mean moving tier 4 and the never-billed strong matches below every billed
-match, which changes the approved tier order. Under "do not change the approved behaviour" and "do not invent new
-ranking behaviour", that is **not** done here. If billed services must always come first, the change is small
-(`exactNeverBilled` and `strongNeverBilled` below 0 + use), but it needs your approval and a re-run of this review's
-tests.
+Why it isn't done by lowering the never-billed scores: billed weak matches start at 0.25 (0 + one line), so every
+never-billed score would have to go below that. That would also drop never-billed services below **every** matching
+product, even with no billed service in the results, and on busy searches they could fall off the 25-row picker. The
+rule above moves them only as far as it must.
 
 Test cases (`test/service_catalog_takeover_ranking.test.js`):
 
 | Case | What it pins down |
 |---|---|
-| Exact-name collision | Three services named the same: settled first, recent-change second, a billed "starts with" third, the never-billed one fourth, fuzzy last; case, spaces and leading symbols don't matter |
-| Never-billed services | "Spring Replacement" (never billed) below billed "Spring Replacement \| Torsion \| Pair" and a billed group match, above fuzzy matches; still found; first when it is the only match |
+| Exact-name collision (updated for the rule) | Three services named the same: settled first, recent-change second, a billed "starts with" third, the billed fuzzy match fourth, the never-billed one last; case, spaces and leading symbols don't matter |
+| Never-billed services (updated) | "Spring Replacement" (never billed) below every billed match, including the billed fuzzy one; still found; first when it is the only match |
 | Recent price change | Below the settled exact match, above every non-exact billed match (even with 200 uses); its rate stays null |
 | Other warnings | Price varies, billed once, tax varies and recent change each rank in tier 2 |
-| Tiers never cross | Tier bounds asserted; one service per tier with the most use in the lower tiers still sorts 1-5 |
+| Tiers never cross (updated) | Tier score bounds asserted; one service per tier with the most use in the lower tiers sorts 1, 2, 3, then the billed tier-5 one, then the never-billed tier-4 one |
 | Renamed variants | Door Removal: each exact name ranks its own item first. Dispatch: the old name and the old alias find the replacement first; a replacement never outranks an active item whose own name matches; the superseded original never appears |
 | Built from real lines | Via `buildItems` + `pickerEntry`: a never-billed exact name sits below the billed strong match |
 | Ties (added in the final pass) | Equal scores sort A-Z; equal score and name keep input order; use counts up to 200 lines |
 | Tier 3 strengths (final pass) | Use can lift a group-starts match past a name-starts match; an alias/replaced name stays below "name contains" |
-| Tier 5 floor (final pass) | A match only through the group scores 0 + use; a never-billed strong match (80) sits above billed tier-5 matches with less use; a heavily used billed tier-5 match passes it; a missing word is no match |
+| Tier 5 floor (updated) | A match only through the group scores 0 + use and still ranks above a never-billed strong match; one billed line is enough; a missing word is no match |
+| Rule: weak billed > never-billed exact (new) | Billed group-starts, word-starts and scattered matches with one line each all rank above a never-billed exact name |
+| Rule: weak billed > never-billed strong (new) | A billed word-starts match (one line) ranks above never-billed name-starts and group-is matches (A-Z between those two) |
+| Rule: billed exact/strong keep priority (new) | Settled, warned (by use), recent change, strong, weak, then never-billed exact, strong, weak; removing the never-billed changes nothing for the billed |
+| Rule: never-billed discoverable (new) | Alone or among other never-billed: as before; with only products, keeps its place above a weak product; with a billed service, after it but still listed; the limit drops never-billed first |
+| Rule: products unchanged (new) | Products and billed services in exactly the order of the same search without the never-billed; the never-billed right after the last billed service; an old per-type row (V2 off) stays put |
 
 Decision A cases in the same file: both production cases; both "still in use" cases; the 5-newest and 30-day
 boundaries (30 days exactly = not yet; 31 = superseded); an unverified replacement (recent price change) never retires
@@ -406,14 +428,27 @@ against Postgres 18; the runner counts the parent and its subtests), two payment
 with CRLF line endings; "a product edited in the app keeps every edit"). The three new tests are the Decision C
 documentation tests (section 2); the ranking file passes 20 of 20.
 
+**Final ranking rule (`d311619e`).** Backend only; the app, its goldens and the web build don't change.
+
+| Run | Command | Tests | Passed | Failed | Skipped |
+|---|---|---|---|---|---|
+| Ranking file | `node --test test/service_catalog_takeover_ranking.test.js` | 25 | 25 | 0 | 0 |
+| Focused Services set | `IOHD_APP_DIR=<app worktree> node --test` on `service_catalog_takeover_ranking`, `service_catalog_access`, `service_catalog`, `service_catalog_phase2`, `service_catalog_routes`, `service_catalog_sql`, `action_permissions` (no database) | 89 | 84 | 0 | 5 (the SQL file needs `TEST_DATABASE_URL`) |
+| **Full suite** | `TEST_DATABASE_URL=… IOHD_APP_DIR=<app worktree> node --test --test-concurrency=1 test/*.test.js` | **687** | **675** | **12** | **0** |
+
+Against the pushed branch (`29b2d14d`: 682 / 669 / 13) and `main` (589 / 576 / 13): no test fails now that passes on
+either. The 12 are the same environmental failures listed above; "the keys match the office app" passes because this
+run points it at the app branch. The five extra tests are the new rule tests. With the rule in place, four earlier
+tests failed because they pinned the old order (a never-billed match above a billed weak one). They were updated
+to the approved rule: exact-name collisions, never-billed services, tiers never cross, and tier 5 floor. The Product
+Catalog boundary test passes unchanged.
+
 ## 11. Next steps: merge, deployment order, checks and rollback
 
 Each step needs its own approval; none has been given. Pushing the feature branches (done) deploys nothing: Render
 deploys `main` only, and previews are off.
 
 Before the merge:
-- **Decide the never-billed point** in section 2 (keep the approved tiers, or approve the small change and re-run the
-  ranking tests).
 - **Re-check the base.** `git fetch`; backend `origin/main` must still be `030f3b90` and app `origin/main` `7a2d7f0`
   (or re-run the suites on whatever they have become).
 - **Coordinate with the uncommitted Product Catalog work** in `C:\iohd_desktop` (section 14). Don't merge the app branch
@@ -457,7 +492,8 @@ Before the merge:
 Closed on 2026-11-19: the takeover thresholds and generalizations (Decision A approved), the five tiers (Decision C
 approved), the Team permissions goldens (regenerated, section 10).
 
-1. **Never-billed vs billed tier-5 matches** (section 2, "One safeguard needs a decision"). Blocks the merge.
+1. **Final ranking rule**: decided (billed always first), built, tested (section 10), committed (`d311619e`) and pushed
+   to the feature branch.
 2. **Linux VM validation** has not been done (section 15).
 3. A variant's key follows the most common billed name, so after the Dispatch swap (about spring 2027) the keys move:
    `sfr:10792835` will mean the $109 service. Saved lines keep their old keys, which are informational only.
@@ -500,7 +536,7 @@ Still outstanding on Linux:
 
 ## 16. Changed files (branch vs base)
 
-**Backend** (`030f3b90..29b2d14d`, 19 files):
+**Backend** (`030f3b90..d311619e`, 19 files):
 
 ```
 M  scripts/line_item_math_cases.json
