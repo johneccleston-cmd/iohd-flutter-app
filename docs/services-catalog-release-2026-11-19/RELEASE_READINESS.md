@@ -1,21 +1,53 @@
-# Services Catalog Phase 2: release-readiness review (2026-11-19)
+# Services Catalog Phase 2: release-readiness review (2026-11-19, final)
 
-**Status: NOT approved for release.** Nothing here has been merged, deployed or published, no production migration has
-run, and `SERVICE_CATALOG_V2` stays off. Job/Estimate line editing stays a preview (never saved). This review is the
-input for a separate release decision.
+**Status: reviewed and pushed to the feature branches only. NOT approved for merge or release.** Nothing here has been
+merged into `main`, deployed or published, no production migration has run, and `SERVICE_CATALOG_V2` stays off.
+Job/Estimate line editing stays a preview (never saved). Merging and deploying each need a separate approval
+(section 11).
+
+Approved on 2026-11-19: Decision A (the 5-newest-billed-lines / 30-day supersession rule, with the safeguards in
+section 2), Decision C (the five-tier ranking, as documented and tested in section 2), regenerating the two Team
+permissions goldens (help text only, section 10), and pushing both feature branches. One point in Decision C needs
+your decision before merge: see **"One safeguard needs a decision"** in section 2.
 
 ## 1. What is being released
 
-| Repo | Branch | Commit to release | Base it was cut from |
+| Repo | Branch (local = remote feature branch) | Head | Base it was cut from |
 |---|---|---|---|
-| integrity-backend | `services-catalog-phase1` | `0e6417575fd5e1fc9e1400e6ec1d9a027f6faa7e` | `030f3b90` (= `main` today) |
-| iohd_desktop (app) | `services-catalog-phase1` | `08f74c529a79ca482fb8f82a291b93ef0b91d2c5` (code), plus the commit that adds this file (docs only) | `26b798e5` (`main` is `7a2d7f0`) |
+| integrity-backend | `services-catalog-phase1` → `origin/services-catalog-phase1` | `29b2d14d` | `030f3b90` (= `origin/main` on 2026-11-19) |
+| iohd_desktop (app) | `services-catalog-phase1` → `origin/services-catalog-phase1` | `cba712a` (code and tests), plus the commit that adds this revision (docs only) | `26b798e5` (`origin/main` is `7a2d7f0`) |
 
-Backend commits on the branch: `9539f17e` (Phases 1-2, 2026-11-18), `0e641757` (Decisions A and C, 2026-11-19).
-App commits: `e53a1ef` (Phase 2 app, 2026-11-18), `08f74c5` (Decision A, two stale tests), then this review.
+Backend commits on the branch, oldest first:
+
+| Commit | What | Pushed before today? |
+|---|---|---|
+| `9539f17e` | Services Catalog Phases 1-2 (2026-11-18) | yes (the remote branch's head this morning) |
+| `0e641757` | Decisions A and C (2026-11-19) | no |
+| `29b2d14d` | Decision C: the ranking comment states tier 5's floor (0) and the tie-breaks; three tests pin them. No behaviour change | no |
+
+App commits on the branch, oldest first:
+
+| Commit | What | Pushed before today? |
+|---|---|---|
+| `e53a1ef` | Services Catalog Phase 2 app (2026-11-18) | yes (the remote branch's head this morning) |
+| `08f74c5` | Decision A in the app; two stale Phase 2 tests updated | no |
+| `ffe3376` | This review, first revision (docs only) | no |
+| `cba712a` | The two Team permissions goldens regenerated; a test that the page search finds a superseded service by its old name | no |
+| (this revision) | This review, final revision (docs only) | no |
+
+**Production effects already identified** (from the read-only checks of 2026-11-19; details in the sections named):
+- Backend deploy, V2 still off: two nullable columns on `record_line_items` (section 4); five saved non-admin lists
+  (ids 31, 34, 36, 37, 40) get the Services Catalog page switched off (section 5); three old per-type service rows go
+  from taxed to untaxed by the "No Sales Tax Applied" rule, and no Product Catalog product changes (section 7); the
+  current web app shows those five people a load error on the Services Catalog page until the new app is published.
+- Enabling V2 later (its own approval): the picker serves per-item services ranked by Decision C; two entries are
+  superseded and not offered (10792835 Commercial Service Call, 10792892 Commercial Service Labor; section 2).
+- Never: no saved job/estimate line rewritten, nothing written to Service Fusion, nothing deleted (sections 2 and 9).
 
 `main` in the app repo is one commit ahead of the branch base (`7a2d7f0`, the Stock Levels audit): 47 added files under
-`docs/stock-levels-audit-2026-11-18/`, none of which the Services branch touches, so the merge is conflict-free.
+`docs/stock-levels-audit-2026-11-18/`, none of which the Services branch touches, so the merge is conflict-free. Backend
+`main` is still the branch base. The remote feature branches were the 2026-11-18 heads (`e53a1ef`, `9539f17e`) when
+checked before the push, and both pushes were fast-forwards.
 
 ## 2. The decisions of 2026-11-19, as built
 
@@ -52,32 +84,100 @@ in SQL for "the newest 5 billed lines are one renamed line": two more matched, a
 (10792855 Panel -> Section Replacement is not settled, 33% within +/-5%; 11274174 LENNAR 16x7 rename bills the same
 $300, so it stays an alias).
 
-**Beyond the literal wording (please confirm).** The rule is generalized in two ways:
+**Final rule (approved 2026-11-19).** The thresholds are fixed at **5 newest billed lines** and **more than 30 days**.
+Two consequences of the rule, as built, both inside one rate id:
 - The item's name is its most common billed name. As the 18-month window rolls, the Dispatch rename will out-bill
   the old name (about spring 2027) and the two swap places: the old $199 name becomes the "variant". The rule therefore
   lets the original be the taker too, so the old name stays retired instead of coming back as a variant.
 - By the same rule, a short-lived rename the office stopped using is retired while its original carries on.
-- The thresholds (5 newest, 30 days) are my proposal; nothing in the decision fixed them.
 
-### Decision C: search ranking
+**Safeguards and where each is enforced.**
 
-Per-item services are ranked in tiers (`serviceMatchScore`, `src/catalog.js`). Each tier's top is below the next tier's
-floor, so the bonus for use (at most +50) orders services inside a tier and never across tiers.
-
-| Tier | Match | Score (+ use, max 50) |
+| Safeguard | As built | Test (backend `test/service_catalog_takeover_ranking.test.js` unless named) |
 |---|---|---|
-| 1 | exact name, billed, settled, no warning | 500 (500-550) |
-| 2 | exact name, billed, with a warning: recent price change, price varies, billed once, tax varies | 440 (440-490) |
-| 3 | strong match, billed: group is the search 380, name starts with 300, group starts with 260, name contains 220, another name it was billed under / a replaced name is the search 160 | 160-430 |
-| 4 | exact name, never billed (only quoted, $0 or nothing) | 150 |
-| 5 | anything else: a never-billed strong match 80, a word of the name starts with the search 60, another name starts with it 40 | 40-130 |
+| Retire only with a genuine replacement | Taker and superseded entry share one Service Fusion rate id; the taker has its own settled usual price, no recent price change, and all 5 newest billed lines | "A boundaries", "A: an unverified replacement never retires the original" |
+| Never retire on low use alone | No use count appears in the rule; a rate id with one entry (no variant) can never supersede anything; different rate ids are never compared | "A: both renamed lines still in use", "A boundaries" |
+| Never delete history, prices, SF ids, variant links, saved lines | Superseded = `active: false` + `supersededBy`; every field stays; the catalog sends no write statement and never reads `record_line_items` | "A: nothing is written" (records every SQL statement) |
+| Superseded stays visible and searchable by old names | Services Catalog page lists it (last, "Superseded by …", "Not offered", history kept) and its own search finds it by name; the picker finds its replacement by the old name and its aliases | "A in the picker"; app `test/services_catalog_test.dart` "a superseded service is kept…" (page search added today) |
+| Comes back if billed again | Worked out on every build | "A: billed again under the original name, the original is offered again" |
+| V2 off = no effect | The picker serves the old per-type rows | "A off" |
 
-"Billed" = billed at least once in the catalog's 18 months. Never-billed services stay in the results (searched on its
-own, a never-billed service is still the first result). "Another name" scores at most 210, below "name contains"
-(220), so a rename never outranks a match on an item's own name, as before. Products are scored exactly as they always
-were (the Phase 2 "Product Catalog boundary" test still compares every query with the pre-Phase-2 code), and the
-service tiers sit on the products' scale, so products and services interleave as before. With
-`SERVICE_CATALOG_V2` off none of this is reached: the picker serves the old per-type service rows.
+Production effect: only the two entries above are superseded (the read-only check made earlier on 2026-11-19; it was
+not re-run in the final pass, and it must be re-run before V2 is enabled, section 11 step 5).
+
+### Decision C: search ranking (approved 2026-11-19; exact rules)
+
+Code: `serviceMatchScore`, `SERVICE_TIER` and `searchCatalog` in backend `src/catalog.js`. It applies only to per-item
+services (entries with a `group`, served when `SERVICE_CATALOG_V2` is on). With V2 off none of this is reached: the
+picker serves the old per-type service rows, scored as before.
+
+**Which entries are ranked at all.** The search text is lower-cased, trimmed and its spaces collapsed; it is split into
+words. A service is a result only when **every word** appears somewhere in its name, SKU, category/group, the other
+names it was billed under (aliases) or the names of entries it replaced (`formerNames`). Superseded services are not
+in the picker's list, so they are never ranked. "Whole" below = the full search text; names have leading symbols
+removed ("+ Travel Charge" = "travel charge").
+
+**Definitions.** *Billed* = at least one billed line in the catalog's 18 months (`uses > 0`); *never billed* = only
+quoted, billed at $0, or nothing (`uses = 0`). *Warned* = billed, and the price status is not `settled` (recent price
+change, price varies, billed once) or the tax default is `mixed`.
+
+**The five tiers, in order** (score, then the use bonus = min(billed lines, 200) / 4, so at most +50):
+
+| Order | Tier | Matching criteria (first that applies) | Score | With use |
+|---|---|---|---|---|
+| 1 | Exact, settled | name = whole; billed; settled price; tax not mixed | 500 | 500-550 |
+| 2 | Exact, warned | name = whole; billed; warned (see above) | 440 | 440-490 |
+| 3 | Strong, billed | billed, and: group = whole **380**; else name starts with whole **300**; else group starts with whole **260**; else name contains whole **220**; else an alias or replaced name = whole **160** | 160-380 | 160.25-430 |
+| 4 | Exact, never billed | name = whole; never billed | 150 | 150 (no use) |
+| 5 | Everything else | a tier-3 match that was never billed **80**; else a word of the name starts with the first search word **60**; else an alias or replaced name starts with whole **40**; else (found only through the group, SKU or scattered words) **0** | 0-80 | 0-110 |
+
+Tiers never cross: 490 < 500, 430 < 440, 150 < 160.25 (a billed service has at least one line), 110 < 150. Inside
+tier 3 the strengths can cross by use (for example a group that starts with the search, 260 + 50, passes a name that
+starts with it, 300 + 0.25), except that an alias or replaced name tops out at 210, below "name contains" (220), so a
+rename never outranks a match on an item's own name.
+
+**Ties.** Higher total score first; equal totals sort by name A-Z (`localeCompare`); equal score and name keep the
+catalog's build order (the sort is stable): most billed lines (not capped), then most quotes, then group A-Z
+(`serviceCatalog.js` `buildItems`).
+
+**Never-billed services.** Always found when every word matches, never hidden. A never-billed service never outranks a
+billed service that matches exactly or strongly (tiers 1-3). Searched on its own, it is the first result.
+
+**Exact-name collisions** (several services with the name = the search, e.g. the same name under two Service Fusion
+types): settled billed first (tier 1), then billed with a warning (tier 2), then billed strong matches (tier 3), then
+the never-billed exact names (tier 4). Inside a tier, more use first, then the tie rules. Case, extra spaces and
+leading symbols don't change the order.
+
+**Recent price change.** Ranks in tier 2: below a settled exact match whatever its use, above every non-exact billed
+match. No price is filled in (`usualPrice`/`rate` null); the picker row says "Recent price change", and the line editor
+shows the 18-month median and the newest billed prices with "No price is filled in; check it before quoting."
+(`catalog_search_field.dart`, `line_items_editor.dart` `_catalogHints`). Material = at least 4 billed lines, each of
+the 3 newest more than 5% from the 18-month median, and a shift rather than ordinary variation (Phase 2 Decision 2).
+Price varies, billed once and tax varies rank in tier 2 the same way and show their own hint.
+
+**Products unchanged.** Products (and the old per-type service rows) are scored exactly as before Phase 2: SKU = search
++1000, SKU starts with +600, name = search +500, name starts with +300, a word starts with the first search word +100,
+plus the same use bonus. The "Product Catalog boundary" test (`test/service_catalog_access.test.js`) compares 14
+queries against a copy of the pre-Phase-2 function and gets the same order. The service tiers sit on the products'
+scale, so a product named exactly as the search (500+) and a tier-1 service interleave by use.
+
+#### One safeguard needs a decision before merge
+
+The safeguards say never-billed services "cannot outrank billed services". The approved five-tier model, as built,
+keeps that for every exact or strong billed match (tiers 1-3), but **not for billed weak matches in tier 5**:
+
+- a never-billed **exact** name (tier 4, 150) ranks above every billed tier-5 match (at most 110). Example pinned by
+  "C exact-name collisions": a never-billed "Service Call | Dispatch & Evaluation" above the billed
+  "Evaluation & Dispatch | Service Call" (every word, not the name);
+- inside tier 5, a never-billed **strong** match (80) ranks above a billed weak match with less use: a "word starts"
+  match with 80 billed lines or fewer (exactly 80 ties, then A-Z), an "alias starts" match with 160 or fewer, and any
+  match found only through the group or scattered words. Pinned by "C tier 5 floor".
+
+Following the safeguard literally would mean moving tier 4 and the never-billed strong matches below every billed
+match, which changes the approved tier order. Under "do not change the approved behaviour" and "do not invent new
+ranking behaviour", that is **not** done here. If billed services must always come first, the change is small
+(`exactNeverBilled` and `strongNeverBilled` below 0 + use), but it needs your approval and a re-run of this review's
+tests.
 
 Test cases (`test/service_catalog_takeover_ranking.test.js`):
 
@@ -90,6 +190,9 @@ Test cases (`test/service_catalog_takeover_ranking.test.js`):
 | Tiers never cross | Tier bounds asserted; one service per tier with the most use in the lower tiers still sorts 1-5 |
 | Renamed variants | Door Removal: each exact name ranks its own item first. Dispatch: the old name and the old alias find the replacement first; a replacement never outranks an active item whose own name matches; the superseded original never appears |
 | Built from real lines | Via `buildItems` + `pickerEntry`: a never-billed exact name sits below the billed strong match |
+| Ties (added in the final pass) | Equal scores sort A-Z; equal score and name keep input order; use counts up to 200 lines |
+| Tier 3 strengths (final pass) | Use can lift a group-starts match past a name-starts match; an alias/replaced name stays below "name contains" |
+| Tier 5 floor (final pass) | A match only through the group scores 0 + use; a never-billed strong match (80) sits above billed tier-5 matches with less use; a heavily used billed tier-5 match passes it; a missing word is no match |
 
 Decision A cases in the same file: both production cases; both "still in use" cases; the 5-newest and 30-day
 boundaries (30 days exactly = not yet; 31 = superseded); an unverified replacement (recent price change) never retires
@@ -240,71 +343,91 @@ and server). Charlotte Miller (Office, inactive) would start with the Services C
 - Nothing is written to Service Fusion.
 - Post-deploy check: the two fingerprints in section 4.
 
-## 10. Test environment
+## 10. Test results (final pass, 2026-11-19)
 
-The Linux VM used for Phases 1-2 can't be reached from this machine, and its Phase 2 review
-(`audits/services-catalog-2026-11-18/PHASE2_REVIEW.md`) was never pushed, so its environment details aren't
-available here. Everything below was run on this machine:
+Run on this Windows machine; the Linux VM was not available (section 15).
 
 | | |
 |---|---|
 | OS | Windows 11 Pro 10.0.26300 |
 | Flutter | 3.47.4 stable (framework 9584c6713b, 2026-09-10), Dart 3.13.3 |
 | Node / npm | v24.14.0 / 11.12.1 (production runs Node 22) |
-| Postgres for SQL tests | 18.6, a throwaway cluster on localhost:54329 created for this run (never production) |
-| Worktrees | `C:\Users\opera\integrity-backend-services-phase1`, `C:\Users\opera\iohd-flutter-app-services-phase1`, plus clean comparison worktrees at `030f3b90`, `e53a1ef` and `7a2d7f0` |
+| Postgres for SQL tests | 18.6, a throwaway cluster on 127.0.0.1:54329 created in a scratch folder for this run (never production) |
+| Trees | the two Services worktrees (`C:\Users\opera\integrity-backend-services-phase1`, `C:\Users\opera\iohd-flutter-app-services-phase1`) and clean detached comparison worktrees at backend `030f3b90` and app `7a2d7f0`, in a scratch folder. `C:\iohd_desktop` was not used or changed |
 
-**Flutter tests (full suite):**
+**Flutter full suite.** Command: `flutter test --reporter expanded` (in each tree).
 
 | Tree | Passed | Skipped | Failed |
 |---|---|---|---|
 | `main` 7a2d7f0 | 1,887 | 12 | 81 |
-| Phase 2 head e53a1ef | 1,919 | 12 | 85 (the 81 + 4 below) |
-| This release 08f74c5 | 1,925 | 12 | 83 (the 81 + the 2 Team permissions goldens) |
+| Phase 2 head e53a1ef (first review) | 1,919 | 12 | 85 |
+| First review 08f74c5 (first review) | 1,925 | 12 | 83 |
+| **Final `cba712a`** | **1,927** | **12** | **81** |
 
-The 81 failures are the same on all three trees (stale goldens and date-dependent tests, known per CLAUDE.md). The
-Phase 2 head added four: the two stale tests fixed here, and two **Team permissions goldens** (`team_permissions.png`,
-`team_permissions_900.png`) whose only difference is the Services Catalog row's longer help text. Regenerating them
-needs your OK (CLAUDE.md), so they are left failing. Nothing passes on `main` and fails here except those two.
+The 81 failing tests on the final branch are **the same 81, name for name**, as on `main` (stale goldens and
+date-dependent tests: calendar, payroll, commission dashboard, job detail, inventory, Jarvis and others; known per
+CLAUDE.md, none in a file this branch changes). **No new failure.** The two Team permissions goldens now pass. The
+page-search check added to `test/services_catalog_test.dart` passes inside its existing test.
 
-`flutter analyze`: 22 issues (20 infos, 2 warnings, no errors), the identical set on `main`, the Phase 2 head and this
-release, none in a file this work changes. (CLAUDE.md asks for a clean analyze before committing; `main` isn't clean
-either.)
+**Team permissions goldens** (`flutter test test/team_permissions_render_test.dart --update-goldens`, then the same
+without the flag: 3 passed). Only `test/shots/team_permissions.png` and `team_permissions_900.png` changed; no other
+golden was regenerated or accepted (the file has only these two). Checked pixel by pixel before accepting:
+- 1440 x 5000: identical above the Services Catalog row; the help text wraps to a second line; everything below is
+  identical once moved down 16 px (one line); the bottom identical.
+- 900 x 5600: the only differing pixels are the two help lines (x 372-551); the checkbox column is unchanged.
+- Bella's saved switches still read through (the test's own assertions), and Services Catalog is ticked in both,
+  because her saved list doesn't deny it. `defaultOff` only affects never-saved lists, which the
+  "someone never saved" test covers (it passes).
 
-**Web build:** `flutter build web --release` of 08f74c5 into a scratch folder (not `build/web_release`, not copied to
-the backend): built in 60 s, `main.dart.js` 6.4 MB, `flutter_bootstrap.js` parses (`node --check`).
+**`flutter analyze`**: 22 issues (20 infos, 2 warnings, no errors) on both `main` and the branch; none in a file this
+branch changes. (CLAUDE.md asks for a clean analyze; `main` isn't clean either.)
 
-**Backend full suite** (`node --test --test-concurrency=1 test/*.test.js`, Postgres as above):
+**Web release build** of the final branch: `flutter build web --release --output <scratch folder>`. It compiled in 56 s,
+`main.dart.js` is 6.40 MB, and `node --check flutter_bootstrap.js` passes. It was not built into `build/web_release` and
+not copied to the backend.
+
+**Backend full suite.** Command: `TEST_DATABASE_URL=postgres://tester@127.0.0.1:54329/iohd_test node --test
+--test-concurrency=1 test/*.test.js` (run one after the other, on an idle machine).
 
 | Tree | Tests | Passed | Failed | Skipped |
 |---|---|---|---|---|
 | Baseline `main` 030f3b90 | 589 | 576 | 13 | 0 |
-| Branch before today, 9539f17e | 662 | 650 | 12 | 0 |
-| This release, 0e641757 | 679 | 667 | 12 | 0 |
+| First review 0e641757 (first review) | 679 | 667 | 12 | 0 |
+| **Final `29b2d14d`** | **682** | **669** | **13** | **0** |
+| Final, the keys test pointed at the app branch | | +1 | **12** | |
 
-The release's 12 failures are exactly the baseline's 13 minus one; nothing fails on the branch that passes on the
-baseline. The one fixed is "the keys match the office app", which fails on `main` because `main`'s server doesn't know
-`services_catalog` (the bug Phase 2 fixes). The 12 shared failures are environmental on this machine and identical
-when run in parallel or one file at a time: seven Jarvis payroll what-if counts in `assistant_review_sql.test.js` (one
-test with five failing subtests, the runner counting the parent too, plus "a week that already has a finalized payroll
-run"; all "payroll_preview: The database query failed" against Postgres 18), two payments-list tests, the
-callback-rate test (date-dependent), and two Product Catalog tests (a fixture checked out with CRLF line endings by
-Windows git; "a product edited in the app keeps every edit"). The 17 new tests are the Decisions A and C file. An earlier run of the branch, made while three Flutter suites ran in parallel, hung in
-`test/outbound_clients.test.js` (two timing tests failed under that load); it was stopped and re-run on an idle
-machine, where it passes as on the baseline.
+Failure-by-failure: the branch fails exactly the tests `main` fails. The one extra failure in the plain run is "the
+keys match the office app": by default it parses `C:/iohd_desktop/lib/config/access.dart` (`main`'s copy, which doesn't
+know `services_catalog`). Run with `IOHD_APP_DIR=C:/Users/opera/iohd-flutter-app-services-phase1` it passes, as it does
+once the app branch is merged. The shared failures are environmental on this machine, the same as in the first review:
+the Jarvis payroll what-if tests in `assistant_review_sql.test.js` ("payroll_preview: The database query failed"
+against Postgres 18; the runner counts the parent and its subtests), two payments-list tests, the callback-rate test
+(date-dependent), the commission "jobs that paid nothing" test, and two Product Catalog tests (a fixture checked out
+with CRLF line endings; "a product edited in the app keeps every edit"). The three new tests are the Decision C
+documentation tests (section 2); the ranking file passes 20 of 20.
 
-## 11. Deployment order, checks and rollback
+## 11. Next steps: merge, deployment order, checks and rollback
 
-Each step needs its own approval; none has been given.
+Each step needs its own approval; none has been given. Pushing the feature branches (done) deploys nothing: Render
+deploys `main` only, and previews are off.
 
-0. **Before.** Confirm in the Render dashboard that `SERVICE_CATALOG_V2` is not set (it can't be read with the tools
-   used here). Save the permission-list snapshot and re-run the fingerprints (section 4).
-1. **Backend.** Merge `services-catalog-phase1` into `main` and push (Render auto-deploys `main` only; previews are off).
-   Start-up adds the two columns and runs the permission migration.
+Before the merge:
+- **Decide the never-billed point** in section 2 (keep the approved tiers, or approve the small change and re-run the
+  ranking tests).
+- **Re-check the base.** `git fetch`; backend `origin/main` must still be `030f3b90` and app `origin/main` `7a2d7f0`
+  (or re-run the suites on whatever they have become).
+- **Coordinate with the uncommitted Product Catalog work** in `C:\iohd_desktop` (section 14). Don't merge the app branch
+  in that working tree while it has uncommitted changes.
+
+0. **Before deploy.** Confirm in the Render dashboard that `SERVICE_CATALOG_V2` is not set (it can't be read with the
+   tools used here). Save the permission-list snapshot and re-run the fingerprints (section 4).
+1. **Backend.** Merge `services-catalog-phase1` into `main` (a fast-forward while `main` is `030f3b90`) and push: this is
+   the deploy. Start-up adds the two columns and runs the permission migration.
 2. **Check the backend.** The log line above; `app_migrations` has `2026-11-18-services-catalog-off`; the five lists
    contain `services_catalog.view`; both fingerprints unchanged; `/api/catalog/search?q=spring` returns the same
    products as before; with V2 off, services are the old `sf:` rows.
-3. **App.** Merge the app branch, `flutter build web --release --output build/web_release`, check that
+3. **App.** Merge the app branch into `main` (a merge commit: `main` has `7a2d7f0`, docs only, no overlap), re-run
+   `flutter analyze` and the suite, `flutter build web --release --output build/web_release`, check that
    `flutter_bootstrap.js` parses, copy into `integrity-backend/src/public`, push the backend (a deploy).
 4. **Check the app.** Services Catalog page for an admin; the "no access" state for one of the five; Edit Job/Estimate
    still a preview; Product Catalog unchanged.
@@ -331,10 +454,102 @@ Each step needs its own approval; none has been given.
 
 ## 13. Open items for the release decision
 
-1. Confirm the takeover rule's thresholds (5 newest billed lines, 30 days) and its two generalizations (section 2).
-2. OK to regenerate the two Team permissions goldens?
-3. Linux VM environment details and its Phase 2 test record, if they should be part of the release record.
-4. A variant's key follows the most common billed name, so after the Dispatch swap (about spring 2027) the keys move:
+Closed on 2026-11-19: the takeover thresholds and generalizations (Decision A approved), the five tiers (Decision C
+approved), the Team permissions goldens (regenerated, section 10).
+
+1. **Never-billed vs billed tier-5 matches** (section 2, "One safeguard needs a decision"). Blocks the merge.
+2. **Linux VM validation** has not been done (section 15).
+3. A variant's key follows the most common billed name, so after the Dispatch swap (about spring 2027) the keys move:
    `sfr:10792835` will mean the $109 service. Saved lines keep their old keys, which are informational only.
-5. Mixed-version window: until the new web build is published, the five saved users see a load error on the Services
+4. Mixed-version window: until the new web build is published, the five saved users see a load error on the Services
    Catalog page instead of the "no access" state.
+5. At 900 px the Team screen shows the new Services Catalog help in two lines, cut off ("…Anyone who can edi…"); the
+   full text shows at 1,440 px (two lines). This is the approved wording, so it was not changed here.
+
+## 14. Merge-conflict warning: `lib/services/line_items_api.dart`
+
+Another session's **uncommitted** Product Catalog work in `C:\iohd_desktop` (on `main`) also changes
+`lib/services/line_items_api.dart` (+8/-4: `CatalogEntry.hasBorrowedCost` and a `dropBorrowedCost` option on
+`withChange`). This pass did not touch that working tree. A three-way merge of copies (base `7a2d7f0`, this branch, a
+read-only copy of that working file) merges **cleanly with no conflict**, and the merged `withChange` still copies every
+field this branch adds (`priceStatus` … `supersededBy`, `replaces`). Its other changed files (`lib/main.dart`,
+`lib/product_catalog_screen.dart`, `lib/utils/product_csv.dart`, `lib/widgets/page_selection.dart`, Product Catalog
+tests and goldens) aren't touched by this branch. Risks that remain:
+- the other session may change the file again before it commits: re-check when both are ready;
+- whichever lands second must re-run `flutter analyze` and the Product Catalog and line-item tests on the merged tree;
+- don't resolve it by editing the other working tree: commit the Product Catalog work first (its own approval), then
+  merge this branch into `main`.
+
+## 15. Linux VM limitation
+
+The Linux VM used for Phases 1-2 is not reachable from this machine, and its Phase 2 review
+(`audits/services-catalog-2026-11-18/PHASE2_REVIEW.md`) was never pushed. **Linux VM validation has not been
+completed**, and nothing here claims it passed. No remote access was attempted and no VM setting was changed.
+
+Verified on Windows (this machine, section 10): the backend full suite on Node 24 with a scratch Postgres 18.6; the
+Flutter full suite, `flutter analyze` and the web release build on Flutter 3.47.4; the golden comparison; the
+merge-conflict check.
+
+Still outstanding on Linux:
+- the backend suite on Linux, ideally on Node 22 (production's version), including the tests that fail here only for
+  Windows reasons: the CRLF Product Catalog fixture, and the Postgres-18 payroll what-if queries;
+- the VM's own Phase 2 test record and environment details (OS, Node, Postgres versions) for the release record;
+- the Flutter goldens are rendered with Windows fonts (Segoe UI) and are not expected to match on Linux; the Linux
+  check is the non-golden suite;
+- whatever `PHASE2_REVIEW.md` recorded that isn't repeated here, once the VM is reachable.
+
+## 16. Changed files (branch vs base)
+
+**Backend** (`030f3b90..29b2d14d`, 19 files):
+
+```
+M  scripts/line_item_math_cases.json
+A  scripts/service_catalog_preview.js
+M  scripts/smoke_line_items.js
+M  src/accessKeys.js
+M  src/admin_users.js
+M  src/catalog.js
+M  src/lineItemMath.js
+M  src/line_items.js
+A  src/serviceCatalog.js
+A  src/sfTax.js
+M  test/action_permissions.test.js
+A  test/line_item_math.test.js
+A  test/line_items_zero_price.test.js
+A  test/service_catalog.test.js
+A  test/service_catalog_access.test.js
+A  test/service_catalog_phase2.test.js
+A  test/service_catalog_routes.test.js
+A  test/service_catalog_sql.test.js
+A  test/service_catalog_takeover_ranking.test.js
+```
+
+**App** (`26b798e5..` this revision, 25 files):
+
+```
+A  docs/services-catalog-release-2026-11-19/RELEASE_READINESS.md
+A  docs/services-catalog-release-2026-11-19/picker_replacement_row.png
+A  docs/services-catalog-release-2026-11-19/services_catalog_page_1366.png
+M  lib/config/access.dart
+M  lib/job_detail_items.dart
+M  lib/services/line_items_api.dart
+M  lib/services_catalog_screen.dart
+M  lib/utils/line_item_math.dart
+M  lib/widgets/catalog_search_field.dart
+M  lib/widgets/line_items_editor.dart
+M  test/estimate_pdf_test.dart
+M  test/fixtures/line_item_math_cases.json
+M  test/job_page_behavior_test.dart
+M  test/job_page_fixture.dart
+M  test/line_item_math_test.dart
+M  test/line_items_editor_test.dart
+M  test/line_items_final_test.dart
+M  test/line_items_round2_test.dart
+A  test/line_items_zero_price_test.dart
+M  test/nav_session_test.dart
+A  test/service_catalog_entry_test.dart
+A  test/service_picker_test.dart
+M  test/services_catalog_test.dart
+M  test/shots/team_permissions.png
+M  test/shots/team_permissions_900.png
+```
