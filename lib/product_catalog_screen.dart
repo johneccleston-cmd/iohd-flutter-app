@@ -68,15 +68,12 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     ('name', 'Product'),
     ('sku', 'Part #'),
     ('category', 'Category'),
-    ('stock', 'In stock'),
     ('cost', 'Unit cost'),
-    ('margin', 'Margin'),
     ('price', 'Price'),
   ];
 
   final _search = TextEditingController();
   final _searchFocus = FocusNode(debugLabel: 'catalog-search');
-  final _nameField = TextEditingController();
   final _partField = TextEditingController();
   final _catField = TextEditingController();
   final _scroll = ScrollController();
@@ -116,11 +113,8 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   // The filters. An empty group does not filter; picking every option in a group filters nothing either.
   final Set<String> _cats = {};
-  final Set<String> _inv = {}; // 'in' | 'out'
   final Set<String> _act = {'active'}; // 'active' | 'inactive': what the page showed before it had a filter
-  final Set<String> _stockF = {}; // 'instock' | 'review'
   final Set<String> _attn = {}; // 'costabove' | 'nocost' | 'perjob' | 'dupe'
-  String _nameFilter = '';
   String _partFilter = '';
   String _catQuery = '';
   bool _allCats = false;
@@ -149,7 +143,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _debounce?.cancel();
     _search.dispose();
     _searchFocus.dispose();
-    _nameField.dispose();
     _partField.dispose();
     _catField.dispose();
     _scroll.dispose();
@@ -199,7 +192,9 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       final marks = await reviews;
       if (!mounted) return;
       setState(() {
-        _all = r.entries;
+        // Only a cost typed into the catalog is shown: the server falls back to the inventory row's or Service Fusion's
+        // cost for a product with none, and that is not this product's cost.
+        _all = [for (final e in r.entries) e.hasBorrowedCost ? e.withChange(dropBorrowedCost: true) : e];
         _canSeeCost = r.canSeeCost;
         _historyDays = r.historyDays;
         _categories = cats;
@@ -244,10 +239,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   /// Both options of a two-way filter picked is the same as neither.
   bool _narrows(Set<String> group) => group.length == 1;
 
-  static double? _marginOf(CatalogEntry e) => catalogMargin(e.rate, e.cost)?.pct;
-
-  bool _inStock(CatalogEntry e) => (e.stock ?? 0) > 0 && e.inventoryConflict == null;
-
   /// The list's "Needs attention" filters: every data-quality check (lib/utils/catalog_quality.dart) except the stock
   /// link one (that is the Stock group's "Stock needs review"), plus "Per-job price".
   bool _attention(String what, CatalogEntry e) {
@@ -264,32 +255,22 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   List<CatalogEntry> get _shown {
     final words = _query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-    final nameWords = _nameFilter.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     final part = _partFilter.toLowerCase().replaceAll(RegExp(r'\s+'), '');
     final list = _all.where((e) {
       if (_cats.isNotEmpty && !_cats.contains(e.category)) return false;
-      if (_narrows(_inv) && e.inInventory != _inv.contains('in')) return false;
       if (_narrows(_act) && e.active != _act.contains('active')) return false;
-      if (_stockF.isNotEmpty && !((_stockF.contains('instock') && _inStock(e)) || (_stockF.contains('review') && e.inventoryConflict != null))) {
-        return false;
-      }
       if (_attn.isNotEmpty && !_attn.any((a) => _attention(a, e))) return false;
       if (part.isNotEmpty && !e.sku.toLowerCase().replaceAll(RegExp(r'\s+'), '').contains(part)) return false;
-      if (nameWords.isNotEmpty) {
-        final name = e.name.toLowerCase();
-        if (!nameWords.every(name.contains)) return false;
-      }
       if (words.isEmpty) return true;
-      final hay = '${e.name} ${e.sku} ${e.category} ${e.model} ${e.description} ${[for (final v in e.vendors) v.name].join(' ')}'.toLowerCase();
+      // Name, part number, category and model only: a word in a long description or a vendor's name is not the product.
+      final hay = '${e.name} ${e.sku} ${e.category} ${e.model}'.toLowerCase();
       return words.every(hay.contains);
     }).toList();
     int cmpNum(double? a, double? b) => (a ?? double.negativeInfinity).compareTo(b ?? double.negativeInfinity);
     int cmp(CatalogEntry a, CatalogEntry b) => switch (_sortKey) {
       'sku' => a.sku.toLowerCase().compareTo(b.sku.toLowerCase()),
       'category' => a.category.toLowerCase().compareTo(b.category.toLowerCase()),
-      'stock' => cmpNum(a.stock?.toDouble(), b.stock?.toDouble()),
       'cost' => cmpNum(a.cost, b.cost),
-      'margin' => cmpNum(_marginOf(a), _marginOf(b)),
       'price' => cmpNum(a.rate, b.rate),
       _ => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
     };
@@ -303,11 +284,8 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   /// How many filters are set to something other than the page's starting view (Active only, nothing else).
   int get _filterCount =>
       (_cats.isEmpty ? 0 : 1) +
-      (_inv.isEmpty ? 0 : 1) +
       (_act.length == 1 && _act.contains('active') ? 0 : 1) +
-      (_stockF.isEmpty ? 0 : 1) +
       (_attn.isEmpty ? 0 : 1) +
-      (_nameFilter.isEmpty ? 0 : 1) +
       (_partFilter.isEmpty ? 0 : 1);
 
   /// A new list (another sort, search, filter or page): read from its top, rows settling in.
@@ -327,7 +305,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       _ascending = !_ascending;
     } else {
       _sortKey = key;
-      // Text reads A to Z first; stock, cost, margin and price biggest first.
+      // Text reads A to Z first; cost and price biggest first.
       _ascending = key == 'name' || key == 'sku' || key == 'category';
     }
     _page = 1;
@@ -345,14 +323,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _page = 1;
   });
 
-  void _clearName() {
-    _nameField.clear();
-    _newView(() {
-      _nameFilter = '';
-      _page = 1;
-    });
-  }
-
   void _clearPart() {
     _partField.clear();
     _newView(() {
@@ -363,17 +333,13 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   void _resetFilters() {
     _debounce?.cancel();
-    _nameField.clear();
     _partField.clear();
     _newView(() {
       _cats.clear();
-      _inv.clear();
-      _stockF.clear();
       _attn.clear();
       _act
         ..clear()
         ..add('active');
-      _nameFilter = '';
       _partFilter = '';
       _page = 1;
     });
@@ -393,9 +359,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       const CatalogCol('PRODUCT', sortKey: 'name'),
       CatalogCol('PART #', width: roomy ? 112 : 92, sortKey: 'sku'),
       CatalogCol('CATEGORY', width: roomy ? 196 : 150, sortKey: 'category'),
-      CatalogCol('IN STOCK', width: roomy ? 72 : 68, right: true, sortKey: 'stock'),
       if (_canSeeCost) CatalogCol('UNIT COST', width: roomy ? 90 : 84, right: true, sortKey: 'cost'),
-      if (_canSeeCost) CatalogCol('MARGIN', width: roomy ? 74 : 64, right: true, sortKey: 'margin'),
       CatalogCol('PRICE', width: roomy ? 96 : 90, right: true, sortKey: 'price'),
     ];
   }
@@ -473,11 +437,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _query = '';
     _resetFilters();
     _newView(() {
-      if (check == CatalogCheck.linkReview) {
-        _stockF.add('review');
-      } else {
-        _attn.add(check.key);
-      }
+      _attn.add(check.key);
     });
     _switchView(CatalogView.products);
   }
@@ -733,43 +693,15 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     );
   }
 
-  Widget _stockCell(CatalogEntry e) {
-    final conflict = e.inventoryConflict;
-    if (conflict != null) {
-      // Which inventory row is this product's needs a person: say so (the reason on hover), never show another's count.
-      return Tooltip(
-        message: inventoryConflictText(conflict),
-        child: const CatalogTag('Review', tone: CatalogTone.warn),
-      );
-    }
-    final s = e.stock;
-    // Not kept in inventory and nothing on hand: there is no count to read, so a dash rather than a misleading 0.
-    if (s == null || (s == 0 && !e.inInventory)) return const Text('—', style: CatalogUi.cellQuiet);
-    // Out of stock is a plain quiet 0: a number to read, not a warning.
-    return Text(_count.format(s), style: s > 0 ? CatalogUi.cell : CatalogUi.cellQuiet);
-  }
-
-  Widget _marginCell(CatalogEntry e) {
-    final m = catalogMargin(e.rate, e.cost);
-    if (m == null) return const Text('—', style: CatalogUi.cellQuiet);
-    final tone = catalogMarginTone(m.pct);
-    return Text(
-      '${m.pct.toStringAsFixed(0)}%',
-      style: CatalogUi.cell.copyWith(color: tone, fontWeight: tone == DashUi.ink ? FontWeight.w400 : FontWeight.w700),
-    );
-  }
-
   List<Widget> _cells(CatalogEntry e) => [
     _nameCell(e),
     Text(e.sku.isEmpty ? '—' : e.sku, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cellQuiet),
     Text(e.category.isEmpty ? '—' : e.category, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cell),
-    _stockCell(e),
     if (_canSeeCost) _money(e.cost),
-    if (_canSeeCost) _marginCell(e),
     _money(e.rate, none: 'Per job', strong: true),
   ];
 
-  /// A row too narrow for the columns: the product and its price first, then part number and category, then stock and cost.
+  /// A row too narrow for the columns: the product and its price first, then part number, category and cost.
   Widget _compactRow(CatalogEntry e, int index, int position) {
     final meta = [if (e.sku.isNotEmpty) 'Part # ${e.sku}', if (e.category.isNotEmpty) e.category].join('  ·  ');
     return Semantics(
@@ -801,9 +733,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
                       child: Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.meta),
                     ),
                     const SizedBox(width: 12),
-                    const Text('Stock ', style: CatalogUi.meta),
-                    _stockCell(e),
-                    if (_canSeeCost) ...[const SizedBox(width: 14), const Text('Cost ', style: CatalogUi.meta), _money(e.cost)],
+                    if (_canSeeCost) ...[const Text('Cost ', style: CatalogUi.meta), _money(e.cost)],
                   ],
                 ),
               ],
@@ -849,7 +779,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               row('Price', e.rate == null ? 'Priced per job' : dashMoney(e.rate!)),
               if (e.memberPrice != null && e.memberPrice! > 0) row('Member price', dashMoney(e.memberPrice!)),
               if (_canSeeCost) row('Unit cost', e.cost == null ? 'Not entered' : dashMoney(e.cost!)),
-              row('In stock', e.stock == null ? 'Not in inventory' : _count.format(e.stock)),
               if (!e.active) row('Status', 'Inactive'),
               if (e.model.isNotEmpty) row('Model', e.model),
               if (_canSeeCost && vendors.isNotEmpty) row('Bought from', [for (final v in vendors) '${v.name} ${dashMoney(v.price!)}'].join('\n')),
@@ -960,27 +889,40 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   static Color _attnDot(String key) => switch (CatalogCheck.byKey(key)) {
     CatalogCheck.costAbove || CatalogCheck.highMarkup => DashUi.red,
     CatalogCheck.dupeName || CatalogCheck.dupePart || CatalogCheck.similarName => DashUi.indigo,
-    CatalogCheck.noCost || CatalogCheck.noPart || CatalogCheck.noCategory => DashUi.amber,
+    CatalogCheck.noCost || CatalogCheck.noPart || CatalogCheck.noCategory || CatalogCheck.linkReview => DashUi.amber,
     CatalogCheck.categoryOdd => DashUi.sky,
     _ => DashUi.muted,
   };
 
   /// All the filters. The sidebar scrolls them as one; the narrow window's dialog shows the same.
   Widget _filterGroups() {
-    final inInv = _all.where((e) => e.inInventory).length;
     final inactive = _all.where((e) => !e.active).length;
-    final inStock = _all.where(_inStock).length;
-    final review = _all.where((e) => e.inventoryConflict != null).length;
     // The checks that found something (or are on), so a clean check takes no room.
     final attn = [
       for (final c in _quality.checks)
-        if (c != CatalogCheck.linkReview && (_all.any((e) => _attention(c.key, e)) || _attn.contains(c.key))) c.key,
+        if (_all.any((e) => _attention(c.key, e)) || _attn.contains(c.key)) c.key,
       'perjob',
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        CatalogFilterGroup(title: 'Category', picked: _cats.length, child: _categoryList()),
+        CatalogFilterGroup(title: 'Category', initiallyOpen: false, picked: _cats.length, child: _categoryList()),
+        CatalogFilterGroup(
+          title: 'Part number',
+          initiallyOpen: false,
+          picked: _partFilter.isEmpty ? 0 : 1,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            child: _textFilter(_partField, 'Part # contains', _partFilter, (v) {
+              final t = v.trim();
+              if (t == _partFilter) return;
+              _newView(() {
+                _partFilter = t;
+                _page = 1;
+              });
+            }),
+          ),
+        ),
         CatalogFilterGroup(
           title: 'Status',
           picked: _act.length == 1 && _act.contains('active') ? 0 : 1,
@@ -992,34 +934,8 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
           ),
         ),
         CatalogFilterGroup(
-          title: 'Inventory',
-          picked: _inv.length,
-          child: Column(
-            children: [
-              CatalogCheckRow(label: 'In inventory', count: inInv, selected: _inv.contains('in'), onTap: () => _toggle(_inv, 'in')),
-              CatalogCheckRow(label: 'Not in inventory', count: _all.length - inInv, selected: _inv.contains('out'), onTap: () => _toggle(_inv, 'out')),
-            ],
-          ),
-        ),
-        CatalogFilterGroup(
-          title: 'Stock',
-          picked: _stockF.length,
-          child: Column(
-            children: [
-              CatalogCheckRow(label: 'In stock', count: inStock, selected: _stockF.contains('instock'), onTap: () => _toggle(_stockF, 'instock')),
-              if (review > 0 || _stockF.contains('review'))
-                CatalogCheckRow(
-                  label: 'Stock needs review',
-                  count: review,
-                  dot: DashUi.amber,
-                  selected: _stockF.contains('review'),
-                  onTap: () => _toggle(_stockF, 'review'),
-                ),
-            ],
-          ),
-        ),
-        CatalogFilterGroup(
           title: 'Needs attention',
+          initiallyOpen: false,
           picked: _attn.length,
           child: Column(
             children: [
@@ -1032,36 +948,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
                   onTap: () => _toggle(_attn, a),
                 ),
             ],
-          ),
-        ),
-        CatalogFilterGroup(
-          title: 'Product name',
-          picked: _nameFilter.isEmpty ? 0 : 1,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: _textFilter(_nameField, 'Name contains', _nameFilter, (v) {
-              final t = v.trim();
-              if (t == _nameFilter) return;
-              _newView(() {
-                _nameFilter = t;
-                _page = 1;
-              });
-            }),
-          ),
-        ),
-        CatalogFilterGroup(
-          title: 'Part number',
-          picked: _partFilter.isEmpty ? 0 : 1,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            child: _textFilter(_partField, 'Part # contains', _partFilter, (v) {
-              final t = v.trim();
-              if (t == _partFilter) return;
-              _newView(() {
-                _partFilter = t;
-                _page = 1;
-              });
-            }),
           ),
         ),
         const SizedBox(height: 12),
@@ -1193,10 +1079,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     for (final c in _cats.toList()..sort()) (group: 'Category', value: c, remove: () => _toggle(_cats, c)),
     if (_act.length == 1 && _act.contains('inactive')) (group: 'Status', value: 'Inactive only', remove: _resetStatus),
     if (_act.length != 1) (group: 'Status', value: 'Active and inactive', remove: _resetStatus),
-    for (final v in _inv) (group: 'Inventory', value: v == 'in' ? 'In inventory' : 'Not in inventory', remove: () => _toggle(_inv, v)),
-    for (final v in _stockF) (group: 'Stock', value: v == 'instock' ? 'In stock' : 'Needs review', remove: () => _toggle(_stockF, v)),
     for (final v in _attn) (group: 'Attention', value: _attnLabel(v), remove: () => _toggle(_attn, v)),
-    if (_nameFilter.isNotEmpty) (group: 'Name', value: '"$_nameFilter"', remove: _clearName),
     if (_partFilter.isNotEmpty) (group: 'Part #', value: '"$_partFilter"', remove: _clearPart),
   ];
 
@@ -1231,7 +1114,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       child: CatalogSearchField(
         controller: _search,
         focusNode: _searchFocus,
-        hint: 'Search name, part #, category or description',
+        hint: 'Search name, part # or category',
         shortcutHint: true,
         onClear: _search.text.isEmpty ? null : _clearSearch,
         onSubmitted: (v) {
@@ -1307,7 +1190,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   }
 
   Widget _sortMenu() {
-    final cols = _sorts.where((s) => _canSeeCost || (s.$1 != 'cost' && s.$1 != 'margin')).toList();
+    final cols = _sorts.where((s) => _canSeeCost || s.$1 != 'cost').toList();
     final label = cols.firstWhere((s) => s.$1 == _sortKey, orElse: () => cols.first).$2;
     return SelectionContainer.disabled(
       child: PopupMenuButton<String>(

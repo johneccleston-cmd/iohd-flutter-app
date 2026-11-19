@@ -246,8 +246,12 @@ class CatalogEntry {
   /// The catalog_products row behind it (`cat:<id>`), or null for services and the old sources.
   int? get productId => kind == 'product' && key.startsWith('cat:') ? int.tryParse(key.substring(4)) : null;
 
-  /// The same product with its category and status as a change to several products left them.
-  CatalogEntry withChange({String? category, bool? active, String? updatedAt}) => CatalogEntry(
+  /// The cost came from somewhere other than the catalog (the server falls back to the inventory row's or Service Fusion's).
+  bool get hasBorrowedCost => cost != null && costSource != null && costSource != 'catalog';
+
+  /// The same product with its category and status as a change to several products left them. [dropBorrowedCost] also
+  /// clears a cost the catalog does not have of its own.
+  CatalogEntry withChange({String? category, bool? active, String? updatedAt, bool dropBorrowedCost = false}) => CatalogEntry(
     key: key,
     name: name,
     sku: sku,
@@ -259,8 +263,8 @@ class CatalogEntry {
     rateUses: rateUses,
     rateMin: rateMin,
     rateMax: rateMax,
-    cost: cost,
-    costSource: costSource,
+    cost: dropBorrowedCost && hasBorrowedCost ? null : cost,
+    costSource: dropBorrowedCost && hasBorrowedCost ? null : costSource,
     uses: uses,
     lastUsed: lastUsed,
     taxable: taxable,

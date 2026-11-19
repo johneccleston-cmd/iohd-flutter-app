@@ -1,0 +1,118 @@
+TAP version 13
+# Subtest: the seven audit near-misses each point at exactly the Sheet row with the same part number
+ok 1 - the seven audit near-misses each point at exactly the Sheet row with the same part number
+  ---
+  duration_ms: 7.8129
+  type: 'test'
+  ...
+# Subtest: doors, services, labour and other non-stock lines are never flagged (synthetic examples)
+ok 2 - doors, services, labour and other non-stock lines are never flagged (synthetic examples)
+  ---
+  duration_ms: 8.3993
+  type: 'test'
+  ...
+# Subtest: every production job line name: nothing that reads as a door, service, labour or fee is flagged
+ok 3 - every production job line name: nothing that reads as a door, service, labour or fee is flagged
+  ---
+  duration_ms: 1755.0076
+  type: 'test'
+  ...
+# Subtest: every production job line name: the flagged set is exactly the reviewed list (170 names)
+ok 4 - every production job line name: the flagged set is exactly the reviewed list (170 names)
+  ---
+  duration_ms: 1816.0756
+  type: 'test'
+  ...
+# Subtest: an exact Sheet name, an ambiguous name and a too-short name are never flagged
+ok 5 - an exact Sheet name, an ambiguous name and a too-short name are never flagged
+  ---
+  duration_ms: 1.045
+  type: 'test'
+  ...
+# Subtest: words: case, pipes, ×, plurals and "Taxable" do not matter; sizes are kept as they are
+ok 6 - words: case, pipes, ×, plurals and "Taxable" do not matter; sizes are kept as they are
+  ---
+  duration_ms: 0.101
+  type: 'test'
+  ...
+# Subtest: the message names the line, the job, the Sheet name, the part number and shelf, and what to do
+ok 7 - the message names the line, the job, the Sheet name, the part number and shelf, and what to do
+  ---
+  duration_ms: 3.913
+  type: 'test'
+  ...
+# Subtest: a checkout retry has the same fingerprint whatever the line order; another person or day does not
+ok 8 - a checkout retry has the same fingerprint whatever the line order; another person or day does not
+  ---
+  duration_ms: 1.4987
+  type: 'test'
+  ...
+# Subtest: the notifier never throws: a token lookup or send failure is logged and reported
+ok 9 - the notifier never throws: a token lookup or send failure is logged and reported
+  ---
+  duration_ms: 0.9926
+  type: 'test'
+  ...
+# Subtest: mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before
+ok 10 - mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before
+  ---
+  duration_ms: 119.6278
+  type: 'test'
+  ...
+# Subtest: a checkout whose only unmatched lines are doors and services sends no push
+ok 11 - a checkout whose only unmatched lines are doors and services sends no push
+  ---
+  duration_ms: 47.3497
+  type: 'test'
+  ...
+# Subtest: a checkout where everything came off stock sends no push
+ok 12 - a checkout where everything came off stock sends no push
+  ---
+  duration_ms: 46.3974
+  type: 'test'
+  ...
+# Subtest: the same checkout sent again (an old build retrying, no request id) is not notified twice
+ok 13 - the same checkout sent again (an old build retrying, no request id) is not notified twice
+  ---
+  duration_ms: 78.0085
+  type: 'test'
+  ...
+# Subtest: the same checkout replayed by its Idempotency-Key is not notified twice (R2)
+ok 14 - the same checkout replayed by its Idempotency-Key is not notified twice (R2) # SKIP R2 request ids
+  ---
+  duration_ms: 0.115
+  type: 'test'
+  ...
+# Subtest: the same checkout landing on two servers is notified once (R2: the claim is shared through Postgres)
+ok 15 - the same checkout landing on two servers is notified once (R2: the claim is shared through Postgres) # SKIP R2 shared store
+  ---
+  duration_ms: 0.0399
+  type: 'test'
+  ...
+# Subtest: a different person, or a different unmatched line, is a new checkout and is notified
+ok 16 - a different person, or a different unmatched line, is a new checkout and is notified
+  ---
+  duration_ms: 47.1137
+  type: 'test'
+  ...
+# Subtest: no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged
+ok 17 - no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged
+  ---
+  duration_ms: 94.5466
+  type: 'test'
+  ...
+# Subtest: warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush
+ok 18 - warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush
+  ---
+  duration_ms: 62.7757
+  type: 'test'
+  ...
+1..18
+# tests 18
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 0
+# duration_ms 4161.2654

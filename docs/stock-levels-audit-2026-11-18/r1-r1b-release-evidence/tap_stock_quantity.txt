@@ -1,0 +1,76 @@
+TAP version 13
+# Subtest: C2: sheetQty reads every way the Sheets API formats a quantity
+ok 1 - C2: sheetQty reads every way the Sheets API formats a quantity
+  ---
+  duration_ms: 0.9087
+  type: 'test'
+  ...
+# Subtest: C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at)
+ok 2 - C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at)
+  ---
+  duration_ms: 0.1417
+  type: 'test'
+  ...
+# Subtest: M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped
+ok 3 - M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped
+  ---
+  duration_ms: 11.1676
+  type: 'test'
+  ...
+# Subtest: H2: a counted quantity is a whole number from 0 to 100,000
+ok 4 - H2: a counted quantity is a whole number from 0 to 100,000
+  ---
+  duration_ms: 0.1937
+  type: 'test'
+  ...
+# Subtest: checkoutInput: lines are checked one by one and the first bad one refuses the whole request
+ok 5 - checkoutInput: lines are checked one by one and the first bad one refuses the whole request
+  ---
+  duration_ms: 0.8038
+  type: 'test'
+  ...
+# Subtest: scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused
+ok 6 - scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused
+  ---
+  duration_ms: 0.2348
+  type: 'test'
+  ...
+# Subtest: H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice
+ok 7 - H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice
+  ---
+  duration_ms: 0.3579
+  type: 'test'
+  ...
+# Subtest: N1: planDeductions adds up every line for the same part and writes that row once
+ok 8 - N1: planDeductions adds up every line for the same part and writes that row once
+  ---
+  duration_ms: 0.2769
+  type: 'test'
+  ...
+# Subtest: C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten
+ok 9 - C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten
+  ---
+  duration_ms: 0.1472
+  type: 'test'
+  ...
+# Subtest: H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8
+ok 10 - H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8
+  ---
+  duration_ms: 0.1881
+  type: 'test'
+  ...
+# Subtest: C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00)
+ok 11 - C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00)
+  ---
+  duration_ms: 0.1333
+  type: 'test'
+  ...
+1..11
+# tests 11
+# suites 0
+# pass 11
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 71.7994

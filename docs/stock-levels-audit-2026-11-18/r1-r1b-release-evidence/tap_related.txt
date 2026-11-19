@@ -1,0 +1,1010 @@
+TAP version 13
+# Subtest: an explicit link survives a rename: the stock stays with the product
+ok 1 - an explicit link survives a rename: the stock stays with the product
+  ---
+  duration_ms: 0.8331
+  type: 'test'
+  ...
+# Subtest: without a link, a single exact-name match is still used (spaces and case ignored)
+ok 2 - without a link, a single exact-name match is still used (spaces and case ignored)
+  ---
+  duration_ms: 0.1394
+  type: 'test'
+  ...
+# Subtest: two products with the same name share nothing: neither gets the row, both are flagged for review
+ok 3 - two products with the same name share nothing: neither gets the row, both are flagged for review
+  ---
+  duration_ms: 0.1268
+  type: 'test'
+  ...
+# Subtest: an explicitly linked duplicate keeps its row; the other one is flagged, not given the same row
+ok 4 - an explicitly linked duplicate keeps its row; the other one is flagged, not given the same row
+  ---
+  duration_ms: 0.094
+  type: 'test'
+  ...
+# Subtest: a row another product is linked to is never handed out by name
+ok 5 - a row another product is linked to is never handed out by name
+  ---
+  duration_ms: 0.1281
+  type: 'test'
+  ...
+# Subtest: two products linked to the same row: both flagged, neither shows its stock
+ok 6 - two products linked to the same row: both flagged, neither shows its stock
+  ---
+  duration_ms: 0.1289
+  type: 'test'
+  ...
+# Subtest: a link to a row that is gone (or inactive, so not loaded) is flagged, with no name guess
+ok 7 - a link to a row that is gone (or inactive, so not loaded) is flagged, with no name guess
+  ---
+  duration_ms: 0.1067
+  type: 'test'
+  ...
+# Subtest: two inventory rows that only differ by case or spaces are ambiguous, not guessed
+ok 8 - two inventory rows that only differ by case or spaces are ambiguous, not guessed
+  ---
+  duration_ms: 0.0897
+  type: 'test'
+  ...
+# Subtest: a product with no inventory row has no stock and nothing to review
+ok 9 - a product with no inventory row has no stock and nothing to review
+  ---
+  duration_ms: 0.1001
+  type: 'test'
+  ...
+# Subtest: catalog entries: a renamed product keeps stock and its Service Fusion usage; duplicates show no stock and say why
+ok 10 - catalog entries: a renamed product keeps stock and its Service Fusion usage; duplicates show no stock and say why
+  ---
+  duration_ms: 1.3662
+  type: 'test'
+  ...
+# Subtest: copying Service Fusion lines finds a renamed product by its export name, and skips products with no inventory link
+ok 11 - copying Service Fusion lines finds a renamed product by its export name, and skips products with no inventory link
+  ---
+  duration_ms: 0.226
+  type: 'test'
+  ...
+# Subtest: catalog entries carry the export name so a renamed product can still be found
+ok 12 - catalog entries carry the export name so a renamed product can still be found
+  ---
+  duration_ms: 0.1228
+  type: 'test'
+  ...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⏰ [CRON] Running 4:00 PM inventory checkout audit...
+# ⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# 🚨 WAREHOUSE MISSED: No staging done for Brett Miller's jobs.
+# ⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# Subtest: the tech strike runs at 4:00 PM Chicago time and the 8:30 AM run stays for the warehouse
+ok 13 - the tech strike runs at 4:00 PM Chicago time and the 8:30 AM run stays for the warehouse
+  ---
+  duration_ms: 0.5702
+  type: 'test'
+  ...
+# Subtest: 4 PM: only a tech who checked out nothing for any of today's stock jobs gets a strike
+ok 14 - 4 PM: only a tech who checked out nothing for any of today's stock jobs gets a strike
+  ---
+  duration_ms: 1.5703
+  type: 'test'
+  ...
+# Subtest: 4 PM: a checkout counts whatever way the sheet writes the date; another day does not
+ok 15 - 4 PM: a checkout counts whatever way the sheet writes the date; another day does not
+  ---
+  duration_ms: 0.4474
+  type: 'test'
+  ...
+# Subtest: 8:30 AM: no tech strikes any more; a warehouse strike when a tech's stock was neither checked out nor staged
+ok 16 - 8:30 AM: no tech strikes any more; a warehouse strike when a tech's stock was neither checked out nor staged
+  ---
+  duration_ms: 0.4416
+  type: 'test'
+  ...
+# Subtest: pickDateKey reads the date forms the sheet can hold
+ok 17 - pickDateKey reads the date forms the sheet can hold
+  ---
+  duration_ms: 0.1318
+  type: 'test'
+  ...
+# Subtest: the lines the user asked to hide (2026-11-10) never reach the pick list
+ok 18 - the lines the user asked to hide (2026-11-10) never reach the pick list
+  ---
+  duration_ms: 1.2919
+  type: 'test'
+  ...
+# Subtest: partKey matches what checkout writes to the sheet (sheetSafe), in any case
+ok 19 - partKey matches what checkout writes to the sheet (sheetSafe), in any case
+  ---
+  duration_ms: 0.3127
+  type: 'test'
+  ...
+# Subtest: pickedTotals adds up the sheet by job and part and ignores rows that are not a job pick
+ok 20 - pickedTotals adds up the sheet by job and part and ignores rows that are not a job pick
+  ---
+  duration_ms: 0.2613
+  type: 'test'
+  ...
+# Subtest: a part on two lines of one job is added up, and a partial pick leaves the rest on the list
+ok 21 - a part on two lines of one job is added up, and a partial pick leaves the rest on the list
+  ---
+  duration_ms: 1.3195
+  type: 'test'
+  ...
+# Subtest: quantities are read as before: a missing or zero quantity counts as 1, fractions are kept
+ok 22 - quantities are read as before: a missing or zero quantity counts as 1, fractions are kept
+  ---
+  duration_ms: 0.6031
+  type: 'test'
+  ...
+# Subtest: /get_job_materials: one row per part, stock read from the sheet, and whether the part is stocked at all
+ok 23 - /get_job_materials: one row per part, stock read from the sheet, and whether the part is stocked at all
+  ---
+  duration_ms: 1.4288
+  type: 'test'
+  ...
+# Subtest: pendingPicks (the tech picker) counts what /get_job_materials would list
+ok 24 - pendingPicks (the tech picker) counts what /get_job_materials would list
+  ---
+  duration_ms: 0.623
+  type: 'test'
+  ...
+# Subtest: /get_job_materials: an item with no name does not break the whole list
+ok 25 - /get_job_materials: an item with no name does not break the whole list
+  ---
+  duration_ms: 0.3824
+  type: 'test'
+  ...
+# Subtest: sheet numbers: thousands separators, blanks and junk
+ok 26 - sheet numbers: thousands separators, blanks and junk
+  ---
+  duration_ms: 1.0981
+  type: 'test'
+  ...
+# Subtest: rows: header skipped, every column read from its own letter
+ok 27 - rows: header skipped, every column read from its own letter
+  ---
+  duration_ms: 1.2883
+  type: 'test'
+  ...
+# Subtest: /get_full_inventory returns the parsed rows (no "Part Name" item) and keeps name/category/qty for older apps
+ok 28 - /get_full_inventory returns the parsed rows (no "Part Name" item) and keeps name/category/qty for older apps
+  ---
+  duration_ms: 0.4105
+  type: 'test'
+  ...
+# Subtest: the seven audit near-misses each point at exactly the Sheet row with the same part number
+ok 29 - the seven audit near-misses each point at exactly the Sheet row with the same part number
+  ---
+  duration_ms: 8.5399
+  type: 'test'
+  ...
+# Subtest: doors, services, labour and other non-stock lines are never flagged (synthetic examples)
+ok 30 - doors, services, labour and other non-stock lines are never flagged (synthetic examples)
+  ---
+  duration_ms: 11.2014
+  type: 'test'
+  ...
+# Subtest: every production job line name: nothing that reads as a door, service, labour or fee is flagged
+ok 31 - every production job line name: nothing that reads as a door, service, labour or fee is flagged
+  ---
+  duration_ms: 1796.7723
+  type: 'test'
+  ...
+# Subtest: every production job line name: the flagged set is exactly the reviewed list (170 names)
+ok 32 - every production job line name: the flagged set is exactly the reviewed list (170 names)
+  ---
+  duration_ms: 1812.0184
+  type: 'test'
+  ...
+# Subtest: an exact Sheet name, an ambiguous name and a too-short name are never flagged
+ok 33 - an exact Sheet name, an ambiguous name and a too-short name are never flagged
+  ---
+  duration_ms: 1.165
+  type: 'test'
+  ...
+# Subtest: words: case, pipes, ×, plurals and "Taxable" do not matter; sizes are kept as they are
+ok 34 - words: case, pipes, ×, plurals and "Taxable" do not matter; sizes are kept as they are
+  ---
+  duration_ms: 0.1194
+  type: 'test'
+  ...
+# Subtest: the message names the line, the job, the Sheet name, the part number and shelf, and what to do
+ok 35 - the message names the line, the job, the Sheet name, the part number and shelf, and what to do
+  ---
+  duration_ms: 3.4769
+  type: 'test'
+  ...
+# Subtest: a checkout retry has the same fingerprint whatever the line order; another person or day does not
+ok 36 - a checkout retry has the same fingerprint whatever the line order; another person or day does not
+  ---
+  duration_ms: 1.6596
+  type: 'test'
+  ...
+# Subtest: the notifier never throws: a token lookup or send failure is logged and reported
+ok 37 - the notifier never throws: a token lookup or send failure is logged and reported
+  ---
+  duration_ms: 0.934
+  type: 'test'
+  ...
+# Subtest: mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before
+ok 38 - mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before
+  ---
+  duration_ms: 117.6689
+  type: 'test'
+  ...
+# Subtest: a checkout whose only unmatched lines are doors and services sends no push
+ok 39 - a checkout whose only unmatched lines are doors and services sends no push
+  ---
+  duration_ms: 31.7926
+  type: 'test'
+  ...
+# Subtest: a checkout where everything came off stock sends no push
+ok 40 - a checkout where everything came off stock sends no push
+  ---
+  duration_ms: 31.6128
+  type: 'test'
+  ...
+# Subtest: the same checkout sent again (an old build retrying, no request id) is not notified twice
+ok 41 - the same checkout sent again (an old build retrying, no request id) is not notified twice
+  ---
+  duration_ms: 77.1977
+  type: 'test'
+  ...
+# Subtest: the same checkout replayed by its Idempotency-Key is not notified twice (R2)
+ok 42 - the same checkout replayed by its Idempotency-Key is not notified twice (R2) # SKIP R2 request ids
+  ---
+  duration_ms: 0.1003
+  type: 'test'
+  ...
+# Subtest: the same checkout landing on two servers is notified once (R2: the claim is shared through Postgres)
+ok 43 - the same checkout landing on two servers is notified once (R2: the claim is shared through Postgres) # SKIP R2 shared store
+  ---
+  duration_ms: 0.0311
+  type: 'test'
+  ...
+# Subtest: a different person, or a different unmatched line, is a new checkout and is notified
+ok 44 - a different person, or a different unmatched line, is a new checkout and is notified
+  ---
+  duration_ms: 47.1896
+  type: 'test'
+  ...
+# Subtest: no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged
+ok 45 - no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged
+  ---
+  duration_ms: 78.63
+  type: 'test'
+  ...
+# Subtest: warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush
+ok 46 - warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush
+  ---
+  duration_ms: 78.8495
+  type: 'test'
+  ...
+# Subtest: C2: sheetQty reads every way the Sheets API formats a quantity
+ok 47 - C2: sheetQty reads every way the Sheets API formats a quantity
+  ---
+  duration_ms: 1.0257
+  type: 'test'
+  ...
+# Subtest: C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at)
+ok 48 - C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at)
+  ---
+  duration_ms: 0.1636
+  type: 'test'
+  ...
+# Subtest: M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped
+ok 49 - M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped
+  ---
+  duration_ms: 13.3215
+  type: 'test'
+  ...
+# Subtest: H2: a counted quantity is a whole number from 0 to 100,000
+ok 50 - H2: a counted quantity is a whole number from 0 to 100,000
+  ---
+  duration_ms: 0.2104
+  type: 'test'
+  ...
+# Subtest: checkoutInput: lines are checked one by one and the first bad one refuses the whole request
+ok 51 - checkoutInput: lines are checked one by one and the first bad one refuses the whole request
+  ---
+  duration_ms: 0.9978
+  type: 'test'
+  ...
+# Subtest: scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused
+ok 52 - scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused
+  ---
+  duration_ms: 0.3035
+  type: 'test'
+  ...
+# Subtest: H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice
+ok 53 - H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice
+  ---
+  duration_ms: 0.5747
+  type: 'test'
+  ...
+# Subtest: N1: planDeductions adds up every line for the same part and writes that row once
+ok 54 - N1: planDeductions adds up every line for the same part and writes that row once
+  ---
+  duration_ms: 0.3575
+  type: 'test'
+  ...
+# Subtest: C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten
+ok 55 - C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten
+  ---
+  duration_ms: 0.1713
+  type: 'test'
+  ...
+# Subtest: H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8
+ok 56 - H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8
+  ---
+  duration_ms: 0.2953
+  type: 'test'
+  ...
+# Subtest: C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00)
+ok 57 - C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00)
+  ---
+  duration_ms: 0.2107
+  type: 'test'
+  ...
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 8 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 8 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 8 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 9 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 8 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 7 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 4 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 2 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 3 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 6 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 5 staged items.
+# ❌ Checkout: Inventory!D2 for "Broken Row" is not a number; left unchanged.
+# ❌ Scan: Inventory!D2 for "Broken Row" is not a number; nothing changed.
+# 🧩 Likely name mismatch, not taken off stock: "Stop Mold | 7' White" (job 4001, qty 2) is probably "Weather Seal | Stop Mold | 7' White" (Inventory row 2, part 0650747), checked out by T.
+# 📵 No phone registered for T: the mismatch notice was not pushed (logged above).
+# 🧩 Likely name mismatch, not taken off stock: "Stop Mold | 7' White" (job 4001, qty 2) is probably "Weather Seal | Stop Mold | 7' White" (Inventory row 2, part 0650747), checked out by T.
+# 📵 No phone registered for T: the mismatch notice was not pushed (logged above).
+# Subtest: C2: a checkout of 1 from "1,250.00" leaves 1,249 (it wrote 0), written RAW
+ok 58 - C2: a checkout of 1 from "1,250.00" leaves 1,249 (it wrote 0), written RAW
+  ---
+  duration_ms: 113.3329
+  type: 'test'
+  ...
+# Subtest: C2: a scan adding 5 to "1,250.00" leaves 1,255 (it wrote 6); a scan deducting 5 leaves 1,245
+ok 59 - C2: a scan adding 5 to "1,250.00" leaves 1,255 (it wrote 6); a scan deducting 5 leaves 1,245
+  ---
+  duration_ms: 1.9762
+  type: 'test'
+  ...
+# Subtest: C2: a cycle count of a part showing "1,250.00" logs 1,250 as the previous quantity (it logged 1, a 1,249-unit miss)
+ok 60 - C2: a cycle count of a part showing "1,250.00" logs 1,250 as the previous quantity (it logged 1, a 1,249-unit miss)
+  ---
+  duration_ms: 2.1175
+  type: 'test'
+  ...
+# Subtest: C2: Total Warehouse Value, as written to Inventory!I3, counts 1,250 units as 1,250
+ok 61 - C2: Total Warehouse Value, as written to Inventory!I3, counts 1,250 units as 1,250
+  ---
+  duration_ms: 0.4372
+  type: 'test'
+  ...
+# Subtest: N1: one checkout with the same part on two jobs takes both off (3 + 1 from 40 is 36; it left 39)
+ok 62 - N1: one checkout with the same part on two jobs takes both off (3 + 1 from 40 is 36; it left 39)
+  ---
+  duration_ms: 1.7776
+  type: 'test'
+  ...
+# Subtest: N1: three jobs sharing two parts (the 18 Nov pattern) take every unit off once
+ok 63 - N1: three jobs sharing two parts (the 18 Nov pattern) take every unit off once
+  ---
+  duration_ms: 1.5128
+  type: 'test'
+  ...
+# Subtest: N1: two lines for the same part on the SAME job (older phone builds) are both taken off
+ok 64 - N1: two lines for the same part on the SAME job (older phone builds) are both taken off
+  ---
+  duration_ms: 1.3863
+  type: 'test'
+  ...
+# Subtest: N1: the 8:31 flush takes off every staged pick of one part across jobs (2 + 2 from 40 is 36; it left 38)
+ok 65 - N1: the 8:31 flush takes off every staged pick of one part across jobs (2 + 2 from 40 is 36; it left 38)
+  ---
+  duration_ms: 2.8211
+  type: 'test'
+  ...
+# Subtest: N1: two lines for the same job and part in ONE staging request are added together (the second replaced the first)
+ok 66 - N1: two lines for the same job and part in ONE staging request are added together (the second replaced the first)
+  ---
+  duration_ms: 1.3783
+  type: 'test'
+  ...
+# Subtest: N1: every quantity is deducted exactly once, for random checkouts mixing parts, jobs and repeats (300 runs)
+ok 67 - N1: every quantity is deducted exactly once, for random checkouts mixing parts, jobs and repeats (300 runs)
+  ---
+  duration_ms: 348.1471
+  type: 'test'
+  ...
+# Subtest: N1: the same exactly-once check through warehouse staging and the 8:31 flush (100 runs)
+ok 68 - N1: the same exactly-once check through warehouse staging and the 8:31 flush (100 runs)
+  ---
+  duration_ms: 112.7342
+  type: 'test'
+  ...
+# Subtest: M5: a checkout with 0.5 or 2.5 is refused with 400 and nothing is logged or written (0.5 was dropped, 2.5 taken as 2)
+ok 69 - M5: a checkout with 0.5 or 2.5 is refused with 400 and nothing is logged or written (0.5 was dropped, 2.5 taken as 2)
+  ---
+  duration_ms: 8.5348
+  type: 'test'
+  ...
+# Subtest: H2: cycle-count values that are not whole numbers from 0 to 100,000 are refused and nothing is written
+ok 70 - H2: cycle-count values that are not whole numbers from 0 to 100,000 are refused and nothing is written
+  ---
+  duration_ms: 5.4761
+  type: 'test'
+  ...
+# Subtest: H2: a valid count is written RAW as a number
+ok 71 - H2: a valid count is written RAW as a number
+  ---
+  duration_ms: 1.2985
+  type: 'test'
+  ...
+# Subtest: scan: an action other than add or deduct is refused (it deducted); a bad quantity is refused (it became 1)
+ok 72 - scan: an action other than add or deduct is refused (it deducted); a bad quantity is refused (it became 1)
+  ---
+  duration_ms: 2.325
+  type: 'test'
+  ...
+# Subtest: a quantity cell that is not a number is never overwritten: the checkout says so, the scan changes nothing
+ok 73 - a quantity cell that is not a number is never overwritten: the checkout says so, the scan changes nothing
+  ---
+  duration_ms: 1.8803
+  type: 'test'
+  ...
+# Subtest: C1: a line that matches no Inventory row is returned as an exception, not counted in itemsUpdated
+ok 74 - C1: a line that matches no Inventory row is returned as an exception, not counted in itemsUpdated
+  ---
+  duration_ms: 1.517
+  type: 'test'
+  ...
+# Subtest: C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row
+not ok 75 - C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row # TODO name mappings wait for your review (decision 7)
+  ---
+  duration_ms: 1.8548
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:276:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '60.00' !== '58.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '58.00'
+  actual: '60.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:280:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# ❌ Error flushing staged inventory: Error: Sheets 503
+#     at TestContext.<anonymous> (C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:400:30)
+#     at async Test.run (node:internal/test_runner/test:1125:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+# ⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+# 🎉 Flushed and processed 1 staged items.
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# ⏰ [CRON] Running 8:30 AM warehouse staging audit...
+# 🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+# 🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+# ⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+# ⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+# Subtest: C3 (todo S7): two checkouts of one part at the same moment on TWO servers both come off (163 - 2 - 3 = 158)
+not ok 76 - C3 (todo S7): two checkouts of one part at the same moment on TWO servers both come off (163 - 2 - 3 = 158) # TODO S7: Postgres lock across servers
+  ---
+  duration_ms: 53.1088
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:285:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '160.00' !== '158.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '158.00'
+  actual: '160.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:294:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: C4 (todo S7): a row inserted above while a checkout is in flight never overwrites another part
+not ok 77 - C4 (todo S7): a row inserted above while a checkout is in flight never overwrites another part # TODO S7: confirm the row before writing
+  ---
+  duration_ms: 1.6897
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:297:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '59.00' !== '163.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '163.00'
+  actual: '59.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:302:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: C5 (todo S5/S13): the shared app key alone cannot change stock
+not ok 78 - C5 (todo S5/S13): the shared app key alone cannot change stock # TODO S5 identity, enforced at S13 after the Android rollout
+  ---
+  duration_ms: 1.9998
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:307:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly deep-equal:
+    + actual - expected
+    
+      [
+    +   200,
+    +   200,
+    +   200
+    -   401,
+    -   401,
+    -   401
+      ]
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected:
+    0: 401
+    1: 401
+    2: 401
+  actual:
+    0: 200
+    1: 200
+    2: 200
+  operator: 'deepStrictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:318:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6)
+not ok 79 - H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6) # TODO S8: negative balance plus count flag
+  ---
+  duration_ms: 1.2654
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:322:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '0.00' !== '-3.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '-3.00'
+  actual: '0.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:327:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H3 (todo S10): a count made before a checkout does not wipe that checkout
+not ok 80 - H3 (todo S10): a count made before a checkout does not wipe that checkout # TODO S10: counts checked against movements since the zone was loaded
+  ---
+  duration_ms: 1.3464
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:331:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '12.00' !== '10.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '10.00'
+  actual: '12.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:337:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H4 (todo S9): picks staged before a restart are still taken off at 8:31
+not ok 81 - H4 (todo S9): picks staged before a restart are still taken off at 8:31 # TODO S9: durable staging in Postgres
+  ---
+  duration_ms: 1.7039
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:340:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '40.00' !== '38.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '38.00'
+  actual: '40.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:346:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it
+not ok 82 - H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it # TODO S9: durable staging; accumulate
+  ---
+  duration_ms: 1.4068
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:349:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '37.00' !== '35.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '35.00'
+  actual: '37.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:357:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name
+not ok 83 - H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name # TODO S5/S9: staging decided from the token
+  ---
+  duration_ms: 1.1299
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:360:1'
+  failureType: 'testCodeFailure'
+  error: 'a client header must not decide staging'
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: true
+  actual: false
+  operator: '=='
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:364:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H5 (todo S6): the same request id sent twice changes stock once
+not ok 84 - H5 (todo S6): the same request id sent twice changes stock once # TODO S6: database-enforced idempotency
+  ---
+  duration_ms: 1.3268
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:367:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    '56.00' !== '58.00'
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: '58.00'
+  actual: '56.00'
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:373:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H6 (todo S7/B): when the stock write fails, nothing is left logged as picked and the phone is not told success
+not ok 85 - H6 (todo S7/B): when the stock write fails, nothing is left logged as picked and the phone is not told success # TODO S7: stock first, log second; B: one transaction
+  ---
+  duration_ms: 1.0157
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:378:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    1 !== 0
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 0
+  actual: 1
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:384:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first
+not ok 86 - H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first # TODO S8: ambiguous barcode returns 409
+  ---
+  duration_ms: 0.8266
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:387:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    200 !== 409
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 409
+  actual: 200
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:391:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning
+not ok 87 - N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning # TODO S9: idempotent flush
+  ---
+  duration_ms: 1.3692
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:396:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:403:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+# Subtest: N3 (todo S9): with two servers up during a deploy, the 8:30 audit strikes the warehouse once (it struck twice on 16 Nov)
+not ok 88 - N3 (todo S9): with two servers up during a deploy, the 8:30 audit strikes the warehouse once (it struck twice on 16 Nov) # TODO S9: scheduled jobs run once across servers
+  ---
+  duration_ms: 1.8992
+  type: 'test'
+  location: 'C:\\Users\\opera\\AppData\\Local\\Temp\\claude\\099a4ba3c039071a\\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\\scratchpad\\r1b-candidate\\test\\stock_writes.test.js:406:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    Expected values to be strictly equal:
+    
+    2 !== 1
+    
+  code: 'ERR_ASSERTION'
+  name: 'AssertionError'
+  expected: 1
+  actual: 2
+  operator: 'strictEqual'
+  stack: |-
+    TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\8ea3ac0b-cb46-4cf5-92c1-1ada1c051b78\scratchpad\r1b-candidate\test\stock_writes.test.js:413:12)
+    async Test.run (node:internal/test_runner/test:1125:7)
+    async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+  ...
+1..88
+# tests 88
+# suites 0
+# pass 72
+# fail 0
+# cancelled 0
+# skipped 2
+# todo 14
+# duration_ms 4213.4904

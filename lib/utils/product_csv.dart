@@ -6,7 +6,7 @@ import '../services/line_items_api.dart';
 /// The Product Catalog as a spreadsheet file (CSV): one row per product, in the order given. The cost column is left
 /// out when the person's Line Items & Costs > View switch is off, as it is on screen.
 String productCatalogCsv(List<CatalogEntry> products, {required bool canSeeCost}) {
-  final headers = ['Product', 'Part #', 'Category', 'Model', 'In stock', if (canSeeCost) 'Unit cost', 'Price', 'Member price', 'Status', 'Inventory item'];
+  final headers = ['Product', 'Part #', 'Category', 'Model', if (canSeeCost) 'Unit cost', 'Price', 'Member price', 'Status', 'Inventory item'];
   final out = StringBuffer()..write(_line(headers));
   for (final e in products) {
     out.write(
@@ -15,7 +15,6 @@ String productCatalogCsv(List<CatalogEntry> products, {required bool canSeeCost}
         e.sku,
         e.category,
         e.model,
-        e.stock == null ? '' : '${e.stock}',
         if (canSeeCost) _money(e.cost),
         _money(e.rate), // blank means priced per job
         _money(e.memberPrice),

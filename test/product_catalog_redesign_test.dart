@@ -42,6 +42,8 @@ void main() {
   testWidgets('a filter that is on shows as a chip in the command row; its x takes it off', (t) async {
     await _pump(t);
     expect(find.text('17 products'), findsOneWidget);
+    await t.tap(find.text('Category').first); // the group starts closed
+    await t.pumpAndSettle();
     await t.tap(find.text('Overhead Door').first);
     await t.pumpAndSettle();
     expect(find.text('2 matching'), findsOneWidget);
@@ -56,6 +58,9 @@ void main() {
 
   testWidgets('categories: the biggest first, "Show all", and a search that narrows the list', (t) async {
     await _pump(t);
+    expect(find.text('Show all 16'), findsNothing); // closed until opened
+    await t.tap(find.text('Category').first); // the group starts closed
+    await t.pumpAndSettle();
     expect(find.text('Show all 16'), findsOneWidget); // 16 categories, the 8 biggest (then A to Z) listed first
     expect(find.text('Category 9'), findsNothing);
     await t.tap(find.text('Show all 16'));
@@ -70,8 +75,11 @@ void main() {
     expect(find.text('No category matches'), findsOneWidget);
   });
 
-  testWidgets('Stock: in stock and needs review; Needs attention: cost at or above price, no cost, per-job price, shared part #', (t) async {
+  testWidgets('Needs attention: stock link to review, cost at or above price, no cost, per-job price, shared part #', (t) async {
     await _pump(t);
+    await t.ensureVisible(find.text('Needs attention'));
+    await t.tap(find.text('Needs attention')); // starts closed
+    await t.pumpAndSettle();
     Future<void> only(String label, String count) async {
       await t.ensureVisible(find.text(label)); // the sidebar scrolls as one
       await t.pumpAndSettle();
@@ -82,8 +90,7 @@ void main() {
       await t.pumpAndSettle();
     }
 
-    await only('In stock', '12 matching'); // springs 1-11 and the bearing; the tensioner has 0, the bracket needs review
-    await only('Stock needs review', '1 matching');
+    await only('Stock link to review', '1 matching'); // the bracket (the Stock group is gone; this check moved here)
     await only('Cost at or above price', '1 matching'); // the tensioner: cost equals price
     await only('No cost entered', '2 matching'); // the screws and the bracket
     await only('Per-job price', '1 matching'); // the door
@@ -94,43 +101,40 @@ void main() {
 
   testWidgets('without the costs switch the cost-based attention filters and the Margin column are not offered', (t) async {
     await _pump(t, canSeeCost: false);
+    await t.ensureVisible(find.text('Needs attention'));
+    await t.tap(find.text('Needs attention')); // closed until opened
+    await t.pumpAndSettle();
     expect(find.text('Cost at or above price'), findsNothing);
     expect(find.text('No cost entered'), findsNothing);
     expect(find.text('MARGIN'), findsNothing);
     expect(find.text('Per-job price'), findsOneWidget);
   });
 
-  testWidgets('the Margin column reads from a real price and cost and sorts, biggest first', (t) async {
+  testWidgets('the list has no Margin or In stock column, and a product with no cost of its own reads a dash', (t) async {
     await _pump(t);
-    expect(find.descendant(of: _row('cat:1'), matching: find.text('67%')), findsOneWidget);
-    expect(find.descendant(of: _row('cat:2'), matching: find.text('0%')), findsOneWidget);
-    expect(find.descendant(of: _row('cat:3'), matching: find.text('—')), findsWidgets); // per job: no margin made up
-    await t.tap(find.text('MARGIN'));
+    expect(find.text('MARGIN'), findsNothing);
+    expect(find.text('IN STOCK'), findsNothing);
+    expect(find.descendant(of: _row('cat:1'), matching: find.text('\$0.87')), findsOneWidget);
+    await t.enterText(find.widgetWithText(TextField, 'Search name, part # or category'), 'tek screws'); // brings the row on screen
+    await t.pump(const Duration(milliseconds: 300));
     await t.pumpAndSettle();
-    final first = t.getTopLeft(_row('cat:1')).dy;
-    expect(first, lessThan(t.getTopLeft(_row('cat:100')).dy)); // 67% before the springs' ~50%
-  });
-
-  testWidgets('stock reads a dash for a product that is not kept in inventory, a number otherwise', (t) async {
-    await _pump(t);
-    expect(find.descendant(of: _row('cat:2'), matching: find.text('0')), findsOneWidget); // an inventory item that ran out
-    expect(find.descendant(of: _row('cat:4'), matching: find.text('0')), findsNothing); // the screws are not stocked
+    expect(find.descendant(of: _row('cat:4'), matching: find.text('—')), findsWidgets); // the screws: no cost entered, none made up
   });
 
   testWidgets('the filter sidebar can be put away and brought back from the command row', (t) async {
     await _pump(t);
-    expect(find.text('Product name'), findsOneWidget);
+    expect(find.text('Part number'), findsOneWidget);
     await t.tap(find.byTooltip('Hide filters'));
     await t.pumpAndSettle();
-    expect(find.text('Product name'), findsNothing);
+    expect(find.text('Part number'), findsNothing);
     await t.tap(find.text('Filters'));
     await t.pumpAndSettle();
-    expect(find.text('Product name'), findsOneWidget);
+    expect(find.text('Part number'), findsOneWidget);
   });
 
   testWidgets('"/" jumps to the search box; Escape clears it', (t) async {
     await _pump(t);
-    final search = find.widgetWithText(TextField, 'Search name, part #, category or description');
+    final search = find.widgetWithText(TextField, 'Search name, part # or category');
     await t.sendKeyEvent(LogicalKeyboardKey.slash);
     await t.pumpAndSettle();
     expect(t.widget<TextField>(search).focusNode!.hasFocus, isTrue);
@@ -143,17 +147,22 @@ void main() {
     expect(find.text('17 products'), findsOneWidget);
   });
 
-  testWidgets('the search also finds words in descriptions', (t) async {
+  testWidgets('the search matches name, part # and category, not words buried in a description', (t) async {
     t.view.physicalSize = const Size(1366, 768);
     t.view.devicePixelRatio = 1;
     addTearDown(t.view.reset);
     final list = [..._entries, const CatalogEntry(key: 'cat:9', name: 'Keypad | L979U', description: 'Security 3.0 keypad for openers', rate: 57.24)];
     await t.pumpWidget(MaterialApp(home: ProductCatalogScreen(loader: () async => (entries: list, canSeeCost: true, historyDays: 540))));
     await t.pumpAndSettle();
-    await t.enterText(find.widgetWithText(TextField, 'Search name, part #, category or description'), 'security');
+    final search = find.widgetWithText(TextField, 'Search name, part # or category');
+    await t.enterText(search, 'security');
     await t.pump(const Duration(milliseconds: 300));
     await t.pumpAndSettle();
-    expect(find.text('1 matching'), findsOneWidget);
+    expect(find.text('No products match'), findsOneWidget); // only the description says it
+    await t.enterText(search, 'keypad');
+    await t.pump(const Duration(milliseconds: 300));
+    await t.pumpAndSettle();
+    expect(find.text('1 matching'), findsOneWidget); // the name does
   });
 
   testWidgets('the pager numbers pages around the current one', (t) async {

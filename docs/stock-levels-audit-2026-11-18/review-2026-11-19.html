@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Levels Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~980px) with a sticky section index on wide screens; severity is carried by a left stripe + chip. */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --ink:#0f1b2d; --muted:#556275; --line:#dde2ea; --navy:#13233d; --navy-ink:#ffffff;
+  --accent:#2f5d9e; --crit:#b42318; --crit-bg:#fdecea; --high:#b54708; --high-bg:#fef3e6; --med:#2f5d9e; --med-bg:#eaf1fb;
+  --low:#5b6576; --low-bg:#eef0f3; --ok:#067647; --ok-bg:#e7f6ee; --code-bg:#f0f2f6;
+  --f-display:"Archivo","Segoe UI",system-ui,sans-serif; --f-body:"Inter","Segoe UI",system-ui,sans-serif; --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0c121c; --surface:#131c2a; --ink:#e7ecf3; --muted:#9aa7b8; --line:#26324a; --navy:#0a1424; --navy-ink:#e7ecf3;
+  --accent:#8fb4ea; --crit:#ff8a7a; --crit-bg:#3a1714; --high:#f7b267; --high-bg:#36230f; --med:#8fb4ea; --med-bg:#16253c;
+  --low:#a7b1c0; --low-bg:#1c2636; --ok:#6fd3a0; --ok-bg:#10291d; --code-bg:#1a2433; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0c121c; --surface:#131c2a; --ink:#e7ecf3; --muted:#9aa7b8; --line:#26324a; --navy:#0a1424; --navy-ink:#e7ecf3;
+  --accent:#8fb4ea; --crit:#ff8a7a; --crit-bg:#3a1714; --high:#f7b267; --high-bg:#36230f; --med:#8fb4ea; --med-bg:#16253c;
+  --low:#a7b1c0; --low-bg:#1c2636; --ok:#6fd3a0; --ok-bg:#10291d; --code-bg:#1a2433; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.6 var(--f-body);-webkit-font-smoothing:antialiased}
+a{color:var(--accent)} a:focus-visible,button:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+code,.mono{font-family:var(--f-mono);font-size:.86em}
+code{background:var(--code-bg);padding:.1em .35em;border-radius:4px;overflow-wrap:anywhere}
+.band{background:var(--navy);color:var(--navy-ink)}
+.wrap{max-width:1180px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header.band .wrap{padding-block:36px 30px}
+.eyebrow{font:600 12px/1 var(--f-body);letter-spacing:.09em;text-transform:uppercase;opacity:.75}
+h1{font:800 clamp(30px,4.4vw,44px)/1.1 var(--f-display);margin:.35em 0 .3em;text-wrap:balance;letter-spacing:-.01em}
+.lede{max-width:72ch;opacity:.9;margin:0}
+.meta{display:flex;flex-wrap:wrap;gap:8px 22px;margin-top:18px;font-size:13px;opacity:.8}
+.layout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:40px;padding-block:32px 64px}
+nav.toc{position:sticky;top:calc(env(safe-area-inset-top,0px) + 16px);align-self:start;font-size:13px}
+nav.toc a{display:block;color:var(--muted);text-decoration:none;padding:5px 0 5px 10px;border-left:2px solid var(--line)}
+nav.toc a:hover{color:var(--ink);border-left-color:var(--accent)}
+main{min-width:0}
+section{margin-bottom:56px;scroll-margin-top:16px}
+h2{font:700 24px/1.25 var(--f-display);margin:0 0 6px;text-wrap:balance}
+h3{font:700 17px/1.35 var(--f-display);margin:26px 0 8px}
+.sub{color:var(--muted);margin:0 0 20px;max-width:75ch}
+p{max-width:78ch}
+.callout{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--crit);border-radius:8px;padding:16px 18px;margin:18px 0}
+.callout.info{border-left-color:var(--accent)}
+.callout p{margin:.35em 0}
+.grades{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin:18px 0}
+.grade{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 14px 12px}
+.grade .k{font-size:12.5px;color:var(--muted);font-weight:600}
+.grade .v{font:800 30px/1.1 var(--f-display);margin-top:4px;font-variant-numeric:tabular-nums}
+.grade .v small{font-size:14px;color:var(--muted);font-weight:600}
+.grade .c{font-size:12.5px;color:var(--muted);margin-top:6px;line-height:1.4}
+.grade.overall{background:var(--navy);color:var(--navy-ink);border-color:var(--navy)}
+.grade.overall .k,.grade.overall .c,.grade.overall .v small{color:inherit;opacity:.8}
+.bar{height:5px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--accent)}
+.grade.overall .bar{background:rgba(255,255,255,.2)} .grade.overall .bar i{background:#fff}
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface);margin:14px 0}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:600 11.5px/1.3 var(--f-body);text-transform:uppercase;letter-spacing:.06em;color:var(--muted);background:var(--surface)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip{display:inline-block;font:600 11px/1 var(--f-body);letter-spacing:.04em;text-transform:uppercase;padding:4px 7px;border-radius:999px;white-space:nowrap;vertical-align:1px}
+.s-crit{color:var(--crit);background:var(--crit-bg)} .s-high{color:var(--high);background:var(--high-bg)}
+.s-med{color:var(--med);background:var(--med-bg)} .s-low{color:var(--low);background:var(--low-bg)}
+.st-conf{color:var(--ok);background:var(--ok-bg)} .st-susp{color:var(--high);background:transparent;border:1px dashed currentColor;padding:3px 6px}
+.st-rec{color:var(--muted);background:transparent;border:1px solid var(--line);padding:3px 6px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 16px}
+.filters button{font:600 13px var(--f-body);border:1px solid var(--line);background:var(--surface);color:var(--ink);padding:6px 12px;border-radius:999px;cursor:pointer}
+.filters button[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+.issue{background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--low);border-radius:8px;padding:14px 18px 6px;margin:12px 0}
+.issue.crit{border-left-color:var(--crit)} .issue.high{border-left-color:var(--high)} .issue.med{border-left-color:var(--med)}
+.issue h4{font:700 15.5px/1.4 var(--f-display);margin:0 0 6px;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:baseline}
+.issue h4 .id{font:500 12.5px var(--f-mono);color:var(--muted)}
+.issue p,.issue li{font-size:14px}
+.issue ul,.issue ol{padding-left:20px;margin:.3em 0 .8em;max-width:78ch}
+.issue .ev{font-size:13px;color:var(--muted)}
+details{margin:4px 0 10px} summary{cursor:pointer;font-weight:600;font-size:13.5px;color:var(--accent)}
+pre{background:var(--code-bg);border-radius:6px;padding:10px 12px;overflow-x:auto;font:12.5px/1.5 var(--f-mono);margin:8px 0}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--surface)}
+.seg button{font:600 13px var(--f-body);border:0;background:transparent;color:var(--muted);padding:7px 14px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface)}
+.gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,460px),1fr));gap:18px;margin-top:16px}
+figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+figure a{display:block;line-height:0;background:#fff}
+figure img{width:100%;height:auto;display:block}
+figcaption{padding:10px 12px;font-size:13px;color:var(--muted);border-top:1px solid var(--line)}
+figcaption b{color:var(--ink)}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 16px}
+.card h4{margin:0 0 6px;font:700 15px var(--f-display)}
+.card ul{margin:.2em 0;padding-left:18px;font-size:14px}
+ol.phases{list-style:none;padding:0;margin:0;counter-reset:ph}
+ol.phases>li{counter-increment:ph;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px 18px 10px 58px;margin:12px 0;position:relative}
+ol.phases>li::before{content:counter(ph);position:absolute;left:16px;top:14px;width:28px;height:28px;border-radius:50%;background:var(--navy);color:var(--navy-ink);font:700 14px/28px var(--f-display);text-align:center}
+ol.phases h4{margin:0 0 4px;font:700 15.5px var(--f-display)}
+ol.phases ul{margin:.3em 0 .5em;padding-left:18px;font-size:14px}
+.legend{display:flex;flex-wrap:wrap;gap:10px 16px;font-size:13px;color:var(--muted);align-items:center}
+footer{color:var(--muted);font-size:13px;border-top:1px solid var(--line);padding-block:20px 40px}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)} nav.toc{display:none}}
+@media (prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+
+blockquote{margin:14px 0;padding:12px 16px;background:var(--surface);border:1px solid var(--line);border-left:4px solid var(--high);border-radius:8px;max-width:78ch}
+main section h2{padding-top:6px;border-top:1px solid var(--line);padding-top:22px}
+main section:first-child h2{border-top:0;padding-top:0}
+h4{font:700 15px/1.35 var(--f-display);margin:20px 0 6px}
+ol,ul{max-width:78ch;padding-left:22px} li{margin:3px 0}
+.status{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px;margin:16px 0 22px}
+.status .card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.status .card b{display:block;font:700 15px/1.3 var(--f-display);margin:6px 0 2px}
+.status .card span.c{font-size:13px;color:var(--muted)}
+.shots{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px;margin:14px 0}
+.shots figure{margin:0;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px}
+.shots img{width:100%;height:auto;border-radius:4px;display:block}
+.meta span{overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.shots figcaption{font-size:12.5px;color:var(--muted);margin-top:6px}
+@media (max-width:900px){.layout{grid-template-columns:minmax(0,1fr)} nav.toc{position:static;display:flex;flex-wrap:wrap;gap:4px 12px} nav.toc a{border-left:0;padding:2px 0}}
+</style></head>
+<body>
+<header class="band"><div class="wrap">
+<div class="eyebrow">Stock Levels · Phase 1 · review pack</div>
+<h1>Stock Levels review, 19 Nov 2026</h1>
+<p class="lede">R1 release hold, the mismatch notification, the seven name mappings, the R2 review and the 16 Nov strike correction, in one place.</p>
+<div class="meta"><span>Local file, not published</span><span>Backend tree: C:\Users\opera\integrity-backend-stock-phase1 (uncommitted)</span></div>
+</div></header>
+<div class="wrap layout">
+<nav class="toc" aria-label="Sections"><a href="#status">Where things stand</a><a href="#hold">R1 release hold</a><a href="#notice">Mismatch notification (R1b)</a><a href="#aliases">Seven name mappings</a><a href="#r2">R2 review</a><a href="#strike">16 Nov strike</a></nav>
+<main><section id="status"><h2>Where things stand</h2>
+<div class="status">
+<div class="card"><span class="chip s-crit">On hold</span><b>R1 release</b><span class="c">Installed phones show a partial checkout as full success.</span></div>
+<div class="card"><span class="chip s-med">Built locally</span><b>Mismatch notification (R1b)</b><span class="c">18/18 tests; 170 flagged names, no doors or services. Not pushed.</span></div>
+<div class="card"><span class="chip s-high">Awaiting approval</span><b>Seven name mappings</b><span class="c">Evidence ready; nothing implemented.</span></div>
+<div class="card"><span class="chip s-high">Awaiting your review</span><b>16 Nov strike, 11 → 10</b><span class="c">SQL prepared, not executed.</span></div>
+<div class="card"><span class="chip st-conf">Accepted for local review</span><b>R2</b><span class="c">110 stock tests, 0 fail; migration not applied.</span></div>
+<div class="card"><span class="chip s-low">Pending from you</span><b>Warehouse phone list</b><span class="c">Who uses the shared login (name + PIN).</span></div>
+</div>
+<h3>Decisions waiting on you</h3>
+<ol>
+<li>Approve R1b for release with R1, or keep both on hold.</li>
+<li>Approve each of the seven name mappings (or the broader match-by-product approach for Phase 2).</li>
+<li>Review the strike SQL, then run it in pgAdmin.</li>
+<li>Send the list of people who use the warehouse phone.</li>
+</ol>
+<p class="sub">Nothing has been committed, pushed, deployed or published. No Sheet or production writes. The original audit is <a href="index.html">index.html</a>.</p>
+</section><section id="hold"><h2>R1 release hold: findings, proposal, deployment and rollback</h2>
+<p>19 Nov 2026. Nothing was deployed, committed, pushed or installed. Production reads only (Render logs, read-only SQL). R1 = commit <code>983535d7</code> on <code>origin/stock-phase1</code>, a single commit directly on top of the live commit <code>030f3b90</code>.</p>
+<h3>1. What the installed Android builds do with <code>status: &quot;partial&quot;</code></h3>
+<p>The builds that can be on phones today, read from git:</p>
+<div class="tablewrap"><table><thead><tr><th>Build</th><th>Commit</th><th>After any HTTP 200 checkout the phone shows</th><th>Reads <code>status</code> / <code>lines</code> / <code>message</code>?</th></tr></thead><tbody><tr><td>versionCode 33 ("old app")</td><td><code>1fe6546</code></td><td>Toast <strong>"Checkout Successful!"</strong></td><td>No</td></tr><tr><td>versionCode 34 (pushed 11-09/11-10)</td><td><code>23140f7</code>, <code>6ce02a4</code>, <code>551c61b</code></td><td>Snackbar <strong>"Checked out N items. M still to pick."</strong>, or the <strong>"Your list is done"</strong> panel when nothing is left</td><td>Only <code>message</code>, and only to spot the "Items staged" prefix</td></tr><tr><td>versionCode 36</td><td>local, uncommitted</td><td>Same as 34 (pick list unchanged)</td><td>Same</td></tr></tbody></table></div>
+<p><strong>Verified on unchanged build 34 (<code>551c61b</code>)</strong> with its own Robolectric harness: a scratch test, never committed, fed it the exact answer the real R1 router returns for a mixed checkout. Evidence is in <code>r1-hold-evidence/</code>.</p>
+<ul><li>Lines: <code>Stop Mold | 7&#x27; White</code> ×2 (job 4001), <code>Keypad | Genie</code> ×1 (job 4001), <code>Keypad | Genie</code> ×1 (job 4002).</li><li>R1 answer: <code>{&quot;status&quot;:&quot;partial&quot;,&quot;itemsUpdated&quot;:2,&quot;lines&quot;:[{&quot;outcome&quot;:&quot;not_stocked&quot;,…},{&quot;outcome&quot;:&quot;deducted&quot;,&quot;remaining&quot;:8},…],&quot;message&quot;:&quot;1 of 3 lines did not come off stock: Stop Mold | 7&#x27; White.&quot;}</code></li><li>The Sheet afterwards: Keypad 10 → 8 (correct, both jobs). Weather Seal | Stop Mold | 7' White stays at 60. All three lines are logged to PickedItems, as before R1.</li><li><strong>What the employee sees:</strong> before checkout, the Stop Mold row carries a grey "Not stocked" chip, the same chip a door or service line gets (<code>r1_A1_before.png</code>). After checkout, <strong>"Your list is done"</strong> (<code>r1_A2_after.png</code>), or <strong>"Checked out 3 items. 1 item still to pick."</strong> when another job is left (<code>r1_B_after.png</code>). Stop Mold is never mentioned again.</li></ul>
+<h3>2. Can an employee mistake a partial checkout for a full one?</h3>
+<p><strong>Yes, on every installed build.</strong> Nothing on screen differs between a full and a partial checkout. The unmatched line also leaves the pick list, because it is logged to PickedItems like any other line.</p>
+<p>This is <strong>not a regression from R1</strong>: production today answers <code>&quot;status&quot;:&quot;success&quot;</code> for the same checkout and the phone shows the same words. R1 makes the server's answer truthful (<code>partial</code>, per-line outcomes) for builds that read it. It changes nothing on the screens of the builds people have now.</p>
+<h3>3. Mixed matched and unmatched lines, tested</h3>
+<div class="tablewrap"><table><thead><tr><th>Test</th><th>Where</th><th>Result</th></tr></thead><tbody><tr><td>Real R1 router, Stop Mold ×2 + Keypad ×1 on two jobs</td><td><code>r1-hold-evidence/mixed_checkout.js</code> → <code>mixed_checkout_out.txt</code></td><td>HTTP 200, <code>partial</code>, <code>itemsUpdated</code> 2, Keypad 10 → 8, Weather Seal unchanged at 60, 3 log rows</td></tr><tr><td>R1 unit test "C1: a line that matches no Inventory row is returned as an exception"</td><td><code>test/stock_writes.test.js</code></td><td>Pass</td></tr><tr><td>Build 34 screen fed that answer (2 scenarios)</td><td><code>r1-hold-evidence/R1PartialCheckoutTest.kt</code>, <code>android_build34_screen_text.txt</code>, 3 PNGs</td><td>Shows success wording; no exception shown</td></tr></tbody></table></div>
+<h3>4. Stop Mold</h3>
+<ul><li>In the audit snapshot, the Service Fusion name <code>Stop Mold | 7&#x27; White</code> has no Sheet row. The shelf part is <code>Weather Seal | Stop Mold | 7&#x27; White</code> (missed 9 times, 18 units, latest 18 Nov). Six more near-miss names are listed in the audit (C1).</li><li><strong>Today the employee is not told clearly.</strong> Build 34 says "Not stocked", which reads like "a part with no shelf" (doors, services), not "this IS on the shelf under another name and nothing came off stock". Build 33 says nothing at all.</li><li>The cause is the name, and only an alias mapping fixes it (decision D7: approve the 7 aliases from the audit, or wait for Phase 2 id matching). Until then, communication can only tell people about it, not fix it.</li></ul>
+<h3>5. Proposal (the current builds cannot display the exceptions)</h3>
+<p><strong>A. Backward-compatible, server only, works on builds 33 and 34 today: a push notification on a partial checkout.</strong> Both builds already display FCM messages that carry a title and body (<code>MyFcmService.kt</code>); the 4 PM "Inventory Overdue" alert uses that path.</p>
+<ul><li>When a checkout has a line that is <code>unreadable</code>, or <code>not_stocked</code> <strong>and looks like a stocked part</strong>, the server sends the signed-in person a push: title <strong>"⚠️ Not taken off stock"</strong>, body <strong>"Stop Mold | 7' White (job 4001) isn't on the stock sheet under that name, so nothing came off stock for it. Tell the office."</strong></li><li>"Looks like a stocked part": every word of the line's name appears in exactly one Sheet part name. That catches Stop Mold and the audit's other near-misses, and skips doors and service lines. Most of the 142 unmatched log rows are those, and pushing for each would teach people to ignore the alerts.</li><li>The same lines go to the server log with a 🚨 marker, so the office sees them as well.</li><li>Limits: best effort (needs the device's FCM token; arrives a second after the "Checked out" message); build 33 shows one line of text. It does not stop the line leaving the pick list.</li><li>Size: about half a day. It is a change to R1, so it needs your approval as "R1b" before release.</li></ul>
+<p><strong>B. In the Android release plan (next build, S11): show the exceptions on the phone.</strong></p>
+<ul><li>Read <code>status</code> and <code>lines</code>. On <code>partial</code>, show a dialog before "Checked out…" or "Your list is done", listing each line that did not come off stock with its reason, and "Tell the office".</li><li>Separate "not on the stock sheet under this name" (a likely mapping problem) from genuine "Not stocked" service lines, using a new optional field from <code>/get_job_materials</code>. Older builds ignore it.</li><li>Never show "Your list is done" after a partial checkout.</li></ul>
+<p><strong>My recommendation:</strong> release R1 (it fixes daily stock loss, N1 and C2, and is no worse on screen than today), with A as R1b if you approve it, B in the next Android build, and decide D7 so Stop Mold stops being a mismatch at all. If you'd rather not add A, R1 alone is still safe to release.</p>
+<h3>6. Exact deployment and rollback procedure for R1 (to run only after your separate release approval)</h3>
+<p><strong>Before</strong></p>
+<ol><li><code>git fetch origin</code> and confirm <code>origin/main</code> is still <code>030f3b906f115aeb017b00d817c968022b8a0806</code>. R1 must be a fast-forward; if main has moved, stop and rebase R1 for a new review.</li><li>On a clean checkout of <code>983535d7</code>: <code>npm ci &amp;&amp; node --test test/*.test.js</code>. Expected: every stock test passes; the only failures are the known environment ones listed in <code>r2-evidence/failures_R1.txt</code>.</li><li>Note the live deploy for rollback: <code>dep-dbuu7itg1s2s739ipe30</code> (commit <code>030f3b90</code>, live since 2026-11-18 17:44 UTC).</li><li>Pick the window: <strong>a weekday between 10:00 and 15:30 Chicago, or after 16:10</strong>. Not 08:00–08:35: warehouse staging is held in memory, so a deploy before 8:31 drops staged picks (H4). Not 15:50–16:05: two servers overlap for about a minute during a deploy and both would run the 4 PM audit (N3).</li></ol>
+<p><strong>Deploy</strong></p>
+<ol><li><code>git push origin 983535d7:main</code> (fast-forward). Render auto-deploys in about a minute.</li></ol>
+<p><strong>Verify (read-only)</strong></p>
+<ol><li>Render: the new deploy is <code>live</code>; start-up log shows <code>✅ Server live on port 3000</code> and no <code>TOKEN_SECRET is not set</code> line.</li><li><code>GET /get_full_inventory</code> answers 200 (the office Stock Levels page loads).</li><li>On the next real checkout: the log shows no <code>❌ Checkout: Inventory!D… is not a number</code> lines (or, if it does, that cell really is text), the Sheet's D cells for the parts taken are plain numbers, and PickedItems has one row per line as before.</li><li>Next morning at 8:31: <code>🎉 Flushed and processed N staged items.</code> once per server, and the staged parts' D values drop by the full staged amount.</li></ol>
+<p><strong>Rollback (no schema, no data to undo)</strong></p>
+<ul><li>Fastest: Render dashboard → the service → Deploys → <code>dep-dbuu7itg1s2s739ipe30</code> → Rollback. Then also run <code>git revert 983535d7 &amp;&amp; git push origin main</code>, because the next push to main would otherwise redeploy R1.</li><li>Values R1 wrote stay correct numbers on the Sheet. After a rollback the old <code>parseInt</code> bugs (C2, N1) come back.</li></ul><div class="shots">
+<figure><a href="r1-hold-evidence/r1_A1_before.png"><img src="r1-hold-evidence/r1_A1_before.png" alt="Build 34 pick list before checkout: Stop Mold shows a grey Not stocked chip"></a><figcaption>Before checkout: Stop Mold shows "Not stocked", like a door or service line.</figcaption></figure>
+<figure><a href="r1-hold-evidence/r1_A2_after.png"><img src="r1-hold-evidence/r1_A2_after.png" alt="Build 34 after a partial checkout: Your list is done"></a><figcaption>After a partial checkout: "Your list is done".</figcaption></figure>
+<figure><a href="r1-hold-evidence/r1_B_after.png"><img src="r1-hold-evidence/r1_B_after.png" alt="Build 34 after a partial checkout with a job left: Checked out 3 items"></a><figcaption>With a job left: "Checked out 3 items. 1 item still to pick."</figcaption></figure>
+</div><p class="sub">Source file: <a href="r1-release-hold.md">r1-release-hold.md</a></p></section><section id="notice"><h2>R1b: push notification for likely stocked-part name mismatches</h2>
+<p>19 Nov 2026. Approved for <strong>local implementation and testing only</strong>. Not committed, pushed or deployed; R1 stays on release hold.</p>
+<h3>What it does</h3>
+<p>After a checkout answers, the server looks at the lines that took nothing off stock (<code>not_stocked</code>). For each one that is <strong>probably a stocked part under another name</strong>, it logs it for the office and pushes one notification to the signed-in person's phone, through the existing channel (<code>admin.messaging().send</code>, the same FCM path and display as the 4 PM "Inventory Overdue" alert; both builds 33 and 34 show it).</p>
+<p>Example (the real text):</p>
+<blockquote><strong>⚠️ Not taken off stock</strong><br>1 part was not taken off stock: "Stop Mold | 7' White" (job 4001) looks like "Weather Seal | Stop Mold | 7' White" on the stock sheet<br>(part 0650732, shelf BD). Tell the office so the names can be matched; the rest of your checkout went through.</blockquote>
+<p>With several lines it lists three and says "And N more". The office log gets one <code>🧩 Likely name mismatch…</code> line per item, with the job, quantity, Sheet row, part number and who checked it out.</p>
+<h3>The rule (src/stockMismatch.js)</h3>
+<p>A <code>not_stocked</code> line counts only if exactly <strong>one</strong> Sheet row matches. A row matches when, after normalising (lower case, split on <code>|</code> <code>,</code> <code>()</code> and spaces, "×" read as "x", plural to singular, "Taxable" and "&amp;" ignored):</p>
+<ul><li>every word of the line is in the row's name, and the line has at least 3 words, or</li><li>every word of the row is in the line, the row has at least 3 words, and the line has at most 2 extra words.</li></ul>
+<p>No match, or more than one: no push. An exact name never gets here (it came off stock).</p>
+<h3>Requirements, and how each was met</h3>
+<div class="tablewrap"><table><thead><tr><th>Requirement</th><th>How</th><th>Test</th></tr></thead><tbody><tr><td>Use the existing notification channel</td><td><code>admin.messaging().send({ notification: { title, body }, token })</code> with the token from <code>services.getTechToken</code> (the 4 PM alert's path)</td><td>router tests check the exact message and token</td></tr><tr><td>No notice for doors, services, ordinary non-stock lines</td><td>Rule above. Run over <strong>every distinct job line name in production</strong> (3,537 names, 30,729 job lines; read-only, 19 Nov): of the 3,425 without an exact Sheet row, <strong>170 are flagged and none is a door, service, labour line or fee</strong></td><td>"every production job line name: nothing that reads as a door, service…"; synthetic doors/services/"Stop Mold | Install New Standard Color"; mixed checkout with a door and a tune-up line</td></tr><tr><td>Include the unmatched name and enough to resolve it</td><td>Line name, job number, the Sheet row's exact name, its part number and shelf, and "tell the office"</td><td>message text test</td></tr><tr><td>Mixed checkouts</td><td>Stop Mold + Keypad on two jobs + a door + a service line → one push naming only Stop Mold; stock and answer unchanged</td><td>"mixed checkout…"</td></tr><tr><td>False positives</td><td>Exact name, two candidate rows, too few words: no push; the flagged set is pinned to a reviewed list (below)</td><td>four tests</td></tr><tr><td>No duplicate notice on a retry</td><td>Fingerprint = person + Chicago day + the unmatched lines (job, name, qty), claimed once for 12 h. R1b alone: in this server's memory. R2: claimed in Postgres (<code>stock_job_runs</code>, key <code>mismatch_notice:&lt;fingerprint&gt;</code>), so it also holds across servers; a retry replayed by its request id never runs the notice at all</td><td>"same checkout sent again", "replayed by its Idempotency-Key" (R2), "two servers" (R2, memory store and <strong>real Postgres</strong>)</td></tr><tr><td>Never break a checkout</td><td>Sent after the answer, not awaited; token lookup or FCM failure only logged</td><td>"no phone registered, or the push service down"</td></tr><tr><td>Warehouse staging</td><td>Staging reads no stock, so the names are checked against the cached Sheet when staged (the person is there), and the 8:31 flush doesn't notify again</td><td>"warehouse staging before 8:31"</td></tr></tbody></table></div>
+<h3>False positives found, and what they mean</h3>
+<p>The 170 flagged names, each checked against Service Fusion's own link (<code>product</code>) on its job lines (full list: <code>test/fixtures/stock_mismatch_flagged_2026-11-19.json</code>, pinned by a test so the rule can't drift unnoticed):</p>
+<ul><li><strong>85</strong>: SF's product <strong>is</strong> that Sheet row. Correct.</li><li><strong>73</strong>: older lines with no product link. Name-only evidence; the review found one clearly wrong: <code>16&#x27; Bottom Seal</code> → "Weather Seal | Aluminum Bottom Seal Retainer | 16'" (a seal is not its retainer). Its last use was 2021.</li><li><strong>12</strong>: SF's product names something else. 5 are the same item spelled differently (e.g. "Operator Parts |" vs "Operator Rail |", a double space, the pusher spring's "QUIET"). 2 are <code>Lubricant | Garage Lube</code> / <code>Lubricant | Clopay Garage Lube</code> → the Sheet's "Clopay Heavy Duty Garage Door Lube | 12 Pack 20 oz." row (probably the same stock, counted by the pack). 5 are doubtful: <code>Stop Mold | 7&#x27; Iron Ore</code> and <code>16&#x27; Iron Ore</code> (SF product says Gray), <code>Stop Mold | 8&#x27; Walnut Finish</code> (SF says 9'), <code>7&#x27; 81550 Operator Belt &amp; Rail</code> (SF says Chain &amp; Rail), and <code>Chain Drive | 12&#x27; TDC7S1BMC L5</code> (SF says T501). Each was used once or twice in 2026.</li></ul>
+<p>That is why the push says "<strong>looks like</strong>" and asks the person to tell the office: it never changes stock, it only asks for a check. A wrong suggestion costs a short conversation; a missed one is today's silent stock loss.</p>
+<h3>Limits</h3>
+<ul><li>Best effort: no FCM token for that login means no push (logged). The push arrives just after the phone's own "Checked out" message, which still says nothing about the miss on builds 33 and 34.</li><li>R1b alone dedupes in each server's memory. A retry that lands on the other server during the minute-long deploy overlap can notify twice. R2 closes this.</li><li>Build 33 shows one line of the text; build 34 shows it all (BigTextStyle).</li><li>The match uses the Sheet as read for the checkout (normal checkout) or the cached copy (staging, at most the cache's age).</li></ul>
+<h3>Test results</h3>
+<div class="tablewrap"><table><thead><tr><th>Where</th><th>Result</th></tr></thead><tbody><tr><td>R2 tree, <code>stock_mismatch.test.js</code></td><td>18 / 18 pass</td></tr><tr><td>R2 tree, <code>stock_r2_sql.test.js</code> incl. "the same checkout on two servers sends the mismatch push once" (real PostgreSQL 18.6)</td><td>19 / 19</td></tr><tr><td>R1 + R1b only (<code>983535d7</code> + <code>r1b-evidence/r1b.patch</code>), stock tests</td><td>70 pass, 0 fail, 2 skipped (the two R2-only cases), 14 todo</td></tr><tr><td>R1 + R1b only, full suite (no database)</td><td>579 tests: 469 pass, 2 fail (the same two environment failures as R1), 94 skipped, 14 todo (<code>r1b-evidence/full_suite_r1b_no_db.txt</code>)</td></tr></tbody></table></div>
+<h3>Files</h3>
+<p>R1b alone, against R1 (<code>r1b-evidence/r1b.patch</code>): <code>src/stockMismatch.js</code> (new), <code>src/inventory.js</code> (+20 lines: the notifier, staging check, call after the checkout answer), <code>test/stock_mismatch.test.js</code> (new), <code>test/stock_fakes.js</code> (phone tokens and pushes), three fixtures (Sheet snapshot, production line names, the reviewed flagged list). In the R2 tree the same module is wired into <code>stockWrites.checkout</code> (returns the rows it read) and <code>inventory.js</code> (Postgres claim).</p>
+<h3>Android (next build, not started)</h3>
+<p>As you required: the phone must read <code>status</code> and <code>lines</code>; on <code>partial</code> it shows the lines that didn't come off stock and why, and it never shows "Checked out N items" or "Your list is done" as if everything came off.</p><p class="sub">Source file: <a href="r1b-mismatch-notice.md">r1b-mismatch-notice.md</a></p></section><section id="aliases"><h2>The seven proposed name mappings (aliases): exact names and evidence</h2>
+<p>19 Nov 2026. <strong>Proposal only. Nothing implemented</strong>: no alias table, no code change, no Sheet or Service Fusion edit. Waiting for your approval of each pair.</p>
+<p>An alias makes a checkout line with the <strong>source</strong> name come off the Sheet row with the <strong>destination</strong> name. Today those lines are logged but take nothing off stock (audit C1).</p>
+<h3>Sources of evidence (all read-only)</h3>
+<ul><li><strong>Sheet</strong>: the read-only Inventory snapshot of 18 Nov (<code>harness/stock_rows.json</code>): name, part number (column A), shelf, quantity.</li><li><strong>Stock copy</strong>: Postgres <code>inventory_items</code>, refreshed 16 Nov: part number, cost, shelf, quantity.</li><li><strong>SF catalog</strong>: Postgres <code>catalog_products</code>, from the Service Fusion export imported 16 Nov: part number, SKU, average cost.</li><li><strong>Job lines</strong>: production <code>jobs.raw_items</code> (Service Fusion job lines, not estimates). Each line has a <code>name</code> (what the phone shows and sends at checkout) and a <code>product</code> (the SF catalog product the line was made from). <strong>When <code>product</code> equals the Sheet row's name, the line was created from that very catalog item. That is the strongest evidence that the two names are one physical part.</strong></li><li><strong>Missed at checkout</strong>: the audit's count of PickedItems rows under the source name that took nothing off stock (snapshot 18 Nov).</li></ul>
+<h3>The seven pairs</h3>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Source (checkout line name, exact)</th><th>Destination (Sheet row name, exact)</th><th>Sheet part no. · shelf · qty 18 Nov</th><th>SF catalog part no. / SKU · avg cost</th><th>Stock copy cost</th></tr></thead><tbody><tr><td>1</td><td><code>Stop Mold | 7&#x27; White</code></td><td><code>Weather Seal | Stop Mold | 7&#x27; White</code></td><td>0650732 · BD · 60</td><td>SMWH / <strong>0650732</strong> · $4.31</td><td>$4.31</td></tr><tr><td>2</td><td><code>Stop Mold | 16&#x27; White</code></td><td><code>Weather Seal | Stop Mold | 16&#x27; White</code></td><td>0650738 · BE · 48</td><td>SMWH / <strong>0650738</strong> · $10.63</td><td>$10.63</td></tr><tr><td>3</td><td><code>Stop Mold | 7&#x27; Black</code></td><td><code>Weather Seal | Stop Mold | 7&#x27; Black</code></td><td>0650832 · BD · 127</td><td>SMBL / <strong>0650832</strong> · $7.98</td><td>$7.98</td></tr><tr><td>4</td><td><code>Keypads | 877LM | LiftMaster</code></td><td><code>Keypad | 877LM | LiftMaster</code></td><td>4128529 · (no shelf) · 0</td><td><strong>4128529</strong> / 4128529 · $32.20</td><td>$32.20</td></tr><tr><td>5</td><td><code>Punched Angle | 1-1/4&quot; x 1-1/4&quot; | 8&#x27;</code></td><td><code>Punched Angle | 16GA | 1-1/4&quot; x 1-1/4&quot; x 8&#x27; | Galvanized</code></td><td>0170015 · BK1 · 0</td><td><strong>0170015</strong> / 0170015 · $3.28</td><td>$3.28</td></tr><tr><td>6</td><td><code>Punched Angle | 2&quot; x 2&quot; | 10&#x27; | Taxable</code></td><td><code>Punched Angle | 12GA | 2&quot; × 2&quot; × 10&#x27; | Galvanized</code> (the "×" is the multiplication sign, U+00D7)</td><td>0170030 · BK1 · 105</td><td><strong>0170030</strong> / 0170030 · $7.72</td><td>$7.72</td></tr><tr><td>7</td><td><code>Operator Parts | PUSHER SPRING KIT QUIET | 27&quot; LONG LH &amp; RH</code></td><td><code>Operator Parts | PUSHER SPRING KIT | 27&quot; LONG LH &amp; RH</code></td><td>4152730 · AL · 11</td><td><strong>4152730</strong> / 4152730 · $67.73</td><td>$67.73</td></tr></tbody></table></div>
+<h3>Evidence per pair</h3>
+<div class="tablewrap"><table><thead><tr><th>#</th><th>Job lines under the source name whose SF <code>product</code> is the destination</th><th>Other evidence</th><th>Missed at checkout (audit)</th><th>Confidence</th></tr></thead><tbody><tr><td>1</td><td><strong>165 of 165 job lines</strong> (6 Feb 2026 to jobs scheduled 3 Jan 2027)</td><td>Line description "Stop mold for bracket and continuous angle construction"; rate $4.27–4.46 = catalog price</td><td>9 rows, 18 units</td><td>High</td></tr><tr><td>2</td><td><strong>169 of 169</strong></td><td>Same description; Sheet part = catalog SKU</td><td>10 rows, 10 units</td><td>High</td></tr><tr><td>3</td><td><strong>16 of 16</strong></td><td>Same description; Sheet part = catalog SKU</td><td>2 rows, 4 units</td><td>High</td></tr><tr><td>4</td><td><strong>48 of 48</strong></td><td>Description "Wireless Keyless Entry System"; the only 877LM keypad on the Sheet; part number equal on all three sources</td><td>2 rows, 3 units</td><td>High</td></tr><tr><td>5</td><td><strong>711 of 711</strong></td><td>Description "Light punched angle | 16 gauge | Galvanized" (16GA is the destination's gauge); the only 1-1/4" × 8' angle on the Sheet</td><td>11 rows, 16 units</td><td>High</td></tr><tr><td>6</td><td><strong>1 of 88</strong> (the other 87 job lines, from 2025 to Nov 2026, have no <code>product</code> link)</td><td>All 87 carry the description "Heavy punched angle | 12 gauge | Galvanized" and a rate of $10.64, the vendor price of part 0170030. The same name without "Taxable" (<code>Punched Angle | 2&quot; x 2&quot; | 10&#x27;</code>, 34 job lines) is linked to the destination on every line. It is the only 2" × 2" × 10' angle on the Sheet.</td><td>2 rows, 6 units</td><td>Medium–high: name, description and price agree, but the product link exists on 1 line only</td></tr><tr><td>7</td><td>n/a: here the checkout name <strong>is</strong> the SF product name (9 job lines). The difference is on the Sheet, whose row drops "QUIET".</td><td>Identical part number 4152730 on the Sheet, the SF catalog and the stock copy; same shelf AL and quantity 11 in the stock copy; cost $67.73 everywhere. The other pusher-spring row (<code>Pusher Springs | 15&quot;</code>, part 4121214) is a different part.</td><td>3 rows, 7 units</td><td>High. A Sheet rename to the SF name would do the same job, but that is a Sheet write, so not proposed.</td></tr></tbody></table></div>
+<p>The quantities differ between the SF catalog and the Sheet (e.g. 7' White: 643 in SF, 60 on the Sheet). That is expected: SF's quantity isn't maintained, and the Sheet is the warehouse count. It is not evidence against a pair.</p>
+<h3>Things you should know before approving</h3>
+<ol><li><strong>Part number columns disagree in kind.</strong> For Stop Mold, the SF catalog's "part number" is a colour code shared by every length (SMWH for 7', 9', 16', 18' White). The Sheet's part number matches the SF <strong>SKU</strong>. So a pair can't be proven by "part number" alone, which is why the table shows both.</li><li><strong>The same pattern goes well beyond these seven.</strong> Checking every job line name in production (R1b work) found 170 names that are very probably stocked parts under another name: remotes (<code>Remotes | 893LM | LiftMaster | Taxable</code>, 121 job lines), keypads, springs (<code>Springs | LW .218 x 2 x 24.5 | Taxable</code>), operator rails and more Stop Mold lengths and colours. The seven above are only the ones the audit saw missed in the PickedItems snapshot. The full list: backend <code>test/fixtures/stock_mismatch_flagged_2026-11-19.json</code>.</li><li><strong>A broader fix is available.</strong> For 85 of those 170 names, every job line's <code>product</code> field already names the Sheet row exactly. Matching checkouts on the line's SF product, instead of its display name, would fix those without a hand-made alias list. It needs the phone to send the product, or the server to look it up by job and line. That is the Phase 2 "match by catalog id" work, which I haven't started.</li><li><strong>Not proven by a physical check.</strong> None of this was confirmed on the shelf. A one-time look by the warehouse at shelves BD, BE, BK1 and AL would close it.</li></ol>
+<h3>When approved (not done)</h3>
+<p>Under the plan, an approved alias is a row in <code>stock_item_aliases</code> (migration 002, Option B) or, before that, a reviewed list in code. Either way: only these exact source names, each to one destination row, each with your name and the date as the approver.</p><p class="sub">Source file: <a href="stop-mold-alias-evidence.md">stop-mold-alias-evidence.md</a></p></section><section id="r2"><h2>R2 for review: request ids, cross-server lock, row confirmation, identity (log only)</h2>
+<p>19 Nov 2026. Local development only, in the Stock Levels worktree <code>C:\Users\opera\integrity-backend-stock-phase1</code> (branch <code>stock-phase1</code>, on top of R1 <code>983535d7</code>). <strong>Not committed, pushed, deployed or applied to production.</strong> No Sheet writes, no Render changes, no Android work. The Services Catalog worktree and its frozen files were not touched. Full diff: <code>r2-evidence/r2.patch</code>.</p>
+<p><strong>Status after your 19 Nov review:</strong> accepted for continued local review. Migration 001 not applied; Render untouched; R2 not deployed. Since then the R2 tree has gained R1b, the likely-mismatch push (see <code>r1b-mismatch-notice.md</code>). In R2 its retry dedupe is shared across servers through <code>stock_job_runs</code>.</p>
+<h3>Limitations kept documented (your list, 19 Nov)</h3>
+<p>These four stay true after R2 and must stay in front of any release decision:</p>
+<ol><li><strong>In-memory warehouse staging can still be lost during a deployment.</strong> Picks staged before 8:31 live in one server's memory until S9; a deploy or restart before the 8:31 flush drops them, and stock is never taken off for them.</li><li><strong>Direct Sheet edits are not coordinated by the Postgres application lock.</strong> The lock keeps program writers apart. A person editing the Inventory tab is never locked. Row confirmation and read-back narrow the risk to a sub-second window and repair a wrong-row write, but a hand edit of the very same cell in that window can still be overwritten.</li><li><strong>The shared app key remains authorized for stock changes</strong> until the later enforcement step (S13, after the Android build). R2 records <code>shared_key_only</code> writes; it refuses nothing.</li><li><strong>No real Sheet or phone validation has occurred.</strong> Every Sheet behaviour was tested against the in-memory fake, every database behaviour against a local PostgreSQL 18.6, and no phone has run against R2.</li></ol>
+<h3>What R2 does</h3>
+<div class="tablewrap"><table><thead><tr><th>Area</th><th>Behaviour</th></tr></thead><tbody><tr><td>Migration 001</td><td><code>db/migrations/stock/001_stock_core.sql</code>, applied only by <code>scripts/stock_migrate.js</code>. Additive: 8 new <code>stock_*</code> tables, no existing table touched. Until it is applied, stock writes answer <strong>503 "Nothing was changed"</strong> (fail closed).</td></tr><tr><td>Request ids (H5, N4, N5)</td><td><code>Idempotency-Key: &lt;UUID&gt;</code> header. The <code>stock_requests</code> primary key decides, across servers. The same key and payload replay the stored answer (<code>replayed: true</code>); another payload or another person gets 409; a request still running gets 409 "still being processed". Old builds send no key, so the server makes one (<code>key_source = server</code>) and they behave exactly as today.</td></tr><tr><td>Failure endings</td><td>Nothing written yet → <code>rejected</code>, 503 "Nothing was changed", and a retry with the same key runs once. Something written → <code>needs_review</code>, 500 "may be partly saved… Do not send it again", a 🚨 log line, and a retry with the same key is refused.</td></tr><tr><td>Cross-server lock (C3, N3)</td><td>Every program write to the Inventory Sheet (checkout, staging, scan, cycle count, 8:31 flush) holds one <code>pg_advisory_xact_lock</code>. Writers queue on their own server first, so each server uses at most one pooled connection for stock. They wait up to 8 s for the lock, then get 503 busy. If a holder hangs, Postgres ends its session after 120 s, which frees the lock.</td></tr><tr><td>Crons (N3)</td><td>The <strong>4 PM audit</strong> runs once per Chicago day (<code>stock_job_runs</code>). The <strong>8:30 strike</strong> is applied at most once per day. Each server still judges from its own staging, which stays in memory until S9. The <strong>8:31 flush</strong> still runs on every server, because each holds its own staged picks; it now goes under the lock as a server request.</td></tr><tr><td>Row identity (C4)</td><td>Read → plan → re-read just those rows and confirm the part name and the cell are unchanged (else plan again) → write RAW → read back. If a row moved in that moment, the other part's value is put back (only if our number is still in the cell) and the write is redone. After 3 tries with nothing written: 503.</td></tr><tr><td>Order (H6)</td><td>Stock first, then the PickedItems log (2 retries). A failed stock write leaves nothing logged.</td></tr><tr><td>Movements</td><td>One <code>stock_movements</code> row per line (applied, short, not_stocked, staged, rejected, unchanged), with person, job, before and after. Append-only, enforced by a database trigger.</td></tr><tr><td>Identity (C5, N6, N7), <strong>log only</strong></td><td>The person comes from the login, never the typed name. On <code>warehouse1</code> the person sends <code>x-stock-operator-id</code> plus <code>x-stock-operator-pin</code> (their own PIN, checked with the existing <code>auth.verifyPin</code>, scrypt). Only people in <code>stock_station_operators</code> count, and <strong>that table is empty until you send the list</strong>. Results: <code>user</code>, <code>station_operator</code>, <code>station_unverified</code>, <code>shared_key_only</code>, <code>untrusted_token</code>, <code>service</code>. Nothing is refused; anything short of a personal identity is recorded and logged.</td></tr><tr><td>PIN rate limit</td><td>In Postgres, per person and per station, held across servers by an advisory lock per person: 5 wrong in 15 min, 10 in 24 h, 20 per station in 15 min. Inactive users, people not on the list and temporary PINs count as failures.</td></tr></tbody></table></div>
+<p><strong>Unchanged on purpose:</strong> what the phone is told (plus <code>requestId</code> and <code>replayed</code>), the PickedItems columns and the typed name in them, the staging rule (still the typed name or <code>x-user-role</code>; S5/S9), the in-memory staging (S9), the clamp at 0 (S8), name matching (C1/D7), the Sheet as the record (D1). R2 implements only <code>identity = log</code> and <code>idempotency_key = optional</code>. Other values in <code>stock_settings</code> are logged and ignored.</p>
+<h3>The migration file</h3>
+<p><code>db/migrations/stock/001_stock_core.sql</code>, sha256 (line endings normalised) <code>f15406f9118e104d9a6c1110b5bcf29112c97d152fa4f7842fb2cd9122648e70</code>.</p>
+<p>Differences from the plan's section 3:</p>
+<ol><li>The runner writes the version row and checksum (a file can't hold its own hash).</li><li><code>stock_requests</code> records route, identity, identity detail, station, <code>needs_review</code> and attempts.</li><li>Two new tables for the warehouse PIN: <code>stock_station_operators</code> (empty) and <code>stock_pin_attempts</code> (no PIN or hash is ever stored).</li><li><code>stock_settings</code> values are constrained by a CHECK.</li><li>Movement kind <code>staging</code> was added.</li></ol>
+<p><strong>Apply (your step, never on deploy), in this order:</strong></p>
+<ol><li>Confirm a Postgres backup or point-in-time restore exists (S0).</li><li><code>node scripts/stock_migrate.js --database-url &quot;&lt;prod url&gt;&quot; --confirm-database &lt;db name&gt; --status</code> (the database name must match, or nothing runs; <code>DATABASE_URL</code> is never read; the password is never printed).</li><li>The same with <code>--dry-run</code>: it applies inside a transaction and rolls back.</li><li>The same with <code>--apply --applied-by &quot;John Eccleston&quot;</code>.</li><li>Only then deploy the R2 code. The other order would answer 503 on every stock write until the migration is in.</li></ol>
+<p><strong>Rollback</strong></p>
+<ul><li>Code: redeploy the previous commit (R1). The tables stay unused and harmless. No data moves.</li><li>Schema (a separate decision, after a backup): <code>pg_dump --data-only -t &#x27;stock_*&#x27;</code>, then <code>node scripts/stock_migrate.js … --rollback 1</code>. It runs <code>001_stock_core.rollback.sql</code> in one transaction and drops only the <code>stock_*</code> objects. Roll the code back first, or stock writes go back to 503.</li><li>Settings: <code>UPDATE stock_settings SET value = &#x27;paused&#x27;, updated_by = &#x27;&lt;name&gt;&#x27; WHERE key = &#x27;writes&#x27;</code> stops every stock write with 503 "Nothing was changed", without a deploy (a production write: only with your OK).</li></ul>
+<h3>Test results (re-run 19 Nov after R1b was added)</h3>
+<div class="tablewrap"><table><thead><tr><th>Run</th><th>Result</th></tr></thead><tbody><tr><td>Stock tests (<code>stock_r2</code>, <code>stock_r2_sql</code>, <code>stock_mismatch</code>, <code>stock_writes</code>, <code>stock_quantity</code>) with the local database</td><td><strong>110 tests: 101 pass, 0 fail, 9 todo</strong> (<code>r2-evidence/stock_tests_r2.txt</code>)</td></tr><tr><td><code>stock_r2.test.js</code> (router + in-memory store)</td><td>31 / 31</td></tr><tr><td><code>stock_r2_sql.test.js</code> (real PostgreSQL 18.6, the version production runs; throwaway local cluster)</td><td>19 / 19, five clean runs in a row</td></tr><tr><td><code>stock_mismatch.test.js</code> (R1b)</td><td>18 / 18</td></tr><tr><td>R1 todo tests now passing (promoted)</td><td>C3 two servers, C4 row inserted mid-write, H5 same id twice, H6 nothing logged on a failed write, N3 one strike on two servers</td></tr><tr><td>Still todo (later steps, untouched)</td><td>C1 aliases, C5 enforcement, H1, H3, H4 x3, H9, N2</td></tr><tr><td>Full suite, no database</td><td>629 tests: 507 pass, 2 fail, 9 todo, 111 skipped (<code>full_suite_no_db.txt</code>)</td></tr><tr><td>Full suite with the local database, R2 vs untouched R1</td><td>699 tests: 677 pass, 13 fail, 9 todo. <strong>The 13 failures are the same as R1's</strong> (<code>failures_R1.txt</code> = <code>failures_R2.txt</code>, no new and none fixed): environment- and date-dependent tests (the access.dart cross-repo check, CRLF in a catalog fixture, commission/payments SQL tests on a scratch database).</td></tr></tbody></table></div>
+<p>One run in the middle of the day stalled: a database connection was left idle inside a transaction until Postgres's 120 s limit ended it, and the local server then crashed with a Windows process error (0xC0000142, "could not reserve shared memory"). After a clean restart the SQL file passed five times in a row, with no idle-transaction terminations or lock waits in the server log. I could not reproduce the stall and can't rule out that it came from the R2 code rather than the crashing server, so it is listed under risks.</p>
+<p>The SQL tests ran against a scratch cluster in the session's temp folder (port 55433), never against Render. Each run creates and drops its own database.</p>
+<h3>Changed files (backend worktree, uncommitted)</h3>
+<div class="tablewrap"><table><thead><tr><th>File</th><th>Change</th></tr></thead><tbody><tr><td><code>db/migrations/stock/001_stock_core.sql</code></td><td>new: migration 001</td></tr><tr><td><code>db/migrations/stock/001_stock_core.rollback.sql</code></td><td>new: rollback</td></tr><tr><td><code>scripts/stock_migrate.js</code></td><td>new: runner (status, dry-run, apply, rollback; checksums; confirm-database guard)</td></tr><tr><td><code>src/stockStore.js</code></td><td>new: Postgres store (schema check, settings, requests, lock, job claims, PIN check)</td></tr><tr><td><code>src/stockRequests.js</code></td><td>new: the request lifecycle (key, replay, failure endings)</td></tr><tr><td><code>src/stockAuth.js</code></td><td>new: identity, log only</td></tr><tr><td><code>src/stockWrites.js</code></td><td>new: the write path (checkout, staging, flush, scan, count) and movements</td></tr><tr><td><code>src/stockErrors.js</code></td><td>new: <code>StockError</code> (did anything change?)</td></tr><tr><td><code>src/stockSheet.js</code></td><td><code>writeConfirmed</code>, <code>appendLog</code>; <code>planDeductions</code> adds <code>key</code> and <code>beforeRaw</code></td></tr><tr><td><code>src/inventory.js</code></td><td>write routes and the 3 crons moved onto the above; optional third argument for tests; <code>index.js</code> unchanged</td></tr><tr><td><code>test/stock_fakes.js</code></td><td><code>batchGet</code>, <code>beforeBatchGet</code>, repeated failures, in-memory store</td></tr><tr><td><code>test/stock_r2.test.js</code>, <code>test/stock_r2_sql.test.js</code></td><td>new</td></tr><tr><td><code>test/stock_writes.test.js</code>, <code>test/stock_quantity.test.js</code></td><td>5 todos promoted; expectations take the new fields</td></tr><tr><td><code>src/stockMismatch.js</code></td><td>new (R1b): likely-mismatch rule, message, once-per-checkout notifier</td></tr><tr><td><code>src/stockWrites.js</code>, <code>src/inventory.js</code></td><td>(R1b) checkout returns the rows it read; the route sends the notice after answering; claim in <code>stock_job_runs</code></td></tr><tr><td><code>test/stock_mismatch.test.js</code></td><td>new (R1b), 18 tests</td></tr><tr><td><code>test/fixtures/stock_sheet_rows_2026-11-18.json</code>, <code>stock_job_line_names_2026-11-19.json</code>, <code>stock_mismatch_flagged_2026-11-19.json</code></td><td>new: Sheet snapshot, every production job line name (names and counts only), the reviewed flagged list</td></tr></tbody></table></div>
+<p>Not changed: <code>index.js</code>, <code>services.js</code>, <code>auth.js</code>, <code>accessKeys.js</code>, <code>dashboardAccess.js</code>, <code>test/support.js</code>, the catalog files, the Android app and the office app.</p>
+<h3>Security evidence</h3>
+<ul><li><strong>PIN never stored, logged or returned.</strong> It is read from the header and the header is deleted at once (test: "the router removes the PIN header…"). The test that captures console output plus every stored request, movement, attempt, answer and log row finds neither PIN. The SQL test dumps <code>stock_pin_attempts</code> and finds no PIN. No request logger records headers (<code>requestTiming.js</code> was checked).</li><li><strong>No oracle:</strong> in log mode the answer says nothing about the PIN (test asserts no "pin", "operator" or "verif" in the answer).</li><li><strong>Brute force:</strong> at most 10 wrong guesses per person per 24 h, across servers, including parallel guesses (SQL test: 8 parallel guesses on 2 pools give 5 <code>bad_pin</code> and 3 <code>rate_limited</code>; then even the right PIN is refused). Temporary PINs never verify.</li><li><strong>Existing hash check reused:</strong> <code>auth.verifyPin</code> (scrypt, timing-safe). No new hashing code; nothing rehashes or writes <code>users</code>.</li><li><strong>SQL:</strong> every value is a bound parameter. The only interpolations are two <code>SET LOCAL</code> timeouts: a constant, and <code>lockWait</code>, which is checked against <code>^\d+(ms|s)$</code> when the store is created.</li><li><strong>Fail closed:</strong> schema missing or writes paused → 503 before the Sheet is read (tests on both stores).</li><li><strong>Identity cannot be borrowed:</strong> a key reused by another signed-in person is a conflict, never a replay of their answer.</li><li><strong>Production TOKEN_SECRET (D3, N7):</strong> the 18 Nov start-up log of instance <code>w55jg</code> has no "TOKEN_SECRET is not set" line, so it is set and differs from the app key. This is inferred from the log; I did not read the environment.</li><li><strong>No secrets added.</strong> The migration runner never reads <code>DATABASE_URL</code> and redacts the URL in its output.</li></ul>
+<h3>Remaining risks</h3>
+<ol><li><strong>Identity is log only.</strong> The app key alone still changes stock until S13. That needs the Android build that sends tokens, keys and operator headers.</li><li><strong>The operator list is empty.</strong> Every warehouse1 write is recorded as <code>station_unverified</code> until you send the list and the phone sends the headers (Android).</li><li><strong>People on the Sheet can't be locked.</strong> A hand edit of the very same cell between the confirm and the write can still be overwritten. The window is sub-second, and only Option B removes it.</li><li><strong>Staging is still in memory (S9).</strong> A deploy before 8:31 drops staged picks. With two servers up at 8:30, the server without the staging can strike (now at most once).</li><li><strong>A Sheet outage or quota limit</strong> gives 503s (nothing changed). The extra confirm and read-back reads (2 per write) add a little quota use and about 0.3–0.6 s per write.</li><li><strong><code>needs_review</code> requests</strong> need someone to look at them. There is no screen yet (Phase 4). They show in the logs and in <code>SELECT * FROM stock_requests WHERE status = &#x27;needs_review&#x27;</code>.</li><li><strong>Zone progress after a count</strong> is saved after the request is marked applied. If that insert fails, a retry replays success without saving the progress (rare; the same as R1's 500 there).</li><li><strong>Deploy order:</strong> deploying R2 before migration 001 stops stock writes (503) until it is applied.</li><li><strong>Not tested on real phones or the real Sheet.</strong> All Sheet behaviour is against the in-memory fake.</li><li><strong>One unexplained test stall</strong> (above): not reproduced in five clean runs. If it was the code, the symptom is a stock write holding the lock until Postgres ends the session after 120 s (other writers get 503 "busy, nothing changed" meanwhile).</li></ol><p class="sub">Source file: <a href="r2-review.md">r2-review.md</a></p></section><section id="strike"><h2>16 Nov duplicate strike: correction for your review</h2><p class="sub">Approved in principle (11 → 10), <strong>not executed</strong>. Run it yourself in pgAdmin after review. Evidence kept in <a href="strike-correction-2026-11-16-evidence.json">strike-correction-2026-11-16-evidence.json</a>.</p><pre>-- Correction of ONE duplicate warehouse strike, 16 Nov 2026 (approved by the owner 2026-11-19; this file is the preview
+-- he asked for). Not run by Claude: the Render SQL tool is read-only. Run it yourself in pgAdmin, step by step.
+--
+-- WHAT HAPPENED (verified read-only, 2026-11-19)
+--   The 8:30 AM warehouse audit runs on every server. On 16 Nov two servers were up (deploy overlap, finding N3) and
+--   both ran it, 20 ms apart, for the SAME missed truck:
+--     2026-11-16T14:30:00.679Z  srv-d7bs4ulm5p6s73f51itg-lrghx  &quot;WAREHOUSE MISSED: No staging done for Andrew Johnson&#x27;s jobs.&quot;
+--     2026-11-16T14:30:00.685Z  srv-d7bs4ulm5p6s73f51itg-lrghx  &quot;WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).&quot;   log id 4ad1120a-8631-4313-8dfc-4fb744c2e6ba
+--     2026-11-16T14:30:00.699Z  srv-d7bs4ulm5p6s73f51itg-vpxsw  &quot;WAREHOUSE MISSED: No staging done for Andrew Johnson&#x27;s jobs.&quot;
+--     2026-11-16T14:30:00.705Z  srv-d7bs4ulm5p6s73f51itg-vpxsw  &quot;WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).&quot;   log id cafec977-9243-4f2e-9b2f-6adc5e2274d1
+--   Same day, same rule run, same single tech (Andrew Johnson), &quot;1 missed trucks&quot; on both: one missed truck, struck twice.
+--   Every other strike in the logs (9-19 Nov) is a single line: 12 Nov (2 missed), 13 Nov (1), 17 Nov (1). Nothing else
+--   is touched here.
+--
+-- THE RECORD TO CORRECT
+--   Warehouse strikes are not stored as events: each one is +1 on users.warehouse_strikes of the shared login
+--   warehouse1 (users.id 40, users_repo.addWarehouseStrike). So the &quot;record&quot; is that counter. The second strike (the
+--   vpxsw line, cafec977...) is the duplicate.
+--
+-- COUNTS
+--   current  warehouse1 (id 40) warehouse_strikes = 11   (read 2026-11-19)
+--   proposed warehouse1 (id 40) warehouse_strikes = 10
+--
+-- AUDIT HISTORY
+--   Nothing existing is edited or deleted. The correction adds ONE row to user_admin_audit (the table the Team screen&#x27;s
+--   history reads; it had no strike rows before), with the evidence above in its note. Render keeps logs for 30 days, so
+--   the two log lines are also copied into this file and into strike-correction-2026-11-16-evidence.json.
+--   Where it shows: Team -&gt; Warehouse (warehouse1) -&gt; change history: &quot;Warehouse strikes  11 -&gt; 10&quot;, by John Eccleston,
+--   with the note underneath (GET /api/admin/users/40/history; office app team_admin_screen.dart, the history list shows
+--   the label, old -&gt; new, who, when and the note).
+--
+-- SAFETY
+--   The UPDATE only runs if warehouse1 still has exactly 11 strikes. If an 8:30 AM strike lands before you run this
+--   (the count is then 12), it stops with an error and changes nothing; re-read step 1 and tell me.
+
+-- ── Step 1: preview (read-only). Expect one row: 40 | warehouse1 | Warehouse | 11 ─────────────────────────────────────
+SELECT id, username, name, warehouse_strikes
+  FROM users
+ WHERE LOWER(TRIM(username)) = &#x27;warehouse1&#x27;;
+
+-- ── Step 2: the correction (one transaction; it refuses to run unless the count is still 11) ─────────────────────────
+BEGIN;
+
+DO $$
+DECLARE
+    n integer;
+BEGIN
+    UPDATE users
+       SET warehouse_strikes = warehouse_strikes - 1,
+           updated_at = NOW()
+     WHERE id = 40
+       AND LOWER(TRIM(username)) = &#x27;warehouse1&#x27;
+       AND warehouse_strikes = 11;
+    GET DIAGNOSTICS n = ROW_COUNT;
+    IF n &lt;&gt; 1 THEN
+        RAISE EXCEPTION &#x27;warehouse1 does not have 11 strikes any more; nothing was changed&#x27;;
+    END IF;
+
+    INSERT INTO user_admin_audit (user_id, field, old_value, new_value, note, changed_by_id, changed_by_name)
+    VALUES (40, &#x27;warehouse_strikes&#x27;, &#x27;11&#x27;, &#x27;10&#x27;,
+            &#x27;Duplicate strike removed (approved 2026-11-19). The 8:30 AM warehouse audit on 16 Nov 2026 ran on two servers &#x27;
+            || &#x27;during a deploy overlap and struck warehouse1 twice for the same missed truck (Andrew Johnson&#x27;&#x27;s jobs): &#x27;
+            || &#x27;srv-d7bs4ulm5p6s73f51itg-lrghx 14:30:00.685Z (log 4ad1120a-8631-4313-8dfc-4fb744c2e6ba, kept) and &#x27;
+            || &#x27;srv-d7bs4ulm5p6s73f51itg-vpxsw 14:30:00.705Z (log cafec977-9243-4f2e-9b2f-6adc5e2274d1, removed). &#x27;
+            || &#x27;Only this strike was corrected.&#x27;,
+            29, &#x27;John Eccleston&#x27;);
+END $$;
+
+-- ── Step 3: check before committing. Expect 10, and one audit row with old 11 -&gt; new 10 ─────────────────────────────
+SELECT id, username, warehouse_strikes FROM users WHERE id = 40;
+SELECT id, field, old_value, new_value, changed_by_name, changed_at FROM user_admin_audit
+ WHERE user_id = 40 AND field = &#x27;warehouse_strikes&#x27; ORDER BY id DESC LIMIT 1;
+
+-- If both look right:
+COMMIT;
+-- If anything looks wrong instead:  ROLLBACK;
+
+-- Undo, if ever needed (also audited): set it back to 11 with a second audit row; never delete the audit row.
+-- UPDATE users SET warehouse_strikes = warehouse_strikes + 1, updated_at = NOW() WHERE id = 40 AND warehouse_strikes = 10;
+-- INSERT INTO user_admin_audit (user_id, field, old_value, new_value, note, changed_by_id, changed_by_name)
+-- VALUES (40, &#x27;warehouse_strikes&#x27;, &#x27;10&#x27;, &#x27;11&#x27;, &#x27;Undo of the 16 Nov duplicate-strike correction&#x27;, 29, &#x27;John Eccleston&#x27;);
+</pre><p class="sub">Source file: <a href="strike-correction-2026-11-16.sql">strike-correction-2026-11-16.sql</a></p></section></main>
+</div>
+</body></html>

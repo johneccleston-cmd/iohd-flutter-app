@@ -1,0 +1,5 @@
+HTTP 200
+ANSWER {"status":"partial","itemsUpdated":2,"lines":[{"jobNumber":"4001","name":"Stop Mold | 7' White","qtyUsed":2,"outcome":"not_stocked","error":"No part with this name on the Inventory sheet, so nothing came off stock."},{"jobNumber":"4001","name":"Keypad | Genie","qtyUsed":1,"outcome":"deducted","remaining":8},{"jobNumber":"4002","name":"Keypad | Genie","qtyUsed":1,"outcome":"deducted","remaining":8}],"message":"1 of 3 lines did not come off stock: Stop Mold | 7' White."}
+Weather Seal | Stop Mold | 7' White: 60.00 (was 60.00)
+Keypad | Genie: 8.00 (was 10.00)
+PickedItems rows appended: [["11/19/2026","4001","Stop Mold | 7' White","2","Brett Miller"],["11/19/2026","4001","Keypad | Genie","1","Brett Miller"],["11/19/2026","4002","Keypad | Genie","1","Brett Miller"]]

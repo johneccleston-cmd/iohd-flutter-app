@@ -1,0 +1,282 @@
+diff -ruN --binary r1b/src/inventory.js r1b-pushoff/src/inventory.js
+--- r1b/src/inventory.js	2026-11-19 08:42:52.000000000 -0600
++++ r1b-pushoff/src/inventory.js	2026-11-19 08:53:38.000000000 -0600
+@@ -9,8 +9,9 @@
+ // (stockQuantity.js), and lines for the same part added up before the row is written (stockSheet.planDeductions).
+ const { sheetQty, nameKey, checkoutInput, scanInput, countInput } = require('./stockQuantity');
+ const { planDeductions, writeData, createWarehouseValueWriter } = require('./stockSheet');
+-// R1b: a push to the person when a checkout line is probably a stocked part under another name (stockMismatch.js).
+-// Old phone builds ignore "partial"; they do show pushes. One push per checkout, retries included (this server's memory).
++// R1b: when a checkout line is probably a stocked part under another name (stockMismatch.js), log it for the office.
++// The push to the person's phone is OFF unless STOCK_MISMATCH_PUSH is exactly "on": the installed builds (33, 34) never
++// register for pushes, so this release only logs. Turning it on is a separate, approved release (see stockMismatch.js).
+ const { createMismatchNotifier } = require('./stockMismatch');
+ const {
+     sheetSafe, todayChicago, getInventorySheets,
+@@ -50,6 +51,7 @@
+     const notifyMismatches = createMismatchNotifier({
+         getToken: (person) => getTechToken(person),
+         send: (message) => admin.messaging().send(message),
++        push: process.env.STOCK_MISMATCH_PUSH === 'on',
+     });
+ 
+     // --- FULL INVENTORY ---
+diff -ruN --binary r1b/src/stockMismatch.js r1b-pushoff/src/stockMismatch.js
+--- r1b/src/stockMismatch.js	2026-11-19 08:42:52.000000000 -0600
++++ r1b-pushoff/src/stockMismatch.js	2026-11-19 08:53:29.000000000 -0600
+@@ -121,8 +121,10 @@
+  *   getToken(person) -> FCM token or null (services.getTechToken)
+  *   send(message)    -> admin.messaging().send
+  *   claim(key)       -> true the first time a key is seen (memory by default; Postgres in R2)
++ *   push             -> false (the default): find and log the mismatches only. No token lookup, no claim, nothing sent.
++ *                       Off for the first release (19 Nov 2026): the installed phone builds never register for pushes.
+  */
+-function createMismatchNotifier({ getToken, send, claim = memoryClaim(), log = console } = {}) {
++function createMismatchNotifier({ getToken, send, claim = memoryClaim(), log = console, push = false } = {}) {
+     return async function notify({ person, businessDate, lines, outcomes, rows, requestId }) {
+         try {
+             const mismatches = likelyMismatches(lines || [], outcomes || [], rows || []);
+@@ -130,6 +132,7 @@
+             for (const m of mismatches) {
+                 log.warn(`🧩 Likely name mismatch, not taken off stock: "${m.name}" (job ${m.jobNumber ?? '?'}, qty ${m.qtyUsed}) is probably "${m.match.name}" (Inventory row ${m.match.row}, part ${m.match.partNumber || '-'}), checked out by ${person || 'unknown'}${requestId ? `, request ${requestId}` : ''}.`);
+             }
++            if (push !== true) return { sent: false, reason: 'push_off', mismatches };
+             const key = fingerprint({ person, businessDate, mismatches });
+             let first = true;
+             try { first = await claim(key, businessDate); } catch (e) { log.error('⚠️ Mismatch notice dedupe check failed; sending anyway:', e.message); }
+diff -ruN --binary r1b/test/stock_mismatch.test.js r1b-pushoff/test/stock_mismatch.test.js
+--- r1b/test/stock_mismatch.test.js	2026-11-19 08:42:52.000000000 -0600
++++ r1b-pushoff/test/stock_mismatch.test.js	2026-11-19 08:54:34.000000000 -0600
+@@ -20,6 +20,19 @@
+ const settle = () => new Promise((r) => setTimeout(r, 30)); // the push is sent after the answer, not awaited
+ const R2 = typeof fx.createMemoryStore === 'function';
+ 
++// The phone push is OFF in this release unless STOCK_MISMATCH_PUSH is exactly "on" (read when the router is built). The push
++// tests turn it on the way production would; the "push off" tests at the end check the default. Nothing here reaches FCM:
++// stock_fakes replaces config.js, so admin.messaging() is a fake that only records.
++delete process.env.STOCK_MISMATCH_PUSH;
++function withPushEnv(value, fn) {
++    const prev = process.env.STOCK_MISMATCH_PUSH;
++    if (value === undefined) delete process.env.STOCK_MISMATCH_PUSH; else process.env.STOCK_MISMATCH_PUSH = value;
++    try { return fn(); } finally {
++        if (prev === undefined) delete process.env.STOCK_MISMATCH_PUSH; else process.env.STOCK_MISMATCH_PUSH = prev;
++    }
++}
++const loadPushOn = (opts) => withPushEnv('on', () => loadInventory(opts));
++
+ // ─── the rule ────────────────────────────────────────────────────────────────────────────────────────────────────────
+ 
+ test('the seven audit near-misses each point at exactly the Sheet row with the same part number', () => {
+@@ -102,7 +115,7 @@
+ });
+ 
+ test('the notifier never throws: a token lookup or send failure is logged and reported', async () => {
+-    const notify = createMismatchNotifier({ getToken: async () => { throw new Error('db down'); }, send: async () => {}, log: quiet });
++    const notify = createMismatchNotifier({ getToken: async () => { throw new Error('db down'); }, send: async () => {}, log: quiet, push: true });
+     const r = await notify({ person: 'P', businessDate: 'd', lines: [{ name: "Stop Mold | 7' White", qtyUsed: 1 }], outcomes: [{ outcome: 'not_stocked' }], rows: ROWS });
+     assert.deepStrictEqual(r, { sent: false, reason: 'error' });
+ });
+@@ -128,7 +141,7 @@
+ test('mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL, PARTS.KEYPAD]);
+-    const inv = loadInventory({ sheet, tokens, requireAuth: asUser });
++    const inv = loadPushOn({ sheet, tokens, requireAuth: asUser });
+     const { v: r, lines } = await withConsole(async () => {
+         const out = await inv.call('POST', CHECKOUT, { headers: { 'x-test-user': BRETT }, body: { techName: 'Brett Miller', items: [
+             line("Stop Mold | 7' White", 2, '4001'), line(PARTS.KEYPAD[1], 1, '4001'), line(PARTS.KEYPAD[1], 1, '4002'),
+@@ -152,7 +165,7 @@
+ test('a checkout whose only unmatched lines are doors and services sends no push', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+-    const inv = loadInventory({ sheet, tokens });
++    const inv = loadPushOn({ sheet, tokens });
+     await withConsole(async () => {
+         await inv.call('POST', CHECKOUT, { body: { techName: 'Brett Miller', items: [line(SEAL[1], 1, '1'), line(DOOR, 1, '1'), line(TUNEUP, 1, '2')] } });
+         await settle();
+@@ -163,7 +176,7 @@
+ test('a checkout where everything came off stock sends no push', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL, PARTS.KEYPAD]);
+-    const inv = loadInventory({ sheet, tokens });
++    const inv = loadPushOn({ sheet, tokens });
+     await inv.call('POST', CHECKOUT, { body: { techName: 'Brett Miller', items: [line(SEAL[1], 1, '1'), line(PARTS.KEYPAD[1], 1, '1')] } });
+     await settle();
+     assert.strictEqual(inv.pushes.length, 0);
+@@ -172,7 +185,7 @@
+ test('the same checkout sent again (an old build retrying, no request id) is not notified twice', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+-    const inv = loadInventory({ sheet, tokens });
++    const inv = loadPushOn({ sheet, tokens });
+     const body = { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '4001'), line(SEAL[1], 1, '4001')] };
+     await withConsole(async () => {
+         await inv.call('POST', CHECKOUT, { body });
+@@ -186,7 +199,7 @@
+ test('the same checkout replayed by its Idempotency-Key is not notified twice (R2)', { skip: R2 ? false : 'R2 request ids' }, async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+-    const inv = loadInventory({ sheet, tokens });
++    const inv = loadPushOn({ sheet, tokens });
+     const headers = { 'idempotency-key': '6f1c1d2e-9a41-4d7e-8f2a-000000000077' };
+     const body = { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '4001')] };
+     await withConsole(async () => {
+@@ -203,8 +216,8 @@
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+     const db = fx.createMemoryStore();
+-    const a = loadInventory({ sheet, tokens, store: db });
+-    const b = loadInventory({ sheet, tokens, store: db });
++    const a = loadPushOn({ sheet, tokens, store: db });
++    const b = loadPushOn({ sheet, tokens, store: db });
+     const body = { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '4001')] };
+     await withConsole(async () => {
+         await a.call('POST', CHECKOUT, { body });
+@@ -217,7 +230,7 @@
+ test('a different person, or a different unmatched line, is a new checkout and is notified', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+-    const inv = loadInventory({ sheet, tokens });
++    const inv = loadPushOn({ sheet, tokens });
+     await withConsole(async () => {
+         await inv.call('POST', CHECKOUT, { body: { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '4001')] } });
+         await inv.call('POST', CHECKOUT, { body: { techName: 'Andrew Johnson', items: [line("Stop Mold | 7' White", 2, '4001')] } });
+@@ -230,7 +243,7 @@
+ test('no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL]);
+-    const noToken = loadInventory({ sheet, tokens: {} });
++    const noToken = loadPushOn({ sheet, tokens: {} });
+     const { v: a, lines } = await withConsole(async () => {
+         const out = await noToken.call('POST', CHECKOUT, { body: { techName: 'Nobody', items: [line("Stop Mold | 7' White", 2, '1')] } });
+         await settle();
+@@ -238,7 +251,7 @@
+     });
+     assert.strictEqual(a.status, 200);
+     assert.ok(lines.some((l) => /📵 No phone registered for Nobody/.test(l)));
+-    const down = loadInventory({ sheet, tokens, failPush: true });
++    const down = loadPushOn({ sheet, tokens, failPush: true });
+     const { v: b, lines: l2 } = await withConsole(async () => {
+         const out = await down.call('POST', CHECKOUT, { body: { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '2')] } });
+         await settle();
+@@ -251,7 +264,7 @@
+ test('warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush', async () => {
+     const sheet = createSheet();
+     sheet.reset([SEAL, PARTS.ANGLE]);
+-    const inv = loadInventory({ sheet, tokens, requireAuth: asUser });
++    const inv = loadPushOn({ sheet, tokens, requireAuth: asUser });
+     const station = JSON.stringify({ id: 40, name: 'Warehouse', username: 'warehouse1', role: 'Warehouse' });
+     await withConsole(async () => {
+         // The push goes to the signed-in login's phone (the warehouse phone), not to the typed name.
+@@ -266,3 +279,111 @@
+     assert.strictEqual(inv.pushes.length, 1);
+     assert.strictEqual(sheet.qty(PARTS.ANGLE[1]), '38.00');
+ });
++
++// ─── this release: push off (19 Nov 2026) ────────────────────────────────────────────────────────────────────────────
++// The installed phone builds never register for pushes, so R1b ships as mismatch detection + office log only.
++
++/** Tokens that count every lookup, so a test can prove the push path was never entered. */
++function countingTokens(map) {
++    const seen = [];
++    return { seen, tokens: new Proxy(map, { get: (t, k) => { if (typeof k === 'string') seen.push(k); return t[k]; } }) };
++}
++const MIXED = [line("Stop Mold | 7' White", 2, '4001'), line(PARTS.KEYPAD[1], 1, '4001'), line(PARTS.KEYPAD[1], 1, '4002'), line(DOOR, 1, '4002'), line(TUNEUP, 1, '4003')];
++
++test('push off by default: the mismatch is detected and logged for the office; no token lookup, nothing sent', async () => {
++    const sheet = createSheet();
++    sheet.reset([SEAL, PARTS.KEYPAD]);
++    const t = countingTokens({ ...tokens });
++    const inv = withPushEnv(undefined, () => loadInventory({ sheet, tokens: t.tokens, requireAuth: asUser, failPush: true }));
++    const { v: r, lines } = await withConsole(async () => {
++        const out = await inv.call('POST', CHECKOUT, { headers: { 'x-test-user': BRETT }, body: { techName: 'Brett Miller', items: MIXED } });
++        await settle();
++        return out;
++    });
++    assert.strictEqual(r.status, 200);
++    assert.strictEqual(r.body.status, 'partial');
++    assert.strictEqual(inv.pushes.length, 0, 'nothing sent');
++    assert.deepStrictEqual(t.seen, [], 'no FCM token looked up');
++    const mismatchLines = lines.filter((l) => l.includes('🧩 Likely name mismatch'));
++    assert.strictEqual(mismatchLines.length, 1, 'one office log line, for Stop Mold only');
++    assert.match(mismatchLines[0], /"Stop Mold \| 7' White" \(job 4001, qty 2\) is probably "Weather Seal \| Stop Mold \| 7' White" \(Inventory row 2, part 0650747\), checked out by Brett Miller/);
++    assert.ok(!lines.some((l) => /📵|Mismatch notice failed|dedupe/.test(l)), 'no push-path log lines');
++});
++
++test('push off: the checkout answer, stock writes and PickedItems log are identical to push on', async () => {
++    async function run(pushEnv) {
++        const sheet = createSheet();
++        sheet.reset([SEAL, PARTS.KEYPAD]);
++        const inv = withPushEnv(pushEnv, () => loadInventory({ sheet, tokens, requireAuth: asUser }));
++        const { v: r } = await withConsole(async () => {
++            const out = await inv.call('POST', CHECKOUT, { headers: { 'x-test-user': BRETT }, body: { techName: 'Brett Miller', items: MIXED } });
++            await settle();
++            return out;
++        });
++        return { body: r.body, writes: sheet.writes, picked: sheet.picked, inventory: sheet.inventory, pushes: inv.pushes.length };
++    }
++    const off = await run(undefined);
++    const on = await run('on');
++    assert.strictEqual(off.pushes, 0);
++    assert.strictEqual(on.pushes, 1);
++    assert.deepStrictEqual(off.body, on.body);
++    assert.deepStrictEqual(off.writes, on.writes);
++    assert.deepStrictEqual(off.picked, on.picked);
++    assert.deepStrictEqual(off.inventory, on.inventory);
++    // Detection never touches stock: the Stop Mold shelf row is unchanged, only the Keypad lines came off.
++    assert.strictEqual(off.inventory.find((row) => row[1] === SEAL[1])[3], '60.00');
++    assert.strictEqual(off.inventory.find((row) => row[1] === PARTS.KEYPAD[1])[3], '8.00');
++});
++
++test('only exactly "on" turns the push on: other values leave it off', async () => {
++    for (const value of ['', 'true', '1', 'ON', 'On', ' on', 'on ', 'yes', 'enabled', 'off']) {
++        const sheet = createSheet();
++        sheet.reset([SEAL]);
++        const t = countingTokens({ ...tokens });
++        const inv = withPushEnv(value, () => loadInventory({ sheet, tokens: t.tokens }));
++        await withConsole(async () => {
++            await inv.call('POST', CHECKOUT, { body: { techName: 'Brett Miller', items: [line("Stop Mold | 7' White", 2, '4001')] } });
++            await settle();
++        });
++        assert.strictEqual(inv.pushes.length, 0, JSON.stringify(value));
++        assert.deepStrictEqual(t.seen, [], JSON.stringify(value));
++    }
++});
++
++test('push off: warehouse staging before 8:31 logs the mismatch, sends nothing, and the 8:31 flush is unchanged', async () => {
++    const sheet = createSheet();
++    sheet.reset([SEAL, PARTS.ANGLE]);
++    const t = countingTokens({ ...tokens });
++    const inv = withPushEnv(undefined, () => loadInventory({ sheet, tokens: t.tokens, requireAuth: asUser }));
++    const station = JSON.stringify({ id: 40, name: 'Warehouse', username: 'warehouse1', role: 'Warehouse' });
++    const { lines } = await withConsole(async () => {
++        const r = await atTime(BEFORE_831, () => inv.call('POST', CHECKOUT, { headers: { 'x-test-user': station }, body: { techName: 'warehouse1', items: [line("Stop Mold | 7' White", 2, '7001'), line(PARTS.ANGLE[1], 2, '7001')] } }));
++        assert.match(r.body.message, /^Items staged/);
++        await settle();
++        await atTime(AFTER_831, () => inv.cron('31 8 * * *')());
++        await settle();
++    });
++    assert.strictEqual(inv.pushes.length, 0);
++    assert.deepStrictEqual(t.seen, []);
++    assert.strictEqual(lines.filter((l) => l.includes('🧩 Likely name mismatch')).length, 1);
++    assert.strictEqual(sheet.qty(PARTS.ANGLE[1]), '38.00');
++    assert.strictEqual(sheet.qty(SEAL[1]), '60.00');
++});
++
++test('the notifier with push off never calls getToken, claim or send, even if they would fail', async () => {
++    const calls = [];
++    const boom = (name) => async () => { calls.push(name); throw new Error(`${name} must not be called`); };
++    const warned = [];
++    const notify = createMismatchNotifier({ getToken: boom('getToken'), send: boom('send'), claim: boom('claim'), log: { ...quiet, warn: (m) => warned.push(m) } });
++    const r = await notify({ person: 'P', businessDate: 'd', lines: [{ name: "Stop Mold | 7' White", jobNumber: '1', qtyUsed: 1 }], outcomes: [{ outcome: 'not_stocked' }], rows: ROWS });
++    assert.strictEqual(r.sent, false);
++    assert.strictEqual(r.reason, 'push_off');
++    assert.strictEqual(r.mismatches.length, 1);
++    assert.deepStrictEqual(calls, []);
++    assert.strictEqual(warned.length, 1);
++    assert.match(warned[0], /^🧩 Likely name mismatch/);
++    // push must be the boolean true; a truthy string from somewhere else is not enough.
++    const r2 = await createMismatchNotifier({ getToken: boom('getToken'), send: boom('send'), claim: boom('claim'), log: quiet, push: 'on' })({ person: 'P', businessDate: 'd', lines: [{ name: "Stop Mold | 7' White", qtyUsed: 1 }], outcomes: [{ outcome: 'not_stocked' }], rows: ROWS });
++    assert.strictEqual(r2.reason, 'push_off');
++    assert.deepStrictEqual(calls, []);
++});

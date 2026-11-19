@@ -1,0 +1,980 @@
+✔ the seven audit near-misses each point at exactly the Sheet row with the same part number (17.0913ms)
+✔ doors, services, labour and other non-stock lines are never flagged (synthetic examples) (17.6059ms)
+✔ every production job line name: nothing that reads as a door, service, labour or fee is flagged (4911.6229ms)
+✔ every production job line name: the flagged set is exactly the reviewed list (170 names) (4578.2516ms)
+✔ an exact Sheet name, an ambiguous name and a too-short name are never flagged (2.7257ms)
+✔ words: case, pipes, ×, plurals and "Taxable" do not matter; sizes are kept as they are (0.3769ms)
+✔ the message names the line, the job, the Sheet name, the part number and shelf, and what to do (6.6386ms)
+✔ a checkout retry has the same fingerprint whatever the line order; another person or day does not (4.801ms)
+✔ the notifier never throws: a token lookup or send failure is logged and reported (2.8459ms)
+✔ mixed checkout: one push naming only the likely mismatch; doors and services are left out; stock as before (305.6251ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Brett Miller".
+✔ a checkout whose only unmatched lines are doors and services sends no push (47.3785ms)
+✔ a checkout where everything came off stock sends no push (47.6588ms)
+✔ the same checkout sent again (an old build retrying, no request id) is not notified twice (94.6394ms)
+✔ the same checkout replayed by its Idempotency-Key is not notified twice (R2) (92.6326ms)
+✔ the same checkout landing on two servers is notified once (R2: the claim is shared through Postgres) (47.028ms)
+✔ a different person, or a different unmatched line, is a new checkout and is notified (47.4935ms)
+✔ no phone registered, or the push service down: the checkout answer is unchanged and the miss is still logged (94.5224ms)
+✔ warehouse staging before 8:31: the mismatch is pushed when it is staged, and not again at the 8:31 flush (78.3618ms)
+✔ C2: sheetQty reads every way the Sheets API formats a quantity (4.775ms)
+✔ C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at) (0.576ms)
+✔ M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped (34.3156ms)
+✔ H2: a counted quantity is a whole number from 0 to 100,000 (0.5012ms)
+✔ checkoutInput: lines are checked one by one and the first bad one refuses the whole request (2.3567ms)
+✔ scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused (0.8548ms)
+✔ H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice (1.0716ms)
+✔ N1: planDeductions adds up every line for the same part and writes that row once (0.8146ms)
+✔ C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten (0.5803ms)
+✔ H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8 (4.4564ms)
+✔ C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00) (1.7529ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+✔ the same Idempotency-Key with the same checkout replays the first answer: stock and log change once (333.8411ms)
+✔ the same key with a different payload is refused with 409 and changes nothing (6.6051ms)
+✔ the same key from a different signed-in person is a conflict, not a replay of someone else's answer (11.7714ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+❌ Stock checkout failed before anything was written (6f1c1d2e-9a41-4d7e-8f2a-000000000007): Sheets 503
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+✔ the same key sent to two servers at the same moment changes stock once (41.7447ms)
+✔ a key that is not a UUID is refused with 400 before anything happens (8.6851ms)
+✔ old builds without a key still work as today: each send is its own request (server-made id, key_source server) (6.6686ms)
+✔ a scan and a cycle count replay on a retry with the same key too (8.9289ms)
+✔ a Sheet read failure answers 503 "nothing was changed"; the same key then runs once (6.6005ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+✔ when the log append fails after the stock was written, the request needs review and a retry is refused (1230.8669ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+↕️ Stock write: 1 row(s) changed between read and confirm (attempt 1); reading again.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+↕️ Stock write: 1 row(s) changed between read and confirm (attempt 1); reading again.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+↕️ Stock write: 1 row(s) changed between read and confirm (attempt 1); reading again.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "B".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "B".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "C".
+✔ a log append that fails once is retried inline and the checkout succeeds (461.3724ms)
+✔ migration 001 missing, or writes paused: 503 "nothing was changed" and the Sheet is never touched (8.6509ms)
+✔ a row inserted between the read and the confirm is caught before writing: the right row is written (4.3489ms)
+✔ a hand edit of the same cell between the read and the confirm is not lost: the checkout comes off the new value (3.9055ms)
+✔ a row moved between the confirm and the write is put back and the right row written (read-back repair) (3.8303ms)
+✔ rows that keep moving: after 3 tries the answer is 503 "nothing was changed" and nothing is logged (6.3805ms)
+✔ a cycle count confirms its rows too: a row inserted mid-count does not overwrite another part (3.4073ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Brett Miller".
+🧩 Likely name mismatch, not taken off stock: "Stop Mold | 7' White" (job 4001, qty 2) is probably "Weather Seal | Stop Mold | 7' White" (Inventory row 2, part 0650747), checked out by Brett Miller, request fb4bef3c-2764-4461-9c9b-688b6217d024.
+📵 No phone registered for Brett Miller: the mismatch notice was not pushed (logged above).
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+✔ checkouts, scans and counts on two servers never overlap: every program write holds the one lock (115.1508ms)
+✔ a checkout records one movement per line: merged parts chain, a Stop Mold line with no Sheet row is recorded as not_stocked (9.5991ms)
+✔ taking more than the Sheet shows records the shortfall on the movement (the Sheet still stops at 0 until S8) (3.4816ms)
+✔ warehouse staging, the 8:31 flush, scans and counts each record movements with their kind (6.6891ms)
+✔ identity is taken from the login, not the typed name, and nothing is refused in log-only mode (3.5948ms)
+✔ the app key alone still works in log-only mode but is recorded and logged as shared_key_only (5.1377ms)
+✔ a token signed while TOKEN_SECRET equals the app key is recorded as untrusted (3.5376ms)
+✔ warehouse phone: no operator is station_unverified; an approved operator with the right PIN is recorded as that person (63.6852ms)
+✔ warehouse phone: a wrong PIN, an operator not on the list and a temporary PIN are recorded, never refused, never revealed (202.6735ms)
+✔ PIN checks are rate limited: after 5 wrong tries even the right PIN is not accepted for 15 minutes (313.479ms)
+✔ the PIN never reaches the logs, the stored request, the movements, the answer or later middleware (115.8495ms)
+✔ the router removes the PIN header from the request as soon as it has read it (52.7733ms)
+✔ the 4 PM audit runs once when two servers are up: each tech is struck once, not twice (5.9954ms)
+✔ without migration 001 the crons fall back to today's behaviour instead of skipping strikes (3.9587ms)
+✔ the 8:31 flush on two servers takes each server's own staged picks off once (staging is per server until S9) (7.3172ms)
+✔ runner: refuses a database whose name does not match --confirm-database, and runs nothing (819.8099ms)
+✔ runner: --dry-run applies inside a transaction and rolls back; --apply then applies once with the file checksum (722.7542ms)
+✔ runner: a migration file edited after it was applied stops the run (141.9223ms)
+✔ runner: the URL password is never printed (0.4378ms)
+✔ stock_movements is append-only: UPDATE, DELETE and TRUNCATE are refused by the database (296.8018ms)
+✔ the database refuses unknown settings values, request kinds and identities (172.5123ms)
+✔ request ids: the primary key decides; two servers inserting the same id at once get "new" exactly once (132.828ms)
+✔ request ids: applied replays the stored answer; another payload or another person is a conflict; rejected runs once more (156.2767ms)
+✔ six writers at once on one server use one pooled connection at a time (the app pool is shared by everything) (355.3158ms)
+✔ the write lock holds across two connection pools (two servers): their work never overlaps (332.1562ms)
+✔ a writer that cannot get the lock in time is told "busy, nothing was changed" (503) (313.4308ms)
+✔ the lock is released when the work fails, and the movements of failed work are never kept (185.1472ms)
+✔ once-a-day claims: two servers claiming the same job and day get true exactly once (73.2007ms)
+✔ operator PIN: only approved, active people with a real PIN verify; attempts never hold the PIN (385.3212ms)
+✔ operator PIN: the rate limit holds across servers, even with guesses sent in parallel (607.1642ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "B".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "A".
+✔ end to end: two servers (two pools) check out the same part at once; both come off, each recorded once (578.2479ms)
+✔ end to end: the same checkout on two servers sends the mismatch push once (claim in stock_job_runs) (373.433ms)
+✔ end to end: before migration 001 is applied, stock writes answer 503 and never touch the Sheet (1564.0341ms)
+✔ runner: rollback drops only the stock objects, and the migration applies again afterwards (457.3825ms)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "Warehouse".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Andrew Johnson".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 9 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+❌ Checkout: Inventory!D2 for "Broken Row" is not a number; left unchanged.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "T".
+❌ Scan: Inventory!D2 for "Broken Row" is not a number; nothing changed.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🧩 Likely name mismatch, not taken off stock: "Stop Mold | 7' White" (job 4001, qty 2) is probably "Weather Seal | Stop Mold | 7' White" (Inventory row 2, part 0650747), checked out by T, request 949bae1b-475f-4084-afeb-3e546e3eecdb.
+📵 No phone registered for T: the mismatch notice was not pushed (logged above).
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🧩 Likely name mismatch, not taken off stock: "Stop Mold | 7' White" (job 4001, qty 2) is probably "Weather Seal | Stop Mold | 7' White" (Inventory row 2, part 0650747), checked out by T, request 2e770710-cad4-4fbe-b504-baf2a62af85f.
+📵 No phone registered for T: the mismatch notice was not pushed (logged above).
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech B".
+✔ C2: a checkout of 1 from "1,250.00" leaves 1,249 (it wrote 0), written RAW (370.9267ms)
+✔ C2: a scan adding 5 to "1,250.00" leaves 1,255 (it wrote 6); a scan deducting 5 leaves 1,245 (7.1199ms)
+✔ C2: a cycle count of a part showing "1,250.00" logs 1,250 as the previous quantity (it logged 1, a 1,249-unit miss) (7.0944ms)
+✔ C2: Total Warehouse Value, as written to Inventory!I3, counts 1,250 units as 1,250 (1.7763ms)
+✔ N1: one checkout with the same part on two jobs takes both off (3 + 1 from 40 is 36; it left 39) (10.5532ms)
+✔ N1: three jobs sharing two parts (the 18 Nov pattern) take every unit off once (6.8563ms)
+✔ N1: two lines for the same part on the SAME job (older phone builds) are both taken off (20.1215ms)
+✔ N1: the 8:31 flush takes off every staged pick of one part across jobs (2 + 2 from 40 is 36; it left 38) (11.1656ms)
+✔ N1: two lines for the same job and part in ONE staging request are added together (the second replaced the first) (10.2993ms)
+✔ N1: every quantity is deducted exactly once, for random checkouts mixing parts, jobs and repeats (300 runs) (1714.4476ms)
+✔ N1: the same exactly-once check through warehouse staging and the 8:31 flush (100 runs) (501.2906ms)
+✔ M5: a checkout with 0.5 or 2.5 is refused with 400 and nothing is logged or written (0.5 was dropped, 2.5 taken as 2) (22.1609ms)
+✔ H2: cycle-count values that are not whole numbers from 0 to 100,000 are refused and nothing is written (33.594ms)
+✔ H2: a valid count is written RAW as a number (4.3361ms)
+✔ scan: an action other than add or deduct is refused (it deducted); a bad quantity is refused (it became 1) (11.8947ms)
+✔ a quantity cell that is not a number is never overwritten: the checkout says so, the scan changes nothing (11.2952ms)
+✔ C1: a line that matches no Inventory row is returned as an exception, not counted in itemsUpdated (6.1688ms)
+⚠ C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row (5.6681ms) # name mappings wait for your review (decision 7)
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🩹 Stock write hit the wrong row: Inventory!D3 ("Lights | Light Bulb for Operators") restored to 163.00; "weather seal | stop mold | 7' white" will be written again.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "anyone".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "anyone".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "anyone".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /cycle_count_update; recorded as "W".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "Tech A".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "T".
+🚨 STOCK REQUEST NEEDS REVIEW ac316ade-4381-43ed-9241-64c67fdefa45 (checkout by T): Sheets 503
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /scan_checkout; recorded as "T".
+🪪 Stock write identity (log only): shared_key_only, no login token; POST /checkout_inventory; recorded as "warehouse1".
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🚨 STOCK REQUEST NEEDS REVIEW 4d41d9ff-3d81-4f76-824a-3bdff479f33f (staging_flush by Warehouse staging (8:31 flush)): Sheets 503
+🚨 8:31 flush partly written (request 4d41d9ff-3d81-4f76-824a-3bdff479f33f); staged picks dropped so they are not taken off twice: [{"checkoutDate":"11/18/2026","jobNumber":"7101","name":"Punched Angle | 16ga | 1-1/4\" x 1-1/4\" x 8' | Galvanized","qtyUsed":2,"loggedBy":"warehouse1"}]
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+ℹ️ Warehouse strike for 2026-11-18 already applied by another server; not applied again.
+⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+✔ C3 (R2): two checkouts of one part at the same moment on TWO servers both come off (163 - 2 - 3 = 158) (109.2264ms)
+✔ C4 (R2): a row inserted above while a checkout is in flight never overwrites another part (4.9739ms)
+⚠ C5 (todo S5/S13): the shared app key alone cannot change stock (7.6167ms) # S5 identity, enforced at S13 after the Android rollout
+⚠ H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6) (3.9696ms) # S8: negative balance plus count flag
+⚠ H3 (todo S10): a count made before a checkout does not wipe that checkout (4.9458ms) # S10: counts checked against movements since the zone was loaded
+⚠ H4 (todo S9): picks staged before a restart are still taken off at 8:31 (10.8016ms) # S9: durable staging in Postgres
+⚠ H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it (6.1834ms) # S9: durable staging; accumulate
+⚠ H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name (3.4229ms) # S5/S9: staging decided from the token
+✔ H5 (R2): the same request id sent twice changes stock once (4.3335ms)
+✔ H6 (R2): when the stock write fails, nothing is left logged as picked and the phone is not told success (3.9115ms)
+⚠ H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first (3.5567ms) # S8: ambiguous barcode returns 409
+⚠ N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning (5.1274ms) # S9: idempotent flush
+✔ N3 (R2): with two servers up during a deploy, the 8:30 audit strikes the warehouse once (it struck twice on 16 Nov) (17.1193ms)
+ℹ tests 110
+ℹ suites 0
+ℹ pass 101
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 9
+ℹ duration_ms 10534.0819
+
+✖ failing tests:
+
+test at test\stock_writes.test.js:279:1
+⚠ C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row (5.6681ms) # name mappings wait for your review (decision 7)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '60.00' !== '58.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:283:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '60.00',
+    expected: '58.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:311:1
+⚠ C5 (todo S5/S13): the shared app key alone cannot change stock (7.6167ms) # S5 identity, enforced at S13 after the Android rollout
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   200,
+  +   200,
+  +   200
+  -   401,
+  -   401,
+  -   401
+    ]
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:322:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 200, 200, 200 ],
+    expected: [ 401, 401, 401 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:326:1
+⚠ H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6) (3.9696ms) # S8: negative balance plus count flag
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '0.00' !== '-3.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:331:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '0.00',
+    expected: '-3.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:335:1
+⚠ H3 (todo S10): a count made before a checkout does not wipe that checkout (4.9458ms) # S10: counts checked against movements since the zone was loaded
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '12.00' !== '10.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:341:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '12.00',
+    expected: '10.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:344:1
+⚠ H4 (todo S9): picks staged before a restart are still taken off at 8:31 (10.8016ms) # S9: durable staging in Postgres
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '40.00' !== '38.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:350:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '40.00',
+    expected: '38.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:353:1
+⚠ H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it (6.1834ms) # S9: durable staging; accumulate
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '37.00' !== '35.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:361:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '37.00',
+    expected: '35.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:364:1
+⚠ H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name (3.4229ms) # S5/S9: staging decided from the token
+  AssertionError [ERR_ASSERTION]: a client header must not decide staging
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:368:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:391:1
+⚠ H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first (3.5567ms) # S8: ambiguous barcode returns 409
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  200 !== 409
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:395:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 200,
+    expected: 409,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:400:1
+⚠ N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning (5.1274ms) # S9: idempotent flush
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\opera\integrity-backend-stock-phase1\test\stock_writes.test.js:407:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

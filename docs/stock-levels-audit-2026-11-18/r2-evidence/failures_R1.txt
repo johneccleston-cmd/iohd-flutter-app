@@ -1,0 +1,13 @@
+✖ a product edited in the app keeps every edit; the export's different values are listed, not applied
+✖ a week that already has a finalized payroll run moves the what-if settlement to the next open week, as the engine does
+✖ as if Jordan were on commission: the same $1,500 share and $750 after the hurdle, marked hypothetical
+✖ as things are: Alex is paid $750 on a $1,500 share, Jordan (not on commission) nothing
+✖ callback rate: completed jobs that started on/after Oct 5 and by today, in the selected year; strikes reconcile
+✖ failing tests:
+✖ it never guesses who is meant, and says so for someone already on commission
+✖ jobs that paid nothing are listed with the reason: a closed job with no commission lines, one before go-live, two still open
+✖ payments list: the Final Invoice Sent $0 filter lists those jobs, with or without a payment
+✖ payments list: without a stripe_payments table it lists Service Fusion alone
+✖ reads the export: active rows only, money, flags, vendors, cleanups
+✖ the keys match the office app (lib/config/access.dart)
+✖ the switch is not left on: the next ordinary question still pays Jordan nothing

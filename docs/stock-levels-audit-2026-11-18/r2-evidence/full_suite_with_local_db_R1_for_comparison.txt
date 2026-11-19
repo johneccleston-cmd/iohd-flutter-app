@@ -1,0 +1,1680 @@
+✔ admins and owners can do everything; nobody signed in gets 401 (46.2879ms)
+✔ office staff follow their switches, and an action needs View on too (16.9375ms)
+✔ a job or estimate is checked against its own switches, looked up only when they differ (7.4738ms)
+❌ Access switch migration failed (it runs again on the next start): a refused change must not open a transaction
+✔ calls and texts need the Communications switch and a job, estimate or customer page (6.1561ms)
+✔ canDo refuses anyone whose permissions were not read, and technicians (0.2106ms)
+✔ saved switch lists: retired keys are dropped, unknown keys refused (0.8245ms)
+✖ the keys match the office app (lib/config/access.dart) (1.6963ms)
+✔ someone never saved gets pay, profit, Team and Jarvis off and everything else on (0.1075ms)
+✔ the Team switches: no admin roles, no editing admins, never your own permissions (24.222ms)
+✔ the key lists hang together (0.2245ms)
+✔ every tool is either in an access area or deliberately general (3.0098ms)
+✔ an admin and someone with every switch on get the full, shared tool list and no access note (70.3879ms)
+✔ someone with Jarvis switched off is refused before anything is spent (5.282ms)
+✔ a limited person: only their lookups are offered, the prompt says what is off, and a forbidden lookup is refused (12.3262ms)
+✔ a composite lookup leaves out the parts the person may not see, and says so (18.0952ms)
+✔ stripProfit removes profit, cost and margin at any depth and keeps everything else (0.2523ms)
+✔ scopeFor: technicians and unknown people get nothing; admins everything (0.1963ms)
+✔ follow-ups: the lookups behind an answer go back to the app, and come back with that answer for the model (15.3299ms)
+✔ lookupNote: only known lookups, short inputs, and only the newest answers keep them (0.4079ms)
+✔ for a job: only the calls and texts on it and its paired records, each saying why it is there (19.4892ms)
+✔ for a customer or a phone: every call and text, each with the job it is on, or "not on a job" (1.2673ms)
+✔ a name that matches two customers is matched one phone number at a time, never across customers (0.5289ms)
+✔ without the app matching, a job still answers the older way (the customer's calls plus hand links) (0.4496ms)
+✔ a window across all customers has no job per item (that would mean matching every customer) (0.4875ms)
+✔ the tool description tells Jarvis what on_job and job_id mean (0.111ms)
+▶ communications: calls and texts by customer, phone or job, missed and returned, with exact totals
+  ✔ the view never carries recordings, the raw Quo object or the ignored number (53.4415ms)
+  ✔ the last 7 days by default, newest first; missed calls and the ones nobody returned (4.6185ms)
+  ✔ missed calls nobody returned, in office hours only (6.1332ms)
+  ✔ a staff member's missed calls by their lines, who returned them and how fast (6.7198ms)
+  ✔ one customer, a phone number or a job: all their history, the job link included once (12.4242ms)
+  ✔ a call's transcript, with who said what (2.95ms)
+✔ communications: calls and texts by customer, phone or job, missed and returned, with exact totals (415.2091ms)
+✔ the prompt sends calls and texts to communications and says recordings are never available (1.4376ms)
+▶ door_counts: each door once, by model, size and color, with exact totals for every scope
+  ✔ open jobs (the default): sizes and colors from the description, else the name; install lines not counted again (152.3852ms)
+  ✔ one quantity per row: no second "starting today or later" figure to squeeze into the same cell (3.2389ms)
+  ✔ start_from ("from Nov 5 forward"): only jobs starting that day or later; doors on open jobs that started earlier are a separate count (2.1369ms)
+  ✔ start_from with start_to ("the week of Nov 5"): start_to is the day after the last day (1.8346ms)
+  ✔ jobs with a visit booked, from the same rows (3.55ms)
+  ✔ without a customer filter every open job counts; by job lists each job and its doors (5.3681ms)
+  ✔ open jobs without a door: install-only, opener-only and neither, adding up to open_jobs (12.5119ms)
+✔ door_counts: each door once, by model, size and color, with exact totals for every scope (513.941ms)
+✔ readDoor: "Sandstone" in the configurator description is the Sandtone color the line name gives (0.4066ms)
+✔ the prompt: named start dates go to door_counts as start_from, one figure per table cell, no talk about the tools (1.7894ms)
+✔ the grounding check catches a figure that was not looked up, and allows the prompt's rounding (1.7593ms)
+▶ evaluation, retrieval: each business question gets the right facts from its lookup
+  ✔ "Give me today's priorities": one daily_briefing call has every section, right (47.9949ms)
+  ✔ "Which jobs are stuck, and what is holding them up?": jobs_stuck shows the clues (131.9347ms)
+  ✔ "Which estimates need follow-up first?": quiet open estimates, largest first (2.888ms)
+  ✔ "Which customers owe us the most, especially overdue?": one call, with the overdue part per customer (1.3677ms)
+  ✔ "What inventory issues could affect upcoming jobs?": needs on booked jobs against stock (8.3741ms)
+  ✔ "How are our technicians performing, and what trends?": per-tech changes worked out server-side (5.7664ms)
+  ✔ "Compare this month with last month": October so far against the same days of September (8.5894ms)
+  ✔ "What changed since yesterday?": since Monday, in one call (2.9638ms)
+  ✔ dates: "last week" and "the same days of last month" are spelled out for the model (1.4272ms)
+✔ evaluation, retrieval: each business question gets the right facts from its lookup (412.0726ms)
+▶ evaluation, whole path: question in, live progress out, grounded answer with links back
+  ✔ priorities (72.3085ms)
+  ✔ stuck (40.6944ms)
+  ✔ estimates (9.8134ms)
+  ✔ owed (8.28ms)
+  ✔ inventory (11.8133ms)
+  ✔ techs (11.2269ms)
+  ✔ compare (18.3735ms)
+  ✔ changes (9.1603ms)
+  ✔ a follow-up keeps the earlier priorities in view (but not its footnotes) and resolves "the second one" (6.2846ms)
+  ✔ a part that cannot be read: the briefing still answers, the checklist flags it, and the gaps are named (15.9626ms)
+  ✔ staff text that tries to give orders reaches the model only as tool data, never as instructions (8.0055ms)
+  ✔ someone who is not an admin is refused before any lookup or model call (2.9794ms)
+✔ evaluation, whole path: question in, live progress out, grounded answer with links back (385.3716ms)
+✔ the sensitive-column rule: secrets by name on any table, sign-in fields on users (0.9666ms)
+✔ ensureAssistantGrants: every column but the sensitive ones, held-back tables revoked, idempotent (82.928ms)
+▶ new Jarvis lookups give the hand-worked figures
+  ✔ tech_performance: revenue split by day weight like the Technicians dashboard, with per-job, per-day and cash figures (50.3627ms)
+  ✔ sales_performance: closed agent jobs (both agents counted in full) next to the estimates each person owns (27.717ms)
+  ✔ estimate_conversion: win rate, and timing from logged changes only (5.8779ms)
+  ✔ sold_vs_final: each won estimate against the job it became and the cash on it (4.2037ms)
+  ✔ invoices_summary: the Invoices page's awaiting, overdue and invoiced figures (7.9162ms)
+  ✔ job_statuses: the Statuses page list with counts as status and sub-status (2.5498ms)
+  ✔ site_checks: newest first with totals (3.3331ms)
+  ✔ search_jobs: status or sub-status ("waiting on materials"), sales agent, and totals for all matches (2.4478ms)
+  ✔ jobs_summary: average job value worked out, and project type groups (1.9737ms)
+  ✔ describe_data: no system or held-back tables, the join guide, several tables at once (16.1821ms)
+  ✔ communications: words said or written, counted, with the line they were in (22.1071ms)
+✔ new Jarvis lookups give the hand-worked figures (587.9349ms)
+▶ payroll detail lists a sales-only person's sales commission rows, and says when the list is cut short
+  ✔ two jobs: the detail is the two sales rows and adds up to the pay (48.8541ms)
+  ✔ 151 jobs: 150 rows listed, flagged as cut short, totals still cover all of them (153.3611ms)
+  ✔ technicians on commission are unchanged: no sales rows appear for them (37.6856ms)
+✔ payroll detail lists a sales-only person's sales commission rows, and says when the list is cut short (506.2386ms)
+▶ figures and filters the model no longer has to work out for itself
+  ✔ search_jobs: words in the job text, with customer, open and date filters together (the 2026-11-12 "duplicate" question) (7.9937ms)
+  ✔ search_jobs: a value filter, and the dates it covered stated (no filter = every date, never "this year") (2.6867ms)
+  ✔ jobs_summary: several customers and open jobs in one call (high-volume jobs), with shares and margins worked out (29.3847ms)
+  ✔ payments_received: one customer's payments, and each group's share (16.7347ms)
+  ✔ schedule: each booked visit names the technician, the day and the job (4.5462ms)
+  ✔ a year left out means every year on the lookups that say so (2.9831ms)
+  ✔ outstanding_balances: each group carries its share of the balance (4.0021ms)
+  ✔ estimates_summary: totals over every group, and win rates worked out (9.8914ms)
+  ✔ payroll_runs: a person's total over finalized runs only; a voided run's lines are marked and never added in (4.34ms)
+  ✔ balance_history: the move between the first and last snapshot is worked out (2.3087ms)
+  ✔ monthly_financials: each month, each quarter and the year carry their own totals and margin (1.1785ms)
+✔ figures and filters the model no longer has to work out for itself (451.3436ms)
+✔ the prompt carries every common date range and weekday ready-made (1.6081ms)
+✔ amounts of $1,000 or more are rounded to the whole dollar before the model sees them; smaller ones keep their cents (1.0847ms)
+✔ the route sends rounded figures; a lookup called on its own keeps its cents (256.2017ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+▶ what someone not on commission would have earned: the real engine with that one person switched on
+  ✖ as things are: Alex is paid $750 on a $1,500 share, Jordan (not on commission) nothing (3.8757ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+  ✖ as if Jordan were on commission: the same $1,500 share and $750 after the hurdle, marked hypothetical (28.7312ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+  ✖ jobs that paid nothing are listed with the reason: a closed job with no commission lines, one before go-live, two still open (26.112ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+  ✖ it never guesses who is meant, and says so for someone already on commission (40.9418ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+  ✖ the switch is not left on: the next ordinary question still pays Jordan nothing (134.2432ms)
+✖ what someone not on commission would have earned: the real engine with that one person switched on (555.254ms)
+❌ assistant tool payroll_preview failed: relation "commission_eligibility_changes" does not exist
+✖ a week that already has a finalized payroll run moves the what-if settlement to the next open week, as the engine does (355.8411ms)
+▶ date boundaries, filters, exclusions and totals hold
+  ✔ "to" is the day after the last day, for payments and for job dates (29.2881ms)
+  ✔ payments: a void is not cash and a refund is taken off (1.4332ms)
+  ✔ customer filters: any of several, any letter case, and wildcard characters are taken literally (5.2128ms)
+  ✔ open jobs leave out every completed, invoiced, cancelled and written-off job, the same way in both lookups (3.0874ms)
+  ✔ groups add up to their totals (jobs, revenue, balances, cash, estimates) (3.6107ms)
+  ✔ payroll: voided runs never count, and a person's lines add up to the run (5.1583ms)
+✔ date boundaries, filters, exclusions and totals hold (271.7384ms)
+✔ nothing found gives zeros and empty lists, never an error or an invented row (480.608ms)
+✔ a result too long to send keeps its totals whole, stays valid JSON and says what was left out (11.4855ms)
+✔ every lookup behind an answer comes back in `calls` (the app shows them under "How I got this") (62.5344ms)
+✔ all results of one turn go back in ONE message, matched by id; bad tools and failed queries come back as errors (9.4575ms)
+✔ a long tool result is shortened to whole rows, stays valid JSON and says how many rows are shown (11.4286ms)
+✔ only signed-in admins and owners reach Jarvis; everyone else is refused before a single model call (21.1078ms)
+✔ feedback needs an admin too, and only takes up / down (6.1696ms)
+✔ malformed conversations are refused with 400 and never reach the model (13.9046ms)
+✔ without a database or an API key the route says it is not configured (503) (3.4719ms)
+✔ the page the person has open is passed on, cleaned, as a [Viewing: ...] prefix (3.9422ms)
+✔ earlier answers are sent back trimmed: no stats / chart / follow-up blocks, at most 2,500 characters (3.77ms)
+✔ a refusal, a cut-off answer and a lookup loop that never ends each get a plain explanation (14.3106ms)
+✔ model errors map to clear messages without internal detail (10.413ms)
+✔ a streamed question shows progress, drops text from lookup turns, then delivers the answer and its lookups (4.7014ms)
+✔ the app gets a live checklist: each lookup starts and finishes (with time and outcome), and a composite one reports its parts (8.8311ms)
+✔ the newer answer blocks reach only apps that draw them; an older build gets plain markdown (11.7182ms)
+✔ a streamed failure ends with an error event carrying the status (3.8348ms)
+✔ requests are built for prompt caching: tools, system prompt and conversation tail are cache breakpoints (3.9788ms)
+✔ usage is added up over every model call and the audit line records calls, time and an estimated cost (4.1706ms)
+✔ when the app goes away mid-question (Stop, closed panel), the server stops calling the model (149.0245ms)
+✔ a question that runs past the time limit is stopped with a clear message (166.7746ms)
+✔ text from the data reaches the model only inside tool results, and the rules say it is data, not instructions (7.1535ms)
+✔ the system prompt states the business rules the dashboards use (0.8183ms)
+✔ the app is told exactly which Drive links the Drive tools returned; a link from any other data is not among them (5.1976ms)
+✔ the deadline holds even while a lookup hangs (219.8567ms)
+✔ a long custom query still shows up under "How I got this" with its purpose (6.9676ms)
+✔ every tool has sample inputs here, a progress phrase in the app, and a valid schema (3.3057ms)
+✔ every tool runs with no rows and sends exactly as many parameters as its SQL uses (40.4086ms)
+✔ every tool runs with a row and sends exactly as many parameters as its SQL uses (13.1125ms)
+✔ Jarvis uses the Chicago date everywhere: no server or database clock in its own SQL (1.9886ms)
+✔ run_sql accepts plain read-only SELECTs (0.3069ms)
+✔ run_sql refuses anything that writes, runs hidden SQL, reads the catalog or escapes the single statement (0.2444ms)
+✔ run_sql runs inside a read-only transaction with a time limit and a row cap, and always rolls back (0.4345ms)
+✔ tool arguments are checked before any query runs (0.7999ms)
+✔ Google Drive tools act as the person asking, and say so plainly when Drive is not set up (0.1371ms)
+✔ estimates_summary quotes the Estimates dashboard's own open pipeline (every year), next to its year-filtered groups (0.4216ms)
+✔ customer_lookup finds the customer whose page is open by their number (0.1283ms)
+✔ payroll_runs no longer tells the model that unrun weeks cannot be previewed (0.0795ms)
+✔ daily_briefing gathers every section in one call, with activity since the last business day (1.7286ms)
+✔ a section that cannot be read is marked unavailable; the rest of the briefing still comes back (0.965ms)
+✔ compare_periods works out differences and % changes itself, with win rate in points (1.1109ms)
+✔ compare_periods picks sensible previous ranges and refuses impossible ones (2.0727ms)
+✔ history and page context are cleaned before they reach the model (0.3446ms)
+✔ the prompt gives exact date ranges for the usual periods, in Chicago time (0.9033ms)
+✔ the audit cost estimate uses list prices and stays quiet for unknown models (0.1016ms)
+✔ the composite tools keep at most two queries on the 3-connection pool, so none times out waiting for one (348.292ms)
+✔ compare_periods: one lookup failing leaves only its measures as n/a, says so, and skips the pipeline it does not use (2.4397ms)
+✔ compare_periods warns that status-based measures run low for a recent period, and not for an old one (3.615ms)
+✔ estimates_summary puts open_pipeline first, so it survives when a long result is cut short (0.4158ms)
+✔ "How I got this" gets valid JSON even for a long custom query (0.1952ms)
+✔ only links the Drive tools returned count as Drive links, never one quoted inside a document or note (0.4334ms)
+✔ dates given to the new tools must be real calendar days, and a bad one is refused without throwing (0.4362ms)
+✔ status-change days and day boundaries are Chicago days, like "today" (0.4503ms)
+✔ history keeps priorities and comparisons (what a follow-up points back to) but drops footnotes, figures strips and charts (0.1874ms)
+✔ the prompt asks for direct, grounded answers in the formats the app draws, and points each common question at its lookup (1.0274ms)
+✔ a lookup counts as failed when it errors or answers with {"error"}, and as partly read when a part is marked unavailable (0.1667ms)
+✔ upcoming_materials leaves out exactly what the pick list leaves out, and only matches stock on exact names (0.6901ms)
+✔ what_changed counts from the last business day and refuses ranges it cannot answer (0.7979ms)
+✔ tech_activity compares two ranges only when both are given in full (0.1157ms)
+✔ an app that does not draw the newer blocks gets them as plain markdown; one that does gets them as they are (0.7294ms)
+✔ calendar: one event per job per visit day, and a job with no dated visit shows on its start date (874.2779ms)
+✔ job_payments start-up block: leaves a correct table alone, so a restart no longer rewrites it (683.4293ms)
+✔ job_payments start-up block: still upgrades an old table (369.8718ms)
+✔ invoice save: an unchanged invoice is not rewritten, a changed one is (171.0874ms)
+🚫 Unauthorized request: GET /api/calendar/sync?start=2026-09-01&end=2026-12-01
+✔ the shared app key alone, or no credentials, cannot read the schedule (401) (47.3529ms)
+✔ technicians' phone-app tokens and office staff with the Calendar switched off are refused (403) (14.9234ms)
+✔ admins, owners and office staff with the Calendar on can read it (8.8461ms)
+✔ a range that is not two real yyyy-mm-dd days, runs backwards, or is too long is refused (400) before any query (9.7273ms)
+✔ the range passes through as inclusive days; a missing end still means 30 days after start (4.7854ms)
+✔ each day comes back as plain yyyy-mm-dd text, so the server time zone can never move a visit to another day (3.8858ms)
+❌ DB Calendar Sync Error: relation "jobs" does not exist (secret detail)
+✔ a database failure is a plain 500 with no details (2.6097ms)
+✔ the generated SQL never truncates, deletes, drops or restarts ids, and the dry run ends with ROLLBACK (3.679ms)
+✔ re-running the same export after the first import changes no product: same ids, nothing added; the identical pair is listed (128.3882ms)
+✖ a product edited in the app keeps every edit; the export's different values are listed, not applied (237.45ms)
+✔ a product renamed in the app BEFORE export names were recorded is not added again: possible rename, for review (198.5534ms)
+✔ a price change in the export waits for approval; --accept-price-changes applies it; a text change applies (112.4801ms)
+✔ a new product is added with a new id (no id reused or shifted) and gets its own inventory row (94.8613ms)
+✔ a product missing from the new export is kept and listed; a product added in the app is listed as such (94.326ms)
+✔ a new export row whose name is already in the catalog with a different part number is not added: review (209.4711ms)
+✔ inventory: rows are linked by id, never renamed; the sheet count is taken only for products on the sheet (98.0062ms)
+✔ the dry run leaves the database exactly as it was, and the preview runs in a read-only transaction (97.5083ms)
+✔ linking existing products to inventory: unique names linked, duplicates listed, existing links kept; preview is read-only (87.5721ms)
+✔ the link backfill also records the export name of imported products nobody has edited, so a later rename is still recognised (210.231ms)
+✔ an explicit link survives a rename: the stock stays with the product (0.8002ms)
+✔ without a link, a single exact-name match is still used (spaces and case ignored) (0.1112ms)
+✔ two products with the same name share nothing: neither gets the row, both are flagged for review (0.0981ms)
+✔ an explicitly linked duplicate keeps its row; the other one is flagged, not given the same row (0.0748ms)
+✔ a row another product is linked to is never handed out by name (0.1164ms)
+✔ two products linked to the same row: both flagged, neither shows its stock (0.1165ms)
+✔ a link to a row that is gone (or inactive, so not loaded) is flagged, with no name guess (0.0947ms)
+✔ two inventory rows that only differ by case or spaces are ambiguous, not guessed (0.0812ms)
+✔ a product with no inventory row has no stock and nothing to review (0.0975ms)
+✔ catalog entries: a renamed product keeps stock and its Service Fusion usage; duplicates show no stock and say why (1.1073ms)
+✔ copying Service Fusion lines finds a renamed product by its export name, and skips products with no inventory link (0.1737ms)
+✔ catalog entries carry the export name so a renamed product can still be found (0.0854ms)
+✔ without Line Items & Costs > Update every management write is refused before the database is touched (52.621ms)
+✔ nobody signed in, or a technician, cannot read or change categories, reviews or the change log (21.6311ms)
+✔ office staff with the page can read categories, reviews and the change log; canEdit follows the Update switch (7.3442ms)
+✔ a bulk change never carries a price or cost, whoever sends it (13.1891ms)
+✔ 2026-11-18 routes: sign-in and the page are needed to read; pricing marks need the cost switch; a typo category is refused (10.4676ms)
+✔ bulk move: only category and the change stamp move; prices, costs, names, part #s and inventory links stay exactly (326.7934ms)
+✔ bulk refuses when any product changed since the list loaded: nothing written, nothing logged (230.6476ms)
+✔ bulk refuses a product that is gone, an unknown category, and any field but category and status (239.0973ms)
+✔ two bulk changes from the same list at the same moment: one goes through, the other is refused (123.8038ms)
+✔ a product page opened before a bulk change cannot save over it (409 CHANGED) (134.9977ms)
+✔ categories: counts with ids, create an empty one, refuse a twin, delete only when empty (110.4013ms)
+✔ rename a category: every product moves in one go, nothing else changes; a clash or a stale view is refused (260.7721ms)
+✔ merge: products of the merged categories land in the target, the sources go, descriptions carry over, stale views are refused (125.7348ms)
+✔ reviewed marks: saved, listed, cleared, logged (211.3201ms)
+✔ the change log: single edits are logged with before and after; cost values are hidden without the view switch (123.5712ms)
+✔ a product page can only file a product in an existing category, unless "Create a new category" was chosen (258.7254ms)
+✔ one product under one check: reviewed or follow up, with a note; every change of the mark is kept in its history (110.8371ms)
+✔ two people marking the same finding at the same moment: one mark is saved, the other is told (122.2583ms)
+✔ pricing-check marks stay with people who can see costs (106.4131ms)
+✔ the change log filters by person, time, product and kind of change (139.3243ms)
+✔ sales across all history: last job and estimate by name or the export name, with the linked stock row (140.8566ms)
+✔ a create needs a name; an edit does not (1.3734ms)
+✔ only the fields sent come back, trimmed and mapped to columns (0.3089ms)
+✔ bad numbers, flags and vendor lists are refused in plain words (12.7208ms)
+✔ money keeps every decimal it was given: a 5-decimal cost is not rounded (prod has 113 sub-cent costs) (0.3167ms)
+✔ more than 6 decimal places is refused rather than rounded (0.144ms)
+✔ vendors keep the named ones, with prices as numbers (0.135ms)
+✔ without the costs switch: costs, vendors and pay are refused, price and text are not (0.2969ms)
+✔ the product record leaves costs, vendors and pay out without the switch (0.3093ms)
+✔ parses quotes, doubled quotes and newlines inside fields (0.9352ms)
+✖ reads the export: active rows only, money, flags, vendors, cleanups (1.7996ms)
+✔ rejects a file with different columns (0.3853ms)
+✔ the import script writes a preview, a dry run and an apply file; none of them truncates or renumbers (7.8898ms)
+✔ catalog from the price list: list price/cost, stock from inventory, services kept, SF products dropped (1.169ms)
+✔ catalog entries carry active and inventoryItem so the page can filter on them (0.1828ms)
+✔ a save that lands while the catalog is being rebuilt is not lost: the next read shows it (101.6599ms)
+✔ after a save the catalog list and the estimate picker read the change straight away (12.0506ms)
+✔ without Line Items & Costs > Update nobody can add, edit or delete products (7.3209ms)
+✔ without Line Items & Costs > View a cost cannot be changed, and costs never come back (5.1845ms)
+✔ a 6-plus-decimal cost is refused with a plain message and nothing is written (4.2778ms)
+✔ the migration adds the inventory link and export-name columns to the existing table, keeping rows and ids (287.8175ms)
+✔ editing one field leaves the 5-decimal cost exactly as stored; a typed cost is stored exactly (239.4671ms)
+✔ a renamed product keeps its stock: the page and the list both still show 16 (251.7606ms)
+✔ two products with the same name: neither page nor list shows the shared row's stock, both say it needs review (271.6616ms)
+✔ two saves from the same starting point at the same moment: one is saved, the other is refused (409), nothing merged (216.2098ms)
+✔ adding a product whose name or part number is already used asks first (409 DUPLICATE); confirming adds it (228.4453ms)
+✔ renaming onto another product's name asks first; saving a product that is already a duplicate does not nag (115.3138ms)
+✔ log: totals split counted rows (the dashboard figure) from rows waiting for payroll (41.2251ms)
+✔ log and entries: technicians and the shared key alone are refused before any ledger query (23.0544ms)
+✔ entry: money out is saved negative, as a manual adjustment, with the note and who saved it (5.5995ms)
+✔ entry: money in with no job or date saves a positive amount for today (4.0072ms)
+✔ entry: bad input is a 400 and writes nothing (25.2624ms)
+✔ entry: a payment spread over weeks saves one row per week, a week apart, sharing a plan (3.5919ms)
+✔ entry: uneven percents still add up to the amount to the cent (the last week takes the rounding) (3.8549ms)
+❌ Company Pool Entry Error: disk full
+✔ a failed week rolls the whole spread back (3.3677ms)
+🔧 retainage_ledger_transaction_type_check now allows: deposit, callback_deduction, release, adjustment
+✔ company pool log and manual entries on a real Postgres (297.9379ms)
+✔ a phone number finds the customer however either side typed it (262.7141ms)
+✔ words still search as before, and short digit strings are not phone searches (170.1194ms)
+✔ jobs are counted by name, ignoring case and spaces (58.6338ms)
+🚫 Unauthorized request: GET /financial_dashboard?year=2026
+🚫 Unauthorized request: GET /commissions_stats?year=2026
+🚫 Unauthorized request: GET /tech_stats?year=2026
+🚫 Unauthorized request: GET /api/dashboards/jobs?year=2026
+🚫 Unauthorized request: GET /api/dashboards/jobs/drill?status=Scheduled
+🚫 Unauthorized request: GET /dashboards/inventory
+🚫 Unauthorized request: GET /dashboards/sales?year=2026
+🚫 Unauthorized request: GET /dashboards/sales/estimates?year=2026&owner=Zac%20Clemens&filter=won
+🚫 Unauthorized request: GET /dashboards/sales/door-estimates?year=2026&type=Classic%20Steel
+🚫 Unauthorized request: GET /dashboards/estimates?year=2026
+🚫 Unauthorized request: GET /dashboards/estimates/drill?year=2026&kind=lost&reason=price
+🚫 Unauthorized request: GET /dashboards/collections?year=2026
+🚫 Unauthorized request: GET /dashboards/collections/jobs?stage=90
+✔ no credentials at all: 401 everywhere, database untouched (72.5606ms)
+✔ the shared app key alone is not an identity: 401 everywhere, database untouched (16.7157ms)
+🚫 Unauthorized request: GET /financial_dashboard?year=2026
+🚫 Unauthorized request: GET /commissions_stats?year=2026
+🚫 Unauthorized request: GET /tech_stats?year=2026
+🚫 Unauthorized request: GET /api/dashboards/jobs?year=2026
+🚫 Unauthorized request: GET /api/dashboards/jobs/drill?status=Scheduled
+🚫 Unauthorized request: GET /dashboards/inventory
+🚫 Unauthorized request: GET /dashboards/sales?year=2026
+🚫 Unauthorized request: GET /dashboards/sales/estimates?year=2026&owner=Zac%20Clemens&filter=won
+🚫 Unauthorized request: GET /dashboards/sales/door-estimates?year=2026&type=Classic%20Steel
+🚫 Unauthorized request: GET /dashboards/estimates?year=2026
+🚫 Unauthorized request: GET /dashboards/estimates/drill?year=2026&kind=lost&reason=price
+🚫 Unauthorized request: GET /dashboards/collections?year=2026
+🚫 Unauthorized request: GET /dashboards/collections/jobs?stage=90
+✔ a user token without the app key: 401 (12.2707ms)
+✔ expired, tampered and app-key-signed tokens: 401 (27.2723ms)
+✔ a deactivated account: 401 even with an unexpired admin token (12.0027ms)
+✔ admin-only dashboards refuse non-admins (403), whatever the page switches say (13.3063ms)
+✔ page-permission dashboards refuse a person whose page is switched off (403) (7.8118ms)
+✔ technicians (phone app tokens) are refused office dashboards even with nothing switched off (10.9727ms)
+❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+    at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\commissions.js:409:72
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+    at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\commissions.js:409:72
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+✔ admins and owners reach every dashboard (38.9312ms)
+✔ a non-admin whose page is switched on reaches the page-permission dashboards (7.2768ms)
+❌ Commission Dashboard API Error (year=2026): TypeError: Cannot read properties of undefined (reading 'amount')
+    at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\commissions.js:409:72
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+❌ Jobs Dashboard API Error: Cannot read properties of undefined (reading 'active_open_jobs')
+✔ the server warm-up token passes (it never leaves the process) (20.4717ms)
+✔ technicians get only the callback leaderboard from /tech_stats (no revenue, penalties or profit) (5.6212ms)
+✔ technicians get only the strike leaderboard from /dashboards/inventory (no stock values) (7.3881ms)
+✔ an admin-cached body is never served whole to anyone else (7.9211ms)
+✔ no third-party avatar URLs are produced (6.4521ms)
+❌ Inventory Dashboard API Error: simulated database failure
+❌ Inventory Dashboard API Error: simulated database failure
+❌ Inventory Dashboard API Error: simulated database failure
+✔ inventory: a failed query is a 500, not $0, and nothing is written to the snapshot history (12.4128ms)
+❌ Financial Dashboard Fetch Error: simulated database failure
+✔ financial: a failed expenses query is a 500, not "no expenses" (8.1858ms)
+✔ inventory: a healthy load still saves today's valuation (3.4524ms)
+✔ cached dashboards say when their numbers were computed, and a cache hit keeps that time (27.9768ms)
+✔ average per commission recipient: everyone on the pool, the install-rate rep included, sales-only left out (49.7558ms)
+✔ average per recipient with nobody on the pool is 0, not a division by zero (7.3985ms)
+✔ commission %: payouts ÷ completed revenue over the same finalized weeks, and the parts add up (9.2081ms)
+✔ commission %: no finalized week since go-live (an empty period) means no figure at all (7.2994ms)
+✔ commission %: finalized weeks with no completed revenue in them is no figure either, not ∞ or 0% (5.1558ms)
+✔ callback rate: strikes ÷ completed jobs since go-live, not ÷ every completed job of the year (18.7731ms)
+✔ callback rate: each callback counts once, not once per tech who worked the job (5.2438ms)
+✔ callback rate: no completed job since go-live (an empty period) is no rate, not 0% (4.3921ms)
+✔ callback rate period: a year before go-live and a future year have no period (5.9385ms)
+✔ profit leaves out Jarred's share, and Actual / day's days count Zac's installs and former techs (5.4524ms)
+✔ the phone-app leaderboard projection is unchanged by the new per-tech field (3.7716ms)
+✔ pipeline: every open estimate counts whatever its year, and the same total shows for any selected year (5.3141ms)
+✔ pipeline: an empty pipeline is zeros, and old estimates are only ever read (6.0411ms)
+✔ pipeline trend: saved as a new series, so readings of the old this-year-only value never mix in (3.7926ms)
+✔ aging drill-down covers every year; the lost drill-down stays in the selected year (4.1386ms)
+✔ commission %: only finalized weeks since go-live, revenue locked in those same weeks (Chicago midnight), eligible jobs only (283.0873ms)
+✔ commission %: finalized weeks whose jobs have not closed yet give no figure (empty period) (195.4934ms)
+❌ Error fetching tech stats (year=2026): error: relation "commission_work_days" does not exist
+    at C:\Users\opera\integrity-backend\node_modules\pg-pool\index.js:45:11
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async Promise.all (index 0)
+    at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\tech_stats.js:494:127
+✖ callback rate: completed jobs that started on/after Oct 5 and by today, in the selected year; strikes reconcile (88.1363ms)
+✔ pipeline: every open estimate of any year, prior-year ones called out, aging and drill-down lists reconcile, nothing changed (153.338ms)
+✔ the full sync expands agents (1.9657ms)
+✔ deletes a job with no money history, keeps a backup and forgets it (3.9932ms)
+✔ refuses a job with payments or paid commission and deletes nothing (2.8153ms)
+✔ a missing table is not a blocker; other errors roll back (3.5761ms)
+✔ unknown or malformed numbers (0.9629ms)
+✔ withoutDeleted drops deleted numbers and keeps the page counts (0.8707ms)
+✔ a technician on the job reads its notes, pictures and documents (124.6186ms)
+✔ technicians named on a visit, or with a work day, read it too; office staff read any job (23.8992ms)
+✔ a technician not on the job is refused before anything is read or written (14.7507ms)
+🚫 Unauthorized request: GET /api/field/jobs/1087520135/records
+✔ the shared app key alone, a signed-out or deactivated person, bad and unknown jobs (11.1856ms)
+✔ a technician on the job adds a note, under their own name (14.5952ms)
+✔ a technician on the job uploads a picture or a document; other types are refused (16.743ms)
+✔ without file storage the read still works (no files) and an upload says it is not set up (7.8338ms)
+✔ technicians cannot delete: no field delete route, and the office ones refuse them (8.2315ms)
+🚫 Unauthorized request: GET /api/field/jobs/1087520135/line-items
+✔ the shared app key alone, or nothing at all: refused before the database (80.7874ms)
+✔ a technician named on the job gets its items, without any cost (11.0393ms)
+✔ the job's visits come along, in date order, with each tech's status and photo and nothing else (9.8902ms)
+✔ a job with no synced visits answers an empty list (3.9371ms)
+✔ a technician named only on a visit (not the job) gets it too (4.0769ms)
+✔ a technician with a work day on the job (not named in Service Fusion) gets it too (4.9836ms)
+✔ a technician who is not on the job is refused, and sees none of it (4.6601ms)
+✔ a deactivated technician is signed out (3.321ms)
+✔ office staff get any job; admins too, but still without cost on this read (7.1825ms)
+✔ bad and unknown job numbers (4.9662ms)
+✔ the office-only routes keep refusing technicians (4.8038ms)
+✔ Ryan's direct line is an ignored line (0.5126ms)
+✔ notIgnoredSql filters the number and the line on the same table alias (0.2197ms)
+✔ notIgnoredSql works on an unqualified column (0.1063ms)
+✔ ingest still only drops ignored numbers, not lines (0.0958ms)
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⏰ [CRON] Running 4:00 PM inventory checkout audit...
+⚠️ TECH STRIKE: Brett Miller checked out no materials by 4:00 PM.
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+🚨 WAREHOUSE MISSED: No staging done for Brett Miller's jobs.
+⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+✔ the tech strike runs at 4:00 PM Chicago time and the 8:30 AM run stays for the warehouse (0.5147ms)
+✔ 4 PM: only a tech who checked out nothing for any of today's stock jobs gets a strike (1.9773ms)
+✔ 4 PM: a checkout counts whatever way the sheet writes the date; another day does not (0.5038ms)
+✔ 8:30 AM: no tech strikes any more; a warehouse strike when a tech's stock was neither checked out nor staged (0.4287ms)
+✔ pickDateKey reads the date forms the sheet can hold (0.14ms)
+✔ termDays reads the terms Service Fusion really sends (1.7527ms)
+✔ toRow sets the due date from terms, because payment_terms comes back empty (2.3719ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: each one is tied to its job on the best evidence, and never on a guess (365.7601ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: the amount beats the PO when they disagree (297.714ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: search finds a job number however the invoice was tied to it (185.8913ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: overdue goes by the stored day, not that day shifted into Chicago (177.7929ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: a written-off job's invoice is neither overdue nor awaiting payment, but stays listed (192.8633ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: what counts is what is still owed, matching the job balance Collections uses (197.3538ms)
+✅ [INVOICE SYNC] full pass: 0 invoices.
+✔ invoices: sorts by amount, customer, due date and issue date, and ignores anything else (184.9604ms)
+✔ a new job is saved, and saving the same job again writes nothing, not even a row lock (67.2018ms)
+✔ a value that rounds on the way in is not seen as a change (169.6854ms)
+✔ every saved column counts as a change (337.9786ms)
+✔ JSON with the keys in another order is the same value (60.2937ms)
+✔ a partial response keeps what is saved and is not a change (63.9265ms)
+✔ a locked job's labor stays frozen, and a new labor figure alone is not a change (190.3317ms)
+✔ force writes an unchanged row, which is what lets the trigger re-lock a closed job (61.4033ms)
+✔ work days: identical rows need no write (0.4255ms)
+✔ work days: any difference that a save would change means write (0.3762ms)
+✔ work days: rows a save would keep anyway do not force a write (0.196ms)
+✔ the default order is unchanged: newest start date first, and it says it can sort (191.4325ms)
+✔ each sort, both ways (97.7775ms)
+✔ an unknown sort is the default, never SQL (196.5515ms)
+✔ sorting works with search, status and Estimates (192.2137ms)
+✔ pages of rows sharing one date hold every row exactly once (199.4599ms)
+✔ request timing: overlapping queries count once, route and bytes are logged, Server-Timing only for signed-in callers (195.0187ms)
+✔ request timing: queries outside a request and callback-style queries pass straight through (0.2185ms)
+✔ static assets: content ETag survives a redeploy, gzip copy is built once and served, no escaping the folder (233.2995ms)
+✔ tracked work returns its own result and logs one 🧠 line naming the operation (15.2741ms)
+✔ while it runs it is listed as active (warnings and the heartbeat name it); a throw is still logged and rethrown (0.7742ms)
+✔ quiet work (the every-minute sync) only logs when memory rose by the given amount (0.7285ms)
+✔ crossing a mark logs a ⚠️ line with what was running, once, then says when memory is back (0.2743ms)
+✔ the marks come from the memory the service may use (86% warn, about 96% critical), and fits() is measured against critical (5.1276ms)
+✔ relieve runs a full collection when memory is high, and not more than every 30 s (2.9406ms)
+🛠️ [COMMISSION FIX] Office Admin job J1 Andrew Johnson · 2026-10-20: set_verified
+✔ verifying an unverified visit as a missed completion tags the history row with the day and tech (48.4094ms)
+🛠️ [COMMISSION FIX] Office Admin job J1 Andrew Johnson · 2026-10-20: set_verified, set_weight
+✔ other fixes record the day and tech but never count as a missed completion (9.4928ms)
+✔ a missed completion is refused unless the visit goes from Not verified to Verified (27.7097ms)
+✔ the per-tech list is year-scoped and totals the counts (22.1739ms)
+✔ reads numbers as the decimal they print as, including exponents and signs (1.4057ms)
+✔ rounds half a cent away from zero, as Postgres ROUND(numeric, 2) does (0.2501ms)
+✔ the results are plain cents that print and add as cents (9.0645ms)
+✔ retainage deposit: one exact formula, rounded once, matching the engine (0.5266ms)
+✔ the policy agrees with exact half-up-away rounding on every split of every cent up to $2,000 (5831.7314ms)
+✔ callback penalty split: each tech is charged their share rounded once to the cent (0.3559ms)
+✔ customer response time: call backs timed in working hours, texts and repeat callers handled, totals add up (125.0642ms)
+🚫 Unauthorized request: GET /payments?page=1&limit=50
+🚫 Unauthorized request: GET /api/jobs?status=All&q=&page=1&limit=50
+🚫 Unauthorized request: GET /api/jobs/status-counts
+🚫 Unauthorized request: GET /api/estimates?status=All&q=&page=1&limit=50
+🚫 Unauthorized request: GET /api/estimates/status-counts
+🚫 Unauthorized request: GET /api/jobs/123456
+🚫 Unauthorized request: GET /users
+✔ no credentials, or the shared app key alone: 401, database untouched (87.0686ms)
+✔ expired, tampered, app-key-signed, id-less, fake-service and deactivated-account tokens: 401 (57.0616ms)
+✔ technicians' phone-app tokens are refused (403): the office app doesn't let them in either (16.1564ms)
+✔ a person whose page is switched off is refused that page (403) but keeps the people list (8.5891ms)
+payments list failed: Cannot read properties of undefined (reading 'ok')
+payments list failed: Cannot read properties of undefined (reading 'ok')
+payments list failed: Cannot read properties of undefined (reading 'ok')
+payments list failed: Cannot read properties of undefined (reading 'ok')
+✔ office staff with the pages switched on, admins and owners reach everything (26.0254ms)
+✔ job detail still hides phone and email unless someone is signed in (unchanged), and a found job loads (3.6851ms)
+✔ the jobs and estimates lists cap ?limit= at 200 (8.8213ms)
+✔ index.js guards /users with requireAuth and requireOfficeUser (28.9629ms)
+✔ snapshot splits memory into heap, Buffers and the rest, and says how much room is left (2.1506ms)
+✔ tracked work is summed per kind for the window: runs, failures, time, the most memory one run added (47.4553ms)
+✔ work in progress is listed with how long it has been running (31.5448ms)
+✔ requests in progress are counted, and outside-service time counts toward the request that caused it (210.436ms)
+✔ the summary line carries memory, requests, the queue gauge, work and outside services; a broken gauge does not break it (35.9981ms)
+✔ a gauge that never answers is skipped after 5 s instead of holding the summary (0.7723ms)
+✔ a call that never answers fails as "timeout" at its deadline, and the request itself is cancelled (102.4268ms)
+✔ a write is NOT retried (it may have happened); a read is retried a bounded number of times with a growing wait (1.754ms)
+✔ errors about the request itself (400, 401, 404) are never retried and never trip the breaker (0.6515ms)
+✔ failures are classified from each client's error shape (0.2397ms)
+✔ a late answer, after the deadline, is dropped: the caller never sees it and it is counted (62.4681ms)
+✔ a late REJECTION after the deadline does not crash the process as an unhandled rejection (65.5349ms)
+✔ the caller's own stop signal ends the call at once ("aborted"), is not retried and does not trip the breaker (35.1486ms)
+✔ circuit breaker: after 3 outages in a row calls fail at once; after the cool-down one probe decides (467.0239ms)
+✔ while the breaker is half open only ONE probe goes to the service (233.0023ms)
+✔ a hung service does not pile up work: 50 calls against it leave nothing in flight and at most a few real attempts (100.8836ms)
+✔ takeWindow() reports and then starts a fresh window; totals keep counting (24.3491ms)
+✔ OUTBOUND_GUARD=off is a plain pass-through (1.0431ms)
+✔ guardGoogle wraps promise calls on resources, picks the policy by method, and leaves the rest alone (42.2659ms)
+✔ Sheets append to a server that never answers: fails at the deadline, the connection is closed, and it is not sent twice (342.5971ms)
+✔ Sheets read: retried once after a timeout (it is safe), then gives up; a healthy server just works (620.9338ms)
+✔ a late answer (after the deadline) never reaches the caller and does not disturb the next call (861.8565ms)
+✔ Drive photo upload (a stream body) to a server that never answers: cancelled at the deadline, sent once (336.0741ms)
+✔ Drive errors keep their status for the callers that read it, and are classified (4.8381ms)
+✔ the caller's stop signal (a site check run out of time) cancels a Drive call in flight (177.3197ms)
+✔ bucket upload to a server that never answers: fails at the deadline, connection closed, no database row left behind (1102.1655ms)
+✔ the run's stop signal cancels a bucket upload in flight (160.8736ms)
+✔ one bucket client is shared: 30 saves do not make 30 clients (0.7832ms)
+✔ the Google token request has a timeout (it had none; every call waits on the one shared token request) (1.3791ms)
+✔ payments list: pairing, hidden washes, Paid in SF, totals, filter and order (363.506ms)
+✔ payments list: sorts by amount, customer and date, and ignores anything else (161.7594ms)
+✖ payments list: the Final Invoice Sent $0 filter lists those jobs, with or without a payment (277.0757ms)
+✖ payments list: without a stripe_payments table it lists Service Fusion alone (172.4615ms)
+✔ the cutover is a Monday after the last paid week (2026-11-02) and is a plain date (0.6521ms)
+✔ per-job cent rounding from the cutover, sales items saved, paid weeks untouched (real Postgres) (780.7089ms)
+✔ half-cent ties: the engine holds exactly what the ledger deposits; weeks before the cutover are unchanged (165.7441ms)
+✔ the policy and Postgres ROUND(numeric, 2) agree on 60,000 retainage splits, ties included (219.0891ms)
+✔ company schedule: the shared app key alone and a technician are refused before the database is read (43.5306ms)
+✔ company schedule: admins, owners and the office manager still get it (18.5667ms)
+✔ a technician still gets their own schedule (4.2752ms)
+✔ schedule: a closed job someone is booked on that day still shows (5.4984ms)
+✔ job lookup sends what is still owed alongside the total (4.7497ms)
+✔ job lookup: a job paid in full owes 0, and an unknown balance is null (not 0) (5.8902ms)
+✔ cycle count: admins, owners and the warehouse1 login; nobody else who is signed in (7.0383ms)
+🚫 Unauthorized request: GET /cycle_probe
+✔ cycle count: an old app build with no user token is left alone until ENFORCE_USER_AUTH is switched on (5.3001ms)
+✔ the three cycle count routes are behind that rule (1.1617ms)
+✔ the list of every tool allowance is behind the office rule (0.4318ms)
+✔ the lines the user asked to hide (2026-11-10) never reach the pick list (0.5771ms)
+✔ partKey matches what checkout writes to the sheet (sheetSafe), in any case (0.1686ms)
+✔ pickedTotals adds up the sheet by job and part and ignores rows that are not a job pick (0.1549ms)
+✔ a part on two lines of one job is added up, and a partial pick leaves the rest on the list (0.6665ms)
+✔ quantities are read as before: a missing or zero quantity counts as 1, fractions are kept (0.2322ms)
+✔ /get_job_materials: one row per part, stock read from the sheet, and whether the part is stocked at all (0.7667ms)
+✔ pendingPicks (the tech picker) counts what /get_job_materials would list (0.3703ms)
+✔ /get_job_materials: an item with no name does not break the whole list (0.1967ms)
+✔ a save with ifUnchangedSince only updates the row as it was last seen (44.1737ms)
+✔ a project someone else changed in between is refused with 409 CHANGED, not overwritten (7.749ms)
+✔ without ifUnchangedSince a save works as before, and a missing project is 404 (7.2829ms)
+✔ a bad ifUnchangedSince is refused before anything is written (4.704ms)
+✔ creating, saving and deleting a project clear the cached list, so the next open shows the change (13.4862ms)
+✔ an address matches the way people write it, and nothing looser (1.5262ms)
+✔ addresses with no house number or no street never match (0.164ms)
+✔ the customer view shows a text on the job whose address it names, and leaves the rest unlinked (37.2925ms)
+✔ a job tab shows the texts that name its address, and not the customer's other texts (13.8594ms)
+quo auto-link finished {"running":false,"write":false,"all":false,"startedAt":"2026-11-19T13:59:16.306Z","finishedAt":"2026-11-19T13:59:16.560Z","numbers":1,"numbersDone":1,"items":8,"counts":{"address":1,"visit_day":0,"same_day":2,"thread":2,"lead_in":1,"recent":1,"recent_guess":0,"only_job":0,"none":1},"withoutCustomer":3,"deferred":0,"errors":0,"stopped":null}
+✔ a dry run counts every layer, samples the answers, and stores nothing (293.5787ms)
+quo auto-link finished {"running":false,"write":true,"all":false,"startedAt":"2026-11-19T13:59:16.585Z","finishedAt":"2026-11-19T13:59:16.816Z","numbers":1,"numbersDone":1,"items":8,"counts":{"address":1,"visit_day":0,"same_day":2,"thread":2,"lead_in":1,"recent":1,"recent_guess":0,"only_job":0,"none":1},"withoutCustomer":3,"deferred":0,"errors":0,"stopped":null}
+✔ a real run stores one answer per item, "none" included (238.2662ms)
+quo address match: canceling statement due to statement timeout
+quo auto-link finished {"running":false,"write":true,"all":false,"startedAt":"2026-11-19T13:59:16.820Z","finishedAt":"2026-11-19T13:59:16.863Z","numbers":1,"numbersDone":1,"items":0,"counts":{"address":0,"visit_day":0,"same_day":0,"thread":0,"lead_in":0,"recent":0,"recent_guess":0,"only_job":0,"none":0},"withoutCustomer":3,"deferred":8,"errors":0,"stopped":null}
+✔ when the address check times out, nothing is decided or stored for those items (64.0539ms)
+✔ the customer view shows a stored answer with its reason, and a person's own link needs none (6.1913ms)
+✔ a customer with one job gets everything around it, even a conversation that started days earlier and a misspelled street (5.0554ms)
+✔ an estimate with no Service Fusion creation date is dated by its start date, a job is not (6.1846ms)
+✔ before 2026, a customer who only ever had one estimate has all of their history on it (6.1628ms)
+✔ an estimate and the job it became count as one: each item goes to the one created closest (6.5324ms)
+✔ a customer with two unrelated jobs gets nothing from the only-job rule (5.6203ms)
+✔ Jarvis gets the same job for every call as the job tab shows, from any of the three records (44.6059ms)
+✔ for a customer, the same answers as the customer tab, with labels (1.4573ms)
+quo: Test Admin deleted 3 calls/texts
+✔ deleting remembers the ids, drops their links, then removes the rows, in one transaction (31.6214ms)
+quo delete: boom
+✔ nothing to delete is a 400, and a failure rolls back (18.1057ms)
+✔ two jobs in play: the day one of them was created is not enough to pick it (36.7124ms)
+✔ an older job still being worked blocks a guess onto a new estimate at another address (10.9179ms)
+✔ a technician visit that day picks the visited record among several at one address (6.078ms)
+✔ between records at one address, the one with something happening closest gets the call (4.7565ms)
+✔ a job booked weeks out stays in play until after its visit (4.7159ms)
+✔ the estimate and every job paired with it show the same calls and texts, and the other address does not (46.2443ms)
+✔ by default only slow, failed and cut-off requests get a timing line (0.5293ms)
+✔ clearing a prefix makes the next request recompute (1.6931ms)
+✔ other routes keep their cached answers (0.1773ms)
+✔ an answer computed before the correction is not kept after it (0.1671ms)
+✔ saving a day fix and unlocking a job both clear the pay caches (1.7826ms)
+✔ office hours are Monday to Saturday, 6 am to 8 pm in Chicago (14.5129ms)
+✔ quiet hours follow Chicago time, not the server clock, across daylight saving (0.3685ms)
+✔ in office hours every tick warms; when quiet, once an hour and always the first time (0.1318ms)
+✔ ENFORCE_USER_AUTH is off in these tests (the production setting), so nothing below depends on it (1.0853ms)
+🚫 Unauthorized request: GET /my-ledger
+🚫 Unauthorized request: GET /dashboard/retainage-stats
+✔ no credentials at all: 401, ledger untouched (70.7043ms)
+✔ the shared app key alone (with or without ?techName=): 401, ledger untouched (17.6665ms)
+🚫 Unauthorized request: GET /my-ledger
+🚫 Unauthorized request: GET /dashboard/retainage-stats
+✔ a valid user token without the app key: 401 (9.4443ms)
+✔ expired, tampered and app-key-signed tokens: 401 (11.3111ms)
+✔ revoked accounts: a deactivated technician or admin is refused with an unexpired token (401) (8.0531ms)
+✔ tokens that skip the users-table check are refused: no id, a forged service claim, the real warm-up token (7.2788ms)
+✔ another technician's token cannot read Tech One's retainage (403), and never by swapping in their own (9.7658ms)
+✔ office staff who are not admins get only their own retainage; asking for a technician is a 403 (6.0801ms)
+✔ a technician gets exactly their own ledger, asked about by the users-table name and id, never another's rows (7.8089ms)
+✔ a technician gets only their own row from the retainage stats (2.8057ms)
+✔ admins and owners may read anyone, by ?techName=, and the whole team from the stats (8.5543ms)
+✔ no shared cache: back-to-back callers each get their own rows from their own query, marked no-store (11.9395ms)
+✔ agent job queries count closed jobs only (1.712ms)
+✔ Sales revenue sums the job totals, not the commissionable lines (0.4885ms)
+✔ pairs a won estimate with a job by customer, address and a shared priced line; closed jobs only (1.1817ms)
+✔ estimateVsJob: rows biggest change first, plus open / cancelled / unmatched counts (0.6157ms)
+✔ the job page button and the KPI chart share one matching rule (1.3544ms)
+✔ a pay week is paid on the Friday 11 days after its Monday (1.1271ms)
+✔ the pay week is worked out from the first Friday of the next month (0.2064ms)
+✔ estimate, builder and agent commission all use the same pay week (0.1714ms)
+✔ takeChanged keeps edits at or after since and says when the page reached older ones (1.0424ms)
+✔ takeChanged never drops an item without a usable edit time (0.1468ms)
+✔ mergeById replaces changed items, adds new ones, keeps the rest, newest first (0.1811ms)
+✔ newestEdit moves forward only (0.1414ms)
+✔ fingerprint follows saved content and ignores picture links (3.0216ms)
+✔ tracker reports jobs whose content changed without a new edit time (0.3053ms)
+✔ a sequence of syncs never misses an edit, including one stamped a little before the watermark (0.2476ms)
+✔ tracker.changed finds new jobs, edited jobs and jobs whose content changed with the same edit time (0.2719ms)
+✔ a payment added without a new edit time counts as a change (job 1100263579: paid Nov 2, job last edited Oct 28) (0.1806ms)
+✔ jobPaymentRows keys each payment like the payment sync: by invoice, else by job number, once each (0.313ms)
+✔ readMostlyFailed: a page or two failing is normal, losing a quarter of the read is worth retrying (0.1936ms)
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+⚠️ Site check PDF could not be added to the job docs: bucket down
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s)) (again: only what is missing)
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s)) (again: only what is missing)
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+⚠️ Site check PDF could not be added to the job docs: bucket down
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+📁 Created Folder for job 1101244876
+⚠️ Site check PDF for job 1101244876 not put on the Docs tab: storage_not_configured
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+📁 Created Folder for job 1101244876
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+📁 Created Folder for job 1101244876
+⚠️ 1 site check photo(s) not added to the job's Pics: bucket down
+
+🚀 SITE CHECK START: Job 1101244876 (2 door(s)) (again: only what is missing)
+✅ SITE CHECK DONE: Job 1101244876
+
+🚀 SITE CHECK START: Job 1101244876 (2 door(s))
+📁 Created Folder for job 1101244876
+✅ SITE CHECK DONE: Job 1101244876
+✔ the PDF just drawn goes on the job docs under this check's own key, and pdfUrl stays the Drive link (16.5383ms)
+✔ two checks on the same job are two documents (0.6785ms)
+✔ a failed docs copy is retried without drawing or sending the Drive PDF again (0.8922ms)
+✔ on the last attempt a failing docs copy is reported, and the Sheet row is still written (0.5255ms)
+✔ storage not set up: the check still finishes, nothing is thrown (0.393ms)
+✔ saveGeneratedJobFile stores a PDF doc on the job, and a repeat keeps one copy (2.9503ms)
+✔ saveGeneratedJobFile skips quietly without storage or with a job number the office app cannot open (0.1301ms)
+✔ photo names say the day, the door when there are several, what it shows, and its number in a group (0.5152ms)
+✔ every photo goes on the Pics tab with its name, listed first photo first, under this check's keys (1.6025ms)
+✔ a retry adds only the photos that did not make it (1.5114ms)
+✔ without file storage the photos are skipped quietly and the check still finishes (0.6894ms)
+✔ the report has the sections the phone showed for each kind of check, in the same order (16.0367ms)
+✔ a section the phone did not show still prints when something was written in it (0.4923ms)
+✔ the date is the Chicago day and the header carries who and where (0.3978ms)
+✔ blank optional answers are left out; blank answers the phone required say so (0.3918ms)
+✔ what was found: every part not rated Ok, with its details, notes and photos (37.0185ms)
+✔ a check with no ratings has no findings box (0.2824ms)
+✔ concrete measurements are split into the left and right pictures (0.297ms)
+✔ the file is named for the job and the customer (0.2144ms)
+✔ it renders a real PDF: more doors and photos make more pages, and a photo that cannot be read is skipped (3932.9697ms)
+✔ a check from an older app (photos as text, no check type, odd values) still renders (282.4995ms)
+couldn't load font "Libre Franklin Not-Rotated 8px", falling back to "Sans Not-Rotated 8px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 10.5px", falling back to "Sans Semi-Bold Not-Rotated 10.5px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 9.5px", falling back to "Sans Not-Rotated 9.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 19px", falling back to "Sans Bold Not-Rotated 19px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 11.5px", falling back to "Sans Semi-Bold Not-Rotated 11.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 11.5px", falling back to "Sans Semi-Bold 11.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 10.5px", falling back to "Sans Semi-Bold 10.5px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 8.5px", falling back to "Sans Not-Rotated 8.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 14.5px", falling back to "Sans Bold Not-Rotated 14.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 7.5px", falling back to "Sans Bold Not-Rotated 7.5px", expect ugly output.couldn't load font "Libre Franklin Bold 7.5px", falling back to "Sans Bold 7.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 8px", falling back to "Sans Bold Not-Rotated 8px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 11px", falling back to "Sans Bold Not-Rotated 11px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 7px", falling back to "Sans Bold Not-Rotated 7px", expect ugly output.couldn't load font "Libre Franklin 9.5px", falling back to "Sans 9.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 10px", falling back to "Sans Semi-Bold Not-Rotated 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 10px", falling back to "Sans Semi-Bold 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 11px", falling back to "Sans Semi-Bold Not-Rotated 11px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 10px", falling back to "Sans Not-Rotated 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 9px", falling back to "Sans Semi-Bold Not-Rotated 9px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 9px", falling back to "Sans Semi-Bold 9px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 9px", falling back to "Sans Not-Rotated 9px", expect ugly output.couldn't load font "Libre Franklin 9px", falling back to "Sans 9px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 13px", falling back to "Sans Bold Not-Rotated 13px", expect ugly output.couldn't load font "Libre Franklin Medium, Medium Not-Rotated 10px", falling back to "Sans Medium Not-Rotated 10px", expect ugly output.couldn't load font "Libre Franklin Medium, Medium 10px", falling back to "Sans Medium 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 8.5px", falling back to "Sans Semi-Bold Not-Rotated 8.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 8.5px", falling back to "Sans Semi-Bold 8.5px", expect ugly output.couldn't load font "Libre Franklin 8.5px", falling back to "Sans 8.5px", expect ugly output.couldn't load font "Libre Franklin Bold 13px", falling back to "Sans Bold 13px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 11px", falling back to "Sans Not-Rotated 11px", expect ugly output.couldn't load font "Libre Franklin 10px", falling back to "Sans 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 9.5px", falling back to "Sans Semi-Bold Not-Rotated 9.5px", expect ugly output.couldn't load font "Libre Franklin Bold 8px", falling back to "Sans Bold 8px", expect ugly output.couldn't load font "Libre Franklin 8px", falling back to "Sans 8px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 9px", falling back to "Sans Bold Not-Rotated 9px", expect ugly output.couldn't load font "Libre Franklin Bold 9px", falling back to "Sans Bold 9px", expect ugly output.
+
+🔄 [SYNC] Starting... (last: Never)
+
+🚀 SITE CHECK START: Job 1101244876 (1 door(s))
+🔑 [SYNC] SF token refreshed.
+📁 Created Folder for job 1101244876
+📄 Generating PDF for Job 1101244876...
+✅ [SYNC] Full pass: 0 jobs and 0 estimates read, saving 0 and 0.
+🔑 [SYNC] SF token refreshed.
+✅ [CUSTOMER SYNC] Incremental customer pass complete (0 saved).
+🔑 [SYNC] SF token refreshed.
+✅ [PAYMENT SYNC] Incremental payment pass complete.
+🎉 PDF Uploaded: Site Check - Job 1101244876 - Test Customer.pdf
+couldn't load font "Libre Franklin Not-Rotated 8px", falling back to "Sans Not-Rotated 8px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 10.5px", falling back to "Sans Semi-Bold Not-Rotated 10.5px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 9.5px", falling back to "Sans Not-Rotated 9.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 19px", falling back to "Sans Bold Not-Rotated 19px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 11.5px", falling back to "Sans Semi-Bold Not-Rotated 11.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 11.5px", falling back to "Sans Semi-Bold 11.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 10.5px", falling back to "Sans Semi-Bold 10.5px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 8.5px", falling back to "Sans Not-Rotated 8.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 14.5px", falling back to "Sans Bold Not-Rotated 14.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 7.5px", falling back to "Sans Bold Not-Rotated 7.5px", expect ugly output.couldn't load font "Libre Franklin Bold 7.5px", falling back to "Sans Bold 7.5px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 8px", falling back to "Sans Bold Not-Rotated 8px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 11px", falling back to "Sans Bold Not-Rotated 11px", expect ugly output.couldn't load font "Libre Franklin Bold Not-Rotated 7px", falling back to "Sans Bold Not-Rotated 7px", expect ugly output.couldn't load font "Libre Franklin 9.5px", falling back to "Sans 9.5px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 10px", falling back to "Sans Semi-Bold Not-Rotated 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 10px", falling back to "Sans Semi-Bold 10px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 9px", falling back to "Sans Semi-Bold Not-Rotated 9px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold 9px", falling back to "Sans Semi-Bold 9px", expect ugly output.couldn't load font "Libre Franklin Not-Rotated 9px", falling back to "Sans Not-Rotated 9px", expect ugly output.couldn't load font "Libre Franklin 9px", falling back to "Sans 9px", expect ugly output.couldn't load font "Libre Franklin SemiBold, Semi-Bold Not-Rotated 9.5px", falling back to "Sans Semi-Bold Not-Rotated 9.5px", expect ugly output.couldn't load font "Libre Franklin 8px", falling back to "Sans 8px", expect ugly output.⚠️ Site check PDF for job 1101244876 not put on the Docs tab: storage_not_configured
+✅ SITE CHECK DONE: Job 1101244876
+✔ a submitted check gets through the real PDF step and lands on the Sheet (929.0229ms)
+🚨 TOKEN_SECRET is not set (or equals API_SECRET): user tokens are signed with the key shipped in the apps. Set a separate TOKEN_SECRET.
+✔ Drive stops answering part way: the run gives up after 3 photos in a row instead of waiting out every photo, and keeps what it did (174.7562ms)
+✔ an upload that reached Drive but whose answer was lost is NOT uploaded again on the retry (324.2233ms)
+✔ photos an EARLIER check put in the same job folder are never mistaken for this check's (315.3652ms)
+✔ a Sheet append that was written but never answered is not appended a second time (47.1907ms)
+✔ ...and when the run could not confirm it, the retry looks before it appends (348.0281ms)
+✔ a check whose Sheet row is genuinely missing still gets it (the look-up only ever skips a row that is there) (332.4938ms)
+✔ the bucket not answering: the run stops after 3 in a row; Drive photos already uploaded are not sent again (338.7707ms)
+✔ a stop signal ends the run at once, even on the last attempt, with what was finished kept (97.3482ms)
+✔ QUEUE: a check stuck on a silent service is stopped at the run limit, retried later, and the checks behind it are processed (267.8415ms)
+✔ QUEUE: before this, the same stuck check held the queue for ever (a processor that is never told to stop) (600.4823ms)
+✔ QUEUE: a failing check does not block or fail the ones after it (0.8625ms)
+✔ QUEUE: a restart (SIGTERM) in the middle of a check puts it straight back in line, uncounted, and starts nothing new (44.7926ms)
+✔ QUEUE: depth is reported, and a pile-up is told to the office once, not every time it is read (0.9791ms)
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+❌ Error uploading Door_1_secPhotos_1_Job_1100999009.jpg: upload failed Door_1_secPhotos_1_Job_1100999009.jpg
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s)) (again: only what is missing)
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s)) (again: only what is missing)
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+⚠️ Google Sheets append failed (1/3): sheets busy
+✔ everything works the first time: one folder, every photo, one pdf, one sheet row per door (16.5388ms)
+✔ a photo that fails makes the attempt fail, and the retry uploads ONLY the missing one (1.8015ms)
+✔ a retry after the sheet was written does not write a second row (0.6909ms)
+✔ an existing folder for the job is reused instead of making another (0.4804ms)
+⚠️ Google Sheets append failed (2/3): sheets busy
+⚠️ Google Sheets append failed (3/3): sheets busy
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+⚠️ Google Sheets append failed (1/3): sheets busy
+⚠️ Google Sheets append failed (2/3): sheets busy
+✅ SITE CHECK DONE: Job 1100999009
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+⚠️ PDF generation failed: adobe down
+
+🚀 SITE CHECK START: Job 1100999009 (2 door(s))
+📁 Created Folder for job 1100999009
+❌ Error uploading Door_1_doorPhotos_1_Job_1100999009.jpg: upload failed Door_1_doorPhotos_1_Job_1100999009.jpg
+❌ Error uploading Door_1_doorPhotos_2_Job_1100999009.jpg: upload failed Door_1_doorPhotos_2_Job_1100999009.jpg
+❌ Error uploading Door_1_secPhotos_1_Job_1100999009.jpg: upload failed Door_1_secPhotos_1_Job_1100999009.jpg
+❌ Error uploading Door_2_doorPhotos_1_Job_1100999009.jpg: upload failed Door_2_doorPhotos_1_Job_1100999009.jpg
+⚠️ PDF generation failed: adobe down
+✅ SITE CHECK DONE: Job 1100999009
+✔ the sheet is retried briefly, then the attempt fails (and is retried by the queue) (27.5043ms)
+✔ on the last attempt a dead PDF service does not lose the data: the sheet row is still written (1.5571ms)
+🚨 TOKEN_SECRET is not set (or equals API_SECRET): user tokens are signed with the key shipped in the apps. Set a separate TOKEN_SECRET.
+✔ a sheet row keeps the live column order and has 114 cells (1.2138ms)
+✔ track lengths, strut qty, drum sizes and seal details reach the sheet (they were silently dropped) (0.2717ms)
+✔ empty concrete pairs are blank, and text that Sheets would run as a formula stays text (0.1862ms)
+✔ filled concrete pairs still print (0.1377ms)
+✔ the date is the Chicago day, not the UTC day (13.7001ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=3 rss=74->74 max=74 rose=0 heap=13->14 heap_max=14 ext=4 buf=0 concurrent=1
+✔ the check is saved BEFORE the app is told success, and old apps keep working (42.7836ms)
+❌ Site check could not be saved: db down
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=76->76 max=76 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+✔ if the database cannot save it the app gets an error so it keeps the check and retries (7.4497ms)
+🧠 op=site_check_upload job=1 mb=0 ms=0 rss=84->85 max=85 rose=0 heap=13->13 heap_max=13 ext=4 buf=0 concurrent=1
+🧠 op=site_check_upload job=1'_OR_name_contains_' mb=0 ms=1 rss=93->94 max=94 rose=2 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=88->84 max=88 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=84->84 max=84 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+✔ bad requests are refused before anything is saved (11.3025ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=85->86 max=86 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+↩️ Site check abc12345-6789 was already received; ignoring the repeat.
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=86->86 max=86 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+✔ the same submissionId sent twice makes one saved check (7.3861ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=85->85 max=85 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+↩️ Site check for job 1100999009 repeats one already saved; ignoring the repeat.
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=86->87 max=87 rose=0 heap=16->16 heap_max=16 ext=4 buf=0 concurrent=1
+✔ an exact repeat from an older app (no id) is recognised too (10.6923ms)
+⚠️ Site check: app said "Someone Else" but "Zac Clemens" is signed in; using the signed-in name.
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+✔ the signed-in person, not the phone, decides who did the check (5.7504ms)
+🧠 op=site_check_upload job=222 mb=0 ms=1 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+🧠 op=site_check id=1 job=222 mb=0 doors=1 photos=1 attempt=1 ms=0 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+🧠 op=site_check_upload job=111 mb=0 ms=1 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+⚠️ Site check job 111 failed (attempt 1), retrying in 1 min: Drive is down
+🧠 op=site_check id=2 job=111 mb=0 doors=1 photos=1 attempt=1 ms=0 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+⚠️ Site check job 111 failed (attempt 2), retrying in 5 min: Drive is down
+🧠 op=site_check id=2 job=111 mb=0 doors=1 photos=1 attempt=2 ms=1 rss=80->80 max=80 rose=0 heap=14->14 heap_max=14 ext=4 buf=0 concurrent=1
+⚠️ Site check job 111 failed (attempt 3), retrying in 15 min: Drive is down
+🧠 op=site_check id=2 job=111 mb=0 doors=1 photos=1 attempt=3 ms=0 rss=80->80 max=80 rose=0 heap=14->15 heap_max=15 ext=4 buf=0 concurrent=1
+⚠️ Site check job 111 failed (attempt 4), retrying in 30 min: Drive is down
+🧠 op=site_check id=2 job=111 mb=0 doors=1 photos=1 attempt=4 ms=0 rss=80->80 max=80 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+❌ SITE CHECK FAILED for good: job 111: Drive is down
+🧠 op=site_check id=2 job=111 mb=0 doors=1 photos=1 attempt=5 ms=0 rss=80->80 max=80 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+✔ a finished check drops its saved copy; a failing one is retried with a wait, then reported (6.8271ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=80->80 max=80 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+🧠 op=site_check id=1 job=1100999009 mb=0 doors=1 photos=1 attempt=5 ms=0 rss=81->80 max=81 rose=0 heap=15->15 heap_max=15 ext=4 buf=0 concurrent=1
+✔ the last attempt is told to finish the sheet row even if photos or the PDF will not work (4.4121ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=80->80 max=80 rose=0 heap=16->16 heap_max=16 ext=4 buf=0 concurrent=1
+✔ the saved copy is the body exactly as sent (no second copy is built) when nothing in it changed (2.8546ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=80->80 max=80 rose=0 heap=16->16 heap_max=16 ext=4 buf=0 concurrent=1
+🧠 op=site_check_upload job=333 mb=0 ms=0 rss=80->80 max=80 rose=0 heap=16->16 heap_max=16 ext=4 buf=0 concurrent=1
+❌ SITE CHECK SET ASIDE: job 1100999009 (#1): Processing was cut off 3 times (server restart or out of memory). Set aside so it cannot stop the server again; Retry runs it once more.
+🧠 op=site_check id=2 job=333 mb=0 doors=1 photos=1 attempt=1 ms=0 rss=80->80 max=80 rose=0 heap=16->16 heap_max=16 ext=4 buf=0 concurrent=1
+✔ a check whose processing keeps getting cut off (restart, out of memory) is set aside, not run again and again (4.5431ms)
+⏳ Site check upload (0 MB) told to retry later: not enough memory: 80 MB in use, this needs about 5 MB more, limit 1 MB (during: no tracked work)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=80->80 max=80 rose=0 heap=13->13 heap_max=13 ext=4 buf=0 concurrent=1
+✔ a big upload is told 503 "busy, retry" (which the phone retries) while another big one is being received or memory is high (9.8638ms)
+⏳ Site check upload (3 MB) told to retry later: not enough memory: 92 MB in use, this needs about 23 MB more, limit 490 MB (during: no tracked work)
+⏳ Site check upload (50 MB) told to retry later: not enough memory: 95 MB in use, this needs about 305 MB more, limit 490 MB (during: no tracked work)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=95->95 max=95 rose=0 heap=20->20 heap_max=20 ext=13 buf=9 concurrent=1
+✔ an upload that would not fit in the memory left is told 503 before its body is read; one that fits is taken (16.8829ms)
+✔ a check over the 50 MB limit is still answered 413 (the phone shows it as not accepted), never 503 for ever (69.5785ms)
+PayloadTooLargeError: request entity too large
+    at readStream (C:\Users\opera\integrity-backend\node_modules\raw-body\index.js:163:17)
+    at getRawBody (C:\Users\opera\integrity-backend\node_modules\raw-body\index.js:116:12)
+    at read (C:\Users\opera\integrity-backend\node_modules\body-parser\lib\read.js:79:3)
+    at jsonParser (C:\Users\opera\integrity-backend\node_modules\body-parser\lib\types\json.js:138:5)
+    at Layer.handle [as handle_request] (C:\Users\opera\integrity-backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\opera\integrity-backend\node_modules\express\lib\router\route.js:149:13)
+    at uploadGate (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\site_checks.js:112:45)
+    at Layer.handle [as handle_request] (C:\Users\opera\integrity-backend\node_modules\express\lib\router\layer.js:95:5)
+    at next (C:\Users\opera\integrity-backend\node_modules\express\lib\router\route.js:149:13)
+    at passAuth (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\site_checks.test.js:137:71)
+⚠️ Site check for job 1100999009 had bytes that are not UTF-8; saved the cleaned-up copy.
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=87->87 max=87 rose=0 heap=14->14 heap_max=14 ext=8 buf=4 concurrent=1
+✔ bytes that are not UTF-8 (the database refuses them) are saved as the cleaned-up check, not answered 503 for ever (6.6998ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=1 rss=87->87 max=87 rose=0 heap=14->14 heap_max=14 ext=8 buf=4 concurrent=1
+🧠 op=site_check id=1 job=1100999009 mb=0 doors=1 photos=1 attempt=1 ms=63 rss=87->88 max=88 rose=0 heap=14->14 heap_max=14 ext=8 buf=4 concurrent=1
+✔ a check that has been processing for 30 minutes is reported as stuck (it holds the one-at-a-time queue) (66.5757ms)
+PayloadTooLargeError: request entity too large
+    at readStream (C:\Users\opera\integrity-backend\node_modules\raw-body\index.js:163:17)
+    at getRawBody (C:\Users\opera\integrity-backend\node_modules\raw-body\index.js:116:12)
+    at read (C:\Users\opera\integrity-backend\node_modules\body-parser\lib\read.js:79:3)
+    at jsonParser (C:\Users\opera\integrity-backend\node_modules\body-parser\lib\types\json.js:138:5)
+    at jsonBody (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\src\bodyLimits.js:20:44)
+    at Layer.handle [as handle_request] (C:\Users\opera\integrity-backend\node_modules\express\lib\router\layer.js:95:5)
+    at trim_prefix (C:\Users\opera\integrity-backend\node_modules\express\lib\router\index.js:328:13)
+    at C:\Users\opera\integrity-backend\node_modules\express\lib\router\index.js:286:9
+    at router.process_params (C:\Users\opera\integrity-backend\node_modules\express\lib\router\index.js:346:12)
+    at next (C:\Users\opera\integrity-backend\node_modules\express\lib\router\index.js:280:10)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=0 rss=88->88 max=88 rose=0 heap=15->15 heap_max=15 ext=8 buf=4 concurrent=1
+✔ other routes only read small JSON bodies; the site check route still takes big ones (5.828ms)
+✔ operator-only notes reach the sheet with the door notes, and an estimate is marked on the sheet (0.2364ms)
+✔ the server reads every field the app sends (2.402ms)
+✔ every photo section the app sends is uploaded (0.0905ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=19 rss=60->64 max=64 rose=4 heap=11->11 heap_max=11 ext=3 buf=0 concurrent=1
+❌ SITE CHECK SET ASIDE: job 1100999009 (#1): Processing was cut off 3 times (server restart or out of memory). Set aside so it cannot stop the server again; Retry runs it once more.
+❌ SITE CHECK SET ASIDE: job 1100999009 (#1): Processing was cut off 3 times (server restart or out of memory). Set aside so it cannot stop the server again; Retry runs it once more.
+🧠 op=site_check id=1 job=1100999009 mb=0 doors=1 photos=1 attempt=1 ms=3 rss=65->65 max=65 rose=0 heap=12->12 heap_max=12 ext=3 buf=0 concurrent=1
+✔ a check cut off 3 times is set aside; office Retry runs it once more, and a 4th cut-off sets it aside again (154.0084ms)
+🧠 op=site_check_upload job=1100999009 mb=0 ms=5 rss=66->66 max=66 rose=0 heap=13->13 heap_max=13 ext=3 buf=0 concurrent=1
+🧠 op=site_check id=1 job=1100999009 mb=0 doors=1 photos=1 attempt=2 ms=2 rss=66->66 max=66 rose=0 heap=13->13 heap_max=13 ext=3 buf=0 concurrent=1
+✔ a check that never failed keeps no cut-off count when retried; one cut-off (a deploy) is simply run again (78.4372ms)
+🧠 op=site_check_upload job=BIG1 mb=3 ms=27 rss=89->83 max=89 rose=0 heap=24->16 heap_max=24 ext=12 buf=9 concurrent=1
+🧠 op=site_check_upload job=SMALL1 mb=0 ms=2 rss=83->83 max=83 rose=0 heap=16->16 heap_max=16 ext=12 buf=9 concurrent=1
+🧠 op=site_check id=2 job=SMALL1 mb=0 doors=1 photos=1 attempt=1 ms=2 rss=83->83 max=83 rose=0 heap=16->16 heap_max=16 ext=12 buf=9 concurrent=1
+🧠 op=site_check id=1 job=BIG1 mb=3 doors=1 photos=1 attempt=1 ms=4 rss=83->75 max=83 rose=0 heap=13->13 heap_max=13 ext=14 buf=5 concurrent=1
+✔ only a check that fits in the memory left is started; a bigger one waits, saved, and the smaller one behind it still goes (247.2764ms)
+🧠 op=site_check_upload job=UTF1 mb=0 ms=4 rss=71->71 max=71 rose=0 heap=14->14 heap_max=14 ext=3 buf=0 concurrent=1
+⚠️ Site check for job UTF2 had bytes that are not UTF-8; saved the cleaned-up copy.
+🧠 op=site_check_upload job=UTF2 mb=0 ms=23 rss=71->72 max=72 rose=0 heap=14->14 heap_max=14 ext=3 buf=0 concurrent=1
+✔ the upload is saved byte for byte; bytes that are not UTF-8 are saved cleaned up instead of failing for ever (204.1371ms)
+✔ sheet numbers: thousands separators, blanks and junk (0.502ms)
+✔ rows: header skipped, every column read from its own letter (0.5998ms)
+✔ /get_full_inventory returns the parsed rows (no "Part Name" item) and keeps name/category/qty for older apps (0.2869ms)
+✔ C2: sheetQty reads every way the Sheets API formats a quantity (0.874ms)
+✔ C2: blank is null; text, formulas and malformed numbers are NaN (never guessed at) (0.1337ms)
+✔ M5: a checkout or scan quantity is a whole number from 1 to 10,000; nothing is rounded or dropped (10.7559ms)
+✔ H2: a counted quantity is a whole number from 0 to 100,000 (0.1919ms)
+✔ checkoutInput: lines are checked one by one and the first bad one refuses the whole request (0.7327ms)
+✔ scanInput: action must be add or deduct; a missing quantity is 1, a bad one is refused (0.2471ms)
+✔ H2: countInput refuses formulas, negatives, fractions, text, missing names and the same part twice (0.4218ms)
+✔ N1: planDeductions adds up every line for the same part and writes that row once (0.2994ms)
+✔ C2 and C1: 1,250 is read as 1,250; an unknown name changes nothing; an unreadable cell is never overwritten (0.1569ms)
+✔ H1 (R1 part): the shortfall is worked out and returned; the Sheet still stops at 0 until S8 (0.2097ms)
+✔ C2: Total Warehouse Value counts 1,250 units as 1,250 (the audit harness got $649.00) (0.1793ms)
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 9 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 8 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 7 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 4 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 2 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 3 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 6 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 5 staged items.
+❌ Checkout: Inventory!D2 for "Broken Row" is not a number; left unchanged.
+❌ Scan: Inventory!D2 for "Broken Row" is not a number; nothing changed.
+✔ C2: a checkout of 1 from "1,250.00" leaves 1,249 (it wrote 0), written RAW (94.6361ms)
+✔ C2: a scan adding 5 to "1,250.00" leaves 1,255 (it wrote 6); a scan deducting 5 leaves 1,245 (2.6709ms)
+✔ C2: a cycle count of a part showing "1,250.00" logs 1,250 as the previous quantity (it logged 1, a 1,249-unit miss) (2.2594ms)
+✔ C2: Total Warehouse Value, as written to Inventory!I3, counts 1,250 units as 1,250 (0.3562ms)
+✔ N1: one checkout with the same part on two jobs takes both off (3 + 1 from 40 is 36; it left 39) (2.7141ms)
+✔ N1: three jobs sharing two parts (the 18 Nov pattern) take every unit off once (2.8232ms)
+✔ N1: two lines for the same part on the SAME job (older phone builds) are both taken off (2.5232ms)
+✔ N1: the 8:31 flush takes off every staged pick of one part across jobs (2 + 2 from 40 is 36; it left 38) (3.4104ms)
+✔ N1: two lines for the same job and part in ONE staging request are added together (the second replaced the first) (1.7372ms)
+✔ N1: every quantity is deducted exactly once, for random checkouts mixing parts, jobs and repeats (300 runs) (452.6945ms)
+✔ N1: the same exactly-once check through warehouse staging and the 8:31 flush (100 runs) (144.3449ms)
+✔ M5: a checkout with 0.5 or 2.5 is refused with 400 and nothing is logged or written (0.5 was dropped, 2.5 taken as 2) (6.2379ms)
+✔ H2: cycle-count values that are not whole numbers from 0 to 100,000 are refused and nothing is written (9.3508ms)
+✔ H2: a valid count is written RAW as a number (1.3919ms)
+✔ scan: an action other than add or deduct is refused (it deducted); a bad quantity is refused (it became 1) (3.4748ms)
+✔ a quantity cell that is not a number is never overwritten: the checkout says so, the scan changes nothing (2.458ms)
+✔ C1: a line that matches no Inventory row is returned as an exception, not counted in itemsUpdated (2.0577ms)
+⚠ C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row (2.3552ms) # name mappings wait for your review (decision 7)
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+❌ Error flushing staged inventory: Error: Sheets 503
+    at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:400:30)
+    at async Test.run (node:internal/test_runner/test:1125:7)
+    at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM...
+🎉 Flushed and processed 1 staged items.
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+⏰ [CRON] Running 8:30 AM warehouse staging audit...
+🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs.
+⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks).
+⚠ C3 (todo S7): two checkouts of one part at the same moment on TWO servers both come off (163 - 2 - 3 = 158) (46.2052ms) # S7: Postgres lock across servers
+⚠ C4 (todo S7): a row inserted above while a checkout is in flight never overwrites another part (2.584ms) # S7: confirm the row before writing
+⚠ C5 (todo S5/S13): the shared app key alone cannot change stock (2.7598ms) # S5 identity, enforced at S13 after the Android rollout
+⚠ H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6) (1.584ms) # S8: negative balance plus count flag
+⚠ H3 (todo S10): a count made before a checkout does not wipe that checkout (2.0814ms) # S10: counts checked against movements since the zone was loaded
+⚠ H4 (todo S9): picks staged before a restart are still taken off at 8:31 (2.1237ms) # S9: durable staging in Postgres
+⚠ H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it (1.8394ms) # S9: durable staging; accumulate
+⚠ H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name (1.4336ms) # S5/S9: staging decided from the token
+⚠ H5 (todo S6): the same request id sent twice changes stock once (1.8329ms) # S6: database-enforced idempotency
+⚠ H6 (todo S7/B): when the stock write fails, nothing is left logged as picked and the phone is not told success (1.8839ms) # S7: stock first, log second; B: one transaction
+⚠ H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first (1.6242ms) # S8: ambiguous barcode returns 409
+⚠ N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning (1.877ms) # S9: idempotent flush
+⚠ N3 (todo S9): with two servers up during a deploy, the 8:30 audit strikes the warehouse once (it struck twice on 16 Nov) (2.3216ms) # S9: scheduled jobs run once across servers
+✔ callback rate denominator: only the jobs a tech worked originally since go-live; strikes and job totals unchanged (685.3894ms)
+✔ employee page: labor days by month and for the year, and a team table that matches each tech's own page (254.009ms)
+ℹ tests 631
+ℹ suites 0
+ℹ pass 604
+ℹ fail 13
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 14
+ℹ duration_ms 58576.3394
+
+✖ failing tests:
+
+test at test\action_permissions.test.js:104:1
+✖ the keys match the office app (lib/config/access.dart) (1.6963ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    {
+      calendar: [
+        'view'
+      ],
+      catalog: [
+  ...
+      ],
+  +   services_catalog: [
+  +     'view'
+  +   ],
+      site_checks: [
+        'view'
+      ],
+      statuses: [
+        'view',
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\action_permissions.test.js:116:12)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { dash_financial: [ 'view' ], dash_commissions: [ 'view' ], dash_technicians: [ 'view' ], dash_inventory: [ 'view' ], dash_jobs: [ 'view' ], dash_estimates: [ 'view' ], dash_sales: [ 'view' ], dash_collections: [ 'view' ], hr_payroll: [ 'view', 'create', 'delete' ], hr_kpis: [ 'view' ], hr_corrections: [ 'view', 'update' ], team: [ 'view', 'create', 'update' ], customers: [ 'view' ], estimates: [ 'view', 'update', 'delete' ], jobs: [ 'view', 'update', 'delete' ], line_items: [ 'view', 'update' ], communications: [ 'view', 'create', 'update', 'delete' ], statuses: [ 'view', 'create', 'update', 'delete' ], payments: [ 'view', 'create' ], invoices: [ 'view' ], documents: [ 'view' ], site_checks: [ 'view' ], takeoffs: [ 'view' ], stock: [ 'view' ], catalog: [ 'view' ], services_catalog: [ 'view' ], purchase_orders: [ 'view', 'create', 'update', 'delete' ], vendors: [ 'view' ], projects: [ 'view', 'create', 'update', 'delete' ], calendar: [ 'view' ], jarvis: [ 'view' ] },
+    expected: { dash_financial: [ 'view' ], dash_commissions: [ 'view' ], dash_technicians: [ 'view' ], dash_inventory: [ 'view' ], dash_jobs: [ 'view' ], dash_estimates: [ 'view' ], dash_sales: [ 'view' ], dash_collections: [ 'view' ], hr_payroll: [ 'view', 'create', 'delete' ], hr_kpis: [ 'view' ], hr_corrections: [ 'view', 'update' ], team: [ 'view', 'create', 'update' ], customers: [ 'view' ], estimates: [ 'view', 'update', 'delete' ], jobs: [ 'view', 'update', 'delete' ], line_items: [ 'view', 'update' ], communications: [ 'view', 'create', 'update', 'delete' ], statuses: [ 'view', 'create', 'update', 'delete' ], payments: [ 'view', 'create' ], invoices: [ 'view' ], documents: [ 'view' ], site_checks: [ 'view' ], takeoffs: [ 'view' ], stock: [ 'view' ], catalog: [ 'view' ], purchase_orders: [ 'view', 'create', 'update', 'delete' ], vendors: [ 'view' ], projects: [ 'view', 'create', 'update', 'delete' ], calendar: [ 'view' ], jarvis: [ 'view' ] },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:64:21
+✖ as things are: Alex is paid $750 on a $1,500 share, Jordan (not on commission) nothing (3.8757ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:65:27)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:64:13
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:59:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:72:21
+✖ as if Jordan were on commission: the same $1,500 share and $750 after the hurdle, marked hypothetical (28.7312ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:73:27)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:72:13
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:59:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:87:21
+✖ jobs that paid nothing are listed with the reason: a closed job with no commission lines, one before go-live, two still open (26.112ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:88:28)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:87:13
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:59:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:99:21
+✖ it never guesses who is meant, and says so for someone already on commission (40.9418ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:104:31)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:99:13
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:59:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:107:21
+✖ the switch is not left on: the next ordinary question still pays Jordan nothing (134.2432ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:108:31)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:107:13
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:59:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\assistant_review_sql.test.js:117:1
+✖ a week that already has a finalized payroll run moves the what-if settlement to the next open week, as the engine does (355.8411ms)
+  AssertionError [ERR_ASSERTION]: payroll_preview: The database query failed.
+      at call (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:22:12)
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:124:23
+      at async withFixture (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_eval_fixture.js:486:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\assistant_review_sql.test.js:120:9)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\catalog_import_sql.test.js:105:1
+✖ a product edited in the app keeps every edit; the export's different values are listed, not applied (237.45ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  ... Skipped lines
+  
+    [
+      {
+        avg_unit_cost: '0.87178',
+        category: 'Bearing - RC',
+        description: null,
+  ...
+        category: 'Miscellaneous',
+  +     description: 'Nuts, bolts, screws and fasteners\nLubricants and cleaners\nZip ties',
+  -     description: 'Nuts, bolts, screws and fasteners\r\nLubricants and cleaners\r\nZip ties',
+        id: 5,
+        member_price: '0',
+        name: 'Materials & Consumables | per service call',
+        part_number: null,
+        row_no: 7,
+  
+      at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\catalog_import_sql.test.js:114:16
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async withSchema (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\catalog_import_sql.test.js:31:16)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { id: 1, row_no: 2, name: 'Bearing RC | Steel | 1"', part_number: '0140950', unit_price: '2.66', avg_unit_cost: '0.87178', member_price: '0', description: null, category: 'Bearing - RC', vendors: [Array], updated_at: null, updated_by: null }, { id: 2, row_no: 3, name: 'Bottom Bracket | Residential | Pair | SBB-1', part_number: '1033071', unit_price: '31.2', avg_unit_cost: '5.41', member_price: '0', description: null, category: 'Bottom Bracket - RC', vendors: [Array], updated_at: null, updated_by: null }, { id: 3, row_no: 4, name: "Chain Drive | 10' T501 L5 | LiftMaster", part_number: '4007442', unit_price: '856.7', avg_unit_cost: '691.34', member_price: '0', description: 'Light Duty Trolley Operator - Logic 5.0', category: 'Commercial Operator Head', vendors: [Array], updated_at: null, updated_by: null }, { id: 4, row_no: 6, name: "Operator Rail | 7' Operator Chain & Rail | Genie", part_number: '2128C7', unit_price: '68.11', avg_unit_cost: '68.11', member_price: '0', description: null, category: 'Operator Rail', vendors: [], updated_at: null, updated_by: null }, { id: 5, row_no: 7, name: 'Materials & Consumables | per service call', part_number: null, unit_price: '25', avg_unit_cost: '15', member_price: '0', description: 'Nuts, bolts, screws and fasteners\nLubricants and cleaners\nZip ties', category: 'Miscellaneous', vendors: [], updated_at: null, updated_by: null }, { id: 6, row_no: 8, name: 'Replace Bottom Two sections With Matching Sections', part_number: null, unit_price: '673', avg_unit_cost: '673', member_price: '0', description: null, category: 'Needs to be Added Next', vendors: [], updated_at: null, updated_by: null }, { id: 7, row_no: 9, name: 'Replace Bottom Two sections With Matching Sections', part_number: null, unit_price: '673', avg_unit_cost: '673', member_price: '0', description: null, category: 'Needs to be Added Next', vendors: [], updated_at: null, updated_by: null }, { id: 8, row_no: 10, name: 'Complete door', part_number: null, unit_price: '0', avg_unit_cost: '0', member_price: '0', description: null, category: 'Overhead Door', vendors: [], updated_at: null, updated_by: null }, { id: 9, row_no: 11, name: 'Weather Seal | Stop Mold | Install New Standard Color', part_number: null, unit_price: '0.67', avg_unit_cost: '0.61', member_price: '0', description: null, category: 'Weather Seal', vendors: [Array], updated_at: null, updated_by: null }, { id: 10, row_no: 12, name: 'Remote 894LT (3-button)', part_number: '4140230', unit_price: '59.99', avg_unit_cost: '15.93882', member_price: '0', description: 'Our text', category: 'Remote', vendors: [Array], updated_at: 2026-11-19T13:58:45.238Z, updated_by: 'Heather' }, { id: 11, row_no: 13, name: 'Editable Product Line Item', part_number: null, unit_price: '0', avg_unit_cost: '6.26923', member_price: '0', description: null, category: 'Miscellaneous', vendors: [], updated_at: null, updated_by: null } ],
+    expected: [ { id: 1, row_no: 2, name: 'Bearing RC | Steel | 1"', part_number: '0140950', unit_price: '2.66', avg_unit_cost: '0.87178', member_price: '0', description: null, category: 'Bearing - RC', vendors: [Array], updated_at: null, updated_by: null }, { id: 2, row_no: 3, name: 'Bottom Bracket | Residential | Pair | SBB-1', part_number: '1033071', unit_price: '31.2', avg_unit_cost: '5.41', member_price: '0', description: null, category: 'Bottom Bracket - RC', vendors: [Array], updated_at: null, updated_by: null }, { id: 3, row_no: 4, name: "Chain Drive | 10' T501 L5 | LiftMaster", part_number: '4007442', unit_price: '856.7', avg_unit_cost: '691.34', member_price: '0', description: 'Light Duty Trolley Operator - Logic 5.0', category: 'Commercial Operator Head', vendors: [Array], updated_at: null, updated_by: null }, { id: 4, row_no: 6, name: "Operator Rail | 7' Operator Chain & Rail | Genie", part_number: '2128C7', unit_price: '68.11', avg_unit_cost: '68.11', member_price: '0', description: null, category: 'Operator Rail', vendors: [], updated_at: null, updated_by: null }, { id: 5, row_no: 7, name: 'Materials & Consumables | per service call', part_number: null, unit_price: '25', avg_unit_cost: '15', member_price: '0', description: 'Nuts, bolts, screws and fasteners\r\nLubricants and cleaners\r\nZip ties', category: 'Miscellaneous', vendors: [], updated_at: null, updated_by: null }, { id: 6, row_no: 8, name: 'Replace Bottom Two sections With Matching Sections', part_number: null, unit_price: '673', avg_unit_cost: '673', member_price: '0', description: null, category: 'Needs to be Added Next', vendors: [], updated_at: null, updated_by: null }, { id: 7, row_no: 9, name: 'Replace Bottom Two sections With Matching Sections', part_number: null, unit_price: '673', avg_unit_cost: '673', member_price: '0', description: null, category: 'Needs to be Added Next', vendors: [], updated_at: null, updated_by: null }, { id: 8, row_no: 10, name: 'Complete door', part_number: null, unit_price: '0', avg_unit_cost: '0', member_price: '0', description: null, category: 'Overhead Door', vendors: [], updated_at: null, updated_by: null }, { id: 9, row_no: 11, name: 'Weather Seal | Stop Mold | Install New Standard Color', part_number: null, unit_price: '0.67', avg_unit_cost: '0.61', member_price: '0', description: null, category: 'Weather Seal', vendors: [Array], updated_at: null, updated_by: null }, { id: 10, row_no: 12, name: 'Remote 894LT (3-button)', part_number: '4140230', unit_price: '59.99', avg_unit_cost: '15.93882', member_price: '0', description: 'Our text', category: 'Remote', vendors: [Array], updated_at: 2026-11-19T13:58:45.238Z, updated_by: 'Heather' }, { id: 11, row_no: 13, name: 'Editable Product Line Item', part_number: null, unit_price: '0', avg_unit_cost: '6.26923', member_price: '0', description: null, category: 'Miscellaneous', vendors: [], updated_at: null, updated_by: null } ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\catalog_products.test.js:17:1
+✖ reads the export: active rows only, money, flags, vendors, cleanups (1.7996ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + 'Nuts, bolts, screws and fasteners\r\nLubricants and cleaners\r\nZip ties'
+  - 'Nuts, bolts, screws and fasteners\nLubricants and cleaners\nZip ties'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\catalog_products.test.js:28:12)
+      at Test.runInAsyncScope (node:async_hooks:228:14)
+      at Test.run (node:internal/test_runner/test:1118:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:787:18)
+      at Test.postRun (node:internal/test_runner/test:1247:19)
+      at Test.run (node:internal/test_runner/test:1175:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:358:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'Nuts, bolts, screws and fasteners\r\nLubricants and cleaners\r\nZip ties',
+    expected: 'Nuts, bolts, screws and fasteners\nLubricants and cleaners\nZip ties',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\dashboard_metrics_sql.test.js:162:1
+✖ callback rate: completed jobs that started on/after Oct 5 and by today, in the selected year; strikes reconcile (88.1363ms)
+  TypeError: Cannot read properties of undefined (reading 'metrics')
+      at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\dashboard_metrics_sql.test.js:182:100
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async withServer (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\support.js:86:16)
+      at async C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\dashboard_metrics_sql.test.js:181:9
+      at async withSchema (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\dashboard_metrics_sql.test.js:40:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\dashboard_metrics_sql.test.js:163:5)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7)
+
+test at test\payments_list_sql.test.js:194:1
+✖ payments list: the Final Invoice Sent $0 filter lists those jobs, with or without a payment (277.0757ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      '9002',
+  +   'stripe-pi_fox',
+      'stripe-pi_zero',
+      'z1'
+    ]
+  
+      at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:213:16
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async withSchema (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:40:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:195:5)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ '9002', 'stripe-pi_fox', 'stripe-pi_zero', 'z1' ],
+    expected: [ '9002', 'stripe-pi_zero', 'z1' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\payments_list_sql.test.js:233:1
+✖ payments list: without a stripe_payments table it lists Service Fusion alone (172.4615ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:240:16
+      at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+      at async withSchema (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:40:16)
+      at async TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\payments_list_sql.test.js:234:5)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:276:1
+⚠ C1 (todo, Phase 2 / after your review of the mappings): "Stop Mold | 7' White" comes off the Weather Seal row (2.3552ms) # name mappings wait for your review (decision 7)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '60.00' !== '58.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:280:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '60.00',
+    expected: '58.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:285:1
+⚠ C3 (todo S7): two checkouts of one part at the same moment on TWO servers both come off (163 - 2 - 3 = 158) (46.2052ms) # S7: Postgres lock across servers
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '160.00' !== '158.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:294:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '160.00',
+    expected: '158.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:297:1
+⚠ C4 (todo S7): a row inserted above while a checkout is in flight never overwrites another part (2.584ms) # S7: confirm the row before writing
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '59.00' !== '163.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:302:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '59.00',
+    expected: '163.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:307:1
+⚠ C5 (todo S5/S13): the shared app key alone cannot change stock (2.7598ms) # S5 identity, enforced at S13 after the Android rollout
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+  +   200,
+  +   200,
+  +   200
+  -   401,
+  -   401,
+  -   401
+    ]
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:318:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 200, 200, 200 ],
+    expected: [ 401, 401, 401 ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:322:1
+⚠ H1 (todo S8): taking 5 when the Sheet says 2 leaves -3 and flags the part for a count (decision 6) (1.584ms) # S8: negative balance plus count flag
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '0.00' !== '-3.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:327:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '0.00',
+    expected: '-3.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:331:1
+⚠ H3 (todo S10): a count made before a checkout does not wipe that checkout (2.0814ms) # S10: counts checked against movements since the zone was loaded
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '12.00' !== '10.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:337:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '12.00',
+    expected: '10.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:340:1
+⚠ H4 (todo S9): picks staged before a restart are still taken off at 8:31 (2.1237ms) # S9: durable staging in Postgres
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '40.00' !== '38.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:346:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '40.00',
+    expected: '38.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:349:1
+⚠ H4 / decision 8 (todo S9): staging the same job and part again adds to it instead of replacing it (1.8394ms) # S9: durable staging; accumulate
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '37.00' !== '35.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:357:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '37.00',
+    expected: '35.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:360:1
+⚠ H4 (todo S5/S9): staging is decided by the signed-in account, never by a header or the typed name (1.4336ms) # S5/S9: staging decided from the token
+  AssertionError [ERR_ASSERTION]: a client header must not decide staging
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:364:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:367:1
+⚠ H5 (todo S6): the same request id sent twice changes stock once (1.8329ms) # S6: database-enforced idempotency
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  '56.00' !== '58.00'
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:373:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: '56.00',
+    expected: '58.00',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:378:1
+⚠ H6 (todo S7/B): when the stock write fails, nothing is left logged as picked and the phone is not told success (1.8839ms) # S7: stock first, log second; B: one transaction
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:384:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:387:1
+⚠ H9 (todo S8): a barcode on two parts asks which one instead of taking it off the first (1.6242ms) # S8: ambiguous barcode returns 409
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  200 !== 409
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:391:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 200,
+    expected: 409,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:396:1
+⚠ N2 (todo S9): a flush that fails after logging does not log and deduct the same picks again the next morning (1.877ms) # S9: idempotent flush
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:403:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at test\stock_writes.test.js:406:1
+⚠ N3 (todo S9): with two servers up during a deploy, the 8:30 audit strikes the warehouse once (it struck twice on 16 Nov) (2.3216ms) # S9: scheduled jobs run once across servers
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\opera\AppData\Local\Temp\claude\099a4ba3c039071a\f80082d6-a42e-4fce-910f-64f73194338d\scratchpad\r1code\test\stock_writes.test.js:413:12)
+      at async Test.run (node:internal/test_runner/test:1125:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:787:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

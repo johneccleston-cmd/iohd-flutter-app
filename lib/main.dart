@@ -77,10 +77,12 @@ final GoRouter _router = GoRouter(
   },
   routes: [
     GoRoute(path: '/login', builder: (context, state) => const RouteSelection(child: LoginScreen())),
-    StatefulShellRoute.indexedStack(
+    StatefulShellRoute(
       builder: (context, state, navigationShell) {
         return RouteSelection(child: MainNavigationShell(navigationShell: navigationShell));
       },
+      // go_router's indexedStack container, with each hidden tab's text kept out of the page selection (page_selection.dart).
+      navigatorContainerBuilder: (context, navigationShell, children) => BranchStack(currentIndex: navigationShell.currentIndex, children: children),
       branches: [
        // OFFICE BRANCH (Index 0)
         StatefulShellBranch(routes: [

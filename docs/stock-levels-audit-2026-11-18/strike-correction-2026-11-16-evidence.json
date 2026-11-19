@@ -1,0 +1,18 @@
+{
+  "note": "Render log lines for the 16 Nov 2026 8:30 AM warehouse audit, copied 2026-11-19 because Render keeps logs for 30 days. Service srv-d7bs4ulm5p6s73f51itg. Read-only query; nothing was written.",
+  "warehouse1": { "users_id": 40, "warehouse_strikes_read_2026_11_19": 11, "user_admin_audit_strike_rows_before": 0 },
+  "logs_2026_11_16": [
+    { "id": "43c17f95-7e17-4e54-9582-c6a7e45481bd", "instance": "srv-d7bs4ulm5p6s73f51itg-vpxsw", "timestamp": "2026-11-16T14:30:00.003196105Z", "message": "⏰ [CRON] Running 8:30 AM warehouse staging audit..." },
+    { "id": "123eff77-c9f3-479a-85a1-93e3873b7e22", "instance": "srv-d7bs4ulm5p6s73f51itg-lrghx", "timestamp": "2026-11-16T14:30:00.003257882Z", "message": "⏰ [CRON] Running 8:30 AM warehouse staging audit..." },
+    { "id": "1db1bcc5-cbab-4eef-8a58-67ee16b57f11", "instance": "srv-d7bs4ulm5p6s73f51itg-lrghx", "timestamp": "2026-11-16T14:30:00.679349763Z", "message": "🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs." },
+    { "id": "4ad1120a-8631-4313-8dfc-4fb744c2e6ba", "instance": "srv-d7bs4ulm5p6s73f51itg-lrghx", "timestamp": "2026-11-16T14:30:00.685713854Z", "message": "⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks)." },
+    { "id": "b0cceaf6-c34a-47de-986f-b37d70316bb7", "instance": "srv-d7bs4ulm5p6s73f51itg-vpxsw", "timestamp": "2026-11-16T14:30:00.699407898Z", "message": "🚨 WAREHOUSE MISSED: No staging done for Andrew Johnson's jobs." },
+    { "id": "cafec977-9243-4f2e-9b2f-6adc5e2274d1", "instance": "srv-d7bs4ulm5p6s73f51itg-vpxsw", "timestamp": "2026-11-16T14:30:00.705756123Z", "message": "⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks)." },
+    { "id": "f6f077a9-c2c7-458f-8050-3e2a566b12a5", "instance": "srv-d7bs4ulm5p6s73f51itg-lrghx", "timestamp": "2026-11-16T14:31:00.002485319Z", "message": "⏰ [CRON] Flushing Staged Warehouse Items at 8:31 AM..." }
+  ],
+  "other_strike_lines_2026_11_09_to_19": [
+    { "id": "0a623c1a-78db-4c3b-9679-3729a6ceea08", "instance": "srv-d7bs4ulm5p6s73f51itg-zjhmn", "timestamp": "2026-11-12T14:30:00.849519144Z", "message": "⚠️ WAREHOUSE STRIKE applied to warehouse1 (2 missed trucks)." },
+    { "id": "02f3d75a-f8b2-4e49-bbb9-168bfb139e8d", "instance": "srv-d7bs4ulm5p6s73f51itg-n94xm", "timestamp": "2026-11-13T14:30:00.914716931Z", "message": "⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks)." },
+    { "id": "7c823a52-f34b-4ac3-b844-1c0e1445d13d", "instance": "srv-d7bs4ulm5p6s73f51itg-s42qg", "timestamp": "2026-11-17T14:30:01.07239252Z", "message": "⚠️ WAREHOUSE STRIKE applied to warehouse1 (1 missed trucks)." }
+  ]
+}

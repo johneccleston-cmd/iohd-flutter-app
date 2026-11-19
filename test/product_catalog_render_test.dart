@@ -67,7 +67,7 @@ final _entries = <CatalogEntry>[
   const CatalogEntry(key: 'cat:5', name: 'Old Opener Remote', sku: 'OLD1', category: 'Bearing - RC', active: false, inventoryItem: false),
 ];
 
-final _searchBox = find.widgetWithText(TextField, 'Search name, part #, category or description');
+final _searchBox = find.widgetWithText(TextField, 'Search name, part # or category');
 
 Widget _app(Widget home) => MaterialApp(debugShowCheckedModeBanner: false, theme: _theme, home: home);
 
@@ -104,7 +104,8 @@ void main() {
     expect(find.text('Priced per job'), findsNothing);
     expect(find.text('Bearing RC | Steel | 1"'), findsOneWidget);
     expect(find.text('UNIT COST'), findsOneWidget); // small-caps headers, as Products & Services has them
-    expect(find.text('MARGIN'), findsOneWidget);
+    expect(find.text('MARGIN'), findsNothing); // no margin column
+    expect(find.text('IN STOCK'), findsNothing); // stock lives on the Stock Levels screen
     expect(find.text('Per job'), findsOneWidget); // the GD5S door has no list price
     await _shot(t, 'product_catalog_1366');
   });
@@ -166,11 +167,21 @@ void main() {
     expect(find.byIcon(Icons.arrow_upward_rounded), findsOneWidget);
   });
 
-  testWidgets('sidebar filters stack: several categories, inventory, then status', (t) async {
+  testWidgets('sidebar filters stack: several categories, then status', (t) async {
     await _pump(t, _screen());
-    for (final g in ['Filters', 'Product name', 'Inventory', 'Status', 'Part number']) {
+    for (final g in ['Filters', 'Part number', 'Status', 'Needs attention']) {
       expect(find.text(g), findsOneWidget, reason: g);
     }
+    for (final g in ['Inventory', 'Stock', 'Not in inventory', 'In stock']) {
+      expect(find.text(g), findsNothing, reason: '$g: stock lives on the Stock Levels screen');
+    }
+    expect(find.text('Product name'), findsNothing); // the top search already covers names
+    // Part number sits above Status, and Category and Needs attention start closed.
+    expect(t.getTopLeft(find.text('Part number')).dy, lessThan(t.getTopLeft(find.text('Status')).dy));
+    expect(find.text('Torsion Spring - RC'), findsWidgets); // the table's cells...
+    expect(find.text('Per-job price'), findsNothing);
+    await t.tap(find.text('Category').first); // the group starts closed
+    await t.pumpAndSettle();
     expect(find.text('Category'), findsWidgets); // the sidebar group and the table's column
     expect(find.byTooltip('Filter by category'), findsNothing); // the old drop-down is gone
     await t.tap(find.text('Bearing - RC').first); // the sidebar row comes before the table's cells
@@ -179,13 +190,10 @@ void main() {
     await t.tap(find.text('Overhead Door').first);
     await t.pumpAndSettle();
     expect(find.text('2 matching'), findsOneWidget); // two categories add up
-    await t.tap(find.text('Not in inventory'));
-    await t.pumpAndSettle();
-    expect(find.text('1 matching'), findsOneWidget); // and inventory narrows them: only the Clopay door
     expect(find.text('Clopay Gallery Steel | GD5S | Complete Door'), findsOneWidget);
     await t.tap(find.text('Inactive'));
     await t.pumpAndSettle();
-    expect(find.text('2 matching'), findsOneWidget); // Active and Inactive both on = no status filter: the remote joins
+    expect(find.text('3 matching'), findsOneWidget); // Active and Inactive both on = no status filter: the remote joins
     expect(find.text('Old Opener Remote'), findsOneWidget);
     expect(find.text('Inactive'), findsNWidgets(2)); // the filter row and the row's own tag
     await _shot(t, 'product_catalog_filters');
@@ -194,13 +202,16 @@ void main() {
     expect(find.text('64 products'), findsOneWidget);
   });
 
-  testWidgets('name and part number filters', (t) async {
+  testWidgets('part number filter, and the search box together', (t) async {
     await _pump(t, _screen());
+    expect(find.widgetWithText(TextField, 'Part # contains'), findsNothing); // the group starts closed
+    await t.tap(find.text('Part number'));
+    await t.pumpAndSettle();
     await t.enterText(find.widgetWithText(TextField, 'Part # contains'), '7030010');
     await t.pump(const Duration(milliseconds: 300));
     await t.pumpAndSettle();
     expect(find.text('1 matching'), findsOneWidget);
-    await t.enterText(find.widgetWithText(TextField, 'Name contains'), 'bearing');
+    await t.enterText(_searchBox, 'bearing');
     await t.pump(const Duration(milliseconds: 300));
     await t.pumpAndSettle();
     expect(find.text('No products match'), findsOneWidget); // the spring has no "bearing" in its name
@@ -211,10 +222,12 @@ void main() {
 
   testWidgets('narrow window: a Filters button opens the same filters in a dialog', (t) async {
     await _pump(t, _screen(), size: const Size(1024, 700));
-    expect(find.text('Product name'), findsNothing); // no sidebar
+    expect(find.text('Part number'), findsNothing); // no sidebar
     await t.tap(find.text('Filters'));
     await t.pumpAndSettle();
-    expect(find.text('Product name'), findsOneWidget);
+    expect(find.text('Part number'), findsOneWidget);
+    await t.tap(find.text('Category').last); // the dialog's group, closed until opened
+    await t.pumpAndSettle();
     await t.tap(find.text('Overhead Door').last);
     await t.pumpAndSettle();
     expect(find.text('1'), findsWidgets); // the Filters badge counts the set filter
@@ -235,15 +248,18 @@ void main() {
     expect(find.text('No products yet'), findsOneWidget);
   });
 
-  testWidgets('stock that needs review says "Review" (with the reason on hover), never a borrowed number', (t) async {
-    const sureStop = [
-      CatalogEntry(key: 'cat:16', name: 'Bottom Bracket | Commercial | LH | Sure-Stop', sku: '120420', category: 'Bottom Bracket - Com', rate: 471.55, inventoryConflict: 'duplicate_name'),
-      CatalogEntry(key: 'cat:17', name: 'Bottom Bracket | Commercial | LH | Sure-Stop', sku: '120436', category: 'Bottom Bracket - Com', rate: 618.15, inventoryConflict: 'duplicate_name'),
+  testWidgets('a cost the server borrowed from inventory or Service Fusion is not shown; only the catalog\'s own cost is', (t) async {
+    const list = [
+      CatalogEntry(key: 'cat:1', name: 'Own Cost Spring', sku: 'A1', category: 'Springs', rate: 100, cost: 40.25, costSource: 'catalog'),
+      CatalogEntry(key: 'cat:2', name: 'Clopay Borrowed Door', sku: 'GD5S', category: 'Overhead Door', rate: 900, cost: 755.68, costSource: 'inventory'),
+      CatalogEntry(key: 'cat:3', name: 'SF Borrowed Opener', sku: 'B2', category: 'Openers', rate: 500, cost: 321.09, costSource: 'service_fusion'),
     ];
-    await _pump(t, _screen(entries: sureStop));
-    expect(find.text('Review'), findsNWidgets(2));
-    expect(find.byWidgetPredicate((w) => w is Tooltip && (w.message ?? '').contains('another product has the same name')), findsNWidgets(2));
-    await _pump(t, _screen(entries: sureStop), size: const Size(820, 700)); // stacked rows say it too
-    expect(find.text('Review'), findsNWidgets(2));
+    await _pump(t, _screen(entries: list));
+    expect(find.text('\$40.25'), findsOneWidget);
+    expect(find.text('\$755.68'), findsNothing);
+    expect(find.text('\$321.09'), findsNothing);
+    await _pump(t, _screen(entries: list), size: const Size(820, 700)); // stacked rows too
+    expect(find.text('\$40.25'), findsOneWidget);
+    expect(find.text('\$755.68'), findsNothing);
   });
 }

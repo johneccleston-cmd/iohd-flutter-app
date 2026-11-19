@@ -59,6 +59,34 @@ class RouteSelection extends StatelessWidget {
   }
 }
 
+/// The nav shell's tabs, one per menu (go_router's indexedStack container, plus selection). The hidden tabs stay laid
+/// out at full size behind the one on screen, so their text sits at the same place as the visible tab's. Left in the
+/// selection, highlighting the job number in a job's ribbon also picked up the hidden Product Catalog ribbon's title
+/// in the same spot. A hidden tab's text registers nowhere, as a covered screen's does.
+class BranchStack extends StatelessWidget {
+  final int currentIndex;
+  final List<Widget> children;
+  const BranchStack({super.key, required this.currentIndex, required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final group = SelectionContainer.maybeOf(context);
+    return IndexedStack(
+      index: currentIndex,
+      children: [
+        for (var i = 0; i < children.length; i++)
+          Offstage(
+            offstage: i != currentIndex,
+            child: TickerMode(
+              enabled: i == currentIndex,
+              child: group == null ? children[i] : SelectionRegistrarScope(registrar: i == currentIndex ? group : _covered, child: children[i]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// Where a covered screen's text registers: nowhere.
 final _covered = _NoSelection();
 

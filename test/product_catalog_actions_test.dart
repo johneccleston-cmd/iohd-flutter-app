@@ -99,9 +99,9 @@ void main() {
     await t.pumpAndSettle();
     expect(name, matches(RegExp(r'^product-catalog-\d{4}-\d{2}-\d{2}\.csv$')));
     final lines = const LineSplitter().convert(csv!);
-    expect(lines.first, 'Product,Part #,Category,Model,In stock,Unit cost,Price,Member price,Status,Inventory item');
+    expect(lines.first, 'Product,Part #,Category,Model,Unit cost,Price,Member price,Status,Inventory item');
     expect(lines, hasLength(6)); // header + 5 products
-    expect(lines, contains('"Chain Drive | 10\' T501, LiftMaster",4007442,Operator,,1,691.34,856.70,,Active,Yes'));
+    expect(lines, contains('"Chain Drive | 10\' T501, LiftMaster",4007442,Operator,,691.34,856.70,,Active,Yes'));
     expect(csv, contains("'=SUM(A1) sneaky name")); // would be a formula otherwise
     expect(lines.last, startsWith('Old Opener Remote'));
     expect(lines.last, endsWith('Inactive,No'));
@@ -122,20 +122,22 @@ void main() {
         ),
       ),
     );
+    await t.tap(find.text('Category').first); // the group starts closed
+    await t.pumpAndSettle();
     await t.tap(find.text('Overhead Door').first); // the sidebar's category row
     await t.pumpAndSettle();
     await t.tap(find.text('Export'));
     await t.pumpAndSettle();
     final lines = const LineSplitter().convert(csv!);
-    expect(lines.first, 'Product,Part #,Category,Model,In stock,Price,Member price,Status,Inventory item');
+    expect(lines.first, 'Product,Part #,Category,Model,Price,Member price,Status,Inventory item');
     expect(lines, hasLength(2));
-    expect(lines.last, 'Clopay Gallery Steel | Complete Door,GD5S,Overhead Door,,3,,700.00,Active,No');
+    expect(lines.last, 'Clopay Gallery Steel | Complete Door,GD5S,Overhead Door,,,700.00,Active,No');
   });
 
   test('the CSV escapes quotes, commas and line breaks', () {
     const e = CatalogEntry(key: 'cat:9', name: 'Door "Deluxe", 8\' wide\nwith glass', category: 'Doors', rate: 10);
     final csv = productCatalogCsv([e], canSeeCost: false);
     expect(csv, contains('"Door ""Deluxe"", 8\' wide\nwith glass"'));
-    expect(csv.split('\r\n').first, 'Product,Part #,Category,Model,In stock,Price,Member price,Status,Inventory item');
+    expect(csv.split('\r\n').first, 'Product,Part #,Category,Model,Price,Member price,Status,Inventory item');
   });
 }

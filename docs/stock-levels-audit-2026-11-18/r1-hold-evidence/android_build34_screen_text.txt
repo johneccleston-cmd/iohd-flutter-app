@@ -1,0 +1,7 @@
+    R1HOLD [A] before checkout, rows: [[Keypad | Genie, 10 in stock, 1], [Stop Mold | 7' White, Not stocked, 2], [Keypad | Genie, 10 in stock, 1]]
+    R1HOLD button before checkout: Check out 3 items
+    R1HOLD [A] sent: [{"name":"Keypad | Genie","qtyUsed":1,"jobNumber":"4001"},{"name":"Stop Mold | 7' White","qtyUsed":2,"jobNumber":"4001"},{"name":"Keypad | Genie","qtyUsed":1,"jobNumber":"4002"}]
+    R1HOLD [A] after checkout, screen: [My pick list, Your list is done, Back to inventory]
+    R1HOLD [B] sent: [{"name":"Keypad | Genie","qtyUsed":1,"jobNumber":"4001"},{"name":"Stop Mold | 7' White","qtyUsed":2,"jobNumber":"4001"},{"name":"Keypad | Genie","qtyUsed":1,"jobNumber":"4002"}]
+    R1HOLD [B] after checkout, screen: [My pick list, 0 of 1 item picked, 1 job, Lee Park, 1 item, Job #4003  ·  Bentonville, Spring, Torsion Spring 207x2x22, 14 in stock, 1, Tick items to check out, Checked out 3 items. 1 item still to pick.]
+BUILD SUCCESSFUL in 1m 2s
