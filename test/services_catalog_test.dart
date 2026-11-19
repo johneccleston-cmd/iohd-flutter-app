@@ -115,6 +115,15 @@ void main() {
       expect(find.text('5'), findsWidgets);
       await _shot(t, 'superseded_${size.width.toInt()}');
     }
+    // Searching the page by the old name still finds the superseded service, marked, with its history.
+    await _pump(t, () async => _ok(entries: entries));
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField), 'scope of work');
+    await t.pump();
+    expect(find.text('Scope of Work | Commercial Service Call'), findsOneWidget);
+    expect(find.text('Superseded by Commercial Service Dispatch & Evaluation'), findsOneWidget);
+    expect(find.text(r'$39.80 – $14,000.00'), findsOneWidget);
+    expect(find.text('Service Call'), findsNothing);
   });
 
   testWidgets('hides the cost column without Line Items & Costs > View', (t) async {
