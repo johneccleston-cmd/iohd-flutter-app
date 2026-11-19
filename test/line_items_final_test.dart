@@ -44,7 +44,9 @@ void _seed(FakeJobServer s, {int extra = 0}) {
   );
   const names = ['Premium carriage house with full-view windows', 'Repair only', 'Good', 'Better', 'Best (insulated steel, 3-layer)', 'Opener swap'];
   for (var i = 0; i < extra; i++) {
-    s.addOption(kEstimateId, names[i % names.length], [_l('Spring Replacement | Labor', rate: 150 + i * 25.5, taxable: false)], taxRate: 10.5);
+    // With a cost, so each tab shows its margin (Services Catalog Phase 2 leaves the margin off while a line has no
+    // cost, which made these tabs narrow enough that all of them fit at 1920 and nothing went into "+N more").
+    s.addOption(kEstimateId, names[i % names.length], [_l('Spring Replacement | Labor', rate: 150 + i * 25.5, cost: 60, taxable: false)], taxRate: 10.5);
   }
 }
 

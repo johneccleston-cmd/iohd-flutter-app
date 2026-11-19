@@ -99,7 +99,11 @@ void main() {
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
     });
 
-    testWidgets('a money-off line with no cost (Service Fusion\'s "10% Discount" item at -\$0.10) is no "line with no cost"', (t) async {
+    // Services Catalog Phase 2 (2026-11-18) changed this rule: the gross profit is only worked out while every line with a
+    // quantity has a cost, money-off lines included (the shared formula, lineItemMath.js, and its cases: "half cents
+    // round away from zero" has a -\$10 line with no cost and no profit). So these lines no longer drop out of the count;
+    // the profit panel shows no profit and says how many lines have no cost.
+    testWidgets('a money-off line with no cost (Service Fusion\'s "10% Discount" item at -\$0.10) leaves the profit unknown too', (t) async {
       await _pump(
         t,
         _editor(const [
@@ -108,7 +112,8 @@ void main() {
           LineDraft(name: 'Return: opener', rate: 389, quantity: -1),
         ], editable: false),
       );
-      expect(find.textContaining('with no cost'), findsNothing, reason: 'neither line has a cost to miss');
+      expect(find.text('2 lines have no cost'), findsOneWidget);
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
       await _pump(
         t,
         _editor(const [
@@ -116,7 +121,17 @@ void main() {
           LineDraft(name: 'Keyless Entry Pad', rate: 79, quantity: 1),
         ], editable: false),
       );
-      expect(find.textContaining('1 line with no cost'), findsOneWidget, reason: 'a priced item with no cost still counts');
+      expect(find.text('1 line has no cost'), findsOneWidget, reason: 'a priced item with no cost counts');
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+      await _pump(
+        t,
+        _editor(const [
+          LineDraft(name: 'Door', rate: 1000, cost: 400, quantity: 1),
+          LineDraft(name: 'Return: opener', rate: 389, cost: 210, quantity: -1),
+        ], editable: false),
+      );
+      expect(find.textContaining('no cost'), findsNothing, reason: 'every cost known');
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
     });
 
     testWidgets('a line just added keeps its fields when its highlight ends (focus stayed where it was put)', (t) async {

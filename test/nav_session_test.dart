@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:iohd_desktop/config/access.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
 import 'package:iohd_desktop/main.dart' as app;
 import 'package:iohd_desktop/widgets/main_navigation_shell.dart';
@@ -127,17 +128,38 @@ void main() {
         expect(_inMenu('Payroll'), findsOneWidget);
         expect(_inMenu('Team'), findsOneWidget);
         await t.tapAt(const Offset(1300, 700));
+        await _settle(t);
+
+        // Someone whose permissions were never saved gets the defaults: the Services Catalog is one of the pages that
+        // start switched off (2026-11-18), and its address is refused too.
+        AuthSession.instance.logout();
+        await _settle(t);
+        nextLogin = 'never-saved';
+        await AuthSession.instance.login('nora', '1234');
+        await t.pump();
+        await t.pump();
+        await _settle(t);
+        await t.tap(_inBar('Inventory'));
+        await _settle(t);
+        expect(_inMenu('Product Catalog'), findsOneWidget);
+        expect(_inMenu('Services Catalog'), findsNothing);
+        await t.tapAt(const Offset(1300, 700));
+        await _settle(t);
+        router().go('/inventory/services');
+        await _settle(t);
+        expect(router().state.uri.path, isNot('/inventory/services'));
         await t.pump(const Duration(seconds: 2));
       }, () => MockClient((req) async {
             if (req.url.path == '/login') {
               final admin = nextLogin == 'admin';
+              final neverSaved = nextLogin == 'never-saved';
               return http.Response(
                 json.encode({
                   'token': _token(),
-                  'name': admin ? 'Ryan Schwartz' : 'Bella Ortiz',
+                  'name': admin ? 'Ryan Schwartz' : (neverSaved ? 'Nora Quinn' : 'Bella Ortiz'),
                   'role': 'Office Manager',
                   'is_admin': admin,
-                  'access_denied': admin ? <String>[] : _restrictedDenied,
+                  'access_denied': admin ? <String>[] : (neverSaved ? null : _restrictedDenied),
                 }),
                 200,
               );
@@ -151,5 +173,12 @@ void main() {
     FlutterError.onError = oldOnError;
 
     expect(errors, isEmpty, reason: errors.join('\n\n====\n\n'));
+  });
+
+  test('the Services Catalog starts switched off for someone never saved (2026-11-18), like pay and profit', () {
+    expect(kAccessResources['services_catalog']!.defaultOff, isTrue);
+    expect(kDefaultOffKeys, contains('services_catalog.view'));
+    expect(effectiveDenied(null), contains('services_catalog.view'));
+    expect(effectiveDenied(<String>[]), isNot(contains('services_catalog.view')), reason: 'a saved list is taken as it is');
   });
 }

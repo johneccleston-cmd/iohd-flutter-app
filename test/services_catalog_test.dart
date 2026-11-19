@@ -69,6 +69,63 @@ void main() {
     }
   });
 
+  testWidgets('a superseded service is kept with its history, after the offered ones, marked and not counted as offered', (t) async {
+    const replacement = CatalogEntry(
+      key: 'sfr:10792835~commercial-service-dispatch-evaluation',
+      name: 'Commercial Service Dispatch & Evaluation',
+      kind: 'service',
+      category: 'Commercial Service',
+      rate: 109,
+      rateMin: 109,
+      rateMax: 394,
+      uses: 22,
+      lastUsed: '2026-11-13',
+      replaces: [(key: 'sfr:10792835', name: 'Scope of Work | Commercial Service Call')],
+    );
+    const superseded = CatalogEntry(
+      key: 'sfr:10792835',
+      name: 'Scope of Work | Commercial Service Call',
+      kind: 'service',
+      category: 'Commercial Service',
+      rate: 199,
+      rateMin: 39.8,
+      rateMax: 14000,
+      uses: 159,
+      lastUsed: '2026-11-12',
+      active: false,
+      supersededBy: (key: 'sfr:10792835~commercial-service-dispatch-evaluation', name: 'Commercial Service Dispatch & Evaluation'),
+    );
+    // The server sends the most billed first: the superseded one (159 lines) ahead of the rest.
+    final entries = [superseded, ..._services, replacement];
+    for (final size in const [Size(1366, 768), Size(420, 800)]) {
+      await _pump(t, () async => _ok(entries: entries), size: size);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull, reason: '$size');
+      expect(find.text('Superseded by Commercial Service Dispatch & Evaluation'), findsOneWidget);
+      expect(find.text('Not offered'), findsOneWidget, reason: 'no usual price offered for it');
+      expect(find.text(r'$39.80 – $14,000.00'), findsOneWidget, reason: 'its billed history stays');
+      expect(find.text('159'), findsOneWidget);
+      expect(find.text('Replaces Scope of Work | Commercial Service Call'), findsOneWidget);
+      // Listed after every service still offered.
+      final old = t.getTopLeft(find.text('Scope of Work | Commercial Service Call')).dy;
+      for (final e in [..._services, replacement]) {
+        expect(t.getTopLeft(find.text(e.name)).dy, lessThan(old), reason: e.name);
+      }
+      // "Services" counts the ones offered (5, not 6); "With a Usual Price" leaves the superseded one out too.
+      expect(find.text('5'), findsWidgets);
+      await _shot(t, 'superseded_${size.width.toInt()}');
+    }
+    // Searching the page by the old name still finds the superseded service, marked, with its history.
+    await _pump(t, () async => _ok(entries: entries));
+    await t.pumpAndSettle();
+    await t.enterText(find.byType(TextField), 'scope of work');
+    await t.pump();
+    expect(find.text('Scope of Work | Commercial Service Call'), findsOneWidget);
+    expect(find.text('Superseded by Commercial Service Dispatch & Evaluation'), findsOneWidget);
+    expect(find.text(r'$39.80 – $14,000.00'), findsOneWidget);
+    expect(find.text('Service Call'), findsNothing);
+  });
+
   testWidgets('hides the cost column without Line Items & Costs > View', (t) async {
     await _pump(t, () async => _ok(cost: false));
     await t.pumpAndSettle();
@@ -95,6 +152,42 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('Service Call'), findsOneWidget);
     expect(calls, 2);
+  });
+
+  // Services Catalog Phase 2: the list answers 403 without the page's switch (Team > Services Catalog), and the page says
+  // so instead of showing a generic error; a refresh that is refused after access was taken away clears the list.
+  testWidgets('a 403 says there is no access, not that loading failed', (t) async {
+    const refused = LineItemsException('Not allowed.', status: 403);
+    for (final size in const [Size(1366, 768), Size(420, 800)]) {
+      await _pump(t, () async => throw refused, size: size);
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull, reason: '$size');
+      expect(find.text("You don't have access to the Services Catalog"), findsOneWidget);
+      expect(find.text('Ask an admin to turn it on in Team.'), findsOneWidget);
+      expect(find.text('Could not load the services'), findsNothing);
+      expect(find.text('Try again'), findsNothing);
+      await _shot(t, 'no_access_${size.width.toInt()}');
+    }
+
+    var calls = 0;
+    await _pump(t, () async {
+      calls++;
+      if (calls > 1) throw refused;
+      return _ok();
+    });
+    await t.pumpAndSettle();
+    expect(find.text('Service Call'), findsOneWidget);
+    await t.tap(find.byTooltip('Refresh'));
+    await t.pumpAndSettle();
+    expect(calls, 2);
+    expect(find.text('Service Call'), findsNothing, reason: 'nothing of the list stays on show');
+    expect(find.text("You don't have access to the Services Catalog"), findsOneWidget);
+
+    // Any other failure is still the ordinary error with Try again.
+    await _pump(t, () async => throw const LineItemsException('Server error (500).', status: 500));
+    await t.pumpAndSettle();
+    expect(find.text('Could not load the services'), findsOneWidget);
+    expect(find.text("You don't have access to the Services Catalog"), findsNothing);
   });
 
   testWidgets('empty list and search with no match say so', (t) async {

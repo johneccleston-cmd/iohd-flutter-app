@@ -33,6 +33,9 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
   bool _slow = false; // the first load has taken long enough to say the server may be waking up
   bool _loaded = false;
   String? _error;
+
+  /// The server refused the list (403): this person's Services Catalog switch is off (Team).
+  bool _noAccess = false;
   int _request = 0; // a late answer from an older request is dropped
 
   @override
@@ -64,13 +67,16 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
     });
     _activity.setRefreshing(true);
     try {
-      final r = await (widget.load ?? () => LineItemsApi.listCatalog(kind: 'service'))();
+      // Inactive too: a service a renamed line has taken over is kept here, with its history, though no longer offered.
+      final r = await (widget.load ?? () => LineItemsApi.listCatalog(kind: 'service', includeInactive: true))();
       if (!mounted || id != _request) return;
       setState(() {
-        _all = r.entries;
+        // The services offered first, in the server's order (most billed first); the superseded ones after them.
+        _all = [...r.entries.where((e) => e.supersededBy == null), ...r.entries.where((e) => e.supersededBy != null)];
         _canSeeCost = r.canSeeCost;
         _historyDays = r.historyDays;
         _loaded = true;
+        _noAccess = false;
         _loading = false;
         _slow = false;
       });
@@ -79,6 +85,12 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
       if (!mounted || id != _request) return;
       setState(() {
         _error = e is LineItemsException ? e.message : 'Could not load the services.';
+        // No access (the switch is off, or was turned off since the page opened): nothing of the list stays on show.
+        _noAccess = e is LineItemsException && e.status == 403;
+        if (_noAccess) {
+          _all = const [];
+          _loaded = false;
+        }
         _loading = false;
         _slow = false;
       });
@@ -130,7 +142,28 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(e.name, style: flatCellBold),
+                Text(e.name, style: e.supersededBy == null ? flatCellBold : flatCellBold.copyWith(color: DashUi.subtle)),
+                // Superseded: kept with its history, no longer offered on new lines; say what replaced it.
+                if (e.supersededBy case final by?)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Superseded by ${by.name}', // "Not offered" stands in its Usual Price column
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: flatCellMuted.copyWith(fontSize: 13, fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else if (e.replaces.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'Replaces ${e.replaces.map((r) => r.name).join(', ')}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: flatCellMuted.copyWith(fontSize: 13),
+                    ),
+                  ),
                 if (e.description.trim().isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -138,7 +171,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
                   ),
               ],
             ),
-            _figure(_money(e.rate)),
+            if (e.supersededBy != null) Text('Not offered', style: flatCellMuted) else _figure(_money(e.rate)),
             _figure(_range(e)),
             if (_canSeeCost) _figure(_money(e.cost)),
             _figure('${e.uses}'),
@@ -150,6 +183,13 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
   }
 
   Widget _body(List<CatalogEntry> shown, bool compact) {
+    if (_noAccess && !_loading) {
+      return const FlatEmpty(
+        icon: Icons.lock_outline_rounded,
+        title: "You don't have access to the Services Catalog",
+        message: 'Ask an admin to turn it on in Team.',
+      );
+    }
     if (_loading && !_loaded) {
       return FlatLoading(label: 'Loading services', flex: const [6, 2, 3, 2, 2, 2], compact: compact, slow: _slow);
     }
@@ -197,7 +237,9 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
   @override
   Widget build(BuildContext context) {
     final shown = _shown;
-    final priced = _all.where((e) => e.rate != null).length;
+    // Counted among the services offered; a superseded one only adds its lines (its history) to the total.
+    final offered = _all.where((e) => e.supersededBy == null).toList();
+    final priced = offered.where((e) => e.rate != null).length;
     final months = (_historyDays / 30).round();
     return Scaffold(
       backgroundColor: Colors.white,
@@ -220,7 +262,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> {
                       if (_loaded)
                         FlatStats(
                           stats: [
-                            FlatStat('Services', '${_all.length}'),
+                            FlatStat('Services', '${offered.length}'),
                             FlatStat('With a Usual Price', '$priced'),
                             FlatStat('Lines in $months Months', '${_all.fold<int>(0, (s, e) => s + e.uses)}'),
                           ],

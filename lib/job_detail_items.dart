@@ -47,6 +47,8 @@ extension _JobItems on _JobDetailScreenState {
   }
 
   /// Service Fusion's items as lines to show (never saved from here). Its cost is the extended cost; shown per unit.
+  /// A cost of $0 is Service Fusion's "no cost entered" (most services): unknown, not free, so the line has no cost and
+  /// no profit is worked out over it (Services Catalog Phase 2; the server copies these lines the same way).
   List<LineDraft> get _sfLines => [
     for (final it in _sfItems)
       () {
@@ -58,8 +60,8 @@ extension _JobItems on _JobDetailScreenState {
           quantity: q,
           rate: it['rate'] == null ? null : _JobDetailScreenState._n(it['rate']),
           // A return's cost comes as -$7 on -1: $7 a unit (it was shown as -$7 a unit, so +$7 extended, before).
-          // Same rule as seedFromServiceFusion in line_items.js.
-          cost: ext == null ? null : (q != 0 ? (ext / q * 100).round() / 100 : (ext == 0 ? 0 : null)),
+          // Same rule as seedFromServiceFusion in line_items.js, where a cost of 0 is unknown too.
+          cost: ext == null || ext == 0 ? null : (q != 0 ? (ext / q * 100).round() / 100 : null),
           taxable: (it['tax'] ?? '').toString().trim().isNotEmpty,
           source: 'service_fusion',
           customerVisible: it['is_show_rate_items'] == true,
@@ -230,17 +232,19 @@ extension _JobItems on _JobDetailScreenState {
   }
 
   /// The estimate's own option (Service Fusion's lines) as a rail tab: its total as Service Fusion has it, its lines,
-  /// and its margin on the money before tax (as the editor's profit panel works it out).
+  /// and its margin on the money before tax (as the editor's profit panel works it out). No margin while a line's cost
+  /// is unknown (a Service Fusion cost of 0 is, see [_sfLines]): it would read as if that line cost nothing.
   _TabFacts get _sfTab {
     final rows = _sfSummaryRows();
     final total = rows.where((r) => r.kind == SummaryKind.total).firstOrNull?.cents ?? rows.fold<int>(0, (s, r) => s + r.cents);
     final net = rows.where((r) => r.beforeTax).fold<int>(0, (s, r) => s + r.cents);
-    final cost = computeLineTotals(_sfLines, null).costCents;
+    final figures = computeLineTotals(_sfLines, null);
+    final cost = figures.costCents;
     return _TabFacts(
       name: kEstimateOptionName,
       totalCents: total,
       lines: _sfLines.where((l) => !l.isDiscount).length,
-      marginPct: net > 0 ? ((net - cost) / net * 1000).round() / 10 : null,
+      marginPct: net > 0 && figures.missingCostLines == 0 ? ((net - cost) / net * 1000).round() / 10 : null,
       current: _lines?.accepted == null,
     );
   }
@@ -390,6 +394,7 @@ extension _JobItems on _JobDetailScreenState {
                 // No taxOptions: this set has its own tax rate (its tax line), so a line is taxed at that or not at all.
                 onPreviewSave: _previewSave,
                 onDirtyChanged: (d) => _set(() => d ? _dirty.add(set.id) : _dirty.remove(set.id)),
+                onConfirmZero: _canEditLines && !set.locked ? (line) => _confirmZero(set, line) : null,
               ),
             ),
           ),
@@ -515,6 +520,7 @@ extension _JobItems on _JobDetailScreenState {
                   onPreviewSave: _previewSave,
                   onDirtyChanged: (d) => _set(() => d ? _dirty.add(o.id) : _dirty.remove(o.id)),
                   onFigures: (total, margin) => _set(() => _liveFigures[o.id] = (total, margin)),
+                  onConfirmZero: _canEditLines && !o.locked ? (line) => _confirmZero(o, line) : null,
                   emptyTitle: 'No lines in ${o.name} yet',
                   emptyMessage: _editing && !o.locked
                       ? 'Search the catalog below to try a line. Lines tried here are a preview and aren\'t kept.'
@@ -533,15 +539,33 @@ extension _JobItems on _JobDetailScreenState {
         ],
       );
 
-  /// Why [o] can't be accepted yet, or null when it can: the server's own rules (a line to sell, every line priced),
-  /// checked here first so the button can say so instead of failing.
+  /// Why [o] can't be accepted yet, or null when it can: the server's own rules (a line to sell, every line priced,
+  /// every $0.00 line confirmed as no charge), checked here first so the button can say so instead of failing.
   String? _cantAccept(LineOption o) {
     if (_editing) return 'Exit the preview first: changes in it aren\'t part of ${o.name}.';
     final items = o.items.where((l) => !l.isDiscount).toList();
     if (items.isEmpty) return 'Add line items before accepting this option.';
     final unpriced = items.where((l) => l.rate == null).length;
     if (unpriced > 0) return '${unpriced == 1 ? 'One line has' : '$unpriced lines have'} no price yet. Price every line before accepting.';
+    // As the server words it (ZERO_PRICE_UNCONFIRMED), the line numbered as the option lists it.
+    final zero = o.items.indexWhere((l) => l.zeroUnconfirmed);
+    if (zero >= 0) {
+      final more = o.items.where((l) => l.zeroUnconfirmed).length - 1;
+      final line = 'Line ${zero + 1} ("${o.items[zero].name.trim()}")';
+      return more == 0
+          ? '$line is \$0.00 and not confirmed as no charge. Confirm it or enter a price before accepting.'
+          : '$line and $more other line${more == 1 ? '' : 's'} are \$0.00 and not confirmed as no charge. Confirm them or enter prices before accepting.';
+    }
     return null;
+  }
+
+  /// A saved $0.00 line confirmed as no charge, outside the preview: the server records who and when, and the option
+  /// comes back with it (a stale version or an accepted option is refused, and the page reloads).
+  Future<void> _confirmZero(LineOption o, LineDraft line) async {
+    final id = line.id;
+    if (id == null) return;
+    final current = _lines?.byId(o.id) ?? o;
+    await _run('confirm-zero', () => _api.confirmZero(o.id, id, current.version), done: '"${line.name.trim()}" is confirmed as no charge.');
   }
 
   Future<void> _run(String what, Future<LineItemsState> Function() call, {String? done}) async {
@@ -940,9 +964,17 @@ class _OptionTab extends StatelessWidget {
     return w;
   }
 
-  /// The least a tab may be cut to so one more fits beside it: its figures stay whole, only a long name is shortened.
-  static double floorOf(BuildContext context, _TabFacts f, {required bool showMargin}) =>
-      (_figuresWidth(context, f, showMargin: showMargin) + 2 * padX + 2).clamp(minW, maxW).toDouble();
+  /// The least a tab may be cut to so one more fits beside it: its figures and its marks stay whole, only a long name is
+  /// shortened. (Its marks used to be left out: once a tab's figures got short, the estimate's own tab with no margin
+  /// to show while a cost is unknown, it could be cut narrower than its "Current" mark, which overflowed.)
+  static double floorOf(BuildContext context, _TabFacts f, {required bool showMargin, bool dirty = false}) {
+    var marks = 0.0;
+    if (f.mark case final mark?) marks += 6 + _TabMark.widthOf(context, mark);
+    if (f.recommended) marks += 5 + 15;
+    if (dirty) marks += 6 + 7;
+    final figures = _figuresWidth(context, f, showMargin: showMargin);
+    return ((figures > marks ? figures : marks) + 2 * padX + 2).clamp(minW, maxW).toDouble();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1166,7 +1198,10 @@ class _OptionTabs extends StatelessWidget {
         final trial = [...shown, all.firstWhere((i) => !shown.contains(i))]..sort();
         final short = need(trial, more: n - trial.length) - room;
         if (short > 0) {
-          final floor = {for (final i in shown) if (i != sel) i: _OptionTab.floorOf(context, entries[i].$2, showMargin: showMargin)};
+          final floor = {
+            for (final i in shown)
+              if (i != sel) i: _OptionTab.floorOf(context, entries[i].$2, showMargin: showMargin, dirty: s._dirty.contains(entries[i].$1)),
+          };
           double cut(double level) => floor.entries.fold(0.0, (a, e) => a + (w[e.key] - math.max(level, e.value)).clamp(0, double.infinity));
           if (cut(0) < short) break;
           // The widest come down first, to one level: the lowest it needs (found by halving).

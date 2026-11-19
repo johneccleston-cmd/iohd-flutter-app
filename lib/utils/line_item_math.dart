@@ -11,6 +11,11 @@
 //   tax            = tax rate x (taxable items - taxable discounts), never below 0
 //   total          = items - discounts + tax
 //   gross profit   = (items - discounts) - cost. Sales tax goes to the state, so it is never profit.
+// Profit and margin are only worked out when every line's cost is known (Services Catalog Phase 2, 2026-11-18): a line
+// with a quantity and no cost makes both null, and missingCostLines says how many lines lack one (an unknown cost read
+// as $0 showed a 100% margin on lines nobody had costed). A line at $0.00 with a quantity is a no-charge line:
+// zeroUnconfirmedLines counts the ones nobody has confirmed ([LineDraft.zeroPriceConfirmed]), so a silent $0 can't slip
+// through. An unpriced line (rate null) is not a $0 line.
 
 /// What a line is: something sold, or a discount taken off (entered as a positive amount).
 enum LineKind { item, discount }
@@ -65,6 +70,15 @@ class LineDraft {
   /// line is still charged; it only isn't listed for the customer. Not saved by the server yet.
   final bool customerVisible;
 
+  /// Someone confirmed that this $0.00 line is no charge ([isZeroPrice]). From the server, a line with a recorded
+  /// confirmer or time; in the preview, the person who confirmed it there. Changing the line's name, quantity or price
+  /// takes it off again ([copyWith]): the confirmation was for the line as it was.
+  final bool zeroPriceConfirmed;
+
+  /// Who confirmed it and when (the server records both; the preview has only who).
+  final String? zeroPriceConfirmedBy;
+  final DateTime? zeroPriceConfirmedAt;
+
   const LineDraft({
     this.id,
     this.kind = LineKind.item,
@@ -83,9 +97,19 @@ class LineDraft {
     this.source = 'manual',
     this.customerVisible = true,
     this.taxName,
+    this.zeroPriceConfirmed = false,
+    this.zeroPriceConfirmedBy,
+    this.zeroPriceConfirmedAt,
   });
 
   bool get isDiscount => kind == LineKind.discount;
+
+  /// A $0 line (the server's rule, src/lineItemMath.js): an item priced at a rate that rounds to $0.00, with a
+  /// quantity. It needs someone to confirm it is no charge. A line at quantity 0, or not priced yet, isn't one.
+  bool get isZeroPrice => !isDiscount && rate != null && (rate! * 100).round() == 0 && _milli(quantity) != 0;
+
+  /// A $0 line nobody has confirmed yet.
+  bool get zeroUnconfirmed => isZeroPrice && !zeroPriceConfirmed;
 
   static const _keep = Object();
 
@@ -101,6 +125,8 @@ class LineDraft {
     bool? taxable,
     bool? customerVisible,
     Object? taxName = _keep,
+    bool? zeroPriceConfirmed,
+    String? zeroPriceConfirmedBy,
   }) => LineDraft(
     id: identical(id, _keep) ? this.id : id as String?,
     kind: kind,
@@ -119,9 +145,28 @@ class LineDraft {
     source: source,
     customerVisible: customerVisible ?? this.customerVisible,
     taxName: identical(taxName, _keep) ? this.taxName : taxName as String?,
+    // A confirmation given here is taken as given (who: [zeroPriceConfirmedBy]). Otherwise it stays only while the line
+    // is still the one that was confirmed (the same name, quantity and price, the server's rule on a save).
+    zeroPriceConfirmed: zeroPriceConfirmed ?? (this.zeroPriceConfirmed && _stillSame(name, quantity, rate)),
+    zeroPriceConfirmedBy: zeroPriceConfirmed != null
+        ? (zeroPriceConfirmed ? zeroPriceConfirmedBy : null)
+        : (_stillSame(name, quantity, rate) ? this.zeroPriceConfirmedBy : null),
+    zeroPriceConfirmedAt: zeroPriceConfirmed == null && _stillSame(name, quantity, rate) ? zeroPriceConfirmedAt : null,
   );
 
+  /// Whether a [copyWith] of these leaves the line's name, quantity and price as they are.
+  bool _stillSame(String? name, double? quantity, Object? rate) =>
+      (name == null || name.trim() == this.name.trim()) &&
+      (quantity == null || _milli(quantity) == _milli(this.quantity)) &&
+      (identical(rate, _keep) || _cents((rate as num?)?.toDouble()) == _cents(this.rate));
+
   static double? _d(dynamic v) => v == null || v.toString().trim().isEmpty ? null : double.tryParse(v.toString());
+
+  static String? _text(dynamic v) => v == null || v.toString().trim().isEmpty ? null : v.toString().trim();
+
+  /// A $0 line the server has a confirmation for: it recorded who or when (an older server sends neither).
+  static bool _confirmedIn(Map<String, dynamic> j) =>
+      _text(j['zeroPriceConfirmedBy']) != null || _text(j['zeroPriceConfirmedAt']) != null || j['zeroPriceConfirmed'] == true;
 
   factory LineDraft.fromJson(Map<String, dynamic> j) => LineDraft(
     id: j['id']?.toString(),
@@ -141,10 +186,15 @@ class LineDraft {
     source: (j['source'] ?? 'manual').toString(),
     customerVisible: j['customerVisible'] != false,
     taxName: (j['taxName'] as String?)?.trim().isEmpty ?? true ? null : (j['taxName'] as String).trim(),
+    zeroPriceConfirmed: _confirmedIn(j),
+    zeroPriceConfirmedBy: _confirmedIn(j) ? _text(j['zeroPriceConfirmedBy']) : null,
+    zeroPriceConfirmedAt: _confirmedIn(j) ? DateTime.tryParse(j['zeroPriceConfirmedAt']?.toString() ?? '') : null,
   );
 
-  /// What the server's PUT .../items takes (only admins save line items, and they see costs).
+  /// What the server's PUT .../items takes (only admins save line items, and they see costs). A saved line carries its
+  /// id, so the server can keep a $0 line's original confirmation while the line is unchanged.
   Map<String, dynamic> toJson() => {
+    'id': ?id,
     'kind': isDiscount ? 'discount' : 'item',
     'name': name.trim(),
     'description': description.trim(),
@@ -159,6 +209,7 @@ class LineDraft {
     'catalogRate': catalogRate,
     'catalogCost': catalogCost,
     'source': source,
+    'zeroPriceConfirmed': isZeroPrice && zeroPriceConfirmed,
   };
 
   /// Same content (ignores the id), for "is there anything unsaved".
@@ -174,7 +225,8 @@ class LineDraft {
       taxable == o.taxable &&
       customerVisible == o.customerVisible &&
       (taxName ?? '') == (o.taxName ?? '') &&
-      inventoryItemId == o.inventoryItemId;
+      inventoryItemId == o.inventoryItemId &&
+      zeroPriceConfirmed == o.zeroPriceConfirmed;
 }
 
 int? _cents(double? v) => v == null ? null : (v * 100).round();
@@ -203,7 +255,9 @@ class LineFigures {
   const LineFigures(this.amountCents, this.extCostCents);
 }
 
-/// A set's totals, in cents. [marginPct] is one decimal, or null when there is nothing to divide by.
+/// A set's totals, in cents. [profitCents] and [marginPct] are null while a line's cost is unknown
+/// ([missingCostLines] > 0; [costCents] is then the costs that are known); [marginPct] is one decimal, and also null when
+/// there is nothing to divide by.
 class LineTotals {
   final int itemsCents;
   final int discountCents;
@@ -212,10 +266,13 @@ class LineTotals {
   final int totalCents;
   final int netCents;
   final int costCents;
-  final int profitCents;
+  final int? profitCents;
   final double? marginPct;
   final int unpricedLines;
   final int missingCostLines;
+
+  /// $0 lines nobody has confirmed as no charge ([LineDraft.zeroUnconfirmed]).
+  final int zeroUnconfirmedLines;
   final List<LineFigures> lines;
 
   const LineTotals({
@@ -230,6 +287,7 @@ class LineTotals {
     required this.marginPct,
     required this.unpricedLines,
     required this.missingCostLines,
+    this.zeroUnconfirmedLines = 0,
     required this.lines,
   });
 
@@ -242,7 +300,7 @@ class LineTotals {
 /// rate instead, each tax worked out on its own lines. Without it (or with no named lines) the result is exactly the
 /// one-rate formula the backend shares.
 LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String, double>? taxRates}) {
-  var items = 0, discounts = 0, taxable = 0, cost = 0, unpriced = 0, missingCost = 0;
+  var items = 0, discounts = 0, taxable = 0, cost = 0, unpriced = 0, missingCost = 0, zeroUnconfirmed = 0;
   final named = <String, int>{}; // tax name -> taxable cents taxed at that tax's rate
   final figures = <LineFigures>[];
   for (final l in lines) {
@@ -255,7 +313,11 @@ LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String
     }
     final q = _milli(l.quantity);
     final amount = l.rate == null ? 0 : mulDivRound(q, (l.rate! * 100).round(), 1000);
-    if (l.rate == null) unpriced++;
+    if (l.rate == null) {
+      unpriced++;
+    } else if ((l.rate! * 100).round() == 0 && q != 0 && !l.zeroPriceConfirmed) {
+      zeroUnconfirmed++;
+    }
     items += amount;
     final tn = l.taxName;
     if (l.taxable && tn != null && taxRates != null && taxRates.containsKey(tn)) {
@@ -285,7 +347,8 @@ LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String
     namedBase += e.value;
   }
   final net = items - discounts;
-  final profit = net - cost;
+  // Unknown while a line's cost is missing (costCents is then only the costs that are known).
+  final profit = missingCost > 0 ? null : net - cost;
   return LineTotals(
     itemsCents: items,
     discountCents: discounts,
@@ -296,9 +359,10 @@ LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String
     costCents: cost,
     profitCents: profit,
     // round() in Dart goes half away from zero; the backend does the same on purpose.
-    marginPct: net > 0 ? (profit / net * 1000).round() / 10 : null,
+    marginPct: profit != null && net > 0 ? (profit / net * 1000).round() / 10 : null,
     unpricedLines: unpriced,
     missingCostLines: missingCost,
+    zeroUnconfirmedLines: zeroUnconfirmed,
     lines: figures,
   );
 }

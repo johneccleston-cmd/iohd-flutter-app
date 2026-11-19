@@ -24,6 +24,7 @@ void main() {
             rate: _d(i['rate']),
             cost: _d(i['cost']),
             taxable: i['taxable'] == true,
+            zeroPriceConfirmed: i['zeroPriceConfirmed'] == true,
           ),
       ];
       final t = computeLineTotals(lines, _d(c['taxRate']));
@@ -34,12 +35,81 @@ void main() {
       expect(t.taxCents, e['taxCents'], reason: 'tax');
       expect(t.totalCents, e['totalCents'], reason: 'total');
       expect(t.costCents, e['costCents'], reason: 'cost');
+      // Null while a line's cost is unknown (Services Catalog Phase 2).
       expect(t.profitCents, e['profitCents'], reason: 'profit');
       expect(t.marginPct, e['marginPct'] == null ? isNull : closeTo((e['marginPct'] as num).toDouble(), 1e-9), reason: 'margin');
       expect(t.unpricedLines, e['unpricedLines'], reason: 'unpriced');
       expect(t.missingCostLines, e['missingCostLines'], reason: 'missing cost');
+      expect(t.zeroUnconfirmedLines, e['zeroUnconfirmedLines'], reason: '\$0 lines not confirmed');
     });
   }
+
+  test('every case says how many \$0 lines are unconfirmed, as the backend\'s copy does', () {
+    for (final c in cases) {
+      expect((c['expect'] as Map).containsKey('zeroUnconfirmedLines'), isTrue, reason: c['name'].toString());
+    }
+  });
+
+  group('\$0.00 lines', () {
+    test('a \$0 line is an item at \$0.00 with a quantity; quantity 0, unpriced and discounts are not', () {
+      expect(const LineDraft(name: 'a', quantity: 1, rate: 0).isZeroPrice, isTrue);
+      expect(const LineDraft(name: 'a', quantity: -1, rate: 0.004).isZeroPrice, isTrue, reason: 'rounds to \$0.00');
+      expect(const LineDraft(name: 'a', quantity: 0, rate: 0).isZeroPrice, isFalse);
+      expect(const LineDraft(name: 'a', quantity: 1).isZeroPrice, isFalse, reason: 'not priced yet');
+      expect(const LineDraft(name: 'a', quantity: 1, rate: 0.01).isZeroPrice, isFalse);
+      expect(const LineDraft(name: 'a', kind: LineKind.discount, rate: 0).isZeroPrice, isFalse);
+    });
+
+    test('a confirmation comes off when the name, quantity or price changes, and stays otherwise', () {
+      final confirmed = const LineDraft(name: 'Haul away', quantity: 1, rate: 0).copyWith(zeroPriceConfirmed: true, zeroPriceConfirmedBy: 'Dana');
+      expect(confirmed.zeroPriceConfirmed, isTrue);
+      expect(confirmed.zeroPriceConfirmedBy, 'Dana');
+      expect(confirmed.zeroUnconfirmed, isFalse);
+      for (final kept in [
+        confirmed.copyWith(taxable: true),
+        confirmed.copyWith(description: 'Old door to the dump'),
+        confirmed.copyWith(customerVisible: false),
+        confirmed.copyWith(cost: 25),
+        confirmed.copyWith(id: null),
+        confirmed.copyWith(quantity: 1, rate: 0, name: ' Haul away '),
+      ]) {
+        expect(kept.zeroPriceConfirmed, isTrue);
+        expect(kept.zeroPriceConfirmedBy, 'Dana');
+      }
+      for (final changed in [confirmed.copyWith(name: 'Haul away (2)'), confirmed.copyWith(quantity: 2), confirmed.copyWith(rate: 10), confirmed.copyWith(rate: null)]) {
+        expect(changed.zeroPriceConfirmed, isFalse);
+        expect(changed.zeroPriceConfirmedBy, isNull);
+      }
+      expect(confirmed.copyWith(zeroPriceConfirmed: false).zeroPriceConfirmedBy, isNull);
+    });
+
+    test('from the server: confirmed when it recorded who or when; sent back as zeroPriceConfirmed with the line id', () {
+      final saved = LineDraft.fromJson({'id': '41', 'name': 'Haul away', 'quantity': 1, 'rate': '0.00', 'zeroPriceConfirmedBy': 'Dana Whitfield', 'zeroPriceConfirmedAt': '2026-11-18T15:00:00Z'});
+      expect(saved.zeroPriceConfirmed, isTrue);
+      expect(saved.zeroPriceConfirmedBy, 'Dana Whitfield');
+      expect(saved.zeroPriceConfirmedAt, DateTime.utc(2026, 11, 18, 15));
+      expect(saved.toJson()['zeroPriceConfirmed'], isTrue);
+      expect(saved.toJson()['id'], '41');
+      final open = LineDraft.fromJson({'name': 'Haul away', 'quantity': 1, 'rate': 0, 'zeroPriceConfirmedBy': null, 'zeroPriceConfirmedAt': null});
+      expect(open.zeroPriceConfirmed, isFalse);
+      expect(open.toJson()['zeroPriceConfirmed'], isFalse);
+      expect(open.toJson().containsKey('id'), isFalse);
+      expect(LineDraft.fromJson({'name': 'old server', 'quantity': 1, 'rate': 0}).zeroPriceConfirmed, isFalse);
+      expect(saved.sameAs(open), isFalse, reason: 'a confirmation is a change');
+      expect(computeLineTotals([saved, open], null).zeroUnconfirmedLines, 1);
+    });
+  });
+
+  test('profit and margin are unknown while a line has no cost; never 100% on uncosted lines', () {
+    final t = computeLineTotals(const [LineDraft(name: 'Install', quantity: 1, rate: 300), LineDraft(name: 'Door', quantity: 1, rate: 700, cost: 400)], null);
+    expect(t.missingCostLines, 1);
+    expect(t.costCents, 40000, reason: 'the known costs');
+    expect(t.profitCents, isNull);
+    expect(t.marginPct, isNull);
+    final costed = computeLineTotals(const [LineDraft(name: 'Install', quantity: 1, rate: 300, cost: 0), LineDraft(name: 'Door', quantity: 1, rate: 700, cost: 400)], null);
+    expect(costed.profitCents, 60000, reason: 'a cost of \$0 entered on our own line is a cost');
+    expect(costed.marginPct, 60);
+  });
 
   test('per-line figures line up with the lines', () {
     final t = computeLineTotals(const [

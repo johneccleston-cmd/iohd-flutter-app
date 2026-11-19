@@ -321,6 +321,10 @@ class FakeJobServer {
     return rec['is_estimate'] == true ? 10.5 : null; // what the real server works out for estimate 1093839956
   }
 
+  /// A $0 line as src/lineItemMath.js has it: an item at a rate that rounds to $0.00, with a quantity.
+  static bool _isZero(Map<String, dynamic> i) =>
+      i['kind'] != 'discount' && i['rate'] is num && ((i['rate'] as num) * 100).round() == 0 && (((i['quantity'] as num?) ?? 1) * 1000).round() != 0;
+
   http.Response _ok(Object body, [int status = 200]) => http.Response(json.encode(body), status);
   http.Response _err(int status, String msg, [Map<String, dynamic>? extra]) => http.Response(json.encode({'error': msg, ...?extra}), status);
 
@@ -389,6 +393,24 @@ class FakeJobServer {
     final job = rec['job'] as Map;
 
     // ---- the line-items server ----
+    // A $0.00 line confirmed as no charge (Services Catalog Phase 2): who and when are recorded, nothing else changes.
+    // Only items given a fixed 'id' can be found (the others get a new one in every answer).
+    final cz = RegExp(r'^/options/(\w+)/items/(\w+)/confirm-zero$').firstMatch(rest);
+    if (cz != null) {
+      if (!canEdit) return _err(403, 'Admin access required.');
+      final o = optionsOf(jobId).where((x) => x.id == cz.group(1)).firstOrNull;
+      if (o == null) return _err(404, 'That option was not found.');
+      if (body['version'] != o.version) return _err(409, 'Changed by someone else.', {'currentVersion': o.version});
+      if (o.acceptedAt != null) return _err(409, 'An accepted option is locked.');
+      final item = o.items.where((i) => i['id'] == cz.group(2)).firstOrNull;
+      if (item == null) return _err(404, 'That line is not in this option.');
+      if (!_isZero(item)) return _err(400, 'Only a \$0.00 line can be confirmed as no charge.');
+      item['zeroPriceConfirmedBy'] = user;
+      item['zeroPriceConfirmedAt'] = '2026-11-18T16:00:00Z';
+      o.version++;
+      _log(o, 'zero_confirmed');
+      return _ok(_state(jobId));
+    }
     final om = RegExp(r'^/options(?:/(\w+))?(?:/(items|accept|unaccept|convert))?$').firstMatch(rest)!;
     final id = om.group(1);
     final verb = om.group(2);
@@ -461,6 +483,12 @@ class FakeJobServer {
       if (other != null) return _err(409, '"${other.name}" is already the accepted option. Undo that first.');
       final unpriced = o.items.where((i) => i['kind'] != 'discount' && i['rate'] == null).length;
       if (unpriced > 0) return _err(400, '${unpriced == 1 ? 'One line has' : '$unpriced lines have'} no price yet. Price every line before accepting.');
+      final zero = o.items.indexWhere((i) => _isZero(i) && i['zeroPriceConfirmedBy'] == null);
+      if (zero >= 0) {
+        return _err(400, 'Line ${zero + 1} ("${o.items[zero]['name']}") is \$0.00 and not confirmed as no charge. Confirm it or enter a price before accepting.', {
+          'code': 'ZERO_PRICE_UNCONFIRMED',
+        });
+      }
       o.acceptedAt = '2026-11-03T16:00:00Z';
       o.acceptedBy = user;
       o.version++;
