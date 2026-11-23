@@ -7,15 +7,15 @@ class JobDetailsDialog extends StatelessWidget {
   const JobDetailsDialog({super.key, required this.job});
 
   // Exact color palette from Android XML
-  static const Color bgColor = Color(0xFFF8F9FB);
+  static const Color bgColor = Color(0xFFF8F8F8);
   static const Color primaryTextColor = Color(0xFF1A1C1E);
   static const Color secondaryTextColor = Color(0xFF4B5563);
   static const Color sectionLabelColor = Color(0xFF9CA3AF);
   static const Color locationRedColor = Color(0xFFCC0007);
   static const Color primaryRedButton = Color(0xFFCC0007);
   static const Color paymentGreenButton = Color(0xFF1A7A4A);
-  static const Color strokeBorderColor = Color(0xFFE5E7EB);
-  static const Color dividerColor = Color(0xFFE5E7EB);
+  static const Color strokeBorderColor = Color(0xFFE5E5E5);
+  static const Color dividerColor = Color(0xFFE5E5E5);
 
   // Warning Notes Card Colors
   static const Color notesBgColor = Color(0xFFFFFBF0);

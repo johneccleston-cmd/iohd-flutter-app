@@ -14,7 +14,7 @@ import 'dashboard_kit.dart';
 Color dashReadableOnDark(Color color) {
   const bg = Color(0xFF1E293B); // the lighter end of the card's gradient, the harder one to read against
   final hsl = HSLColor.fromColor(color);
-  if (hsl.saturation < 0.3 || hsl.lightness < 0.2) return const Color(0xFFF8FAFC);
+  if (hsl.saturation < 0.3 || hsl.lightness < 0.2) return const Color(0xFFF8F8F8);
   double contrast(Color c) {
     final a = c.computeLuminance(), b = bg.computeLuminance();
     return (math.max(a, b) + 0.05) / (math.min(a, b) + 0.05);
@@ -34,7 +34,7 @@ Color dashReadableOnDark(Color color) {
 const dashTipGradient = LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.ink, Color(0xFF1E293B)]);
 const dashTipShadow = [BoxShadow(color: Color(0x400F172A), blurRadius: 24, offset: Offset(0, 10))];
 const dashTipEdge = Color(0x1FFFFFFF);
-const dashTipBodyStyle = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, height: 1.45, color: Color(0xFFCBD5E1));
+const dashTipBodyStyle = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, height: 1.45, color: Color(0xFFD4D4D4));
 
 final dashTipDecoration = BoxDecoration(
   gradient: dashTipGradient,
@@ -218,7 +218,7 @@ class _DashHoverCardState extends State<DashHoverCard> with SingleTickerProvider
                         Expanded(
                           child: Text(
                             widget.title,
-                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, height: 1.3, color: Color(0xFFE2E8F0)),
+                            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, height: 1.3, color: Color(0xFFE4E4E4)),
                           ),
                         ),
                         const SizedBox(width: 12),

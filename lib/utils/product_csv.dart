@@ -26,6 +26,47 @@ String productCatalogCsv(List<CatalogEntry> products, {required bool canSeeCost}
   return out.toString();
 }
 
+/// The Services Catalog as a spreadsheet file: the page's own columns plus what the page no longer shows (usage, the price
+/// range and the tax default), so nothing is lost by taking them off the screen. Cost only with Line Items & Costs > View.
+String servicesCatalogCsv(List<CatalogEntry> services, {required bool canSeeCost}) {
+  final headers = [
+    'Service',
+    'Category', // the page's word for it (a service not moved yet shows its Service Fusion group)
+    'Price',
+    if (canSeeCost) 'Cost',
+    'Lowest price',
+    'Highest price',
+    'Times used',
+    'Last used',
+    'Tax',
+    'Status',
+    'Replaced by',
+    'Edited',
+    'Description',
+  ];
+  final out = StringBuffer()..write(_line(headers));
+  for (final e in services) {
+    out.write(
+      _line([
+        e.name,
+        e.group.isEmpty ? e.category : e.group,
+        _money(e.rate), // blank means no usual price
+        if (canSeeCost) _money(e.cost),
+        _money(e.rateMin),
+        _money(e.rateMax),
+        '${e.uses}',
+        e.lastUsed == null ? '' : e.lastUsed!.split('T').first,
+        e.taxable ? 'Taxable' : 'No tax',
+        e.active ? 'Active' : 'Inactive',
+        e.supersededBy?.name ?? '',
+        e.isEdited ? 'Yes' : '',
+        e.description.trim().replaceAll(RegExp(r'\s+'), ' '),
+      ]),
+    );
+  }
+  return out.toString();
+}
+
 /// The file's bytes: UTF-8 with a byte order mark, so Excel reads the accents and symbols right.
 Uint8List productCatalogCsvBytes(String csv) => Uint8List.fromList([0xEF, 0xBB, 0xBF, ...utf8.encode(csv)]);
 

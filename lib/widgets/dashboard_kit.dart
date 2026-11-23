@@ -18,8 +18,15 @@ class DashUi {
   static const ink = Color(0xFF0F172A);
   static const slate = Color(0xFF475569);
   static const muted = Color(0xFF94A3B8);
-  static const line = Color(0xFFE2E8F0);
-  static const faint = Color(0xFFF1F5F9);
+  static const line = Color(0xFFE4E4E4);
+  static const faint = Color(0xFFF2F2F2);
+
+  // Table surfaces: neutral greys (no blue cast), matching the app's neutral page grey (AppTheme.bgColor).
+  // Row stripes, row hover, the header of a striped table, and the rule between rows.
+  static const rowStripe = Color(0xFFF3F3F3);
+  static const rowHover = Color(0xFFEAEAEA);
+  static const rowHead = Color(0xFFE6E6E6);
+  static const rowRule = Color(0xFFE4E4E4);
 
   static const emerald = Color(0xFF10B981);
   static const emeraldDeep = Color(0xFF059669);
@@ -30,7 +37,7 @@ class DashUi {
   static const red = Color(0xFFDC2626);
 
   /// A form box's resting outline: between `line` (too faint to read as a box) and `muted` (heavy on a grid of boxes).
-  static const fieldEdge = Color(0xFFB4C0CF);
+  static const fieldEdge = Color(0xFFB8B8B8);
 
   // Text-safe tones (at least 4.5:1 on white and on `faint`). `muted`,
   // `emeraldDeep` and `amber` fail as small text, so use these for readable

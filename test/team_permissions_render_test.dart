@@ -101,7 +101,7 @@ void main() {
       expect(find.byType(Checkbox), findsNWidgets(kAllAccessKeys.length + 2), reason: 'plus the two tech-app switches');
       expect(find.text('Admins only'), findsNothing);
       expect(find.text('Only admins can'), findsNothing);
-      for (final row in ['Team', 'Line Items & Costs', 'Ask Jarvis', 'Calls & Texts']) {
+      for (final row in ['Team', 'Line Items & Costs', 'Ask Jarvis', 'Calls & Texts', 'Product Catalog', 'Services Catalog', 'Company & Commercial Pools']) {
         expect(find.text(kAccessResources.values.firstWhere((r) => r.label == row).help), findsOneWidget, reason: row);
       }
       // Bella's saved switches read through.
@@ -143,10 +143,15 @@ void main() {
     await http.runWithClient(() async {
       await _open(t, const Size(1440, 5000), 'New Person');
       expect(t.takeException(), isNull);
-      for (final off in ['Financial view', 'Payroll view', "KPI's view", 'Team view', 'Line Items & Costs view', 'Ask Jarvis view']) {
+      for (final off in [
+        'Financial view', 'Payroll view', "KPI's view", 'Team view', 'Line Items & Costs view', 'Ask Jarvis view',
+        // 2026-11-19: the newer screens' own switches start as their old stand-ins did.
+        'Product Catalog create', 'Product Catalog update', 'Product Catalog delete', 'Services Catalog view',
+        'Services Catalog update', 'Company & Commercial Pools view', 'Company & Commercial Pools create',
+      ]) {
         expect(_ticked(t, off), isFalse, reason: off);
       }
-      for (final on in ['Customers view', 'Jobs update', 'Sales view', 'Calls & Texts create']) {
+      for (final on in ['Customers view', 'Jobs update', 'Sales view', 'Calls & Texts create', 'Product Catalog view']) {
         expect(_ticked(t, on), isTrue, reason: on);
       }
     }, () => MockClient((r) async => _handle(r)));

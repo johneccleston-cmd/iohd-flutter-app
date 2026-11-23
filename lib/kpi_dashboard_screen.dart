@@ -53,8 +53,8 @@ class KPIDashboardContent extends StatefulWidget {
 const _ink = Color(0xFF0F172A);
 const _slate = Color(0xFF64748B);
 const _muted = Color(0xFF94A3B8);
-const _line = Color(0xFFE5E7EB);
-const _faint = Color(0xFFF1F5F9);
+const _line = Color(0xFFE5E5E5);
+const _faint = Color(0xFFF2F2F2);
 const _gold = Color(0xFFF59E0B);
 
 String _str(dynamic v) => v?.toString().trim() ?? '';
@@ -1362,7 +1362,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                     );
                   },
                   errorBuilder: (context, error, stackTrace) => const Center(
-                    child: Icon(Icons.person, size: 64, color: Color(0xFFCBD5E1)),
+                    child: Icon(Icons.person, size: 64, color: Color(0xFFD4D4D4)),
                   ),
                 ),
               ),
@@ -1496,7 +1496,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                 Container(
                   width: double.infinity,
                   padding: EdgeInsets.symmetric(vertical: compact ? 6 : 10, horizontal: compact ? 14 : 18),
-                  decoration: BoxDecoration(color: const Color(0xFFF8FAFC), borderRadius: BorderRadius.circular(12)),
+                  decoration: BoxDecoration(color: const Color(0xFFF8F8F8), borderRadius: BorderRadius.circular(12)),
                   child: Flex(
                     direction: compact ? Axis.horizontal : Axis.vertical,
                     mainAxisAlignment: compact ? MainAxisAlignment.spaceBetween : MainAxisAlignment.start,

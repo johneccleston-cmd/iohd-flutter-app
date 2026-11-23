@@ -780,7 +780,7 @@ class DashRankBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final (Color fg, Color bg) = switch (rank) {
       1 => (_gold, const Color(0xFFFEF3C7)),
-      2 => (_silver, const Color(0xFFF1F5F9)),
+      2 => (_silver, const Color(0xFFF2F2F2)),
       3 => (_bronze, const Color(0xFFFFEDD5)),
       _ => (DashUi.subtle, Colors.white),
     };
@@ -1878,7 +1878,7 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
     final rows = future ? const <DashTipRow>[] : v.tip(i);
     final prior = v.prior;
 
-    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFCBD5E1));
+    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFD4D4D4));
     const strong = TextStyle(
       fontSize: 13,
       fontWeight: FontWeight.w700,

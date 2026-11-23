@@ -385,8 +385,8 @@ class _InvoicesScreenState extends State<InvoicesScreen> with SingleTickerProvid
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
       decoration: BoxDecoration(
-        color: index.isOdd ? DashUi.faint : null,
-        border: const Border(top: BorderSide(color: DashUi.line)),
+        color: index.isOdd ? DashUi.rowStripe : null,
+        border: const Border(top: BorderSide(color: DashUi.rowRule)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,

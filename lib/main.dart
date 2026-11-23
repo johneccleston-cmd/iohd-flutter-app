@@ -9,7 +9,9 @@ import 'config/api_config.dart';
 import 'package:go_router/go_router.dart';
 import 'product_catalog_screen.dart';
 import 'product_detail_screen.dart';
+import 'service_detail_screen.dart';
 import 'services_catalog_screen.dart';
+import 'tax_settings_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
 import 'jobs_screen.dart';
@@ -45,6 +47,7 @@ import 'takeoffs_screen.dart';
 import 'config/auth_session.dart';
 import 'widgets/smooth_wheel_scroll.dart';
 import 'widgets/dash_hover_card.dart';
+import 'widgets/dashboard_kit.dart';
 
 
 
@@ -144,7 +147,11 @@ final GoRouter _router = GoRouter(
               GoRoute(
                 path: 'services',
                 builder: (context, state) => const ServicesCatalogScreen(),
+                // A service's own page (/inventory/services/item?key=...).
+                routes: serviceDetailRoutes(),
               ),
+              // What the Products & Services "Tax, discounts & fees" panel offers (2026-11-20).
+              GoRoute(path: 'tax-discounts-fees', builder: (context, state) => const TaxSettingsScreen()),
               // 🔥 UPDATED: Live Purchase Orders Screen
               GoRoute(
                 path: 'purchase-orders', 
@@ -240,10 +247,10 @@ Future<void> main() async {
 class IohdHubApp extends StatelessWidget {
   const IohdHubApp({super.key});
 
-  static const Color bgColor = Color(0xFFF8F9FB);
+  static const Color bgColor = Color(0xFFF8F8F8);
   static const Color brandRed = Color(0xFFCC0007);
   static const Color primaryText = Color(0xFF1A1C1E);
-  static const Color strokeBorder = Color(0xFFE5E7EB);
+  static const Color strokeBorder = Color(0xFFE5E5E5);
 
   @override
   Widget build(BuildContext context) {
@@ -254,117 +261,131 @@ class IohdHubApp extends StatelessWidget {
       routerConfig: _router,
       // Flutter text is not selectable by default. This makes all text in the app highlightable and copyable.
       builder: appSelectionBuilder,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.light,
-        scaffoldBackgroundColor: AppTheme.bgColor, // same page colour as the dashboards
-        typography: Typography.material2021(platform: defaultTargetPlatform),
-        textTheme: const TextTheme().apply(displayColor: primaryText, bodyColor: primaryText),
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: brandRed,
-          primary: brandRed,
-          surface: bgColor,
-        ),
-        // Highlighted text is the usual light blue, not the red primary (the default derives it from primary).
-        textSelectionTheme: const TextSelectionThemeData(
-          selectionColor: Color(0x663390FF),
-          selectionHandleColor: Color(0xFF1A73E8),
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          elevation: 0,
-        ),
-        cardTheme: CardThemeData(
-          color: Colors.white,
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: strokeBorder, width: 1),
-          ),
-        ),
-
-        // ---- Pop-ups: one look everywhere (dialogs, menus, dropdowns, tooltips, snackbars) ----
-        dialogTheme: DialogThemeData(
-          backgroundColor: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          elevation: 12,
-          shadowColor: Colors.black.withValues(alpha: 0.18),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(18),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
-          ),
-          titleTextStyle: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w800,
-            color: Color(0xFF0F172A),
-            letterSpacing: -0.3,
-          ),
-          contentTextStyle: const TextStyle(fontSize: 14, color: Color(0xFF475569), height: 1.45),
-          actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
-        ),
-        popupMenuTheme: PopupMenuThemeData(
-          color: Colors.white,
-          surfaceTintColor: Colors.transparent,
-          elevation: 8,
-          shadowColor: Colors.black.withValues(alpha: 0.14),
-          menuPadding: const EdgeInsets.all(6),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
-            side: const BorderSide(color: Color(0xFFE2E8F0)),
-          ),
-          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
-        ),
-        menuTheme: MenuThemeData(
-          style: MenuStyle(
-            backgroundColor: const WidgetStatePropertyAll(Colors.white),
-            surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-            elevation: const WidgetStatePropertyAll(8),
-            shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.14)),
-            padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-            ),
-          ),
-        ),
-        dropdownMenuTheme: DropdownMenuThemeData(
-          menuStyle: MenuStyle(
-            backgroundColor: const WidgetStatePropertyAll(Colors.white),
-            surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
-            elevation: const WidgetStatePropertyAll(8),
-            shape: WidgetStatePropertyAll(
-              RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-                side: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-            ),
-          ),
-        ),
-        // Every plain tooltip wears the scorecard hover card's look (see dash_hover_card.dart).
-        tooltipTheme: TooltipThemeData(
-          waitDuration: const Duration(milliseconds: 350),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          margin: const EdgeInsets.all(8),
-          constraints: const BoxConstraints(maxWidth: 320),
-          decoration: dashTipDecoration,
-          textStyle: dashTipBodyStyle,
-        ),
-        snackBarTheme: SnackBarThemeData(
-          behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF0F172A),
-          contentTextStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.white),
-          actionTextColor: const Color(0xFF93C5FD),
-          elevation: 6,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          insetPadding: const EdgeInsets.all(20),
-        ),
-      ),
+      theme: officeTheme(),
     );
   }
+}
+
+/// The office app's theme. A function of its own so the review harnesses (test/services_catalog_shots_test.dart and the
+/// real-browser harness in tool/ux_harness/) draw with exactly what the app draws with: a stand-in theme there hid the
+/// red text cursor below (UX audit 2026-11-19).
+ThemeData officeTheme() {
+  const bgColor = IohdHubApp.bgColor;
+  const brandRed = IohdHubApp.brandRed;
+  const primaryText = IohdHubApp.primaryText;
+  const strokeBorder = IohdHubApp.strokeBorder;
+  return ThemeData(
+    useMaterial3: true,
+    brightness: Brightness.light,
+    scaffoldBackgroundColor: AppTheme.bgColor, // same page colour as the dashboards
+    typography: Typography.material2021(platform: defaultTargetPlatform),
+    textTheme: const TextTheme().apply(displayColor: primaryText, bodyColor: primaryText),
+    colorScheme: ColorScheme.fromSeed(
+      seedColor: brandRed,
+      primary: brandRed,
+      surface: bgColor,
+    ),
+    // Highlighted text is the usual light blue, not the red primary (the default derives it from primary). The text
+    // cursor is ink: left unset it too fell back to the primary, so every box in the app blinked a bright brand red
+    // (UX audit 2026-11-19). A box that wants another colour (Jarvis) still sets its own.
+    textSelectionTheme: const TextSelectionThemeData(
+      cursorColor: DashUi.ink,
+      selectionColor: Color(0x663390FF),
+      selectionHandleColor: Color(0xFF1A73E8),
+    ),
+    appBarTheme: const AppBarTheme(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 0,
+    ),
+    cardTheme: CardThemeData(
+      color: Colors.white,
+      elevation: 0,
+      margin: EdgeInsets.zero,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: strokeBorder, width: 1),
+      ),
+    ),
+
+    // ---- Pop-ups: one look everywhere (dialogs, menus, dropdowns, tooltips, snackbars) ----
+    dialogTheme: DialogThemeData(
+      backgroundColor: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 12,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(18),
+        side: const BorderSide(color: Color(0xFFE4E4E4)),
+      ),
+      titleTextStyle: const TextStyle(
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+        color: Color(0xFF0F172A),
+        letterSpacing: -0.3,
+      ),
+      contentTextStyle: const TextStyle(fontSize: 14, color: Color(0xFF475569), height: 1.45),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
+    ),
+    popupMenuTheme: PopupMenuThemeData(
+      color: Colors.white,
+      surfaceTintColor: Colors.transparent,
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.14),
+      menuPadding: const EdgeInsets.all(6),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Color(0xFFE4E4E4)),
+      ),
+      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+    ),
+    menuTheme: MenuThemeData(
+      style: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: const WidgetStatePropertyAll(8),
+        shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.14)),
+        padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Color(0xFFE4E4E4)),
+          ),
+        ),
+      ),
+    ),
+    dropdownMenuTheme: DropdownMenuThemeData(
+      menuStyle: MenuStyle(
+        backgroundColor: const WidgetStatePropertyAll(Colors.white),
+        surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
+        elevation: const WidgetStatePropertyAll(8),
+        shape: WidgetStatePropertyAll(
+          RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: Color(0xFFE4E4E4)),
+          ),
+        ),
+      ),
+    ),
+    // Every plain tooltip wears the scorecard hover card's look (see dash_hover_card.dart).
+    tooltipTheme: TooltipThemeData(
+      waitDuration: const Duration(milliseconds: 350),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      margin: const EdgeInsets.all(8),
+      constraints: const BoxConstraints(maxWidth: 320),
+      decoration: dashTipDecoration,
+      textStyle: dashTipBodyStyle,
+    ),
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: const Color(0xFF0F172A),
+      contentTextStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.white),
+      actionTextColor: const Color(0xFF93C5FD),
+      elevation: 6,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      insetPadding: const EdgeInsets.all(20),
+    ),
+  );
 }
 
 class _PlaceholderScreen extends StatelessWidget {

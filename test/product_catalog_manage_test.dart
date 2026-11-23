@@ -279,7 +279,8 @@ Future<void> _signIn({bool canUpdate = true, bool canSeeCost = true}) async {
       'name': 'Sam Example',
       'role': 'Office Manager',
       'is_admin': false,
-      'denied': [if (!canUpdate) 'line_items.update', if (!canSeeCost) 'line_items.view'],
+      // Changing the catalog is Team screen > Product Catalog (2026-11-19); line items stay on, to show they don't count.
+      'denied': [if (!canUpdate) ...['catalog.create', 'catalog.update', 'catalog.delete'], if (!canSeeCost) 'line_items.view'],
     }),
   });
   await AuthSession.instance.restore();
@@ -415,7 +416,7 @@ void main() {
     await t.pumpAndSettle();
     final move = t.widget<TextButton>(find.byKey(const ValueKey('bulk-category')));
     expect(move.onPressed, isNull);
-    expect(find.byTooltip('Changing products needs the Line Items & Costs > Update switch'), findsWidgets);
+    expect(find.byTooltip('Changing products needs the Product Catalog > Update switch'), findsWidgets);
     await t.tap(find.byKey(const ValueKey('bulk-export')));
     await t.pumpAndSettle();
     expect(find.text('Exported 1 product'), findsOneWidget);
@@ -423,7 +424,7 @@ void main() {
     await t.tap(find.text('Categories'));
     await t.pumpAndSettle();
     expect(find.text('New category'), findsNothing);
-    expect(find.textContaining('Changing them needs the Line Items & Costs > Update switch'), findsOneWidget);
+    expect(find.textContaining('Changing them needs the Product Catalog > Update switch'), findsOneWidget);
   });
 
   testWidgets('categories: rename refuses a name another category has, then renames with the product ids it showed', (t) async {

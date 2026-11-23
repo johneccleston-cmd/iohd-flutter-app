@@ -758,16 +758,18 @@ typedef CategoryPick = ({String name, bool isNew});
 /// Picks a product's category from the catalog's existing categories, searchable. A new category is only made when the
 /// person picks "Create ..." for the name typed in the search, and a name that looks like an existing one asks "did
 /// you mean" first: a typo never quietly starts a new category. [load] returns the categories and their product
-/// counts (null count: not known). Returns null when cancelled.
+/// counts (null count: not known). [canCreate] (Product Catalog > Create) offers "Create ..." at all. Returns null when
+/// cancelled.
 Future<CategoryPick?> showCategoryPickerDialog(
   BuildContext context, {
   required String current,
   required Future<Map<String, int?>> Function() load,
   String? pendingNew,
+  bool canCreate = true,
 }) {
   return showDialog<CategoryPick>(
     context: context,
-    builder: (_) => _CategoryPickerDialog(current: current, load: load, pendingNew: pendingNew),
+    builder: (_) => _CategoryPickerDialog(current: current, load: load, pendingNew: pendingNew, canCreate: canCreate),
   );
 }
 
@@ -777,7 +779,8 @@ class _CategoryPickerDialog extends StatefulWidget {
 
   /// A new category picked earlier on this page and not saved yet: offered again.
   final String? pendingNew;
-  const _CategoryPickerDialog({required this.current, required this.load, this.pendingNew});
+  final bool canCreate;
+  const _CategoryPickerDialog({required this.current, required this.load, this.pendingNew, this.canCreate = true});
 
   @override
   State<_CategoryPickerDialog> createState() => _CategoryPickerDialogState();
@@ -895,7 +898,7 @@ class _CategoryPickerDialogState extends State<_CategoryPickerDialog> {
       final typed = _typed;
       final exists = cats.keys.any((c) => catalogNorm(c) == catalogNorm(typed));
       final pending = widget.pendingNew;
-      final offerNew = typed.isNotEmpty && !exists && typed.length <= 120;
+      final offerNew = widget.canCreate && typed.isNotEmpty && !exists && typed.length <= 120;
       final items = [
         if (offerNew) _row(typed, null, isNew: true),
         if (!offerNew && pending != null && !cats.containsKey(pending) && (q.isEmpty || pending.toLowerCase().contains(q))) _row(pending, null, isNew: true),

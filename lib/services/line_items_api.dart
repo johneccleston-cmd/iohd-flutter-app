@@ -191,6 +191,73 @@ class CatalogPriceChange {
   }
 }
 
+/// One rate line of a service (2026-11-19, backend service_rates): like Service Fusion's rate editor, a name, an optional
+/// description, a quantity, the regular rate and (with Line Items & Costs > View) the internal cost and the commission it
+/// pays: a fixed amount or a percentage. Totals are quantity times rate or cost.
+class ServiceRate {
+  final String name;
+  final String description;
+  final double qty;
+  final double? rate;
+  final double? cost;
+  final bool paysCommission;
+  final String? commissionType; // fixed | percent
+  final double? commissionValue;
+
+  const ServiceRate({
+    required this.name,
+    this.description = '',
+    this.qty = 1,
+    this.rate,
+    this.cost,
+    this.paysCommission = false,
+    this.commissionType,
+    this.commissionValue,
+  });
+
+  double? get total => rate == null ? null : ((qty * rate!) * 100).round() / 100;
+  double? get totalCost => cost == null ? null : ((qty * cost!) * 100).round() / 100;
+
+  factory ServiceRate.fromJson(Map<String, dynamic> j) => ServiceRate(
+    name: (j['name'] ?? '').toString(),
+    description: (j['description'] ?? '').toString(),
+    qty: (j['qty'] as num?)?.toDouble() ?? 1,
+    rate: (j['rate'] as num?)?.toDouble(),
+    cost: (j['cost'] as num?)?.toDouble(),
+    paysCommission: j['paysCommission'] == true,
+    commissionType: j['commissionType']?.toString(),
+    commissionValue: (j['commissionValue'] as num?)?.toDouble(),
+  );
+
+  /// What is sent to save it. Without [withCost] the cost and commission are left out (the server keeps the saved ones).
+  Map<String, dynamic> toJson({required bool withCost}) => {
+    'name': name,
+    'description': description,
+    'qty': qty,
+    'rate': rate,
+    if (withCost) ...{
+      'cost': cost,
+      'paysCommission': paysCommission,
+      'commissionType': paysCommission ? commissionType : null,
+      'commissionValue': paysCommission ? commissionValue : null,
+    },
+  };
+
+  @override
+  bool operator ==(Object other) =>
+      other is ServiceRate &&
+      other.name == name &&
+      other.description == description &&
+      other.qty == qty &&
+      other.rate == rate &&
+      other.cost == cost &&
+      other.paysCommission == paysCommission &&
+      (!paysCommission || (other.commissionType == commissionType && other.commissionValue == commissionValue));
+
+  @override
+  int get hashCode => Object.hash(name, description, qty, rate, cost, paysCommission);
+}
+
 /// One product or service the office can add. Rate and cost are null when the data doesn't support a default.
 class CatalogEntry {
   final String key;
@@ -281,6 +348,24 @@ class CatalogEntry {
   /// The services this one has taken over from (they are no longer offered; their names still find this one).
   final List<({String key, String name})> replaces;
 
+  /// A service the office has edited (2026-11-19, saved in our own database, never in Service Fusion): which of `name`,
+  /// `description`, `rate`, `cost`, `taxable` and `active` were set by a person, who and when, and what the job lines
+  /// said before ([computed]: name, description, rate, cost, taxable, active). Empty / null for a service nobody edited.
+  final List<String> editedFields;
+  final String? editedBy;
+  final String? editedAt;
+  final Map<String, dynamic>? computed;
+
+  /// A service's own rate lines, in order (empty: none saved). The first sets the [rate] and [cost] shown.
+  final List<ServiceRate> rates;
+
+  /// A service's commission, for the service as a whole (USER RULE 2026-11-19: not per rate): a percentage of its price
+  /// or a fixed amount each time it is sold. Null: none (Service Fusion's lines carry none). Only for people who may see
+  /// costs.
+  final ServiceCommission? commission;
+
+  bool get isEdited => editedFields.isNotEmpty;
+
   /// Kept in inventory: the price list says so, or (without the flag) it has an inventory row.
   bool get inInventory => inventoryItem ?? (inventoryItemId != null);
 
@@ -327,6 +412,12 @@ class CatalogEntry {
     this.variants = const [],
     this.supersededBy,
     this.replaces = const [],
+    this.editedFields = const [],
+    this.editedBy,
+    this.editedAt,
+    this.computed,
+    this.rates = const [],
+    this.commission,
   });
 
   bool get isService => kind == 'service';
@@ -382,6 +473,12 @@ class CatalogEntry {
     variants: variants,
     supersededBy: supersededBy,
     replaces: replaces,
+    editedFields: editedFields,
+    editedBy: editedBy,
+    editedAt: editedAt,
+    computed: computed,
+    rates: rates,
+    commission: commission,
   );
 
   /// The price a service's new line starts at: the catalog's, only once it is settled (a server older than Phase 2 sends
@@ -410,6 +507,7 @@ class CatalogEntry {
     catalogRate: rate,
     catalogCost: cost,
     source: 'catalog',
+    service: false,
   );
 
   LineDraft _serviceLine() {
@@ -427,8 +525,34 @@ class CatalogEntry {
       catalogRate: r,
       catalogCost: cost,
       source: 'catalog',
+      service: true,
     );
   }
+
+  /// Whether picking this adds a service package: a service with rates of its own.
+  bool get isPackage => isService && rates.isNotEmpty;
+
+  /// A service package's lines (USER RULE 2026-11-20): one per rate, in the package's order, each at its own starting
+  /// quantity (usually 0, raised when the job needs it), price and cost, taxed as the service is, all carrying
+  /// [packageId] and the package's name for the heading over them. None of them is a "main" line.
+  List<LineDraft> toPackageLines(String packageId) => [
+    for (final r in rates)
+      LineDraft(
+        name: r.name,
+        description: r.description,
+        quantity: r.qty,
+        rate: r.rate,
+        cost: r.cost,
+        taxable: taxDefault == null ? taxable : taxDefault == 'taxed',
+        catalogKey: key,
+        catalogRate: r.rate,
+        catalogCost: r.cost,
+        source: 'catalog',
+        packageId: packageId,
+        packageName: name,
+        service: true,
+      ),
+  ];
 
   static List<CatalogPrice> _prices(Object? v) => [
     for (final p in (v is List ? v : const []).whereType<Map>())
@@ -438,7 +562,26 @@ class CatalogEntry {
   static ({String key, String name})? _ref(Object? v) =>
       v is Map && v['key'] != null ? (key: v['key'].toString(), name: (v['name'] ?? '').toString()) : null;
 
-  factory CatalogEntry.fromJson(Map<String, dynamic> j) => CatalogEntry(
+  /// What a service package comes to at its rates' starting quantities, as its page says ("Starts at"): the lines at 0
+  /// add nothing until a job needs them. Null when none of its rates has a price ([cost]: a cost).
+  static double? startsAt(List<ServiceRate> rates, {bool cost = false}) {
+    final known = [for (final r in rates) if ((cost ? r.cost : r.rate) != null) r];
+    if (known.isEmpty) return null;
+    return known.fold<int>(0, (sum, r) => sum + (((cost ? r.totalCost : r.total) ?? 0) * 100).round()) / 100;
+  }
+
+  factory CatalogEntry.fromJson(Map<String, dynamic> j) {
+    final rates = [for (final x in (j['rates'] as List? ?? const []).whereType<Map>()) ServiceRate.fromJson(Map<String, dynamic>.from(x))];
+    // A service package has no main rate (USER RULE 2026-11-20): the list, its sort and filters, the CSV and the picker
+    // show what its page shows, the sum at its starting quantities. The server set its price from its FIRST rate, so a
+    // package whose first line starts at 0 showed that line's price on the list and another on its page (audit round 2).
+    final package = (j['kind'] ?? 'product') == 'service' && rates.isNotEmpty;
+    final rate = package ? startsAt(rates) : (j['rate'] as num?)?.toDouble();
+    final cost = package ? startsAt(rates, cost: true) : (j['cost'] as num?)?.toDouble();
+    return CatalogEntry._fromJson(j, rates, rate, cost);
+  }
+
+  factory CatalogEntry._fromJson(Map<String, dynamic> j, List<ServiceRate> rates, double? rate, double? cost) => CatalogEntry(
     key: j['key'].toString(),
     name: (j['name'] ?? '').toString(),
     sku: (j['sku'] ?? '').toString(),
@@ -446,11 +589,11 @@ class CatalogEntry {
     kind: (j['kind'] ?? 'product').toString(),
     inventoryItemId: (j['inventoryItemId'] as num?)?.toInt(),
     stock: (j['stock'] as num?)?.toInt(),
-    rate: (j['rate'] as num?)?.toDouble(),
+    rate: rate,
     rateUses: (j['rateUses'] as num?)?.toInt() ?? 0,
     rateMin: (j['rateMin'] as num?)?.toDouble(),
     rateMax: (j['rateMax'] as num?)?.toDouble(),
-    cost: (j['cost'] as num?)?.toDouble(),
+    cost: cost,
     costSource: j['costSource']?.toString(),
     uses: (j['uses'] as num?)?.toInt() ?? 0,
     lastUsed: j['lastUsed']?.toString(),
@@ -493,7 +636,36 @@ class CatalogEntry {
     replaces: [
       for (final v in (j['replaces'] as List? ?? const [])) ?_ref(v),
     ],
+    editedFields: [for (final f in (j['editedFields'] as List? ?? const [])) f.toString()],
+    editedBy: j['editedBy']?.toString(),
+    editedAt: j['editedAt']?.toString(),
+    computed: j['computed'] is Map ? Map<String, dynamic>.from(j['computed'] as Map) : null,
+    rates: rates,
+    commission: ServiceCommission.fromJson(j['commission']),
   );
+}
+
+/// A service's commission (backend service_overrides commission_type / commission_value): a percentage of the service's
+/// price, or a fixed amount each time it is sold. [value] null: the kind is chosen, the amount not entered yet.
+class ServiceCommission {
+  final String type; // percent | fixed
+  final double? value;
+  const ServiceCommission(this.type, this.value);
+
+  bool get isPercent => type == 'percent';
+
+  static ServiceCommission? fromJson(Object? j) {
+    if (j is! Map || (j['type'] != 'percent' && j['type'] != 'fixed')) return null;
+    return ServiceCommission(j['type'] as String, (j['value'] as num?)?.toDouble());
+  }
+
+  Map<String, dynamic> toJson() => {'type': type, 'value': value};
+
+  @override
+  bool operator ==(Object other) => other is ServiceCommission && other.type == type && other.value == value;
+
+  @override
+  int get hashCode => Object.hash(type, value);
 }
 
 /// One category of the price list (backend /api/catalog/categories): its products' own category text, plus the saved
@@ -907,6 +1079,27 @@ class LineItemsApi {
       canSeeCost: d['canSeeCost'] == true,
       historyDays: (d['historyDays'] as num?)?.toInt() ?? 540,
     );
+  }
+
+  /// Saves the office's edit of a service (backend PUT /api/catalog/services/override): only the [fields] sent change;
+  /// a field sent as null goes back to what the job lines say. Returns the service as it now reads. Needs Line Items &
+  /// Costs > Update and the Services Catalog page; a server older than 2026-11-19 answers 404/405.
+  static Future<CatalogEntry> saveService(String key, Map<String, dynamic> fields) async {
+    final d = await _call('PUT', Uri.parse('$kApiBaseUrl/api/catalog/services/override'), body: {'key': key, ...fields});
+    return CatalogEntry.fromJson(Map<String, dynamic>.from(d['service'] as Map));
+  }
+
+  /// Saves a service's rate lines as a whole set, in order (an empty list removes them). Returns the service as it now reads.
+  static Future<CatalogEntry> saveServiceRates(String key, List<ServiceRate> rates, {required bool withCost}) async {
+    final d = await _call(
+      'PUT',
+      Uri.parse('$kApiBaseUrl/api/catalog/services/rates'),
+      body: {
+        'key': key,
+        'rates': [for (final r in rates) r.toJson(withCost: withCost)],
+      },
+    );
+    return CatalogEntry.fromJson(Map<String, dynamic>.from(d['service'] as Map));
   }
 
   static ProductPage _productPage(Map<String, dynamic> d, {bool? canSeeCost}) => (

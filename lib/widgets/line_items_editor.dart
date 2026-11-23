@@ -7,10 +7,15 @@ import 'package:flutter/services.dart';
 
 import '../config/auth_session.dart';
 import '../services/line_items_api.dart';
+import '../utils/charge_presets.dart';
 import '../utils/line_item_math.dart';
+import '../utils/sales_tax_catalog.dart';
 import 'app_dialog.dart';
 import 'catalog_search_field.dart';
+import 'charges_panel.dart';
+import 'dashboard_data.dart';
 import 'dashboard_kit.dart';
+import 'line_table_style.dart';
 import 'ps_menu.dart';
 
 // The line-item table on the job and estimate pages. It takes the height its lines need: the page around it scrolls.
@@ -140,11 +145,19 @@ class LineItemsEditor extends StatefulWidget {
 
   /// With [summary] on an editable table: the figures for a changed draft (the page reworks its source's own figures
   /// from the draft's lines). [summary] itself shows while nothing is changed.
-  final List<LineSummaryRow> Function(List<LineDraft> lines, List<LineFigures> figures)? summaryBuilder;
+  ///
+  /// [taxes] is the draft's tax lines (the record's own, and any added from Tax, discounts & fees), so a tax added in
+  /// the preview is worked out in the figures too.
+  final List<LineSummaryRow> Function(List<LineDraft> lines, List<LineFigures> figures, List<SalesTax> taxes)? summaryBuilder;
 
-  /// The sales taxes a line can be given in its Tax dropdown: the record's own tax line(s). A line naming one of these
-  /// is taxed at its rate; the dropdown's other choice is No tax.
+  /// The record's own tax lines (Service Fusion's tax charges). The draft starts with these; Tax, discounts & fees adds
+  /// more or takes them off (USER RULE 2026-11-20: adding a tax taxes nothing, it only becomes a choice in each line's
+  /// Tax dropdown). A line naming one of the draft's taxes is taxed at its rate; the dropdown's other choice is No tax.
   final List<SalesTax> taxOptions;
+
+  /// The discounts and fees Tax, discounts & fees offers, and the out-of-state tax's start (the Tax, Discounts & Fees
+  /// screen's settings; the built-in list until they load).
+  final TaxSettings taxSettings;
 
   /// What the last line of the total box is called: "Estimate total" on an estimate, "Job total" on a job.
   final String totalLabel;
@@ -157,6 +170,10 @@ class LineItemsEditor extends StatefulWidget {
   /// The page asks the server, which records who and when, and the lines come back confirmed. Null where it can't be
   /// done (no Update switch, an accepted option): an unconfirmed $0 line then only says so.
   final Future<void> Function(LineDraft line)? onConfirmZero;
+
+  /// The record's own Service Fusion service lines, by [serviceNameKey]: a saved line of the same name with nothing else
+  /// to say what it is is a service line ("S"), not an inventory item ("I").
+  final Set<String> serviceNames;
 
   const LineItemsEditor({
     super.key,
@@ -177,9 +194,11 @@ class LineItemsEditor extends StatefulWidget {
     this.onPreviewSave,
     this.summaryBuilder,
     this.taxOptions = const [],
+    this.taxSettings = TaxSettings.builtIn,
     this.totalLabel = 'Total',
     this.onFigures,
     this.onConfirmZero,
+    this.serviceNames = const {},
   });
 
   @override
@@ -241,6 +260,10 @@ class _Cols {
   /// Below this a name box's "Description" is its icon alone, so the name keeps some room.
   static const compactToggleW = 260.0;
 
+  /// The room before every line's name for its "S" or "I" mark ([_KindMark]), and how much further in a service
+  /// package's lines sit, under its heading.
+  static const markW = 28.0, packageIndent = 18.0;
+
   double get qty => editable ? qtyEditW : qtyW;
   double get lead => (editable ? gripW : 0) + eyeW;
   double get trail => editable ? actionsW : 0;
@@ -267,6 +290,9 @@ class _Cols {
     Widget? costCell,
     Widget? taxCell,
     Widget? menu,
+
+    /// Before the item, inside its column: a service package line's "S" mark, which also indents it under the heading.
+    Widget? itemLead,
     CrossAxisAlignment cross = CrossAxisAlignment.start,
   }) => Row(
     crossAxisAlignment: cross,
@@ -274,7 +300,15 @@ class _Cols {
     children: [
       if (editable) SizedBox(key: const ValueKey('col-grip'), width: gripW, child: grip),
       SizedBox(key: const ValueKey('col-eye'), width: eyeW, child: eye),
-      Expanded(key: const ValueKey('col-item'), child: item),
+      Expanded(
+        key: const ValueKey('col-item'),
+        child: itemLead == null
+            ? item
+            : Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [itemLead, Expanded(child: item)],
+              ),
+      ),
       const SizedBox(width: itemGap),
       SizedBox(key: const ValueKey('col-qty'), width: qty, child: qtyCell),
       if (editable) SizedBox(width: symW, child: times),
@@ -290,17 +324,17 @@ class _Cols {
 }
 
 const _figures = [FontFeature.tabularFigures()];
-const _head = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.ink, letterSpacing: 0.7, height: 1.2);
-const _cell = TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.35, fontFeatures: _figures);
+const _head = LineTable.head;
+const _cell = LineTable.cell;
 const _cellMuted = TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.35, fontFeatures: _figures);
 const _costText = TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.35, fontFeatures: _figures);
-const _nameStyle = TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, letterSpacing: -0.1);
-const _metaStyle = TextStyle(fontSize: 12, color: DashUi.ink, height: 1.4, fontFeatures: _figures);
-const _descStyle = TextStyle(fontSize: 13, color: DashUi.ink, height: 1.5);
-const _hint = TextStyle(fontSize: 13, color: DashUi.slate, height: 1.35);
+const _nameStyle = LineTable.name;
+const _metaStyle = LineTable.meta;
+const _descStyle = LineTable.description;
+const _hint = LineTable.hint;
 
 /// The "$" in front of a money box while editing, at the box's left as the field it opens into has it.
-const _currency = TextStyle(fontSize: 13, color: DashUi.subtle, height: 1.35);
+const _currency = LineTable.currency;
 
 /// The line every text in a value's box sits on: the value's own ([style], resolved as the box draws it). A text field
 /// forces its typed text onto its style's line (EditableText's strut), sets its "$" and its placeholder on that text's
@@ -350,17 +384,17 @@ class _NameController extends TextEditingController {
 
 /// The outline of every box that can be typed into: one quiet hairline (user 2026-11-13 pass 5: "too much gray, too
 /// heavy"), darker under the pointer, ink with a soft ring while it has focus.
-const _edge = DashUi.fieldEdge;
-const _edgeHover = DashUi.subtle;
-const _edgeW = 1.0;
-const _radius = 6.0;
+const _edge = LineTable.edge;
+const _edgeHover = LineTable.edgeHover;
+const _edgeW = LineTable.edgeWidth;
+const _radius = LineTable.radius;
 
 /// The ring around a focused box (or a red one around a value that isn't a number). Outside the box, so it moves nothing.
-List<BoxShadow> _ring(Color c) => [BoxShadow(color: c.withValues(alpha: 0.14), spreadRadius: 3)];
+List<BoxShadow> _ring(Color c) => LineTable.ring(c);
 
 /// Under the pointer: an icon button's light fill.
-const _press = DashUi.faint;
-const _amountStyle = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, fontFeatures: _figures);
+const _press = LineTable.press;
+const _amountStyle = LineTable.amount;
 
 /// A line's amount: semibold, red when it is money off, and regular weight at $0.00 (a line at quantity 0 is a note or
 /// a part for a later visit: 17% of Service Fusion's lines are, and a column of bold "$0.00" drowned out the figures that
@@ -380,22 +414,22 @@ const _metaGap = 2.0;
 
 /// Inside every value's cell: where a field puts its text, so a value doesn't move when its field opens. Editable rows
 /// are [_rowPad] - [_cellY] from their edge, so both kinds of row are the same height.
-const _cellX = 8.0;
-const _cellY = 6.0;
+const _cellX = LineTable.cellX;
+const _cellY = LineTable.cellY;
 
 /// A one-line value box's height: the name's line (14 px at 1.35, scaled with the reader's text size) and the room above
 /// and below it. Fixed, so a value and the field it opens into are exactly as tall.
-double _boxHeight(BuildContext context) => (MediaQuery.textScalerOf(context).scale(14) * 1.35).ceilToDouble() + 2 * _cellY;
+double _boxHeight(BuildContext context) => LineTable.boxHeight(context);
 
 /// Behind the open line while editing (never under the pointer: user 2026-11-13 round 3, no hover shading on rows).
-final Color _rowTint = DashUi.faint.withValues(alpha: 0.5);
+final Color _rowTint = LineTable.rowTint;
 
 /// Every other read-only line: an extremely light cool off-white, white's neighbour (user 2026-11-13 round 3: "barely
 /// noticeable", for following a line across the table, not zebra stripes). It replaces the rules between read-only lines.
-final Color _stripe = Color.lerp(Colors.white, DashUi.faint, 0.45)!;
+final Color _stripe = LineTable.stripe;
 
 /// The rule between lines: lighter than the one under the headings.
-final Color _rowRule = Color.lerp(DashUi.line, DashUi.faint, 0.45)!;
+final Color _rowRule = LineTable.rowRule;
 
 /// The room a text field keeps after its text for the caret (RenderEditable: a 1 px gap plus the caret's width). A
 /// right-aligned field's text ends this far before a plain Text's would, so a figure jumped about 3 px left the moment
@@ -477,15 +511,14 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   Map<int, int> _origin = const {}; // a row's place in widget.lines, for the rows that came from it
   final Set<int> _moreOpen = {}; // rows whose description is showing (it is hidden until "More")
   late double? _tax;
-  late final TextEditingController _taxText;
 
-  /// What is typed in the tax rate isn't a rate from 0% to 30%: the field is marked and the totals keep the last good
-  /// rate (it used to charge whatever was typed, 105% included; found in round 2, 2026-11-13).
-  bool _taxBad = false;
+  /// The draft's tax lines: the record's own ([LineItemsEditor.taxOptions]) and any added from Tax, discounts & fees,
+  /// less any taken off. Each line's Tax dropdown offers these (and the set's own rate, [_tax]) and No tax.
+  late List<SalesTax> _taxes;
   int _nextUid = 0;
   int? _active; // the row with its fields open
   String _focusField = 'name';
-  int? _flash; // a row just added, lit for a moment
+  final Set<int> _flash = {}; // rows just added (one line, or a package's lines), lit for a moment
   Timer? _flashTimer;
   final Map<int, Set<String>> _invalid = {};
   bool _saving = false;
@@ -504,10 +537,12 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   final Map<int, CatalogEntry> _added = {};
   final _searchFocus = FocusNode(debugLabel: 'catalog search');
 
+  /// The Tax, discounts & fees panel is open (its button looks pressed and its chevron turns).
+  bool _chargesOpen = false;
+
   @override
   void initState() {
     super.initState();
-    _taxText = TextEditingController();
     widget.controller?._state = this;
     _reset();
   }
@@ -537,8 +572,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       if (wasOpen.contains(_lineKey(r.line))) _moreOpen.add(r.uid);
     }
     _tax = widget.taxRate;
-    _taxText.text = _tax == null ? '' : _trimRate(_tax!);
-    _taxBad = false;
+    _taxes = [...widget.taxOptions];
     _leaving.clear();
     _added.clear();
     _active = null;
@@ -551,8 +585,6 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 
   /// A line, recognised across a reload: its id, else what it is.
   static String _lineKey(LineDraft l) => l.id ?? '${l.kind.name}|${l.name.trim()}|${l.sku.trim()}';
-
-  static String _trimRate(double r) => r.toStringAsFixed(4).replaceFirst(RegExp(r'\.?0+$'), '');
 
   /// The same lines, in the same order. The page makes Service Fusion's lines afresh on every build (a new list each
   /// time), so "new lines" has to mean different lines, not a different list: otherwise anything that rebuilt the page
@@ -574,12 +606,15 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       widget.controller?._state = this;
     }
     if (old.editable != widget.editable) _modeSwitched = true;
-    if (!_sameLines(old.lines, widget.lines) || old.taxRate != widget.taxRate || old.editable != widget.editable) {
+    if (!_sameLines(old.lines, widget.lines) ||
+        old.taxRate != widget.taxRate ||
+        old.editable != widget.editable ||
+        !_sameTaxes(old.taxOptions, widget.taxOptions)) {
       // New saved lines arrived (our save, a refresh, someone else's change). Keep an unsaved draft unless it was ours
       // that just landed. Whether there is one is judged against the lines it was made from: judged against the new
       // ones, an untouched draft of the old lines looked changed, so it stayed on screen, marked "Changed, not saved"
       // (found 2026-11-13).
-      final hadDraft = old.editable && _differsFrom(old.lines, old.taxRate);
+      final hadDraft = old.editable && _differsFrom(old.lines, old.taxRate, old.taxOptions);
       if (!hadDraft || _savePending || !widget.editable) {
         _savePending = false;
         _reset();
@@ -598,7 +633,6 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   void dispose() {
     if (widget.controller?._state == this) widget.controller!._state = null;
     _flashTimer?.cancel();
-    _taxText.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
@@ -607,12 +641,23 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 
   List<LineDraft> get _lines => [for (final r in _rows) r.line];
 
-  bool get _dirty => widget.editable && _differsFrom(widget.lines, widget.taxRate);
+  bool get _dirty => widget.editable && _differsFrom(widget.lines, widget.taxRate, widget.taxOptions);
 
-  /// The draft differs from [lines] at [taxRate] (or holds a number that doesn't parse).
-  bool _differsFrom(List<LineDraft> lines, double? taxRate) {
-    if (_invalid.values.any((s) => s.isNotEmpty) || _taxBad) return true;
+  /// The same tax lines, in the same order.
+  static bool _sameTaxes(List<SalesTax> a, List<SalesTax> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (!a[i].sameAs(b[i])) return false;
+    }
+    return true;
+  }
+
+  /// The draft differs from [lines] at [taxRate] with [taxes] (or holds a number that doesn't parse).
+  bool _differsFrom(List<LineDraft> lines, double? taxRate, List<SalesTax> taxes) {
+    if (_invalid.values.any((s) => s.isNotEmpty)) return true;
     if ((_tax == null) != (taxRate == null) || (_tax != null && (_tax! * 10000).round() != (taxRate! * 10000).round())) return true;
+    if (!_sameTaxes(_taxes, taxes)) return true;
     if (_rows.length != lines.length) return true;
     for (var i = 0; i < _rows.length; i++) {
       if (!_rows[i].line.sameAs(lines[i])) return true;
@@ -641,20 +686,80 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   void _insert(_Row row, {int? at, String? open}) {
     _changed(() {
       _rows.insert((at ?? _rows.length).clamp(0, _rows.length), row);
-      _flash = row.uid;
+      _flash
+        ..clear()
+        ..add(row.uid);
     });
+    _lightFor();
+    if (open != null) _open(row.uid, open);
+  }
+
+  /// The lit rows go back to normal after a moment.
+  void _lightFor() {
     _flashTimer?.cancel();
     _flashTimer = Timer(const Duration(milliseconds: 1400), () {
-      if (mounted && _flash == row.uid) setState(() => _flash = null);
+      if (mounted && _flash.isNotEmpty) setState(_flash.clear);
     });
-    if (open != null) _open(row.uid, open);
   }
 
   void _add(LineDraft line, {CatalogEntry? from}) {
     final added = _Row(_nextUid++, line);
     if (from != null && from.isService) _added[added.uid] = from;
     _insert(added);
-    // The new line, and the search under it, stay in view clear of the page's save bar: the page scrolls just enough.
+    _scrollTo(added);
+  }
+
+  /// A service package (USER RULE 2026-11-20): its rates go in as separate lines under the package's name, each at its
+  /// own starting quantity, price and cost, all lit as they come in. None is a "main" line.
+  void _addPackage(CatalogEntry entry) {
+    final id = 'pkg-$_nextUid';
+    final rows = [for (final l in entry.toPackageLines(id)) _Row(_nextUid++, l)];
+    if (rows.isEmpty) return;
+    _changed(() {
+      _rows.addAll(rows);
+      _flash
+        ..clear()
+        ..addAll(rows.map((r) => r.uid));
+    });
+    _lightFor();
+    _scrollTo(rows.last);
+  }
+
+  /// The heading's ⋮ > Remove package: all of that package's lines go at once, with one Undo that puts them all back.
+  void _removePackage(String id) {
+    final gone = [for (final r in _rows) if (r.line.packageId == id) r];
+    if (gone.isEmpty) return;
+    final at = _rows.indexOf(gone.first);
+    final generation = _generation;
+    _changed(() {
+      _rows.removeWhere(gone.contains);
+      for (final r in gone) {
+        _invalid.remove(r.uid);
+        _leaving.remove(r.uid);
+        if (_active == r.uid) _active = null;
+      }
+    });
+    final name = gone.first.line.packageName ?? 'the package';
+    final lines = gone.length == 1 ? '1 line' : '${gone.length} lines';
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(widget.onPreviewSave != null ? 'Removed "$name" ($lines) from the preview.' : 'Removed "$name" ($lines). It is gone once you save.'),
+          action: SnackBarAction(
+            label: 'Undo',
+            onPressed: () {
+              // Only into the draft they came out of (see [_finishRemove]).
+              if (!mounted || !widget.editable || generation != _generation || gone.any(_rows.contains)) return;
+              _changed(() => _rows.insertAll(at.clamp(0, _rows.length), gone));
+            },
+          ),
+        ),
+      );
+  }
+
+  /// The new line, and the search under it, stay in view clear of the page's save bar: the page scrolls just enough.
+  void _scrollTo(_Row added) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final ctx = added.shell.currentContext;
       final row = ctx?.findRenderObject();
@@ -682,52 +787,187 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   }
 
   void _pick(CatalogChoice c) {
-    if (c.entry != null) {
+    if (c.entry != null && c.entry!.isPackage) {
+      _addPackage(c.entry!);
+    } else if (c.entry != null) {
       _add(c.entry!.toLine(), from: c.entry);
     } else if (c.custom != null) {
       _insert(_Row(_nextUid++, LineDraft(name: c.custom!, quantity: 1, source: 'manual')), open: 'rate');
     }
   }
 
-  static const _discountChoices = ['Discount', 'Builder Relationship Discount'];
-  static const _feeChoices = ['Trip charge', 'Delivery fee', 'Fuel surcharge', 'Disposal fee', 'Permit fee', 'Other fee'];
-  static const _taxSet = '\u0000set';
+  // ---- Tax, discounts & fees ----------------------------------------------------------------------------------------
 
-  /// The "Tax, discounts & fees" menu under the search: a pick adds that line. A discount or fee opens on its amount;
-  /// a sales tax is put on every item line (each line's Tax dropdown can still change it).
-  List<PsMenuEntry<String>> _chargeEntries() {
-    final hasLines = _rows.any((r) => !r.line.isDiscount);
-    final taxes = <PsMenuEntry<String>>[
-      if (hasLines) ...[
-        for (final t in widget.taxOptions) PsMenuItem('t:${t.name}', t.short, trailing: '${SalesTax.rateText(t.rate)}%'),
-        if (widget.taxOptions.isEmpty && _tax != null) PsMenuItem('t:$_taxSet', 'Sales tax', trailing: '${_trimRate(_tax!)}%'),
-      ],
-    ];
-    return [
-      if (taxes.isNotEmpty) ...[const PsMenuHeading('Tax (on every line)'), ...taxes, const PsMenuDivider()],
-      const PsMenuHeading('Discounts'),
-      for (final d in _discountChoices) PsMenuItem('d:$d', d),
-      const PsMenuDivider(),
-      const PsMenuHeading('Fees'),
-      for (final f in _feeChoices) PsMenuItem('f:$f', f),
-    ];
+  /// The draft's lines as the totals take them: a taxable line whose tax name isn't one of the draft's taxes exactly is
+  /// given the one it resolves to ([SalesTax.resolve]: Service Fusion's lines often say just "Sales Tax"), so the totals
+  /// tax it at what its Tax cell says.
+  List<LineDraft> get _taxedLines => [
+    for (final l in _lines)
+      if (l.taxable && !l.isCharge && l.taxName != null && !_taxes.any((t) => t.name == l.taxName))
+        switch (SalesTax.resolve(l.taxName, _taxes)) {
+          final t? => l.copyWith(taxName: t.name),
+          null => l,
+        }
+      else
+        l,
+  ];
+
+  LineTotals _totals() => computeLineTotals(_taxedLines, _tax, taxRates: {for (final t in _taxes) t.name: t.rate});
+
+  /// How many lines each tax is on ('' the set's own rate).
+  Map<String, int> _taxCounts() {
+    final out = <String, int>{};
+    for (final l in _taxedLines) {
+      if (!l.taxable || l.isCharge) continue;
+      final k = l.taxName != null && _taxes.any((t) => t.name == l.taxName) ? l.taxName! : '';
+      out[k] = (out[k] ?? 0) + 1;
+    }
+    return out;
   }
 
-  void _pickCharge(String v) {
-    if (!mounted) return;
-    final name = v.substring(2);
-    switch (v[0]) {
-      case 't':
+  final _chargesButton = GlobalKey(debugLabel: 'tax, discounts and fees');
+
+  /// The "Tax, discounts & fees" button under the search: its panel ([showChargesPanel]) lists the record's taxes,
+  /// discounts and fees, the Arkansas catalog, out-of-state tax and the discount and fee presets; what is done there is
+  /// applied here.
+  Future<void> _openCharges() async {
+    final ctx = _chargesButton.currentContext;
+    if (ctx == null || !widget.editable) return;
+    final totals = _totals();
+    final charges = [
+      for (var i = 0; i < _rows.length; i++)
+        if (_rows[i].line.isCharge) ChargeEntry(_rows[i].uid, _rows[i].line, totals.lines[i].amountCents),
+    ];
+    final record = [
+      for (final r in widget.summary ?? const <LineSummaryRow>[])
+        if (r.kind == SummaryKind.discount || r.kind == SummaryKind.charge) (r.label, r.cents, r.kind == SummaryKind.discount),
+    ];
+    final result = await showChargesPanel(
+      context: ctx,
+      snapshot: ChargesSnapshot(
+        taxes: _taxes,
+        taxedLines: _taxCounts(),
+        ownRate: _tax,
+        canOwnRate: widget.summary == null,
+        charges: charges,
+        recordCharges: record,
+        itemsCents: totals.itemsCents,
+        discountCents: totals.discountCents,
+        today: isoDay(DashClock.now()),
+        settings: widget.taxSettings,
+      ),
+    );
+    if (!mounted || result == null || !widget.editable) return;
+    _applyCharges(result);
+  }
+
+  void _applyCharges(ChargesResult r) {
+    switch (r) {
+      case AddTax(:final tax):
+        if (_taxes.any((t) => t.name == tax.name)) return; // one tax per place: never twice
+        _changed(() => _taxes = [..._taxes, tax]);
+        _say('Added ${tax.short} ${SalesTax.rateText(tax.rate)}%. Choose it in a line\'s Tax column to tax that line.');
+      case UpdateTax(:final was, :final now):
         _changed(() {
-          for (final r in _rows) {
-            if (!r.line.isDiscount) r.line = r.line.copyWith(taxable: true, taxName: name == _taxSet ? null : name);
+          _taxes = [for (final t in _taxes) t.name == was.name ? now : t];
+          if (was.name != now.name) {
+            for (final row in _rows) {
+              if (row.line.taxName == was.name) row.line = row.line.copyWith(taxName: now.name);
+            }
           }
         });
-      case 'd':
-        _insert(_Row(_nextUid++, LineDraft(kind: LineKind.discount, name: name, quantity: 1, source: 'manual')), open: 'rate');
-      default:
-        _insert(_Row(_nextUid++, LineDraft(name: name, quantity: 1, source: 'manual')), open: 'rate');
+        _say('${now.short} is now ${SalesTax.rateText(now.rate)}%.');
+      case RemoveTax(:final tax):
+        _removeTax(tax);
+      case SetOwnRate(:final rate):
+        final was = _tax;
+        final untaxed = <_Row>[];
+        _changed(() {
+          _tax = rate;
+          if (rate == null) {
+            for (final row in _rows) {
+              if (row.line.taxable && !row.line.isCharge && (row.line.taxName == null || !_taxes.any((t) => t.name == row.line.taxName))) {
+                untaxed.add(row);
+                row.line = row.line.copyWith(taxable: false, taxName: null);
+              }
+            }
+          }
+        });
+        if (rate == null && was != null) {
+          _say(
+            'Removed the ${SalesTax.rateText(was)}% sales tax${untaxed.isEmpty ? '' : ' (${untaxed.length} line${untaxed.length == 1 ? '' : 's'} now No tax)'}.',
+            undo: () {
+              _tax = was;
+              for (final row in untaxed) {
+                if (_rows.contains(row)) row.line = row.line.copyWith(taxable: true, taxName: null);
+              }
+            },
+          );
+        }
+      case AddCharge(:final line):
+        final row = _Row(_nextUid++, line);
+        _insert(row);
+        _scrollTo(row);
+      case UpdateCharge(:final uid, :final line):
+        final row = _rows.where((x) => x.uid == uid).firstOrNull;
+        if (row != null) _changed(() => row.line = line);
+      case RemoveCharge(:final uid):
+        final i = _rows.indexWhere((x) => x.uid == uid);
+        if (i >= 0) _remove(i);
     }
+  }
+
+  /// A tax comes off the record: every line set to it goes to No tax, with one Undo that puts the tax and those lines
+  /// back.
+  void _removeTax(SalesTax tax) {
+    final at = _taxes.indexWhere((t) => t.name == tax.name);
+    if (at < 0) return;
+    final generation = _generation;
+    final gone = _taxes[at];
+    final untaxed = <_Row>[];
+    _changed(() {
+      _taxes = [..._taxes]..removeAt(at);
+      for (final row in _rows) {
+        final l = row.line;
+        if (!l.taxable || l.isCharge) continue;
+        final named = l.taxName == gone.name || (l.taxName != null && SalesTax.resolve(l.taxName, [..._taxes, gone])?.name == gone.name);
+        if (named) {
+          untaxed.add(row);
+          row.line = l.copyWith(taxable: false, taxName: null);
+        }
+      }
+    });
+    _say(
+      'Removed ${gone.short}${untaxed.isEmpty ? '' : ' (${untaxed.length} line${untaxed.length == 1 ? '' : 's'} now No tax)'}.',
+      undo: () {
+        if (generation != _generation || _taxes.any((t) => t.name == gone.name)) return;
+        _taxes = [..._taxes]..insert(at.clamp(0, _taxes.length), gone);
+        for (final row in untaxed) {
+          if (_rows.contains(row)) row.line = row.line.copyWith(taxable: true, taxName: gone.name);
+        }
+      },
+    );
+  }
+
+  /// A note at the foot of the window (with an Undo that changes the draft, when given).
+  void _say(String text, {VoidCallback? undo}) {
+    final generation = _generation;
+    ScaffoldMessenger.maybeOf(context)
+      ?..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(text),
+          action: undo == null
+              ? null
+              : SnackBarAction(
+                  label: 'Undo',
+                  onPressed: () {
+                    if (!mounted || !widget.editable || generation != _generation) return;
+                    _changed(undo);
+                  },
+                ),
+        ),
+      );
   }
 
   /// A pick from a line's Tax dropdown: no tax, the set's own rate, or a named sales tax.
@@ -746,16 +986,42 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       _active = uid;
       _focusField = field;
       if (field == 'description') _moreOpen.add(uid);
-      // The line's fields start again from its good figures (the draft only ever took good numbers), so a bad number
-      // left in it last time no longer marks it: reopening never shows a good figure in a red box (found by the
-      // 2026-11-13 review). While closed it keeps its red mark, so the bad number isn't missed.
+      // The line's fields start again from its good figures (the draft only ever keeps good numbers), so nothing from
+      // last time marks it: reopening never shows a good figure in a red box (found by the 2026-11-13 review).
       _invalid.remove(uid);
     });
     _notifyDirty();
   }
 
   void _close(int uid) {
-    if (_active == uid) setState(() => _active = null);
+    if (_active != uid) return;
+    _settleBad(uid, const ['qty', 'rate', 'cost', 'pct']);
+    setState(() => _active = null);
+  }
+
+  /// [fields] of line [uid] were left holding something that isn't a number. The line never took it: while it was there
+  /// the line went back to its figure from before that edit ([_EditRowState._before]), so the totals never counted a
+  /// half-typed figure ("12..5" in a $689.00 rate used to leave it at $12.00, the last keystroke that read as a number:
+  /// found in real Chrome, audit round 2, 2026-11-20). The mark comes off, and a note says what the line kept.
+  void _settleBad(int uid, Iterable<String> fields) {
+    final set = _invalid[uid];
+    if (set == null) return;
+    final gone = [for (final f in fields) if (set.contains(f)) f];
+    if (gone.isEmpty) return;
+    set.removeAll(gone);
+    final i = _rows.indexWhere((r) => r.uid == uid);
+    if (i < 0) return;
+    final l = _rows[i].line;
+    String money(double? v, String none) => v == null ? none : centsMoney((v * 100).round());
+    String kept(String f) => switch (f) {
+      'qty' => 'quantity ${qtyText(l.quantity)}',
+      'pct' => 'percentage ${l.percent == null ? '' : '${SalesTax.rateText(l.percent!)}%'}',
+      'cost' => l.cost == null ? 'empty cost' : 'cost ${money(l.cost, '')}',
+      _ => l.isCharge ? 'amount ${money(l.rate, r'$0.00')}' : (l.rate == null ? 'empty rate' : 'rate ${money(l.rate, '')}'),
+    };
+    setState(() {});
+    _notifyDirty();
+    _say("Line ${i + 1}: that wasn't a number, so it keeps its ${gone.map(kept).join(' and ')}.");
   }
 
   void _move(int from, int to) {
@@ -891,24 +1157,19 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       final bad = _invalid[r.uid] ?? const <String>{};
       if (bad.isNotEmpty) return 'Line ${i + 1}: ${bad.map(_fieldName).join(', ')} ${bad.length == 1 ? "isn't" : "aren't"} a valid number.';
       if (r.line.name.trim().isEmpty) return 'Line ${i + 1} needs a name.';
-      if (r.line.isDiscount && (r.line.rate == null || r.line.rate! <= 0)) return 'Discount "${r.line.name}" needs an amount above \$0.';
+      if (r.line.isCharge) {
+        final what = r.line.isDiscount ? 'Discount' : 'Fee';
+        final p = r.line.percent;
+        if (p != null && (p <= 0 || p > 100)) return '$what "${r.line.name}" needs a percentage above 0% and up to 100%.';
+        if (p == null && (r.line.rate == null || r.line.rate! <= 0)) return '$what "${r.line.name}" needs an amount above \$0.';
+      }
     }
-    if (_taxBad) return _taxRateRule;
     return null;
   }
 
-  static const _taxRateRule = 'Tax rate must be between 0% and 30%.';
-
-  /// What is typed in the tax rate: empty (no tax), or a rate from 0% to 30%; anything else is marked and left out.
-  void _typedTaxRate(String v) => _changed(() {
-    final t = v.trim();
-    final r = t.isEmpty ? null : double.tryParse(t);
-    _taxBad = t.isNotEmpty && (r == null || !r.isFinite || r < 0 || r > 30);
-    if (!_taxBad) _tax = r;
-  });
-
   static String _fieldName(String f) => switch (f) {
     'qty' => 'quantity',
+    'pct' => 'percentage',
     'rate' => 'rate',
     'cost' => 'cost',
     _ => f,
@@ -974,14 +1235,14 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 
   @override
   Widget build(BuildContext context) {
-    final totals = computeLineTotals(_lines, _tax, taxRates: {for (final t in widget.taxOptions) t.name: t.rate});
+    final totals = _totals();
     final figures = _lineFigures(totals);
     final editable = widget.editable;
     if (widget.onFigures != null) {
       // What the summary shows: a source's own figures (reworked for a changed draft), else the worked-out totals.
       final summary = widget.summary == null
           ? null
-          : (editable && _dirty && widget.summaryBuilder != null ? widget.summaryBuilder!(_lines, figures) : widget.summary!);
+          : (editable && _dirty && widget.summaryBuilder != null ? widget.summaryBuilder!(_lines, figures, _taxes) : widget.summary!);
       final total = summary == null
           ? totals.totalCents
           : (summary.where((r) => r.kind == SummaryKind.total).firstOrNull?.cents ?? summary.fold<int>(0, (s, r) => s + r.cents));
@@ -1009,7 +1270,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               // A source's own figures (Service Fusion's), reworked for the draft once it is changed.
               final summary = widget.summary == null
                   ? null
-                  : (editable && _dirty && widget.summaryBuilder != null ? widget.summaryBuilder!(_lines, figures) : widget.summary!);
+                  : (editable && _dirty && widget.summaryBuilder != null ? widget.summaryBuilder!(_lines, figures, _taxes) : widget.summary!);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 mainAxisSize: MainAxisSize.min,
@@ -1083,13 +1344,23 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   /// items, and the Tax, discounts & fees menu beside it.
   Widget _addRow(_Cols cols, {bool narrow = false}) {
     final search = CatalogSearchField(onPick: _pick, showCost: widget.showCost, search: widget.search, focusNode: _searchFocus);
-    final charges = PsMenuButton<String>(
-      entries: _chargeEntries,
-      onSelected: _pickCharge,
-      width: 280,
-      label: 'Tax, discounts and fees',
-      builder: (context, open, show) => TextButton.icon(
-        onPressed: show,
+    final open = _chargesOpen;
+    final count = _taxes.length + (_tax != null ? 1 : 0) + _rows.where((r) => r.line.isCharge).length;
+    final charges = Semantics(
+      label: 'Tax, discounts and fees${count == 0 ? '' : ', $count on this record'}',
+      button: true,
+      excludeSemantics: true,
+      child: TextButton.icon(
+        key: _chargesButton,
+        onPressed: () async {
+          if (_chargesOpen) return;
+          setState(() => _chargesOpen = true);
+          try {
+            await _openCharges();
+          } finally {
+            if (mounted) setState(() => _chargesOpen = false);
+          }
+        },
         icon: const Icon(Icons.add_rounded, size: 17),
         label: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1097,6 +1368,19 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
             const Flexible(
               child: Text('Tax, discounts & fees', maxLines: 1, overflow: TextOverflow.ellipsis, style: _quietLabel),
             ),
+            // How many taxes, discounts and fees the record has, in a quiet count (a fixed slot, so the label never
+            // moves as it changes).
+            if (count > 0) ...[
+              const SizedBox(width: 6),
+              Container(
+                constraints: const BoxConstraints(minWidth: 18),
+                height: 18,
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                alignment: Alignment.center,
+                decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(9), border: Border.all(color: DashUi.line)),
+                child: Text('$count', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.1, fontFeatures: _figures)),
+              ),
+            ],
             const SizedBox(width: 4),
             _Chevron(open: open),
           ],
@@ -1168,6 +1452,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
         // No heading over the lines' eyes (user 2026-11-16): each line's own eye says whether the customer sees it. The
         // column keeps its width, so ITEM stays over the names.
         // Read-only the name is bare text at the column's start; while editing it is in a box, [_cellX] in.
+        itemLead: const SizedBox(width: _Cols.markW),
         item: Padding(
           padding: EdgeInsets.only(left: cols.editable ? _cellX : 0),
           child: const Text('ITEM', maxLines: 1, style: _head),
@@ -1219,7 +1504,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   /// the name box), so they are even anyway.
   Widget _list(_Cols cols, List<LineFigures> all) {
     // A tax too long for one line takes two, as a name over its SKU does (see _taxTwoLines).
-    final twoLine = !widget.editable && _rows.any((r) => _hasMeta(r.line) || _taxTwoLines(context, r.line, widget.taxOptions, _tax) != null);
+    final twoLine = !widget.editable && _rows.any((r) => _hasMeta(r.line) || _taxTwoLines(context, r.line, _taxes, _tax) != null);
     Widget row(int i) {
       final r = _rows[i];
       final figures = all[i];
@@ -1234,15 +1519,17 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               focusField: _focusField,
               more: _moreOpen.contains(r.uid),
               onMore: () => _toggleMore(r.uid),
-              taxOptions: widget.taxOptions,
+              taxOptions: _taxes,
               defaultRate: _tax,
               onTax: (v) => _pickTax(r, v),
               invalid: _invalid[r.uid] ?? const {},
               onChanged: (l) => _changed(() => r.line = l),
               onInvalid: (f, bad) => _setInvalid(r.uid, f, bad),
+              onSettle: (f) => _settleBad(r.uid, [f]),
               onDone: () => _close(r.uid),
               onMove: (d) => _move(i, i + d),
               onMenu: (a) => _menu(a, i),
+              serviceNames: widget.serviceNames,
             )
           : _ViewRow(
               key: ValueKey('view-${r.uid}'),
@@ -1260,12 +1547,13 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
                       if (lineAmountFits(q, r.line.rate)) _changed(() => r.line = r.line.copyWith(quantity: q));
                     }
                   : null,
-              taxOptions: widget.taxOptions,
+              taxOptions: _taxes,
               defaultRate: _tax,
               onTax: widget.editable ? (v) => _pickTax(r, v) : null,
               invalid: (_invalid[r.uid] ?? const {}).isNotEmpty,
               onOpen: widget.editable ? (f) => _open(r.uid, f) : null,
               onMenu: (a) => _menu(a, i),
+              serviceNames: widget.serviceNames,
             );
       // Under the line, from where its name starts: its $0.00 confirmation, and what the catalog said about a service
       // just added (see [_lineNotes]).
@@ -1284,26 +1572,52 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               children: [
                 child,
                 Padding(
-                  padding: EdgeInsets.fromLTRB(_side + cols.lead + (widget.editable ? _cellX : 0), 0, _side + cols.trail, widget.editable ? 8 : 10),
+                  padding: EdgeInsets.fromLTRB(_side + cols.lead + _Cols.markW + (widget.editable ? _cellX : 0), 0, _side + cols.trail, widget.editable ? 8 : 10),
                   child: notes,
                 ),
               ],
             );
+      final shell = _RowShell(
+        key: r.shell,
+        flash: _flash.contains(r.uid),
+        leaving: _leaving.contains(r.uid),
+        onLeft: () => _finishRemove(r),
+        active: active,
+        editable: widget.editable,
+        // Read-only lines are told apart by the faint stripe on every other one (no rules between them); editable
+        // lines by their boxes, and a small window's stacked editable lines by a rule from where the items start.
+        stripe: !widget.editable && i.isOdd,
+        ruleLeft: widget.editable && cols.stacked ? _side : null,
+        child: body,
+      );
+      // A service package's name heads its lines (USER RULE 2026-11-20): over the first of each run of its lines.
+      final pkg = r.line.packageId;
+      final heads = pkg != null && (i == 0 || _rows[i - 1].line.packageId != pkg);
+      var count = 0;
+      if (heads) {
+        for (var j = i; j < _rows.length && _rows[j].line.packageId == pkg; j++) {
+          count++;
+        }
+      }
       return KeyedSubtree(
         key: ValueKey(r.uid),
-        child: _RowShell(
-          key: r.shell,
-          flash: _flash == r.uid,
-          leaving: _leaving.contains(r.uid),
-          onLeft: () => _finishRemove(r),
-          active: active,
-          editable: widget.editable,
-          // Read-only lines are told apart by the faint stripe on every other one (no rules between them); editable
-          // lines by their boxes, and a small window's stacked editable lines by a rule from where the items start.
-          stripe: !widget.editable && i.isOdd,
-          ruleLeft: widget.editable && cols.stacked ? _side : null,
-          child: body,
-        ),
+        child: heads
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _PackageHeader(
+                    id: pkg,
+                    name: r.line.packageName ?? 'Service package',
+                    lines: count,
+                    cols: cols,
+                    first: i == 0,
+                    onRemove: widget.editable ? () => _removePackage(pkg) : null,
+                  ),
+                  shell,
+                ],
+              )
+            : shell,
       );
     }
 
@@ -1365,45 +1679,29 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   /// Under the lines: the warnings about the figures and the [LineItemsEditor.aside] on the left, the summary on the
   /// right (stacked on a narrow window, the summary first).
   Widget _footer(LineTotals t, List<LineSummaryRow>? summary, {required bool wide}) {
-    final editable = widget.editable;
     final List<_TotalsRow> rows;
     if (summary != null) {
       rows = [for (final r in summary) _TotalsRow(r.strong ? widget.totalLabel : r.label, r.cents, strong: r.strong, tip: r.tip)];
     } else {
-      final taxField = editable
-          ? Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: SizedBox(
-                width: 70,
-                child: TextField(
-                  key: const ValueKey('tax-rate'),
-                  mouseCursor: SystemMouseCursors.click,
-                  controller: _taxText,
-                  cursorColor: DashUi.ink,
-                  textAlign: TextAlign.right,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, fontFeatures: _figures),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                  decoration: _inlineDeco(hint: '0', suffix: '%', error: _taxBad),
-                  onChanged: _typedTaxRate,
-                ),
-              ),
-            )
-          : null;
-      final taxMark = _taxBad
-          ? const Padding(
-              key: ValueKey('tax-rate-invalid'),
-              padding: EdgeInsets.only(left: 6),
-              child: Icon(Icons.error_outline_rounded, size: 16, color: DashUi.redText, semanticLabel: _taxRateRule),
-            )
-          : null;
+      // One row per tax line, as the record's own tax lines read ("Sales tax Rogers 9.5%"); "Sales tax" at $0.00 while
+      // the set has none (USER RULE 2026-11-20: until a tax is added nothing is taxed). The set's own rate and any tax
+      // are changed in Tax, discounts & fees.
+      String taxLabel(TaxFigure f) {
+        if (f.name == null) return 'Sales tax ${SalesTax.rateText(f.rate)}%';
+        final t = _taxes.where((x) => x.name == f.name).firstOrNull;
+        final short = t?.short ?? SalesTax.shortName(f.name!);
+        return short.trim().toLowerCase() == 'sales tax' ? 'Sales tax ${SalesTax.rateText(f.rate)}%' : 'Sales tax $short ${SalesTax.rateText(f.rate)}%';
+      }
+
+      final taxRows = [
+        for (final f in t.taxes)
+          if (f.name != null || _tax != null) _TotalsRow(taxLabel(f), f.taxCents, tip: f.name),
+      ];
       rows = [
         _TotalsRow('Items', t.itemsCents),
         if (t.discountCents > 0 || _rows.any((r) => r.line.isDiscount)) _TotalsRow('Discounts', -t.discountCents),
-        _TotalsRow(
-          _tax == null || editable ? 'Tax' : 'Tax ${_trimRate(_tax!)}%',
-          t.taxCents,
-          extra: taxField == null ? null : Row(mainAxisSize: MainAxisSize.min, children: [taxField, ?taxMark]),
-        ),
+        if (t.feeCents > 0 || _rows.any((r) => r.line.isFee)) _TotalsRow('Fees', t.feeCents),
+        if (taxRows.isEmpty) _TotalsRow(_tax == null ? 'Sales tax' : 'Sales tax ${SalesTax.rateText(_tax!)}%', t.taxCents) else ...taxRows,
         _TotalsRow(widget.totalLabel, t.totalCents, strong: true),
       ];
     }
@@ -1411,7 +1709,6 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     // and says how many lines have no cost (Services Catalog Phase 2; see _ProfitLines).
     final zero = _zeroChecks ? t.zeroUnconfirmedLines : 0;
     final notes = [
-      if (summary == null && editable && _taxBad) _taxRateRule,
       if (summary == null && t.unpricedLines > 0) '${t.unpricedLines} line${t.unpricedLines == 1 ? '' : 's'} not priced yet',
       if (zero > 0) '$zero line${zero == 1 ? '' : 's'} at \$0.00 not confirmed',
     ];
@@ -1468,31 +1765,6 @@ class _SaveIntent extends Intent {
   const _SaveIntent();
 }
 
-/// A field outside the boxes (the set's tax rate, an open description): white with the boxes' hairline, ink while
-/// focused, red when what is typed isn't a number.
-InputDecoration _inlineDeco({String? hint, String? suffix, String? prefix, bool error = false}) {
-  OutlineInputBorder b(Color c, [double w = 1]) => OutlineInputBorder(
-    borderRadius: BorderRadius.circular(_radius),
-    borderSide: BorderSide(color: c, width: w),
-  );
-  return InputDecoration(
-    isDense: true,
-    filled: true,
-    fillColor: Colors.white,
-    hoverColor: Colors.white,
-    hintText: hint,
-    hintStyle: _hint,
-    suffixText: suffix,
-    prefixText: prefix,
-    prefixStyle: const TextStyle(fontSize: 13, color: DashUi.ink, height: 1.35),
-    suffixStyle: const TextStyle(fontSize: 12, color: DashUi.ink, height: 1.35),
-    contentPadding: const EdgeInsets.symmetric(horizontal: _cellX, vertical: _cellY),
-    border: b(_edge, _edgeW),
-    enabledBorder: b(error ? DashUi.red : _edge, error ? 1.5 : _edgeW),
-    focusedBorder: b(error ? DashUi.red : DashUi.ink, 1.5),
-  );
-}
-
 /// A row with its fields closed: the line as text. In an editable table each value that can be changed is a box that
 /// opens into its field (see [_FieldCell]), always there as in Service Fusion's own editor; a figure that is worked out
 /// (an item's amount) stays plain text beside them, so it is clear what can be typed into and what follows from it.
@@ -1515,6 +1787,9 @@ class _ViewRow extends StatelessWidget {
   final ValueChanged<String>? onTax; // a pick from the Tax dropdown (see _TaxCell); null: read-only
   final void Function(String field)? onOpen;
   final ValueChanged<String> onMenu;
+
+  /// The record's Service Fusion service names ([LineItemsEditor.serviceNames]).
+  final Set<String> serviceNames;
   const _ViewRow({
     super.key,
     required this.index,
@@ -1533,12 +1808,16 @@ class _ViewRow extends StatelessWidget {
     required this.invalid,
     required this.onOpen,
     required this.onMenu,
+    this.serviceNames = const {},
   });
 
   @override
   Widget build(BuildContext context) {
     final open = onOpen != null;
-    final discount = line.isDiscount;
+    // A discount or a fee (a charge on the whole set): no quantity, rate or cost; its amount, or its percentage, is what
+    // is typed.
+    final discount = line.isCharge;
+    final pct = line.percent;
     final description = _cleanDescription(line.description);
     // A value that opens into its field (editing), or the value padded the same (read-only).
     Widget cell(String field, Widget child, {Alignment align = Alignment.centerLeft, Widget? end, double? endWidth, bool divider = false}) => open
@@ -1631,6 +1910,9 @@ class _ViewRow extends StatelessWidget {
     );
     final readName = _NameText(nameText, style: nameStyle, invalid: invalid);
     final meta = open ? null : _metaLine(line, toggle: toggle, tone: idle ? _quietTone : DashUi.ink);
+    // Every line's mark: "S" a service line, "I" an inventory item (USER RULE 2026-11-20); a package's lines sit a step
+    // further in, under its heading.
+    final mark = _KindMark.of(context, line, services: serviceNames, height: open ? _boxHeight(context) : _KindMark.textLine(context));
 
     if (cols.stacked) {
       // A small window: the name and amount on top; under the name its quiet line, then quantity x rate, tax and cost.
@@ -1638,7 +1920,7 @@ class _ViewRow extends StatelessWidget {
       final figuresText = [
         if (open && !discount && line.sku.trim().isNotEmpty) line.sku.trim(),
         if (!discount) '${qtyText(line.quantity)} × ${line.rate == null ? 'not priced' : money(line.rate)}',
-        if (!discount) _taxLabel(line, taxOptions, defaultRate) else if (line.taxable) 'Off taxed lines',
+        if (!discount) _taxLabel(line, taxOptions, defaultRate) else if (line.isFee) 'Not taxed' else 'Off the total',
         if (cols.cost && !discount) 'cost ${line.cost == null ? '—' : money(line.cost)}',
       ].join('  ·  ');
       final figuresLine = figuresText.isEmpty
@@ -1686,7 +1968,7 @@ class _ViewRow extends StatelessWidget {
               ],
             );
       return Semantics(
-        label: 'Line ${index + 1}: ${line.name}',
+        label: _lineLabel(index, line),
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: _side, vertical: open ? _cellY + 1 : _rowPad),
           child: Row(
@@ -1694,6 +1976,7 @@ class _ViewRow extends StatelessWidget {
             children: [
               if (cols.editable) SizedBox(width: _Cols.gripW, child: grip),
               SizedBox(width: _Cols.eyeW, child: eye),
+              mark,
               Expanded(child: body),
               const SizedBox(width: 10),
               // One width for every line's amount, so the name boxes above line up.
@@ -1724,13 +2007,9 @@ class _ViewRow extends StatelessWidget {
         _Reveal(child: desc == null ? null : Padding(padding: EdgeInsets.fromLTRB(0, 8, open ? 0 : 24, 2), child: desc)),
       ],
     );
+    // A fee is never taxed; a discount comes off the total and never lowers the tax (USER RULE 2026-11-20).
     final Widget tax = discount
-        ? plain(
-            line.taxable
-                ? const Text('Off taxed lines', maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellMuted)
-                : const SizedBox(height: 18),
-            align: Alignment.centerLeft,
-          )
+        ? plain(line.isFee ? _notTaxed : _offTotal, align: Alignment.centerLeft)
         : _TaxCell(line: line, options: taxOptions, defaultRate: defaultRate, onPick: onTax, quiet: idle);
     final qtyValue = Text(qtyText(line.quantity), textAlign: TextAlign.right, maxLines: 1, style: cellStyle);
     final Widget? qty = discount
@@ -1745,11 +2024,15 @@ class _ViewRow extends StatelessWidget {
             endWidth: onQty == null ? null : _Spin.width,
           )
         : plain(qtyValue);
-    final Widget? rate = discount ? null : (open ? cell('rate', rateValue, align: Alignment.centerRight) : plain(rateValue));
+    // A percentage discount or fee shows its percentage where an item's rate is (a box while editing) and its worked-out
+    // amount beside it; a dollar one has only its amount, typed into a box while editing.
+    final Widget? rate = discount
+        ? (pct == null ? null : (open ? cell('pct', _percentValue(context, pct, boxed: true), align: Alignment.centerRight) : plain(_percentValue(context, pct, boxed: false))))
+        : (open ? cell('rate', rateValue, align: Alignment.centerRight) : plain(rateValue));
     // A discount's amount is what is typed (a box while editing); an item's is worked out, plain text, never a box.
     final amountText = Text(centsMoney(figures.amountCents), textAlign: TextAlign.right, maxLines: 1, style: amountStyle);
-    final Widget amount = discount && open
-        ? cell('rate', _money(context, -figures.amountCents / 100, boxed: true, style: amountStyle), align: Alignment.centerRight)
+    final Widget amount = discount && open && pct == null
+        ? cell('rate', _money(context, figures.amountCents.abs() / 100, boxed: true, style: amountStyle), align: Alignment.centerRight)
         : plain(amountText);
     final Widget? cost = discount ? null : (open ? cell('cost', costValue, align: Alignment.centerRight) : plain(costValue));
     final sym = cols.editable && !discount;
@@ -1767,6 +2050,7 @@ class _ViewRow extends StatelessWidget {
         costCell: cost,
         taxCell: tax,
         menu: actions,
+        itemLead: mark,
       ),
     );
     if (twoLine && !open) {
@@ -1776,7 +2060,168 @@ class _ViewRow extends StatelessWidget {
         child: Align(alignment: Alignment.centerLeft, child: body),
       );
     }
-    return Semantics(label: 'Line ${index + 1}: ${line.name}', child: body);
+    return Semantics(label: _lineLabel(index, line), child: body);
+  }
+}
+
+/// What a screen reader hears for a line: its place and name, and the package it is a service line of.
+String _lineLabel(int index, LineDraft line) =>
+    'Line ${index + 1}: ${line.name}${line.packageName == null ? '' : ', a service line of ${line.packageName}'}';
+
+/// A folded name, for matching a saved line to the record's Service Fusion service lines ([LineItemsEditor.serviceNames]).
+String serviceNameKey(String name) => name.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+/// Whether [line] is a service line (marked "S") rather than an inventory item ("I"): a service package's line, a
+/// service picked from the catalog, a Service Fusion service line; or a saved line that names a priced Service Fusion
+/// service rate (an `sfr:` key) or carries the name of one of the record's own service lines ([services]). Anything
+/// with an inventory part is an item.
+bool isServiceLine(LineDraft line, {Set<String> services = const {}}) {
+  if (line.inPackage) return true;
+  final known = line.service;
+  if (known != null) return known;
+  final key = line.catalogKey ?? '';
+  if (line.inventoryItemId != null || key.startsWith('inv:')) return false;
+  if (key.startsWith('sfr:')) return true;
+  return services.contains(serviceNameKey(line.name));
+}
+
+/// Every line's mark (USER RULE 2026-11-20): "S" in a circle for a service line, "I" for an inventory item, before its
+/// name. A discount has none (it is not an item) but keeps the room, so every name starts in the same place. A service
+/// package's lines sit [_Cols.packageIndent] further in, under the package's heading. [height] is the line's first row
+/// (a box while editing, the name's text line read-only), so the mark sits level with the name.
+class _KindMark extends StatelessWidget {
+  final String? letter; // S, I, or null (a discount)
+  final bool indented;
+  final double height;
+  const _KindMark({required this.letter, required this.indented, required this.height});
+
+  factory _KindMark.of(BuildContext context, LineDraft line, {required Set<String> services, required double height}) => _KindMark(
+    letter: line.isCharge ? null : (isServiceLine(line, services: services) ? 'S' : 'I'),
+    indented: line.inPackage,
+    height: height,
+  );
+
+  static const double size = 18;
+
+  /// A read-only name's first line: 14 px at 1.35, with the reader's text size.
+  static double textLine(BuildContext context) => (MediaQuery.textScalerOf(context).scale(14) * 1.35).ceilToDouble();
+
+  @override
+  Widget build(BuildContext context) {
+    final l = letter;
+    return SizedBox(
+      width: _Cols.markW + (indented ? _Cols.packageIndent : 0),
+      height: height,
+      child: l == null
+          ? null
+          : Semantics(
+              label: l == 'S' ? 'Service line' : 'Inventory item',
+              excludeSemantics: true,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: Container(
+                    key: ValueKey(l == 'S' ? 'service-mark' : 'item-mark'),
+                    width: size,
+                    height: size,
+                    alignment: Alignment.center,
+                    // A slate ring, an ink letter: on every line, so it stays quiet (and an ink outline is the table's
+                    // focus look).
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: DashUi.slate, width: 1.2),
+                    ),
+                    child: Text(
+                      l,
+                      textScaler: TextScaler.noScaling,
+                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w800, color: DashUi.ink, height: 1),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+/// A service package's heading (USER RULE 2026-11-20): its name over its lines, which sit indented under it, each
+/// with its "S". It carries no price of its own (its lines are what is charged), only how many lines it has. While
+/// editing, its ⋮ removes the whole package.
+class _PackageHeader extends StatelessWidget {
+  final String id;
+  final String name;
+  final int lines;
+  final _Cols cols;
+
+  /// The table's first row: less room above it (the headings' hairline is right there).
+  final bool first;
+  final VoidCallback? onRemove; // null: read-only
+  const _PackageHeader({required this.id, required this.name, required this.lines, required this.cols, required this.first, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    final remove = onRemove;
+    final count = lines == 1 ? '1 line' : '$lines lines';
+    return Semantics(
+      container: true,
+      header: true,
+      label: 'Service package: $name, $count',
+      child: Padding(
+        key: ValueKey('package-$id'),
+        padding: EdgeInsets.fromLTRB(_side + cols.lead, first ? 8 : 14, _side, 0),
+        child: SizedBox(
+          height: _boxHeight(context),
+          child: Row(
+            children: [
+              // The name and its count take the row; the ⋮ sits in the lines' menu column, under theirs.
+              Expanded(
+                child: ExcludeSemantics(
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text.rich(
+                          _nameSpan(name, const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3, letterSpacing: -0.1)),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Service package · $count',
+                        maxLines: 1,
+                        style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.3),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (remove != null)
+                SizedBox(
+                  width: _Cols.actionsW,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: PsMenuButton<String>(
+                      entries: () => const [PsMenuItem('remove-package', 'Remove package', icon: Icons.delete_outline_rounded, danger: true)],
+                      onSelected: (_) => remove(),
+                      width: 210,
+                      align: PsMenuAlign.end,
+                      label: '$name actions',
+                      builder: (context, open, show) => _BoxButton(
+                        key: ValueKey('package-$id-actions'),
+                        label: '$name actions',
+                        icon: Icons.more_vert_rounded,
+                        active: open,
+                        onTap: show,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -1829,6 +2274,32 @@ Widget _money(BuildContext context, double dollars, {required bool boxed, TextSt
 /// "1,489.00", "-30.00": money without its "$" (the box shows that at its left).
 String _plainMoney(int cents) => centsMoney(cents).replaceFirst(r'$', '');
 
+/// A discount's or fee's percentage, in its box while editing ("20" with "%" at the box's right, where the field puts
+/// its suffix), or as plain text ("20%").
+Widget _percentValue(BuildContext context, double percent, {required bool boxed, TextStyle style = _cell}) {
+  final t = SalesTax.rateText(percent);
+  if (!boxed) return Text('$t%', textAlign: TextAlign.right, maxLines: 1, style: style);
+  return Row(
+    children: [
+      Expanded(
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerRight,
+          child: Text(t, textAlign: TextAlign.right, maxLines: 1, style: style),
+        ),
+      ),
+      const SizedBox(width: 4),
+      Text('%', style: _currency, strutStyle: _valueLine(context, style)),
+    ],
+  );
+}
+
+/// A fee's tax cell: fees are never taxed (USER RULE 2026-11-20).
+const _notTaxed = Text('Not taxed', maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellMuted);
+
+/// A discount's tax cell: it comes off the total and never lowers the tax (USER RULE 2026-11-20).
+const _offTotal = Text('Off the total', maxLines: 1, overflow: TextOverflow.ellipsis, style: _cellMuted);
+
 /// The height a read-only line takes when it has a quiet line under its name, at the reader's text size.
 double _twoLineHeight(BuildContext context) {
   final s = MediaQuery.textScalerOf(context);
@@ -1855,17 +2326,24 @@ class _Sym extends StatelessWidget {
 }
 
 /// Whether a read-only line has a quiet line under its name.
-bool _hasMeta(LineDraft line) => line.isDiscount || line.sku.trim().isNotEmpty || _cleanDescription(line.description).isNotEmpty;
+bool _hasMeta(LineDraft line) => line.isCharge || line.sku.trim().isNotEmpty || _cleanDescription(line.description).isNotEmpty;
 
-/// What sits at the end of a line's name box while editing: its SKU, or "Discount".
+/// What a discount or fee is, in the quiet line under its name: "Discount", "Fee", and for a percentage what it is a
+/// percentage of ("20% of items", "3% of items less discounts").
+String _chargeKind(LineDraft line) => line.isDiscount ? 'Discount' : 'Fee';
+String? _chargeBasis(LineDraft line) {
+  final p = line.percent;
+  if (p == null) return null;
+  return '${SalesTax.rateText(p)}% of ${line.isDiscount ? 'items' : 'items less discounts'}';
+}
+
+/// A discount's mark is red (money off); a fee's is ink.
+TextStyle _chargeMarkStyle(LineDraft line) => _metaStyle.copyWith(fontWeight: FontWeight.w600, color: line.isDiscount ? DashUi.redText : DashUi.ink);
+
+/// What sits at the end of a line's name box while editing: its SKU, or "Discount" / "Fee".
 Widget? _inlineMeta(LineDraft line) {
-  if (line.isDiscount) {
-    return Text(
-      'Discount',
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: _metaStyle.copyWith(fontWeight: FontWeight.w600, color: DashUi.redText),
-    );
+  if (line.isCharge) {
+    return Text(_chargeKind(line), maxLines: 1, overflow: TextOverflow.ellipsis, style: _chargeMarkStyle(line));
   }
   final sku = line.sku.trim();
   return sku.isEmpty ? null : Text(sku, maxLines: 1, overflow: TextOverflow.ellipsis, style: _metaStyle.copyWith(letterSpacing: 0.3));
@@ -1876,12 +2354,9 @@ Widget? _inlineMeta(LineDraft line) {
 /// (slate on a line at quantity 0).
 Widget? _metaLine(LineDraft line, {Widget? toggle, Color tone = DashUi.ink}) {
   final parts = <Widget>[
-    if (line.isDiscount)
-      Text(
-        'Discount',
-        style: _metaStyle.copyWith(fontWeight: FontWeight.w600, color: DashUi.redText),
-      ),
-    if (!line.isDiscount && line.sku.trim().isNotEmpty) Text(line.sku.trim(), maxLines: 1, style: _metaStyle.copyWith(letterSpacing: 0.3, color: tone)),
+    if (line.isCharge) Text(_chargeKind(line), style: _chargeMarkStyle(line)),
+    if (_chargeBasis(line) != null) Text(_chargeBasis(line)!, maxLines: 1, style: _metaStyle.copyWith(color: tone)),
+    if (!line.isCharge && line.sku.trim().isNotEmpty) Text(line.sku.trim(), maxLines: 1, style: _metaStyle.copyWith(letterSpacing: 0.3, color: tone)),
   ];
   if (parts.isEmpty && toggle == null) return null;
   return Wrap(
@@ -2456,6 +2931,9 @@ String _taxLabel(LineDraft line, List<SalesTax> options, double? defaultRate) {
 ({String name, String? rate}) _taxParts(LineDraft line, List<SalesTax> options, double? defaultRate) {
   if (!line.taxable) return (name: 'No tax', rate: null);
   final name = line.taxName;
+  // A line with no tax named on a set with a rate of its own pays that rate, whatever taxes were added beside it (found
+  // in real Chrome 2026-11-20: once Rogers was added, the set's 10.5% lines read "Rogers 9.5%").
+  if (name == null && defaultRate != null) return (name: 'Taxable', rate: '${SalesTax.rateText(defaultRate)}%');
   // A record with tax lines of its own: the one this line is charged at (see SalesTax.resolve), as the totals have it.
   if (options.isNotEmpty) {
     final t = SalesTax.resolve(name, options);
@@ -2518,6 +2996,7 @@ class _TaxCell extends StatelessWidget {
   /// calls just "Sales Tax" shows the record's own tax ticked, not an unknown name.
   String get _current {
     if (!line.taxable) return none;
+    if (line.taxName == null && defaultRate != null) return setRate; // the set's own rate (see _taxParts)
     final resolved = SalesTax.resolve(line.taxName, options);
     return resolved?.name ?? line.taxName ?? setRate;
   }
@@ -2533,7 +3012,8 @@ class _TaxCell extends StatelessWidget {
         : null;
     return [
       for (final t in options) item(t.name, t.short, sub: '${SalesTax.rateText(t.rate)}%'),
-      if (options.isEmpty && (line.taxable && line.taxName == null || defaultRate != null))
+      // The set's own rate, beside any tax added to it; a line still marked "Taxable" with no rate stays visible.
+      if (defaultRate != null || (options.isEmpty && line.taxable && line.taxName == null))
         item(setRate, 'Taxable', sub: defaultRate == null ? null : '${SalesTax.rateText(defaultRate!)}%'),
       if (orphan != null) item(orphan, SalesTax.shortName(orphan), sub: 'rate not known'),
       item(none, 'No tax'),
@@ -2903,9 +3383,15 @@ class _EditRow extends StatefulWidget {
   final Set<String> invalid;
   final ValueChanged<LineDraft> onChanged;
   final void Function(String field, bool bad) onInvalid;
+
+  /// A figure's box was left holding something that isn't a number (see _LineItemsEditorState._settleBad).
+  final ValueChanged<String>? onSettle;
   final VoidCallback onDone;
   final ValueChanged<int> onMove;
   final ValueChanged<String> onMenu;
+
+  /// The record's Service Fusion service names ([LineItemsEditor.serviceNames]).
+  final Set<String> serviceNames;
   const _EditRow({
     super.key,
     required this.index,
@@ -2921,9 +3407,11 @@ class _EditRow extends StatefulWidget {
     required this.invalid,
     required this.onChanged,
     required this.onInvalid,
+    this.onSettle,
     required this.onDone,
     required this.onMove,
     required this.onMenu,
+    this.serviceNames = const {},
   });
 
   @override
@@ -2965,12 +3453,21 @@ class _EditRowState extends State<_EditRow> {
       'qty': TextEditingController(text: qtyText(l.quantity)),
       'rate': TextEditingController(text: _moneyText(l.rate)),
       'cost': TextEditingController(text: _moneyText(l.cost)),
+      // A percentage discount or fee: "20", "2.5" (its "%" sits at the box's end).
+      'pct': TextEditingController(text: l.percent == null ? '' : SalesTax.rateText(l.percent!)),
     };
     _f = {for (final k in _c.keys) k: FocusNode(debugLabel: 'line ${widget.index + 1} $k')};
     // A figure is tidied when its field is left ("2.5" -> "2.50", "689" -> "689.00"), so it reads as it will once the
-    // line closes.
-    for (final k in const ['qty', 'rate', 'cost']) {
-      _f[k]!.addListener(() => _tidy(k));
+    // line closes. As its field takes the keyboard, the line is noted as it was ([_before]).
+    for (final k in const ['qty', 'rate', 'cost', 'pct']) {
+      _f[k]!.addListener(() {
+        if (!mounted) return;
+        if (_f[k]!.hasFocus) {
+          _before[k] = widget.line;
+        } else {
+          _tidy(k);
+        }
+      });
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -2992,13 +3489,51 @@ class _EditRowState extends State<_EditRow> {
     super.dispose();
   }
 
+  /// Each figure's line as it was when its box took the keyboard. While what is typed there isn't a number, the line
+  /// goes back to it, so a half-typed figure is never charged (see _LineItemsEditorState._settleBad).
+  final Map<String, LineDraft> _before = {};
+
+  /// [field]'s figure as the line holds it, as its box shows it.
+  String _shown(String field) {
+    final l = widget.line;
+    return switch (field) {
+      'qty' => qtyText(l.quantity),
+      'pct' => l.percent == null ? '' : SalesTax.rateText(l.percent!),
+      'cost' => _moneyText(l.cost),
+      _ => _moneyText(l.rate),
+    };
+  }
+
+  /// While [field] holds something that isn't a number: the line's figure from before this edit.
+  void _putBack(String field) {
+    final b = _before[field];
+    final l = widget.line;
+    if (b == null) return;
+    final back = switch (field) {
+      'qty' => b.quantity == l.quantity ? null : l.copyWith(quantity: b.quantity),
+      'pct' => b.percent == l.percent ? null : l.copyWith(percent: b.percent),
+      'cost' => b.cost == l.cost ? null : l.copyWith(cost: b.cost),
+      _ => b.rate == l.rate ? null : l.copyWith(rate: b.rate),
+    };
+    if (back != null) widget.onChanged(back);
+  }
+
   void _tidy(String field) {
     if (!mounted || _f[field]!.hasFocus) return;
     final c = _c[field]!;
+    // Left holding something that isn't a number: the box shows the line's own figure again, and the editor says so.
+    if (widget.invalid.contains(field)) {
+      c.text = _shown(field);
+      widget.onSettle?.call(field);
+      return;
+    }
     final String? tidy;
     if (field == 'qty') {
       final q = parseQty(c.text);
       tidy = _qtyOk(q) ? qtyText(q!) : null;
+    } else if (field == 'pct') {
+      final p = parsePercent(c.text);
+      tidy = p == null ? null : SalesTax.rateText(p);
     } else {
       final m = _typedMoney(field, c.text);
       tidy = c.text.trim().isEmpty || m == null ? null : _plainMoney((m * 100).round());
@@ -3032,26 +3567,37 @@ class _EditRowState extends State<_EditRow> {
   /// 75 (it was kept as -75, so the field said "-75.00" and the closed box "75.00"; found in round 2, 2026-11-13).
   double? _typedMoney(String field, String v) {
     final m = parseMoney(v);
-    return m != null && field == 'rate' && widget.line.isDiscount ? m.abs() : m;
+    return m != null && field == 'rate' && widget.line.isCharge ? m.abs() : m;
   }
 
   void _number(String field, String v) {
     final empty = v.trim().isEmpty;
     final l = widget.line;
+    if (field == 'pct') {
+      // A percentage from just above 0% to 100%; anything else is marked and the line keeps its last good one.
+      final p = parsePercent(v);
+      final ok = p != null && p > 0 && p <= 100;
+      widget.onInvalid('pct', !ok);
+      ok ? widget.onChanged(l.copyWith(percent: p)) : _putBack('pct');
+      return;
+    }
     if (field == 'qty') {
       final q = parseQty(v);
       // Quantity x rate stays within what the server takes for one line (lineAmountFits).
       final ok = _qtyOk(q) && lineAmountFits(q!, l.rate);
       widget.onInvalid('qty', !ok);
-      if (ok) widget.onChanged(l.copyWith(quantity: q));
+      ok ? widget.onChanged(l.copyWith(quantity: q)) : _putBack('qty');
       return;
     }
     final m = _typedMoney(field, v);
     final ok =
         empty ||
-        (m != null && m.abs() <= kMaxLineRate && (field != 'cost' || m >= 0) && (field != 'rate' || l.isDiscount || lineAmountFits(l.quantity, m)));
+        (m != null && m.abs() <= kMaxLineRate && (field != 'cost' || m >= 0) && (field != 'rate' || l.isCharge || lineAmountFits(l.quantity, m)));
     widget.onInvalid(field, !ok);
-    if (!ok) return;
+    if (!ok) {
+      _putBack(field);
+      return;
+    }
     widget.onChanged(field == 'rate' ? l.copyWith(rate: empty ? null : m) : l.copyWith(cost: empty ? null : m));
   }
 
@@ -3102,6 +3648,7 @@ class _EditRowState extends State<_EditRow> {
     bool right = false,
     bool numeric = false,
     bool money = false,
+    bool percent = false,
     bool multiline = false,
     TextStyle? style,
     String? label,
@@ -3145,7 +3692,7 @@ class _EditRowState extends State<_EditRow> {
               divider: key == 'name',
               child: field!,
             ),
-            child: _textField(key, hint: hint, right: right, numeric: numeric, money: money, multiline: false, style: style),
+            child: _textField(key, hint: hint, right: right, numeric: numeric, money: money, percent: percent, multiline: false, style: style),
           ),
   );
 
@@ -3155,6 +3702,7 @@ class _EditRowState extends State<_EditRow> {
     required bool right,
     required bool numeric,
     required bool money,
+    bool percent = false,
     required bool multiline,
     TextStyle? style,
   }) {
@@ -3165,7 +3713,17 @@ class _EditRowState extends State<_EditRow> {
     // theme's comes through; the same for its placeholder and its "$".
     final base = DefaultTextStyle.of(context).style;
     TextStyle closed(TextStyle s) => base.merge(s);
-    return _textFieldStyled(key, hint: hint, right: right, numeric: numeric, money: money, multiline: multiline, style: closed(style ?? _cell), closed: closed);
+    return _textFieldStyled(
+      key,
+      hint: hint,
+      right: right,
+      numeric: numeric,
+      money: money,
+      percent: percent,
+      multiline: multiline,
+      style: closed(style ?? _cell),
+      closed: closed,
+    );
   }
 
   TextField _textFieldStyled(
@@ -3174,6 +3732,7 @@ class _EditRowState extends State<_EditRow> {
     required bool right,
     required bool numeric,
     required bool money,
+    bool percent = false,
     required bool multiline,
     required TextStyle style,
     required TextStyle Function(TextStyle) closed,
@@ -3232,6 +3791,8 @@ class _EditRowState extends State<_EditRow> {
                     ),
                   ),
             prefix: money ? Text(r'$ ', style: closed(_currency), strutStyle: StrutStyle.fromTextStyle(style, forceStrutHeight: true)) : null,
+            // A percentage's "%" at the box's end, where the closed box has it ([_percentValue]).
+            suffix: percent ? Text(' %', style: closed(_currency), strutStyle: StrutStyle.fromTextStyle(style, forceStrutHeight: true)) : null,
             // The box draws the outline; the text sits exactly where a closed line's value does (and so under its
             // heading). A right-aligned field keeps [_caretRoom] after its text for the caret: that comes off its
             // padding, or its figure would sit 3 px left of the closed one (round 3, 2026-11-13).
@@ -3248,7 +3809,9 @@ class _EditRowState extends State<_EditRow> {
   Widget build(BuildContext context) {
     final cols = widget.cols;
     final l = widget.line;
-    final discount = l.isDiscount;
+    // A discount or a fee: its amount (or percentage) and, for a discount, whether it comes off the taxed lines.
+    final discount = l.isCharge;
+    final pct = l.percent != null;
     final boxH = _boxHeight(context);
     final actions = Align(
       alignment: Alignment.topRight,
@@ -3268,7 +3831,7 @@ class _EditRowState extends State<_EditRow> {
     final nameField = LayoutBuilder(
       builder: (context, c) => _field(
         'name',
-        hint: discount ? 'What the discount is for' : 'Item name',
+        hint: l.isDiscount ? 'What the discount is for' : (l.isFee ? 'What the fee is for' : 'Item name'),
         label: 'Line ${widget.index + 1} name',
         style: _nameStyle,
         // The SKU (or "Discount") and "Description" stay inside the name box, where the closed box has them.
@@ -3305,39 +3868,14 @@ class _EditRowState extends State<_EditRow> {
       trailing: _Spin(value: _typedQty, rate: l.rate, onChanged: _stepQty, inField: true),
       trailingWidth: _Spin.width,
     );
+    // A fee is never taxed; a discount comes off the total and never lowers the tax (USER RULE 2026-11-20: tax is
+    // worked out line by line). The old "Off taxed lines" checkbox is gone.
+    // Where a closed line puts its text ([_cellX] in), so the words stay put as the line opens and sit under TAX.
     final offTaxed = SizedBox(
       height: boxH,
-      child: Tooltip(
-        message: 'Comes off the taxed lines (lowers the tax)',
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // Exactly its square, so it starts at the column's edge as every box in the column does (a Material
-            // checkbox otherwise sits about 7 px inside its own touch area: round 3).
-            SizedBox(
-              key: const ValueKey('off-taxed'),
-              width: 18,
-              height: 18,
-              child: Checkbox(
-                value: l.taxable,
-                visualDensity: VisualDensity.compact,
-                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                activeColor: DashUi.ink,
-                side: const BorderSide(color: _edgeHover, width: 1.2),
-                onChanged: (v) => widget.onChanged(l.copyWith(taxable: v == true)),
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Flexible(
-              child: Text(
-                'Off taxed lines',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12.5, color: DashUi.ink),
-              ),
-            ),
-          ],
-        ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: _cellX),
+        child: Align(alignment: Alignment.centerLeft, child: l.isFee ? _notTaxed : _offTotal),
       ),
     );
     final taxCell = _TaxCell(line: l, options: widget.taxOptions, defaultRate: widget.defaultRate, onPick: widget.onTax);
@@ -3355,15 +3893,22 @@ class _EditRowState extends State<_EditRow> {
       ),
     );
     final rateField = _field('rate', hint: 'Price', right: true, numeric: true, money: true, label: 'Rate');
-    final discountField = _field(
-      'rate',
-      hint: 'Amount',
-      right: true,
-      numeric: true,
-      money: true,
-      label: 'Discount amount',
-      style: _amountStyle.copyWith(color: DashUi.redText),
-    );
+    // A dollar discount or fee: its amount is typed. A percentage one: its percentage is typed where an item's rate is,
+    // and its amount is worked out beside it.
+    final discountField = pct
+        ? amountText
+        : _field(
+            'rate',
+            hint: 'Amount',
+            right: true,
+            numeric: true,
+            money: true,
+            label: l.isDiscount ? 'Discount amount' : 'Fee amount',
+            style: _amountStyle.copyWith(color: l.isDiscount ? DashUi.redText : DashUi.ink),
+          );
+    final pctField = pct
+        ? _field('pct', hint: '0', right: true, numeric: true, percent: true, label: l.isDiscount ? 'Discount percentage' : 'Fee percentage')
+        : null;
     final costField = _field('cost', hint: 'Cost', right: true, numeric: true, money: true, label: 'Unit cost');
     final under = cols.stacked ? _inlineMeta(l) : null;
     final item = Column(
@@ -3405,19 +3950,22 @@ class _EditRowState extends State<_EditRow> {
                 children: [
                   SizedBox(width: _Cols.gripW, child: grip),
                   SizedBox(width: _Cols.eyeW, child: eye),
+                  _KindMark.of(context, l, services: widget.serviceNames, height: boxH),
                   Expanded(child: item),
                   SizedBox(width: _Cols.actionsW, child: actions),
                 ],
               ),
               const SizedBox(height: 10),
               Padding(
-                padding: const EdgeInsets.only(left: _Cols.gripW + _Cols.eyeW),
+                padding: const EdgeInsets.only(left: _Cols.gripW + _Cols.eyeW + _Cols.markW),
                 child: Wrap(
                   spacing: 10,
                   runSpacing: 10,
                   crossAxisAlignment: WrapCrossAlignment.end,
                   children: [
-                    if (discount)
+                    if (discount && pctField != null) ...[
+                      labelled('Percent', 120, pctField),
+                    ] else if (discount)
                       labelled('Amount', 128, discountField)
                     else ...[
                       labelled('Qty', _Cols.qtyEditW, qtyField),
@@ -3446,13 +3994,14 @@ class _EditRowState extends State<_EditRow> {
           item: item,
           qtyCell: discount ? null : qtyField,
           times: _Sym(discount ? '' : '×'),
-          rateCell: discount ? null : rateField,
+          rateCell: discount ? pctField : rateField,
           equals: _Sym(discount ? '' : '='),
           // A discount's amount is what is typed; an item's is worked out.
           amountCell: discount ? discountField : amountText,
           costCell: discount ? null : costField,
           taxCell: discount ? Align(alignment: Alignment.topLeft, child: offTaxed) : taxCell,
           menu: actions,
+          itemLead: _KindMark.of(context, l, services: widget.serviceNames, height: boxH),
         ),
       ),
     );
@@ -3494,8 +4043,7 @@ class _TotalsRow {
   final int cents;
   final bool strong;
   final String? tip;
-  final Widget? extra;
-  const _TotalsRow(this.label, this.cents, {this.strong = false, this.tip, this.extra});
+  const _TotalsRow(this.label, this.cents, {this.strong = false, this.tip});
 }
 
 /// What the lines cost us and what is left after it (see _LineItemsEditorState._profit).
@@ -3567,7 +4115,6 @@ class _Summary extends StatelessWidget {
               style: _value.copyWith(color: r.cents < 0 ? DashUi.redText : DashUi.ink),
             ),
             tip: r.tip,
-            extra: r.extra,
           ),
         // Ours, between the customer's figures and their total (above the rule, user 2026-11-12), in a box of its own.
         if (p != null)

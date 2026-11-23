@@ -1993,7 +1993,7 @@ class _ChartPainter extends CustomPainter {
         TextStyle(
           fontSize: 12.5,
           fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
-          color: focus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFCBD5E1)),
+          color: focus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFD4D4D4)),
         ),
         // A label may be wider than its slot when only some points have one.
         maxWidth: labels != null ? slot * 4 : slot,
@@ -2506,7 +2506,7 @@ class _MissedCallsDialogState extends State<_MissedCallsDialog> {
             ),
             for (final day in days) ...[
               Container(
-                color: const Color(0xFFF8FAFC),
+                color: const Color(0xFFF8F8F8),
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 7),
                 child: Row(
                   children: [
@@ -2582,7 +2582,7 @@ class _MissedCallsDialogState extends State<_MissedCallsDialog> {
             // The window these calls cover, with the count.
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-              decoration: const BoxDecoration(color: Color(0xFFF1F5F9), border: Border.symmetric(horizontal: BorderSide(color: _line))),
+              decoration: const BoxDecoration(color: Color(0xFFF2F2F2), border: Border.symmetric(horizontal: BorderSide(color: _line))),
               child: Row(
                 children: [
                   const Icon(Icons.calendar_today_rounded, size: 15, color: _slate),
@@ -3399,7 +3399,7 @@ class _FlamePainter extends CustomPainter {
     final flick = 0.94 + 0.06 * math.sin(a * 3) + 0.03 * math.sin(a * 5 + 1);
     final sway = math.sin(a * 2);
     if (!lit) {
-      canvas.drawPath(_flame(size, size.width * 0.8, size.height * 0.55, 0), Paint()..color = const Color(0xFFCBD5E1));
+      canvas.drawPath(_flame(size, size.width * 0.8, size.height * 0.55, 0), Paint()..color = const Color(0xFFD4D4D4));
       return;
     }
     final outer = Color.lerp(const Color(0xFFF59E0B), const Color(0xFFEF4444), heat)!;

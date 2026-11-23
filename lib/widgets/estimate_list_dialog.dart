@@ -442,7 +442,7 @@ class _EstimateListDialogState extends State<EstimateListDialog> {
     final card = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: DashUi.line),
       ),

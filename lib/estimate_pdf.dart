@@ -53,8 +53,8 @@ class ProposalInput {
 final PdfColor _ink = PdfColor.fromInt(0xFF0F172A);
 final PdfColor _slate = PdfColor.fromInt(0xFF475569);
 final PdfColor _subtle = PdfColor.fromInt(0xFF64748B);
-final PdfColor _line = PdfColor.fromInt(0xFFE2E8F0);
-final PdfColor _faint = PdfColor.fromInt(0xFFF1F5F9);
+final PdfColor _line = PdfColor.fromInt(0xFFE4E4E4);
+final PdfColor _faint = PdfColor.fromInt(0xFFF2F2F2);
 final PdfColor _red = PdfColor.fromInt(0xFFB91C1C);
 final PdfColor _green = PdfColor.fromInt(0xFF047857);
 final PdfColor _brand = PdfColor.fromInt(0xFFCC0007);

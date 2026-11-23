@@ -483,12 +483,12 @@ class _FinancialPage extends StatelessWidget {
         companyHistory: data.companyPoolHistory,
         commercialHistory: data.commercialPoolHistory,
         // The log needs the Payroll switch; without it the figure stays a plain number.
-        onOpenCompany: AuthSession.instance.canView('hr_payroll')
+        onOpenCompany: AuthSession.instance.canView('company_pool')
             ? () async {
                 if (await showCompanyPoolDialog(context)) onPoolChanged?.call();
               }
             : null,
-        onOpenCommercial: AuthSession.instance.canView('hr_payroll') ? () => showCommercialPoolDialog(context) : null,
+        onOpenCommercial: AuthSession.instance.canView('company_pool') ? () => showCommercialPoolDialog(context) : null,
       ),
       chart: _FinancialChart(months: months, year: year, opexTotal: opexTotal),
       segments: _SegmentsStrip(g: g, data: data, year: year),

@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:iohd_desktop/product_detail_screen.dart';
 import 'package:iohd_desktop/services/line_items_api.dart';
 import 'package:iohd_desktop/theme/app_theme.dart';
+import 'package:iohd_desktop/widgets/leave_guard.dart';
 
 Future<void> _loadFont(String family, List<String> paths) async {
   final loader = FontLoader(family);
@@ -187,6 +188,29 @@ void main() {
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Bearing - RC'), findsOneWidget);
     expect(find.text('Something else'), findsNothing);
+  });
+
+  // Bug 2026-11-20: Discard on the leave question kept the draft. The page stays alive behind other tabs (the shell's
+  // indexed stack), so every later page change, from a dashboard or anywhere, asked about the same changes again.
+  testWidgets('leaving with changes: Discard drops them, so the next page change does not ask again', (t) async {
+    await _pump(t, ProductDetailScreen(productId: 1, loader: (_) async => _page(), categoriesLoader: _catLoader));
+    await t.tap(find.text('Edit'));
+    await t.pumpAndSettle();
+    await _pickCategory(t, 'Something else');
+
+    final first = LeaveGuard.confirm(); // a nav bar tab, from this page
+    await t.pumpAndSettle();
+    expect(find.text('Discard your changes?'), findsOneWidget);
+    await t.tap(find.text('Discard changes'));
+    await t.pumpAndSettle();
+    expect(await first, isTrue);
+    expect(find.byType(TextField), findsNothing, reason: 'back to reading when the tab is opened again');
+    expect(find.text('Something else'), findsNothing);
+
+    final second = LeaveGuard.confirm(); // leaving the dashboard later; this page is still alive behind it
+    await t.pumpAndSettle();
+    expect(find.text('Discard your changes?'), findsNothing, reason: 'the changes were already discarded');
+    expect(await second, isTrue);
   });
 
   testWidgets('a clash with someone else\'s save says so and offers a reload', (t) async {

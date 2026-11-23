@@ -32,14 +32,14 @@ import 'widgets/flat_page.dart';
 /// chips, the count), a white small-caps header and 42 px rows. Several filters can be on at once: within one group the
 /// picks add up (Category A or B), across groups they narrow (Category A and in inventory).
 ///
-/// Clicking a product opens its own page, where Edit and Delete are (they follow the Line Items & Costs > Update switch).
+/// Clicking a product opens its own page, where Edit and Delete are (they follow the Product Catalog switches).
 /// New product and Export are in the ribbon: Export saves what the filters show as a CSV file. "/" jumps to the search.
 ///
 /// Phase 3 (2026-11-16) adds the catalog's management as views of the same page, tabs on the ribbon: Products (the
 /// list, now with picking several products to move them to a category, make them active or inactive, or export them),
 /// Categories (rename, describe, merge, delete when empty, see naming questions), Cleanup (the data-quality checks; a
 /// check opens the product list filtered to it, possible duplicates are gone through group by group) and History (the
-/// change log). Changes need the Line Items & Costs > Update switch, as editing one product does; cost-based checks
+/// change log). Changes need the Product Catalog > Update switch, as editing one product does; cost-based checks
 /// need the View switch. Every change to several products is previewed and confirmed (see catalog_manage.dart).
 class ProductCatalogScreen extends StatefulWidget {
   /// Tests pass a fake list; the app loads the real one.
@@ -164,7 +164,12 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     return true;
   }
 
+  /// Which load is the newest: an older answer that lands after a newer one is dropped (it could put back rows a bulk
+  /// change had just updated, whose changes then failed as "changed meanwhile"; audit round 2, 2026-11-20).
+  int _loads = 0;
+
   Future<void> _load() async {
+    final ticket = ++_loads;
     final first = _all.isEmpty;
     setState(() {
       _loading = first;
@@ -190,7 +195,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       final r = await (widget.loader ?? () => LineItemsApi.listCatalog(kind: 'product', includeInactive: true))();
       final cats = await categories;
       final marks = await reviews;
-      if (!mounted) return;
+      if (!mounted || ticket != _loads) return;
       setState(() {
         // Only a cost typed into the catalog is shown: the server falls back to the inventory row's or Service Fusion's
         // cost for a product with none, and that is not this product's cost.
@@ -209,20 +214,22 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       productCategories.value = [for (final (n, _) in _categoryCounts) n]; // the product page suggests these
       _activity.landed();
     } on LineItemsException catch (e) {
-      if (!mounted) return;
+      if (!mounted || ticket != _loads) return;
       setState(() {
         _loading = false;
         _error = e.message;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || ticket != _loads) return;
       setState(() {
         _loading = false;
         _error = 'Could not load the product catalog.';
       });
     } finally {
-      _slowTimer?.cancel();
-      _activity.setRefreshing(false);
+      if (ticket == _loads) {
+        _slowTimer?.cancel();
+        _activity.setRefreshing(false);
+      }
     }
   }
 
@@ -266,15 +273,23 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       final hay = '${e.name} ${e.sku} ${e.category} ${e.model}'.toLowerCase();
       return words.every(hay.contains);
     }).toList();
-    int cmpNum(double? a, double? b) => (a ?? double.negativeInfinity).compareTo(b ?? double.negativeInfinity);
     int cmp(CatalogEntry a, CatalogEntry b) => switch (_sortKey) {
       'sku' => a.sku.toLowerCase().compareTo(b.sku.toLowerCase()),
       'category' => a.category.toLowerCase().compareTo(b.category.toLowerCase()),
-      'cost' => cmpNum(a.cost, b.cost),
-      'price' => cmpNum(a.rate, b.rate),
+      'cost' => (a.cost ?? 0).compareTo(b.cost ?? 0),
+      'price' => (a.rate ?? 0).compareTo(b.rate ?? 0),
       _ => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
     };
+    // A product with no price (or no cost) sorts last either way, as on the Services list: sorting by price low to high
+    // used to start with every unpriced product (audit round 2, 2026-11-20).
+    double? figure(CatalogEntry e) => switch (_sortKey) {
+      'cost' => e.cost,
+      'price' => e.rate,
+      _ => 0,
+    };
     list.sort((a, b) {
+      final fa = figure(a), fb = figure(b);
+      if ((fa == null) != (fb == null)) return fa == null ? 1 : -1;
       final c = _ascending ? cmp(a, b) : cmp(b, a);
       return c != 0 ? c : a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
@@ -368,7 +383,11 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   // ---- New product, Export ----------------------------------------------------
 
-  bool get _canEdit => AuthSession.instance.can('line_items', AccessAction.update);
+  // Team screen > Product Catalog: Create (new products and categories), Update (edit, several at once, Cleanup marks),
+  // Delete (products and categories).
+  bool get _canEdit => AuthSession.instance.can('catalog', AccessAction.update);
+  bool get _canCreate => AuthSession.instance.can('catalog', AccessAction.create);
+  bool get _canDelete => AuthSession.instance.can('catalog', AccessAction.delete);
 
   /// The catalog_products row behind an entry. Entries from the old sources (before the price list is loaded) have none,
   /// so they cannot be opened, edited or deleted.
@@ -537,7 +556,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   Future<void> _bulkCategory() async {
     final picked = _picked;
     if (picked.isEmpty || _manager == null) return;
-    final r = await showBulkCategoryDialog(context, entries: picked, categories: _categoryCountsMap, manager: _manager!, canCreate: _canEdit);
+    final r = await showBulkCategoryDialog(context, entries: picked, categories: _categoryCountsMap, manager: _manager!, canCreate: _canCreate);
     await _afterBulk(r);
   }
 
@@ -559,7 +578,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     final tooMany = n > kCatalogBulkMax;
     final canChange = _canEdit && _manageLive && !tooMany;
     final why = !_canEdit
-        ? 'Changing products needs the Line Items & Costs > Update switch'
+        ? 'Changing products needs the Product Catalog > Update switch'
         : (!_manageLive ? 'Needs the server update that adds changes to several products' : (tooMany ? 'Pick at most ${_count.format(kCatalogBulkMax)} products' : ''));
     final white = TextButton.styleFrom(
       foregroundColor: Colors.white,
@@ -1142,7 +1161,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
         if (small) Expanded(child: _searchBox()) else SizedBox(width: searchWidth, child: _searchBox()),
         if (filterButton) ...[const SizedBox(width: 10), _filterButton(reopensSidebar: reopensSidebar)],
         if (compact) ...[const SizedBox(width: 8), _sortMenu()],
-        if (!small) ...[const SizedBox(width: 14), Expanded(child: _ChipStrip(chips: chips)), const SizedBox(width: 14), _countLabel(shown)],
+        if (!small) ...[const SizedBox(width: 14), Expanded(child: CatalogChipStrip(chips: chips)), const SizedBox(width: 14), _countLabel(shown)],
       ],
     );
     return Container(
@@ -1267,9 +1286,9 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
             actions: [
               if (_view == CatalogView.products) ...[
                 if (_all.isNotEmpty) RibbonGhostButton(icon: Icons.file_download_outlined, label: 'Export', onPressed: _export),
-                if (_canEdit) PageBanner.button(icon: Icons.add_rounded, label: 'New product', onPressed: _newProduct),
+                if (_canCreate) PageBanner.button(icon: Icons.add_rounded, label: 'New product', onPressed: _newProduct),
               ],
-              if (_view == CatalogView.categories && _canEdit && _manageLive)
+              if (_view == CatalogView.categories && _canCreate && _manageLive)
                 PageBanner.button(icon: Icons.create_new_folder_outlined, label: 'New category', onPressed: () => catalogNewCategory(_categoriesKey)),
               RibbonRefreshButton(onPressed: _loading ? null : _load),
             ],
@@ -1299,6 +1318,8 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
             entries: _all,
             categories: _categories,
             canEdit: _canEdit,
+            canCreate: _canCreate,
+            canDelete: _canDelete,
             manager: _manager ?? const CatalogManager(),
             initialCategory: _categoryToOpen,
             onChanged: _load,
@@ -1368,8 +1389,9 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(width: CatalogUi.sidebarWidth, child: _filterSidebar()),
-        Expanded(child: _listPane(filterButton: false)),
+        // One traversal group each, so Tab finishes the filters before the table (it zig-zagged by height between them).
+        SizedBox(width: CatalogUi.sidebarWidth, child: FocusTraversalGroup(child: _filterSidebar())),
+        Expanded(child: FocusTraversalGroup(child: _listPane(filterButton: false))),
       ],
     );
   }
@@ -1563,113 +1585,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               ),
             ),
           ],
-        );
-      },
-    );
-  }
-}
-
-/// The filters that are on, as chips on one line: as many as fit, then "+N more", which lists the rest to take off.
-class _ChipStrip extends StatelessWidget {
-  final List<({String group, String value, VoidCallback remove})> chips;
-  const _ChipStrip({required this.chips});
-
-  static const _gap = 6.0;
-
-  static double _width(BuildContext context, String group, String value) {
-    final p = TextPainter(
-      text: TextSpan(
-        children: [
-          TextSpan(
-            text: '$group  ',
-            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-          ),
-          TextSpan(
-            text: value,
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-          ),
-        ],
-      ),
-      textDirection: Directionality.of(context),
-      textScaler: MediaQuery.textScalerOf(context),
-      maxLines: 1,
-    )..layout();
-    return p.width + 11 + 4 + 20 + 5 + 2; // padding, gap, the x, padding, rounding
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (chips.isEmpty) return const SizedBox.shrink();
-    return LayoutBuilder(
-      builder: (context, c) {
-        const moreWidth = 84.0;
-        var used = 0.0;
-        var fit = 0;
-        for (var i = 0; i < chips.length; i++) {
-          final w = _width(context, chips[i].group, chips[i].value) + (i > 0 ? _gap : 0);
-          final reserve = i < chips.length - 1 ? moreWidth + _gap : 0;
-          if (used + w + reserve > c.maxWidth) break;
-          used += w;
-          fit++;
-        }
-        final hidden = chips.skip(fit).toList();
-        return ClipRect(
-          child: Row(
-            children: [
-              for (var i = 0; i < fit; i++) ...[
-                if (i > 0) const SizedBox(width: _gap),
-                Flexible(
-                  child: CatalogFilterChip(
-                    key: ValueKey('${chips[i].group}:${chips[i].value}'),
-                    group: chips[i].group,
-                    value: chips[i].value,
-                    onRemove: chips[i].remove,
-                  ),
-                ),
-              ],
-              if (hidden.isNotEmpty) ...[
-                if (fit > 0) const SizedBox(width: _gap),
-                MenuAnchor(
-                  alignmentOffset: const Offset(0, 4),
-                  menuChildren: [
-                    for (final h in hidden)
-                      MenuItemButton(
-                        onPressed: h.remove,
-                        trailingIcon: const Icon(Icons.close_rounded, size: 16, color: DashUi.slate),
-                        child: Text.rich(
-                          TextSpan(
-                            children: [
-                              TextSpan(
-                                text: '${h.group}  ',
-                                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.slate),
-                              ),
-                              TextSpan(
-                                text: h.value,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                  builder: (context, controller, _) => TextButton(
-                    onPressed: () => controller.isOpen ? controller.close() : controller.open(),
-                    style: TextButton.styleFrom(
-                      foregroundColor: DashUi.ink,
-                      minimumSize: const Size(0, 30),
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(999),
-                        side: const BorderSide(color: DashUi.line),
-                      ),
-                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-                    ),
-                    child: Text('+${hidden.length} more'),
-                  ),
-                ),
-              ],
-            ],
-          ),
         );
       },
     );

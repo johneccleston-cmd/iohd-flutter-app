@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'dashboard_kit.dart';
+import 'focus_ring.dart';
 
 // One look for every pop-up in the app: white card, soft corners, bold tight title, ink buttons,
 // pill selectors and quiet filled fields. It matches the Team screen's dialogs and the dashboards.
@@ -127,7 +128,9 @@ class AppDialog extends StatelessWidget {
 class AppButton {
   AppButton._();
 
-  static Widget ink(String label, VoidCallback? onPressed, {IconData? icon, bool danger = false}) {
+  /// [autofocus]: the button a question opens on, so Enter answers it and Tab starts there (a dialog otherwise opens
+  /// with nothing focused, and Tab's first stop is the close button).
+  static Widget ink(String label, VoidCallback? onPressed, {IconData? icon, bool danger = false, bool autofocus = false}) {
     final style = FilledButton.styleFrom(
       backgroundColor: danger ? const Color(0xFFB91C1C) : DashUi.ink,
       disabledBackgroundColor: DashUi.line,
@@ -137,20 +140,29 @@ class AppButton {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
     );
     final text = Text(label, style: const TextStyle(fontWeight: FontWeight.w700));
-    return icon == null
-        ? FilledButton(onPressed: onPressed, style: style, child: text)
-        : FilledButton.icon(onPressed: onPressed, style: style, icon: Icon(icon, size: 18), label: text);
+    // The shared keyboard ring, 3 px out so it stands clear of the ink fill (Material's focus wash on ink barely shows).
+    return FocusRing(
+      borderRadius: BorderRadius.circular(13),
+      outset: const EdgeInsets.all(3),
+      child: icon == null
+          ? FilledButton(onPressed: onPressed, autofocus: autofocus, style: style, child: text)
+          : FilledButton.icon(onPressed: onPressed, autofocus: autofocus, style: style, icon: Icon(icon, size: 18), label: text),
+    );
   }
 
-  static Widget ghost(String label, VoidCallback? onPressed) {
-    return TextButton(
+  static Widget ghost(String label, VoidCallback? onPressed, {bool autofocus = false}) {
+    return FocusRing(
+      borderRadius: BorderRadius.circular(10),
+      child: TextButton(
       onPressed: onPressed,
+      autofocus: autofocus,
       style: TextButton.styleFrom(
         foregroundColor: DashUi.slate,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 15),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700)),
+      ),
     );
   }
 }
@@ -162,7 +174,7 @@ InputDecoration appFieldDecoration({String? hint, String? label, String? helper,
   return InputDecoration(
     isDense: true,
     filled: true,
-    fillColor: const Color(0xFFF8FAFC),
+    fillColor: const Color(0xFFF8F8F8),
     hintText: hint,
     labelText: label,
     helperText: helper,
@@ -291,7 +303,7 @@ class AppNotice extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final (IconData icon, Color fg, Color bg, Color border) = switch (kind) {
-      AppNoticeKind.info => (Icons.info_outline_rounded, DashUi.slate, const Color(0xFFF8FAFC), DashUi.line),
+      AppNoticeKind.info => (Icons.info_outline_rounded, DashUi.slate, const Color(0xFFF8F8F8), DashUi.line),
       AppNoticeKind.warning => (Icons.warning_amber_rounded, const Color(0xFF92400E), const Color(0xFFFFFBEB), const Color(0xFFFDE68A)),
       AppNoticeKind.error => (Icons.error_outline_rounded, const Color(0xFFB91C1C), const Color(0xFFFEF2F2), const Color(0xFFFECACA)),
       AppNoticeKind.success => (Icons.check_circle_outline_rounded, const Color(0xFF047857), const Color(0xFFECFDF5), const Color(0xFFA7F3D0)),

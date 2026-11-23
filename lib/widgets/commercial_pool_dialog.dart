@@ -409,7 +409,7 @@ class _CommercialPoolDialogState extends State<CommercialPoolDialog> {
     final row = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: DashUi.line),
       ),

@@ -616,7 +616,7 @@ class _DashMonthBarsState extends State<DashMonthBars> with TickerProviderStateM
     final change = _change(i);
     final last = _lastYear(i);
     final more = widget.detail?.call(i) ?? const <String>[];
-    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFCBD5E1));
+    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFD4D4D4));
     return Positioned(
       left: left,
       top: 0,
@@ -795,7 +795,7 @@ class _BarsPainter extends CustomPainter {
         TextStyle(
           fontSize: 12.5,
           fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
-          color: focus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFCBD5E1)),
+          color: focus ? DashUi.ink : (has ? DashUi.slate : const Color(0xFFD4D4D4)),
         ),
         maxWidth: slot,
       );

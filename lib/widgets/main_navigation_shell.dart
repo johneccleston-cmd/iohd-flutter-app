@@ -38,7 +38,7 @@ class _Bar {
   static const border = _darkBar ? Color(0xFF1E293B) : AppTheme.strokeBorder;
   static const divider = _darkBar ? Color(0xFF334155) : AppTheme.strokeBorder;
 
-  static const text = _darkBar ? Color(0xFFCBD5E1) : DashUi.slate;
+  static const text = _darkBar ? Color(0xFFD4D4D4) : DashUi.slate;
   static const textActive = _darkBar ? Colors.white : DashUi.ink;
   static const icon = _darkBar ? Color(0xFF94A3B8) : DashUi.subtle;
   static const iconActive = _darkBar ? Colors.white : _brandRed;
@@ -155,6 +155,7 @@ List<_NavModule> _navFor(AuthSession session) {
         ('stock', Icons.stacked_bar_chart_rounded, 'Stock Levels', '/inventory'),
         ('catalog', Icons.category_rounded, 'Product Catalog', '/inventory/catalog'),
         ('services_catalog', Icons.handyman_rounded, 'Services Catalog', '/inventory/services'),
+        ('tax_settings', Icons.percent_rounded, 'Tax, Discounts & Fees', '/inventory/tax-discounts-fees'),
       ]),
       group('Purchasing', [
         ('purchase_orders', Icons.shopping_cart_checkout_rounded, 'Purchase Orders', '/inventory/purchase-orders'),
@@ -174,7 +175,7 @@ List<_NavModule> _navFor(AuthSession session) {
     _NavModule.menu('Dashboards', Icons.insights_rounded, const [8], [
       _NavGroup(null, [
         for (final d in kAccessGroups.firstWhere((g) => g.title == 'Dashboards').items)
-          if (can(d.key)) _NavLink(d.icon, d.label, d.route!),
+          if (d.route != null && can(d.key)) _NavLink(d.icon, d.label, d.route!), // the pool logs are part of Financial
       ]),
     ]),
   ];

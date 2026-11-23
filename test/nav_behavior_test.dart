@@ -339,7 +339,8 @@ void main() {
     testWidgets('a restricted account sees only its pages; a menu with nothing left goes', (t) async {
       await navSignIn(
         admin: false,
-        denied: denyViews(['stock', 'catalog', 'services_catalog', 'purchase_orders', 'vendors', 'hr_payroll', 'projects', 'payments']),
+        // tax_settings: off with catalog, as the 2026-11-20 migration sets it on a saved list.
+        denied: denyViews(['stock', 'catalog', 'services_catalog', 'purchase_orders', 'vendors', 'tax_settings', 'hr_payroll', 'projects', 'payments']),
       );
       await pumpNav(t, _wide);
       expect(find.text('Inventory'), findsNothing);

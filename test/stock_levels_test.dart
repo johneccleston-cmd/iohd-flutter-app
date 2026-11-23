@@ -82,16 +82,19 @@ void main() {
 
   testWidgets('wide: sidebar counts, needs-attention first, status filter narrows', (t) async {
     await _pump(t, InventoryScreen(loader: () async => _sample), const Size(1366, 760));
-    expect(find.text('6 parts  ·  1,351 units on hand'), findsOneWidget);
+    expect(find.text('6 parts'), findsOneWidget);
     // Out of stock first, then low (fewest first).
     final names = [for (final w in t.widgetList<Text>(find.byType(Text))) w.data ?? ''];
     expect(names.indexOf('Cable 8ft'), lessThan(names.indexOf('Keypad | 878MAX')));
     expect(names.indexOf('Keypad | 878MAX'), lessThan(names.indexOf('Back Hang Nut')));
     expect(find.text('Not kept in stock'), findsWidgets);
 
+    expect(find.bySemanticsLabel('Low stock, 2'), findsNothing); // filter groups start collapsed
+    await t.tap(find.text('Stock status'));
+    await t.pumpAndSettle();
     await t.tap(find.bySemanticsLabel('Low stock, 2'));
     await t.pumpAndSettle();
-    expect(find.text('2 matching  ·  1,255 units on hand'), findsOneWidget);
+    expect(find.text('2 matching'), findsOneWidget);
     expect(find.text('Bearing RC | Steel | 1"'), findsNothing);
   });
 
@@ -108,7 +111,7 @@ void main() {
     expect(find.text('No parts match "zzz"'), findsOneWidget);
     await t.tap(find.text('Clear search and filters'));
     await t.pumpAndSettle();
-    expect(find.text('6 parts  ·  1,351 units on hand'), findsOneWidget);
+    expect(find.text('6 parts'), findsOneWidget);
   });
 
   testWidgets('error with nothing loaded, then retry works', (t) async {
@@ -148,6 +151,8 @@ void main() {
     }
     testWidgets('real data, low filter, 1366', (t) async {
       await _pump(t, InventoryScreen(loader: () async => real), const Size(1366, 768));
+      await t.tap(find.text('Stock status'));
+      await t.pumpAndSettle();
       await t.tap(find.bySemanticsLabel(RegExp(r'^Low stock, ')));
       await t.pumpAndSettle();
       await _save(t, 'real_low_1366');

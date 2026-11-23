@@ -82,7 +82,7 @@ class _CompanyPoolScreenState extends State<CompanyPoolScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('1% Company Warranty Pool'),
-        backgroundColor: Colors.blueGrey[900],
+        backgroundColor: Colors.grey[900],
         foregroundColor: Colors.white,
         actions: [
           IconButton(icon: const Icon(Icons.refresh), onPressed: _fetchCompanyPool),
@@ -97,7 +97,7 @@ class _CompanyPoolScreenState extends State<CompanyPoolScreen> {
                   width: double.infinity,
                   padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
                   decoration: BoxDecoration(
-                    color: Colors.blueGrey[800],
+                    color: Colors.grey[800],
                     boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
                   ),
                   child: Column(
@@ -142,10 +142,10 @@ class _CompanyPoolScreenState extends State<CompanyPoolScreen> {
 
                             return ListTile(
                               leading: CircleAvatar(
-                                backgroundColor: isDeduction ? Colors.red[50] : Colors.blueGrey[50],
+                                backgroundColor: isDeduction ? Colors.red[50] : Colors.grey[50],
                                 child: Icon(
                                   isDeduction ? Icons.money_off : Icons.account_balance_wallet,
-                                  color: isDeduction ? Colors.red[700] : Colors.blueGrey[700],
+                                  color: isDeduction ? Colors.red[700] : Colors.grey[700],
                                 ),
                               ),
                               title: Text(

@@ -62,22 +62,42 @@ final _entries = [
   _service('Weather Seal Labor', 'single', extra: {'uses': 1, 'rateUses': 1}),
   _service('Commercial Survey', 'quote_only', extra: {'uses': 0, 'rateUses': 0, 'lastBilled': null, 'medianPrice': null}),
   _service('Warranty Visit', 'none', extra: {'uses': 0, 'rateUses': 0, 'lastBilled': null, 'medianPrice': null, 'quoteMedian': null}),
-  _service('Spring Replacement - Commercial', 'settled', rate: 340, extra: {
-    'variantOf': {'key': 'sfr:1', 'name': 'Spring Replacement'},
-  }),
+  _service(
+    'Spring Replacement - Commercial',
+    'settled',
+    rate: 340,
+    extra: {
+      'variantOf': {'key': 'sfr:1', 'name': 'Spring Replacement'},
+    },
+  ),
   // A renamed line that has taken over (2026-11-19): the server no longer sends the entry it replaced to the picker.
-  _service('Commercial Service Dispatch & Evaluation', 'settled', rate: 109, extra: {
-    'key': 'sfr:10792835~commercial-service-dispatch-evaluation',
-    'group': 'Commercial Service',
-    'category': 'Commercial Service',
-    'uses': 22,
-    'rateUses': 22,
-    'variantOf': {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
-    'replaces': [
-      {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
-    ],
-  }),
-  const CatalogEntry(key: 'inv:7', name: 'Torsion Spring | 0.250 x 2" x 32"', sku: 'TS-25032', category: 'Springs', inventoryItemId: 7, stock: 14, rate: 89, uses: 40, taxable: true),
+  _service(
+    'Commercial Service Dispatch & Evaluation',
+    'settled',
+    rate: 109,
+    extra: {
+      'key': 'sfr:10792835~commercial-service-dispatch-evaluation',
+      'group': 'Commercial Service',
+      'category': 'Commercial Service',
+      'uses': 22,
+      'rateUses': 22,
+      'variantOf': {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+      'replaces': [
+        {'key': 'sfr:10792835', 'name': 'Scope of Work | Commercial Service Call'},
+      ],
+    },
+  ),
+  const CatalogEntry(
+    key: 'inv:7',
+    name: 'Torsion Spring | 0.250 x 2" x 32"',
+    sku: 'TS-25032',
+    category: 'Springs',
+    inventoryItemId: 7,
+    stock: 14,
+    rate: 89,
+    uses: 40,
+    taxable: true,
+  ),
 ];
 
 Future<void> _pump(WidgetTester t) async {
@@ -95,7 +115,10 @@ Future<void> _pump(WidgetTester t) async {
             editable: true,
             showCost: true,
             onPreviewSave: () {},
-            search: (q) async => [for (final e in _entries) if (q == 'all' || e.name.toLowerCase().contains(q.toLowerCase())) e],
+            search: (q) async => [
+              for (final e in _entries)
+                if (q == 'all' || e.name.toLowerCase().contains(q.toLowerCase())) e,
+            ],
           ),
         ),
       ),
@@ -124,25 +147,29 @@ void main() {
     await dashSignIn();
   });
 
-  testWidgets('service rows say how sure their price is; product rows are as they were', (t) async {
+  testWidgets('result rows show the name only: no price, cost, category, group or usage (user 2026-11-20)', (t) async {
     await _pump(t);
     await _type(t, 'all');
     expect(t.takeException(), isNull);
-    expect(find.text(r'$285.00'), findsOneWidget, reason: 'settled: the price');
-    expect(find.text('Recent price change'), findsOneWidget);
-    expect(find.text(r'18-mo median $89.00 · recent $129.00, $125.00, $119.00'), findsOneWidget);
-    expect(find.text(r'Price varies $249.00 – $325.00'), findsOneWidget);
-    expect(find.text(r'Billed once · $289.00'), findsOneWidget);
-    expect(find.text(r'No billed price · quoted $299.00'), findsOneWidget);
-    expect(find.text('No price on file'), findsOneWidget);
-    expect(find.text('Renamed line of Spring Replacement, with its own price'), findsOneWidget);
-    expect(find.text('Residential Service · billed 14×'), findsWidgets);
-    expect(find.text('Residential Service · never billed'), findsWidgets, reason: 'only quoted, or nothing on file');
-    expect(find.textContaining('tax varies'), findsOneWidget, reason: 'only the mixed-tax service');
-    // The product row: SKU, category, stock and Service Fusion uses, its price.
+    for (final gone in [
+      r'$285.00',
+      'Recent price change',
+      'Price varies',
+      'Billed once',
+      'No billed price',
+      'No price on file',
+      'billed 14×',
+      'never billed',
+      'Cost ',
+    ]) {
+      expect(find.textContaining(gone, findRichText: true), findsNothing, reason: '"$gone" is not on the results');
+    }
+    expect(find.text('Renamed line of Spring Replacement'), findsOneWidget);
+    expect(find.textContaining('tax varies', findRichText: true), findsOneWidget, reason: 'only the mixed-tax service');
+    // The product row: SKU and stock under the name, no category, uses or price.
     await _type(t, 'torsion');
-    expect(find.text('SKU TS-25032  ·  Springs  ·  14 in stock  ·  on 40 Service Fusion lines'), findsOneWidget);
-    expect(find.text(r'$89.00'), findsOneWidget);
+    expect(find.text('SKU TS-25032  ·  14 in stock', findRichText: true), findsOneWidget);
+    expect(find.text(r'$89.00'), findsNothing);
   });
 
   testWidgets('a replacement says what it replaces and is added at its own price', (t) async {
@@ -151,7 +178,6 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.text('Replaces Scope of Work | Commercial Service Call'), findsOneWidget);
     expect(find.textContaining('Renamed line of Scope of Work'), findsNothing, reason: 'it says what it replaced instead');
-    expect(find.text('Commercial Service · billed 22×'), findsOneWidget);
     await t.tap(find.text('Commercial Service Dispatch & Evaluation').last);
     await t.pumpAndSettle();
     expect(find.text('Not priced'), findsNothing);
@@ -165,10 +191,7 @@ void main() {
     expect(find.byKey(const ValueKey('zero-chip')), findsNothing);
     final hint = find.byKey(const ValueKey('hint-recent-change'));
     expect(hint, findsOneWidget);
-    expect(
-      find.descendant(of: hint, matching: find.textContaining(r'18-month median $89.00 · recent $129.00, $125.00, $119.00')),
-      findsOneWidget,
-    );
+    expect(find.descendant(of: hint, matching: find.textContaining(r'18-month median $89.00 · recent $129.00, $125.00, $119.00')), findsOneWidget);
     expect(find.textContaining('Use last billed'), findsNothing);
   });
 

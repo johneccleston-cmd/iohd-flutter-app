@@ -168,7 +168,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         product: const ProductRecord(),
         stock: null,
         canSeeCost: AuthSession.instance.can('line_items', AccessAction.view),
-        canEdit: AuthSession.instance.can('line_items', AccessAction.update),
+        canEdit: AuthSession.instance.can('catalog', AccessAction.create), // a new product: Product Catalog > Create
         inventoryConflict: null,
       );
       _loading = false;
@@ -194,12 +194,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
     if (mounted && _editing) setState(() {});
   }
 
+  /// Leaving the page with changes asks first. Discard also drops the changes: the page stays alive behind the other
+  /// tabs (the shell's indexed stack), so a kept draft would ask again on every later page change (bug 2026-11-20).
   Future<bool> _confirmLeave() async {
-    if (!_changed) return true;
-    return _askDiscard();
+    if (!mounted || !_changed) return true;
+    if (!await _askDiscard()) return false;
+    if (mounted) setState(_dropEdits);
+    return true;
   }
 
-  Future<bool> _askDiscard() async {
+  Future<bool> _askDiscard({String why = 'If you leave now they are lost.'}) async {
     final discard = await showDialog<bool>(
       context: context,
       builder: (ctx) => AppDialog(
@@ -207,7 +211,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         subtitle: 'This product has changes that are not saved.',
         icon: Icons.edit_off_rounded,
         width: 460,
-        body: const Text('If you leave now they are lost.', style: TextStyle(fontSize: 14, color: DashUi.slate)),
+        body: Text(why, style: const TextStyle(fontSize: 14, color: DashUi.slate)),
         actions: [
           AppButton.ghost('Keep editing', () => Navigator.pop(ctx, false)),
           AppButton.ink('Discard changes', () => Navigator.pop(ctx, true), danger: true),
@@ -510,13 +514,16 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       _toList();
       return;
     }
-    setState(() {
-      _editing = false;
-      _saveError = null;
-      _conflict = false;
-      final p = _page?.product;
-      if (p != null) _fill(p);
-    });
+    setState(_dropEdits);
+  }
+
+  /// Back to the product as saved (call inside setState). A new product's form goes back to blank and stays open.
+  void _dropEdits() {
+    _editing = _isNew;
+    _saveError = null;
+    _conflict = false;
+    final p = _page?.product;
+    if (p != null) _fill(p);
   }
 
   // ---- build ------------------------------------------------------------------
@@ -586,7 +593,10 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
         gap,
         PageBanner.button(icon: Icons.edit_rounded, label: 'Edit', onPressed: () => setState(() => _editing = true)),
         gap,
-        // Delete is the rare, destructive one: under More, as on Job detail.
+      ],
+      // Delete is the rare, destructive one: under More, as on Job detail (Product Catalog > Delete).
+      if (!_isNew && AuthSession.instance.can('catalog', AccessAction.delete)) ...[
+        gap,
         PageBanner.more(
           items: [BannerMenuItem(icon: Icons.delete_outline_rounded, label: 'Delete', onPressed: _delete, danger: true)],
         ),
@@ -701,7 +711,11 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           ),
           if (_conflict)
             TextButton(
-              onPressed: () {
+              // Reloading puts the saved product back in every box, so typed changes ask first (they were dropped
+              // without a word; audit round 2, 2026-11-20).
+              onPressed: () async {
+                if (_changed && !await _askDiscard(why: 'Reloading shows the product as it is saved now, and your changes are lost.')) return;
+                if (!mounted) return;
                 setState(() => _editing = false);
                 _load();
               },
@@ -1282,6 +1296,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       current: _c['category']!.text.trim(),
       load: _loadCategories,
       pendingNew: _newCategory,
+      canCreate: AuthSession.instance.can('catalog', AccessAction.create),
     );
     if (pick == null || !mounted) return;
     _newCategory = pick.isNew ? pick.name : null;

@@ -139,6 +139,9 @@ List<(String, Rect)> _textsIn(Element slot) {
   void visit(Element e) {
     final w = e.widget;
     if (w is Opacity && w.opacity == 0) return;
+    // A line's "S" / "I" mark (USER RULE 2026-11-20) sits before its name, in the item column: the ITEM heading is
+    // over the name, so the name is what lines up with it.
+    if (w.key == const ValueKey('item-mark') || w.key == const ValueKey('service-mark')) return;
     if (w is InputDecorator) {
       // Only the typed text of a field, not its hint or prefix.
       for (final ed in find.descendant(of: find.byElementPredicate((x) => x == e), matching: find.byType(EditableText)).evaluate()) {
@@ -175,14 +178,8 @@ List<String> _misaligned(WidgetTester t, {double tolerance = 0.75}) {
         : (find.descendant(of: find.byElementPredicate((e) => e == slots.first), matching: find.byType(Text)).evaluate().first.widget as Text).style?.letterSpacing ?? 0.0;
     final h = left ? head.first.$2.left : head.last.$2.right - spacing;
     for (final slot in slots.skip(1)) {
-      // An open discount's tax cell is its "Off taxed lines" checkbox: a box, so it starts at the column's edge, where
-      // the tax selects' boxes do.
-      final check = find.descendant(of: find.byElementPredicate((e) => e == slot), matching: find.byKey(const ValueKey('off-taxed')));
-      if (check.evaluate().isNotEmpty) {
-        final edge = (slot.renderObject! as RenderBox).localToGlobal(Offset.zero).dx;
-        if ((t.getTopLeft(check).dx - edge).abs() > tolerance) misses.add('tax checkbox starts at ${t.getTopLeft(check).dx}, column edge $edge');
-        continue;
-      }
+      // A discount's tax cell says "Off the total" (USER RULE 2026-11-20: no "Off taxed lines" checkbox any more): text,
+      // measured like every other value.
       final texts = _textsIn(slot);
       if (texts.isEmpty) continue;
       // The value: the figure at the right of a figure's cell ("$" sits at a box's left), the first text of the others.

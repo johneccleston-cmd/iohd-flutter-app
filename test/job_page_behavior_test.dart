@@ -38,7 +38,7 @@ void main() {
   setUpAll(jobPageSetUp);
 
   // Line items are a preview (the ribbon's Edit Job / Edit Estimate): they can be changed on screen and the totals follow,
-  // but no line is ever saved (user, 2026-11-12). The option actions (new, rename, recommend, notes, accept, send to
+  // but no line is ever saved (user, 2026-11-12). The option actions (new, rename, accept, send to
   // job, delete) do save, to our own database.
   Iterable<String> lineSaves(FakeJobServer s) => s.requests.where((r) => r.endsWith('/items'));
 
@@ -134,7 +134,7 @@ void main() {
         await editEstimate(t);
         await t.enterText(_search, 'rolling');
         await settle(t, frames: 4);
-        expect(find.textContaining('Price varies'), findsOneWidget, reason: 'the range is shown, no made-up default');
+        expect(find.textContaining('Price varies'), findsNothing, reason: 'the results show no price (user 2026-11-20)');
         await t.tap(find.text('Clopay Rolling Door').last);
         await settle(t, frames: 4);
         expect(find.text('Not priced'), findsOneWidget);
@@ -155,14 +155,21 @@ void main() {
         await _type(t, _cell(0, 'rate'), '59');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await settle(t, frames: 3);
-        expect(find.text('Discount'), findsNothing, reason: 'the discount is behind the Tax, discounts & fees menu');
+        expect(find.text('Discount'), findsNothing, reason: 'the discount is behind the Tax, discounts & fees panel');
         await t.tap(find.text('Tax, discounts & fees'));
         await settle(t, frames: 3);
-        await t.tap(find.text('Discount').first);
+        // A custom discount, $9 (since 2026-11-20 a discount's name, kind and amount are set in the panel's form).
+        await t.enterText(find.byKey(const ValueKey('charges-search')), 'custom discount');
+        await settle(t, frames: 2);
+        await t.tap(find.byKey(const ValueKey('charge-choice-custom-discount')));
         await settle(t, frames: 3);
-        await _type(t, _cell(1, 'rate'), '9');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
-        await settle(t, frames: 3);
+        await t.enterText(find.byKey(const ValueKey('charge-name')), 'Discount');
+        await t.tap(find.byKey(const ValueKey('mode-Dollar amount')));
+        await settle(t, frames: 2);
+        await t.enterText(find.byKey(const ValueKey('charge-value')), '9');
+        await settle(t, frames: 2);
+        await t.tap(find.byKey(const ValueKey('save-charge')));
+        await settle(t, frames: 4);
         expect(find.text('Discount'), findsNWidgets(2), reason: 'the line (named Discount) and its Discount tag');
         expect(find.text(r'-$9.00'), findsWidgets);
         expect(find.text(r'$50.00'), findsWidgets, reason: 'total 59 - 9, no tax on this option');
@@ -182,8 +189,11 @@ void main() {
         await _type(t, _cell(0, 'qty'), '2..5');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await settle(t, frames: 3);
-        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget, reason: 'the closed line says it has a bad number');
-        expect(find.text(r'$178.00'), findsWidgets, reason: 'the last good quantity (2) still counts');
+        // Audit round 2 (2026-11-20): the line never takes a half-typed figure, so once closed nothing bad is left on
+        // it; a note says what it kept.
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'the line kept its good figure');
+        expect(find.textContaining("that wasn't a number, so it keeps its quantity 2.00"), findsOneWidget);
+        expect(find.text(r'$178.00'), findsWidgets, reason: 'the quantity from before the edit (2) still counts');
       });
     });
   });
@@ -314,7 +324,7 @@ void main() {
       });
     });
 
-    testWidgets('options stay independent: duplicate, rename, recommend and delete from the option menu, and it is all there after a reload', (t) async {
+    testWidgets('options stay independent: duplicate, rename and delete from the option menu, and it is all there after a reload', (t) async {
       final s = FakeJobServer();
       seedThreeOptions(s);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
@@ -324,12 +334,6 @@ void main() {
         await t.enterText(find.byType(TextField).last, 'Upgraded plus');
         await t.tap(find.text('Rename').last);
         await settle(t, frames: 6);
-        await optionMenu(t, 'Mark as recommended');
-        await optionMenu(t, 'Add notes for the customer');
-        await t.enterText(find.byType(TextField).last, 'Lead time 4 to 6 weeks.');
-        await t.tap(find.text('Save').last);
-        await settle(t, frames: 6);
-        expect(find.text('Lead time 4 to 6 weeks.'), findsOneWidget);
         await t.tap(find.text('Standard').first);
         await settle(t, frames: 4);
         await optionMenu(t, 'Delete option');
@@ -339,14 +343,12 @@ void main() {
       });
       final left = s.optionsOf(kEstimateId);
       expect(left.map((o) => o.name), ['Upgraded', 'Premium', 'Upgraded plus']);
-      expect(left.where((o) => o.recommended).map((o) => o.name), ['Upgraded plus'], reason: 'one recommended option');
+      expect(left.where((o) => o.recommended).map((o) => o.name), ['Upgraded'], reason: 'the seeded recommendation is untouched (the menu no longer offers it)');
       expect(left.last.items.length, left.first.items.length, reason: 'the copy has the same lines');
-      expect(left.last.notes, 'Lead time 4 to 6 weeks.');
       // A fresh page shows what was saved.
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
         expect(find.text('Standard'), findsNothing);
         expect(find.text('Upgraded plus'), findsWidgets);
-        expect(find.text('Lead time 4 to 6 weeks.'), findsOneWidget, reason: 'the recommended option opens first, with its notes');
       });
       expect(lineSaves(s), isEmpty);
     });

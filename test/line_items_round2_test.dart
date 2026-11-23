@@ -35,21 +35,45 @@ String? get _focused => FocusManager.instance.primaryFocus?.debugLabel;
 void main() {
   group('bugs found in round 2', () {
     testWidgets('a tax rate outside 0 to 30% is marked and not charged; the last good rate stays', (t) async {
+      // Since the Tax, discounts & fees redesign (2026-11-20) the set's own rate is changed in that panel, not in a
+      // field in the totals: the same rule, the same keys.
       await _pump(t, _editor(const [LineDraft(name: 'Door', rate: 1000, quantity: 1, taxable: true)], taxRate: 10));
       expect(find.text(r'$100.00'), findsOneWidget, reason: '10% of \$1,000');
+      Future<void> openOwnRate() async {
+        await t.tap(find.text('Tax, discounts & fees'));
+        await t.pumpAndSettle();
+        await t.tap(find.byKey(const ValueKey('charge-choice-own')));
+        await t.pumpAndSettle();
+      }
+
+      await openOwnRate();
       await t.enterText(find.byKey(const ValueKey('tax-rate')), '105');
+      await t.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tax-rate-invalid')), findsOneWidget, reason: 'the field is marked');
+      expect(t.widget<FilledButton>(find.byKey(const ValueKey('save-own-rate'))).onPressed, isNull, reason: 'a 105% rate is not saved');
+      await t.sendKeyEvent(LogicalKeyboardKey.escape); // back to the list
+      await t.pumpAndSettle();
+      await t.sendKeyEvent(LogicalKeyboardKey.escape); // closed
       await t.pumpAndSettle();
       expect(find.text(r'$1,050.00'), findsNothing, reason: 'a 105% tax was charged');
       expect(find.text(r'$100.00'), findsOneWidget, reason: 'the last good rate stays in the totals');
-      expect(find.byKey(const ValueKey('tax-rate-invalid')), findsOneWidget, reason: 'the field is marked');
+
+      await openOwnRate();
       await t.enterText(find.byKey(const ValueKey('tax-rate')), '8.25');
       await t.pumpAndSettle();
-      expect(find.text(r'$82.50'), findsOneWidget);
       expect(find.byKey(const ValueKey('tax-rate-invalid')), findsNothing);
+      await t.tap(find.byKey(const ValueKey('save-own-rate')));
+      await t.pumpAndSettle();
+      expect(find.text(r'$82.50'), findsOneWidget);
+
+      await openOwnRate();
       await t.enterText(find.byKey(const ValueKey('tax-rate')), '');
       await t.pumpAndSettle();
-      expect(find.text(r'$0.00'), findsWidgets, reason: 'empty is no tax, and fine');
-      expect(find.byKey(const ValueKey('tax-rate-invalid')), findsNothing);
+      expect(find.byKey(const ValueKey('tax-rate-invalid')), findsNothing, reason: 'empty is no tax, and fine');
+      await t.tap(find.byKey(const ValueKey('save-own-rate')));
+      await t.pumpAndSettle();
+      expect(find.text(r'$82.50'), findsNothing);
+      expect(find.text(r'$0.00'), findsWidgets, reason: 'no tax once the rate is gone');
     });
 
     testWidgets('a discount typed with a minus is the same discount, and reads the same when its line is reopened', (t) async {

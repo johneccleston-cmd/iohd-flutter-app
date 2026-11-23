@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
@@ -11,6 +12,7 @@ import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/app_ribbon.dart';
+import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 
@@ -21,7 +23,9 @@ import 'widgets/flat_page.dart';
 /// reorder point that has actually been set; out is a part with a reorder point and none on hand. A part with no reorder
 /// point is one the warehouse doesn't keep a minimum of, so having none of it is not a warning ("Not kept in stock").
 ///
-/// Filters sit in a sidebar like the Product Catalog (a Filters button and dialog when the window is too narrow).
+/// The page is laid out like the Product Catalog (widgets/catalog_kit.dart): a command row with search, filter chips and the
+/// count over a header-and-stripes table; collapsed filter groups in a sidebar (a Filters button and dialog when the window
+/// is too narrow); a footer pager.
 class InventoryScreen extends StatefulWidget {
   /// Tests pass a fake list; the app loads the real one.
   final Future<List<StockItem>> Function()? loader;
@@ -144,7 +148,6 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
   @override
   bool get wantKeepAlive => true;
 
-  static const _sidebarWidth = 264.0;
   static const _tableWidth = 900.0; // below this the rows stack
   static const _sorts = [
     ('status', 'Status'),
@@ -160,6 +163,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
   final _scroll = ScrollController();
   final _activity = RibbonActivity();
   final _filterTick = ValueNotifier<int>(0); // tells the Filters dialog (narrow windows) to redraw
+  bool _sidebarHidden = false;
   late final _rowsIn = AnimationController(vsync: this, duration: const Duration(milliseconds: 460), value: 1);
   Timer? _slowTimer;
   Timer? _debounce;
@@ -344,31 +348,35 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
 
   // ---- table ----------------------------------------------------------------
 
-  List<FlatCol> get _cols => [
-    const FlatCol('Part', flex: 7, sortKey: 'name'),
-    const FlatCol('Part #', flex: 3, sortKey: 'part'),
-    const FlatCol('Location', flex: 2, sortKey: 'location'),
-    const FlatCol('Category', flex: 4, sortKey: 'category'),
-    const FlatCol('On hand', flex: 3, right: true, sortKey: 'qty'),
-    if (_hasReorder) const FlatCol('Reorder at', flex: 3, right: true, sortKey: 'reorder'),
-    const FlatCol('Status', flex: 4, sortKey: 'status'),
-  ];
+  /// The columns for a table [width] wide: the part takes what the fixed columns leave.
+  List<CatalogCol> _cols(double width) {
+    final roomy = width >= 1150; // under it the fixed columns tighten so part names keep to fewer lines
+    return [
+      const CatalogCol('PART', sortKey: 'name'),
+      CatalogCol('PART #', width: roomy ? 112 : 92, sortKey: 'part'),
+      CatalogCol('LOCATION', width: roomy ? 96 : 84, sortKey: 'location'),
+      CatalogCol('CATEGORY', width: roomy ? 196 : 150, sortKey: 'category'),
+      CatalogCol('ON HAND', width: roomy ? 84 : 78, right: true, sortKey: 'qty'),
+      if (_hasReorder) CatalogCol('REORDER AT', width: roomy ? 104 : 96, right: true, sortKey: 'reorder'),
+      CatalogCol('STATUS', width: roomy ? 150 : 136, sortKey: 'status'),
+    ];
+  }
 
   Widget _qtyText(StockItem i) {
     final attention = i.status == StockStatus.out || i.status == StockStatus.low;
     return Text(
       _count.format(i.qty),
-      style: (attention ? flatCellBold.copyWith(color: i.status.color) : (i.qty > 0 ? flatCellStyle : flatCellMuted))
-          .copyWith(fontFeatures: flatFigures),
+      maxLines: 1,
+      style: attention ? CatalogUi.cellStrong.copyWith(color: i.status.color) : (i.qty > 0 ? CatalogUi.cell : CatalogUi.cellQuiet),
     );
   }
 
   Widget _reorderText(StockItem i) {
     final rp = i.reorderPoint ?? 0;
-    return Text(rp > 0 ? _count.format(rp) : '—', style: (rp > 0 ? flatCellStyle : flatCellMuted).copyWith(fontFeatures: flatFigures));
+    return Text(rp > 0 ? _count.format(rp) : '—', maxLines: 1, style: rp > 0 ? CatalogUi.cell : CatalogUi.cellQuiet);
   }
 
-  /// FlatStatus's dot and label, but the label wraps rather than overflowing a narrow column.
+  /// A status dot and label; the label wraps rather than overflowing a narrow column.
   Widget _statusText(StockItem i) {
     final (label, color) = _hasReorder
         ? (i.status.label, i.status.color)
@@ -379,19 +387,19 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
         Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
         const SizedBox(width: 8),
         Flexible(
-          child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color)),
+          child: Text(label, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: color)),
         ),
       ],
     );
   }
 
-  Widget _muted(String s) => Text(s.isEmpty ? '—' : s, maxLines: 1, overflow: TextOverflow.ellipsis, style: flatCellMuted);
+  Widget _quiet(String s) => Text(s.isEmpty ? '—' : s, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cellQuiet);
 
   List<Widget> _cells(StockItem i) => [
-    Text(i.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: flatCellBold),
-    _muted(i.partNumber),
-    _muted(i.location),
-    Text(i.category, maxLines: 2, overflow: TextOverflow.ellipsis, style: flatCellStyle),
+    Text(i.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: CatalogUi.name),
+    _quiet(i.partNumber),
+    _quiet(i.location),
+    Text(i.category, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cell),
     _qtyText(i),
     if (_hasReorder) _reorderText(i),
     _statusText(i),
@@ -405,31 +413,27 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
       i.category,
     ].join('  ·  ');
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-      decoration: BoxDecoration(
-        color: index.isOdd ? DashUi.faint : null,
-        border: const Border(top: BorderSide(color: DashUi.line)),
-      ),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+      color: index.isOdd ? CatalogUi.stripe : null,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(child: Text(i.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: flatCellBold)),
+              Expanded(child: Text(i.name, maxLines: 2, overflow: TextOverflow.ellipsis, style: CatalogUi.name)),
               const SizedBox(width: 12),
               _statusText(i),
             ],
           ),
           const SizedBox(height: 4),
-          Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: flatCellMuted),
+          Text(meta, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.meta),
           const SizedBox(height: 4),
           Wrap(
             spacing: 16,
             children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [const Text('On hand ', style: flatCellMuted), _qtyText(i)]),
-              if (_hasReorder)
-                Row(mainAxisSize: MainAxisSize.min, children: [const Text('Reorder at ', style: flatCellMuted), _reorderText(i)]),
+              Row(mainAxisSize: MainAxisSize.min, children: [const Text('On hand ', style: CatalogUi.meta), _qtyText(i)]),
+              if (_hasReorder) Row(mainAxisSize: MainAxisSize.min, children: [const Text('Reorder at ', style: CatalogUi.meta), _reorderText(i)]),
             ],
           ),
         ],
@@ -437,241 +441,240 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
     );
   }
 
-  Widget _row(StockItem i, int index, bool compact, List<FlatCol> cols) {
+  /// One part's row: the catalog's stripes and rhythm, but nothing to open (so no hover arrow).
+  Widget _row(StockItem i, int index, bool compact, List<CatalogCol> cols) {
     final rp = i.reorderPoint ?? 0;
     return Semantics(
       label: '${i.name}, ${_count.format(i.qty)} on hand${rp > 0 ? ', reorder at ${_count.format(rp)}' : ''}, ${i.status.label}',
       excludeSemantics: true,
-      child: compact ? _compactRow(i, index) : FlatTableRow(columns: cols, cells: _cells(i), index: index, striped: true),
+      child: SelectionContainer.disabled(
+        child: compact
+            ? _compactRow(i, index)
+            : Container(
+                constraints: const BoxConstraints(minHeight: CatalogUi.rowHeight),
+                padding: const EdgeInsets.symmetric(horizontal: CatalogUi.side, vertical: 8),
+                color: index.isOdd ? CatalogUi.stripe : Colors.white,
+                child: CatalogCells(cols: cols, cells: _cells(i)),
+              ),
+      ),
     );
   }
 
   // ---- filters --------------------------------------------------------------
 
-  /// A pick-any-number row: a check box, an optional status dot, the name and how many parts it holds.
-  Widget _checkRow(String label, int count, bool selected, VoidCallback onTap, {Color? dot}) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Semantics(
-        button: true,
-        checked: selected,
-        label: '$label, ${_count.format(count)}',
-        excludeSemantics: true,
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          hoverColor: DashUi.faint,
-          child: AnimatedContainer(
-            duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(color: selected ? DashUi.ink.withValues(alpha: 0.06) : Colors.transparent, borderRadius: BorderRadius.circular(10)),
-            child: Row(
-              children: [
-                Icon(
-                  selected ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
-                  size: 20,
-                  color: selected ? DashUi.ink : DashUi.slate,
-                ),
-                const SizedBox(width: 10),
-                if (dot != null) ...[
-                  Container(width: 8, height: 8, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
-                  const SizedBox(width: 8),
-                ],
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13.5, fontWeight: selected ? FontWeight.w800 : FontWeight.w600, color: DashUi.ink),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  _count.format(count),
-                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: selected ? DashUi.ink : DashUi.slate, fontFeatures: flatFigures),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _filterGroup(String title, Widget child, {String? caption}) => Padding(
-    padding: const EdgeInsets.fromLTRB(8, 10, 8, 2),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(2, 0, 2, 8),
-          child: Text(title, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800, color: DashUi.ink)),
-        ),
-        child,
-        if (caption != null)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 4, 4),
-            child: Text(caption, style: const TextStyle(fontSize: 12.5, height: 1.35, color: DashUi.slate)),
-          ),
-      ],
-    ),
-  );
-
+  /// All the filters, collapsed until opened. The sidebar scrolls them as one; the narrow window's dialog shows the same.
   Widget _filterGroups() {
-    final cats = _categoryCounts;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         if (_hasReorder)
-          _filterGroup(
-            'Stock status',
-            Column(
+          CatalogFilterGroup(
+            title: 'Stock status',
+            initiallyOpen: false,
+            picked: _statuses.length,
+            child: Column(
               children: [
                 for (final s in StockStatus.values)
-                  _checkRow(s.label, _statusCount(s), _statuses.contains(s), () => _toggle(_statuses, s), dot: s.color),
+                  CatalogCheckRow(label: s.label, count: _statusCount(s), selected: _statuses.contains(s), onTap: () => _toggle(_statuses, s), dot: s.color),
               ],
             ),
-            caption: 'Low is at or below the part\'s reorder point. A part with no reorder point isn\'t kept in stock, '
-                'so having none of it isn\'t counted as out.',
           ),
-        _filterGroup(
-          'Category',
-          // Every category in the sidebar's own scroll (no box scrolling inside it).
-          Column(children: [for (final (name, n) in cats) _checkRow(name, n, _cats.contains(name), () => _toggle(_cats, name))]),
+        CatalogFilterGroup(
+          title: 'Category',
+          initiallyOpen: false,
+          picked: _cats.length,
+          child: Column(
+            children: [for (final (name, n) in _categoryCounts) CatalogCheckRow(label: name, count: n, selected: _cats.contains(name), onTap: () => _toggle(_cats, name))],
+          ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
       ],
     );
   }
 
-  Widget _clearFiltersButton() => TextButton(
-    onPressed: _filterCount == 0 ? null : _resetFilters,
-    style: TextButton.styleFrom(foregroundColor: DashUi.ink, padding: const EdgeInsets.symmetric(horizontal: 8), minimumSize: const Size(0, 32)),
-    child: const Text('Clear all', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-  );
-
   Widget _filterSidebar() {
     return Container(
       decoration: const BoxDecoration(border: Border(right: BorderSide(color: DashUi.line))),
+      // Not selectable text: the app-wide selection's I-beam would replace the click cursor.
       child: SelectionContainer.disabled(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
+            // As tall as the command row beside it, so the two hairlines run as one.
+            Container(
+              height: CatalogUi.commandHeight,
+              padding: const EdgeInsets.fromLTRB(20, 0, 10, 0),
+              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: DashUi.line))),
               child: Row(
                 children: [
+                  const Icon(Icons.tune_rounded, size: 18, color: DashUi.slate),
+                  const SizedBox(width: 8),
                   const Expanded(
                     child: Text('Filters', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
                   ),
-                  _clearFiltersButton(),
+                  AnimatedOpacity(
+                    opacity: _filterCount == 0 ? 0 : 1,
+                    duration: CatalogUi.motion(context),
+                    child: TextButton(
+                      onPressed: _filterCount == 0 ? null : _resetFilters,
+                      style: TextButton.styleFrom(foregroundColor: DashUi.ink, padding: const EdgeInsets.symmetric(horizontal: 10), minimumSize: const Size(0, 32)),
+                      child: const Text('Clear all', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Hide filters',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () => setState(() => _sidebarHidden = true),
+                    icon: const Icon(Icons.keyboard_double_arrow_left_rounded, size: 18, color: DashUi.slate),
+                  ),
                 ],
               ),
             ),
-            const Divider(height: 1, color: DashUi.line),
-            Expanded(child: SingleChildScrollView(child: _filterGroups())),
+            Expanded(child: SingleChildScrollView(padding: const EdgeInsets.only(top: 6), child: _filterGroups())),
           ],
         ),
       ),
     );
   }
 
-  /// The Filters button and its dialog, for windows too narrow for the sidebar.
-  Widget _filterButton() {
+  static final ButtonStyle _outlined = OutlinedButton.styleFrom(
+    minimumSize: const Size(0, 38),
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    foregroundColor: DashUi.ink,
+    backgroundColor: Colors.white,
+    side: const BorderSide(color: DashUi.line),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+  );
+
+  /// The Filters button: on a window too narrow for the sidebar it opens the filters in a dialog; where the sidebar
+  /// fits but was hidden, it brings the sidebar back.
+  Widget _filterButton({bool reopensSidebar = false}) {
     final n = _filterCount;
     return SelectionContainer.disabled(
       child: Semantics(
         button: true,
         label: n == 0 ? 'Filters' : 'Filters, $n set',
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: () => showDialog<void>(
-            context: context,
-            builder: (ctx) => AppDialog(
-              title: 'Filters',
-              icon: accessIcon('stock'),
-              width: 420,
-              body: ValueListenableBuilder<int>(
-                valueListenable: _filterTick,
-                builder: (_, _, _) => SingleChildScrollView(child: _filterGroups()),
-              ),
-              actions: [
-                AppButton.ghost('Clear all', _resetFilters),
-                AppButton.ink('Done', () => Navigator.pop(ctx)),
-              ],
-            ),
-          ),
-          child: Container(
-            height: 42,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: DashUi.line)),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.filter_list_rounded, size: 18, color: DashUi.slate),
-                const SizedBox(width: 8),
-                const Text('Filters', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink)),
-                if (n > 0) ...[
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
-                    decoration: BoxDecoration(color: DashUi.ink, borderRadius: BorderRadius.circular(10)),
-                    child: Text('$n', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+        excludeSemantics: true,
+        child: OutlinedButton(
+          onPressed: reopensSidebar
+              ? () => setState(() => _sidebarHidden = false)
+              : () => showDialog<void>(
+                  context: context,
+                  builder: (ctx) => AppDialog(
+                    title: 'Filters',
+                    icon: accessIcon('stock'),
+                    width: 420,
+                    body: ValueListenableBuilder<int>(
+                      valueListenable: _filterTick,
+                      builder: (_, _, _) => SingleChildScrollView(child: _filterGroups()),
+                    ),
+                    actions: [AppButton.ghost('Clear all', _resetFilters), AppButton.ink('Done', () => Navigator.pop(ctx))],
                   ),
-                ],
+                ),
+          style: _outlined,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.tune_rounded, size: 18, color: DashUi.slate),
+              const SizedBox(width: 8),
+              const Text('Filters'),
+              if (n > 0) ...[
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+                  decoration: BoxDecoration(color: DashUi.ink, borderRadius: BorderRadius.circular(999)),
+                  child: Text('$n', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.white)),
+                ),
               ],
-            ),
+            ],
           ),
         ),
       ),
     );
   }
 
+  /// The filters that are on, each one a chip that takes it off.
+  List<({String group, String value, VoidCallback remove})> get _chips => [
+    for (final s in StockStatus.values)
+      if (_statuses.contains(s)) (group: 'Status', value: s.label, remove: () => _toggle(_statuses, s)),
+    for (final c in _cats.toList()..sort()) (group: 'Category', value: c, remove: () => _toggle(_cats, c)),
+  ];
+
   // ---- list -----------------------------------------------------------------
 
-  /// "445 parts · 4,411 units on hand", or what the search and filters left.
-  String _countLabel(List<StockItem> shown) {
-    final units = shown.fold<int>(0, (s, i) => s + (i.qty > 0 ? i.qty : 0));
+  Widget _countLabel(int shown) {
     final filtered = _query.isNotEmpty || _filterCount > 0;
-    final parts = filtered ? '${_count.format(shown.length)} matching' : (shown.length == 1 ? '1 part' : '${_count.format(shown.length)} parts');
-    return '$parts  ·  ${_count.format(units)} ${units == 1 ? 'unit' : 'units'} on hand';
+    const strong = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink, fontFeatures: CatalogUi.figures);
+    return Semantics(
+      liveRegion: true,
+      child: filtered
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('${_count.format(shown)} matching', style: strong),
+                Text(' of ${_count.format(_all.length)}', style: const TextStyle(fontSize: 13.5, color: DashUi.slate, fontFeatures: CatalogUi.figures)),
+              ],
+            )
+          : Text(shown == 1 ? '1 part' : '${_count.format(shown)} parts', style: strong.copyWith(color: DashUi.slate, fontWeight: FontWeight.w600)),
+    );
   }
 
-  Widget _toolbar(bool compact, bool filterButton, List<StockItem> shown) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 12,
-        crossAxisAlignment: WrapCrossAlignment.center,
+  Widget _searchBox() {
+    return CallbackShortcuts(
+      bindings: {const SingleActivator(LogicalKeyboardKey.escape): _clearSearch},
+      child: CatalogSearchField(
+        controller: _search,
+        hint: 'Search part, part #, shelf or category',
+        onClear: _search.text.isEmpty ? null : _clearSearch,
+        onSubmitted: (v) {
+          _debounce?.cancel();
+          _applyQuery(v);
+        },
+        onChanged: (v) {
+          setState(() {}); // the clear button comes and goes with the text
+          _debounce?.cancel();
+          _debounce = Timer(const Duration(milliseconds: 250), () {
+            if (mounted) _applyQuery(v);
+          });
+        },
+      ),
+    );
+  }
+
+  /// The command row: search, the filters that are on, the count. One 52 px line; on a phone-narrow pane the chips go under it.
+  Widget _commandRow({required bool filterButton, required bool compact, required int shown, required double width, bool reopensSidebar = false}) {
+    final chips = _chips;
+    final small = width < 640;
+    final searchWidth = (width * 0.34).clamp(260.0, 440.0);
+    final line = Row(
+      children: [
+        if (small) Expanded(child: _searchBox()) else SizedBox(width: searchWidth, child: _searchBox()),
+        if (filterButton) ...[const SizedBox(width: 10), _filterButton(reopensSidebar: reopensSidebar)],
+        if (compact) ...[const SizedBox(width: 8), _sortMenu()],
+        if (!small) ...[const SizedBox(width: 14), Expanded(child: CatalogChipStrip(chips: chips)), const SizedBox(width: 14), _countLabel(shown)],
+      ],
+    );
+    return Container(
+      decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: DashUi.line))),
+      padding: EdgeInsets.symmetric(horizontal: compact ? 12 : CatalogUi.side),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 340),
-            child: TextField(
-              controller: _search,
-              style: const TextStyle(fontSize: 14),
-              textInputAction: TextInputAction.search,
-              decoration: flatSearchDecoration(
-                'Search part, part #, shelf or category',
-                onClear: _search.text.isEmpty ? null : _clearSearch,
+          SizedBox(height: CatalogUi.commandHeight, child: line),
+          if (small)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _countLabel(shown),
+                  for (final c in chips) CatalogFilterChip(key: ValueKey('${c.group}:${c.value}'), group: c.group, value: c.value, onRemove: c.remove),
+                ],
               ),
-              onSubmitted: (v) {
-                _debounce?.cancel();
-                _applyQuery(v);
-              },
-              onChanged: (v) {
-                setState(() {}); // the clear button comes and goes with the text
-                _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 250), () {
-                  if (mounted) _applyQuery(v);
-                });
-              },
             ),
-          ),
-          if (filterButton) _filterButton(),
-          if (compact) _sortMenu(),
-          Semantics(liveRegion: true, child: Text(_countLabel(shown), style: flatCellMuted)),
         ],
       ),
     );
@@ -689,19 +692,19 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
           for (final (key, name) in cols)
             PopupMenuItem(
               value: key,
+              height: 40,
               child: Row(
                 children: [
                   Expanded(
                     child: Text(name, style: TextStyle(fontWeight: _sortKey == key ? FontWeight.w700 : FontWeight.w500, color: DashUi.ink)),
                   ),
-                  if (_sortKey == key)
-                    Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 16, color: DashUi.ink),
+                  if (_sortKey == key) Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 16, color: DashUi.ink),
                 ],
               ),
             ),
         ],
         child: Container(
-          height: 42,
+          height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: DashUi.line)),
           child: Row(
@@ -743,19 +746,12 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
 
   Widget _body(double width) {
     final scale = MediaQuery.textScalerOf(context);
-    final wide = width >= _sidebarWidth + scale.scale(_tableWidth);
-    final cols = _cols;
-    if (_loading) {
-      return FlatLoading(label: 'Loading stock levels', flex: [for (final c in cols) c.flex], compact: width < scale.scale(_tableWidth), slow: _slow);
-    }
+    // Larger text needs the room too, so the sidebar and the columns give way sooner.
+    final wide = width >= CatalogUi.sidebarWidth + scale.scale(_tableWidth);
+    if (_loading) return _loadingView(width, wide);
     if (_error != null && _all.isEmpty) {
       return Center(
-        child: FlatEmpty(
-          icon: Icons.cloud_off_rounded,
-          title: 'Could not load stock levels',
-          message: _error!,
-          action: AppButton.ink('Try again', _load),
-        ),
+        child: FlatEmpty(icon: Icons.cloud_off_rounded, title: 'Could not load stock levels', message: _error!, action: AppButton.ink('Try again', _load)),
       );
     }
     if (_all.isEmpty) {
@@ -769,82 +765,131 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
       );
     }
     if (!wide) return _listPane(filterButton: true);
+    if (_sidebarHidden) return _listPane(filterButton: true, reopensSidebar: true);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(width: _sidebarWidth, child: _filterSidebar()),
-        Expanded(child: _listPane(filterButton: false)),
+        // One traversal group each, so Tab finishes the filters before the table (it zig-zagged by height between them).
+        SizedBox(width: CatalogUi.sidebarWidth, child: FocusTraversalGroup(child: _filterSidebar())),
+        Expanded(child: FocusTraversalGroup(child: _listPane(filterButton: false))),
       ],
     );
   }
 
-  Widget _listPane({required bool filterButton}) {
+  /// Loading: the page's own frame with pulsing rows, so nothing jumps when the list lands.
+  Widget _loadingView(double width, bool wide) {
+    final listWidth = wide ? width - CatalogUi.sidebarWidth : width;
+    final table = listWidth >= _tableWidth;
+    // Stacked rows on a narrow window: one placeholder column, not the table's fixed ones.
+    final cols = table ? _cols(listWidth) : const [CatalogCol('PART')];
+    final pane = Semantics(
+      label: 'Loading stock levels',
+      liveRegion: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            height: CatalogUi.commandHeight,
+            padding: const EdgeInsets.symmetric(horizontal: CatalogUi.side),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: DashUi.line))),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              children: [
+                const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate)),
+                const SizedBox(width: 12),
+                Flexible(
+                  child: Text(
+                    _slow ? 'Still loading. The server can take a moment when it has just started.' : 'Loading stock levels',
+                    style: CatalogUi.meta.copyWith(fontSize: 13.5),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (table) CatalogTableHeader(cols: cols, sortKey: _sortKey, ascending: _ascending, onSort: (_) {}),
+          Expanded(
+            child: ClipRect(
+              child: OverflowBox(alignment: Alignment.topCenter, maxHeight: double.infinity, child: CatalogSkeleton(cols: cols, rows: 24)),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (!wide) return pane;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          width: CatalogUi.sidebarWidth,
+          decoration: const BoxDecoration(border: Border(right: BorderSide(color: DashUi.line))),
+          alignment: Alignment.topLeft,
+          child: Container(
+            height: CatalogUi.commandHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: DashUi.line))),
+            child: const Row(
+              children: [
+                Icon(Icons.tune_rounded, size: 18, color: DashUi.slate),
+                SizedBox(width: 8),
+                Text('Filters', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: DashUi.ink)),
+              ],
+            ),
+          ),
+        ),
+        Expanded(child: pane),
+      ],
+    );
+  }
+
+  Widget _listPane({required bool filterButton, bool reopensSidebar = false}) {
     return LayoutBuilder(
       builder: (context, c) {
         final compact = c.maxWidth < MediaQuery.textScalerOf(context).scale(_tableWidth);
-        final cols = _cols;
         final shown = _shown;
         final pages = shown.isEmpty ? 1 : (shown.length / _pageSize).ceil();
         final page = _page.clamp(1, pages);
         final start = (page - 1) * _pageSize;
         final rows = shown.skip(start).take(_pageSize).toList();
+        final cols = _cols(c.maxWidth);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Expanded(
-              child: CustomScrollView(
-                controller: _scroll,
-                slivers: [
-                  SliverToBoxAdapter(child: _toolbar(compact, filterButton, shown)),
-                  if (_error != null)
-                    SliverToBoxAdapter(child: FlatStaleNotice(message: '$_error The list below may be out of date.', busy: false, onRetry: _load)),
-                  if (!_hasReorder)
-                    const SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
-                        child: Text('Low and out of stock appear once the server sends each part\'s reorder point.', style: flatCellMuted),
-                      ),
-                    ),
-                  if (shown.isEmpty)
-                    SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(
-                        child: FlatEmpty(
-                          icon: Icons.search_off_rounded,
-                          title: _query.isEmpty ? 'No parts match' : 'No parts match "$_query"',
-                          message: 'Try other words, or take off some filters.',
-                          action: AppButton.ghost('Clear search and filters', _clearAll),
-                        ),
-                      ),
-                    )
-                  else ...[
-                    if (!compact)
-                      PinnedHeaderSliver(
-                        child: FlatTableHeader(
-                          columns: cols,
-                          striped: true,
-                          sortKey: _sortKey,
-                          ascending: _ascending,
-                          onSort: _sort,
-                        ),
-                      ),
-                    SliverList.builder(
-                      itemCount: rows.length,
-                      itemBuilder: (_, i) => flatRowEntrance(_rowsIn, i, _row(rows[i], i, compact, cols)),
-                    ),
-                  ],
-                ],
+            _commandRow(filterButton: filterButton, compact: compact, shown: shown.length, width: c.maxWidth, reopensSidebar: reopensSidebar),
+            if (_error != null) FlatStaleNotice(message: '$_error The list below may be out of date.', busy: false, onRetry: _load),
+            if (!_hasReorder)
+              const Padding(
+                padding: EdgeInsets.fromLTRB(CatalogUi.side, 10, CatalogUi.side, 4),
+                child: Text('Low and out of stock appear once the server sends each part\'s reorder point.', style: CatalogUi.meta),
               ),
-            ),
-            if (shown.isNotEmpty)
-              FlatPager(
+            if (shown.isEmpty)
+              Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    child: FlatEmpty(
+                      icon: Icons.search_off_rounded,
+                      title: _query.isEmpty ? 'No parts match' : 'No parts match "$_query"',
+                      message: 'Try other words, or take off some filters.',
+                      action: AppButton.ghost('Clear search and filters', _clearAll),
+                    ),
+                  ),
+                ),
+              )
+            else ...[
+              if (!compact) CatalogTableHeader(key: const ValueKey('stock-header'), cols: cols, sortKey: _sortKey, ascending: _ascending, onSort: _sort),
+              Expanded(
+                child: ListView.builder(
+                  controller: _scroll,
+                  itemCount: rows.length,
+                  itemBuilder: (_, i) => flatRowEntrance(_rowsIn, i, _row(rows[i], i, compact, cols)),
+                ),
+              ),
+              CatalogPager(
+                key: const ValueKey('stock-footer'),
                 page: page,
                 totalPages: pages,
-                total: shown.length,
                 firstRow: start + 1,
                 rowsShown: rows.length,
                 pageSize: _pageSize,
-                busy: false,
                 compact: compact,
                 onPage: (p) => _newView(() => _page = p),
                 onPageSize: (s) => _newView(() {
@@ -852,6 +897,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
                   _page = 1;
                 }),
               ),
+            ],
           ],
         );
       },

@@ -14,8 +14,10 @@ import 'config/access.dart';
 import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'services/line_items_api.dart';
+import 'services/tax_settings_api.dart';
 import 'theme/app_theme.dart';
 import 'utils/job_statuses.dart';
+import 'utils/charge_presets.dart';
 import 'utils/line_item_math.dart';
 import 'utils/status_colors.dart';
 import 'widgets/app_dialog.dart';
@@ -123,11 +125,19 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     super.initState();
     _job = widget.initial;
     _unguard = LeaveGuard.register(canLeave: _confirmLeave, holdsWork: () => mounted && _editing && _dirty.isNotEmpty);
+    // The discount and fee presets for Tax, discounts & fees (the built-in list until the saved ones arrive).
+    TaxSettingsStore.instance.addListener(_taxSettingsChanged);
+    unawaited(TaxSettingsStore.instance.ensureLoaded());
     _load();
+  }
+
+  void _taxSettingsChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    TaxSettingsStore.instance.removeListener(_taxSettingsChanged);
     _unguard();
     super.dispose();
   }
@@ -1012,7 +1022,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     Widget bar(double w, double h) => Container(
       width: w,
       height: h,
-      decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: const Color(0xFFD4D4D4), borderRadius: BorderRadius.circular(6)),
     );
     Widget card({int rows = 6}) => Container(
       decoration: _blockFill,
@@ -3167,7 +3177,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   }
 }
 
-/// The Add Note / Add Task dialog (and an estimate option's customer notes), in the app's standard pop-up. It owns its
+/// The Add Note / Add Task dialog, in the app's standard pop-up. It owns its
 /// text box, so the box is only thrown away once the dialog is fully gone (disposing it right after the dialog closes
 /// breaks the closing animation). An empty box is refused under the field; a failed save keeps the text and says why
 /// above the buttons. Enter saves a one-line box, Ctrl+Enter a longer one, Esc cancels; nothing closes it mid-save.
@@ -3177,8 +3187,6 @@ class _TextDialog extends StatefulWidget {
   final int maxLength;
   final int maxLines;
   final Future<String?> Function(String text) onSave;
-  final String initial;
-  final bool allowEmpty; // an option's notes can be cleared
   final IconData icon;
   final String? subtitle;
   final String saveLabel;
@@ -3188,8 +3196,6 @@ class _TextDialog extends StatefulWidget {
     required this.maxLength,
     required this.maxLines,
     required this.onSave,
-    this.initial = '',
-    this.allowEmpty = false,
     this.icon = Icons.edit_note_rounded,
     this.subtitle,
     this.saveLabel = 'Save',
@@ -3200,7 +3206,7 @@ class _TextDialog extends StatefulWidget {
 }
 
 class _TextDialogState extends State<_TextDialog> {
-  late final _controller = TextEditingController(text: widget.initial);
+  late final _controller = TextEditingController();
   String? _empty; // shown under the field
   String? _failed; // shown above the buttons
   bool _saving = false;
@@ -3216,7 +3222,7 @@ class _TextDialogState extends State<_TextDialog> {
   Future<void> _save() async {
     if (_saving) return;
     final text = _controller.text.trim();
-    if (text.isEmpty && !widget.allowEmpty) {
+    if (text.isEmpty) {
       setState(() => _empty = 'Type something first.');
       return;
     }

@@ -176,7 +176,7 @@ void main() {
       expect(t.itemsCents, 7000);
       expect(t.discountCents, 1000);
       expect(t.netCents, 6000);
-      expect(t.taxCents, 600, reason: '10% of (100 - 30 - 10)');
+      expect(t.taxCents, 700, reason: '10% of (100 - 30): a discount never lowers the tax (USER RULE 2026-11-20), even one marked taxable');
     });
 
     test('the limits are the server\'s, either way (LIMITS in lineItemMath.js), not the old 9,999.999', () {

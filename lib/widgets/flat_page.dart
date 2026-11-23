@@ -347,7 +347,7 @@ class FlatTableHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: striped ? DashUi.line : DashUi.faint, // a striped table needs a header darker than its stripes
+      color: striped ? DashUi.rowHead : DashUi.rowStripe, // a striped table needs a header darker than its stripes
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
       child: Row(children: [for (final col in columns) _flatCell(col, _label(col))]),
     );
@@ -367,12 +367,12 @@ class FlatTableRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      hoverColor: striped ? DashUi.line : DashUi.faint,
+      hoverColor: striped ? DashUi.rowHover : DashUi.rowStripe,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
         decoration: BoxDecoration(
-          color: striped && index.isOdd ? DashUi.faint : null,
-          border: const Border(top: BorderSide(color: DashUi.line)),
+          color: striped && index.isOdd ? DashUi.rowStripe : null,
+          border: const Border(top: BorderSide(color: DashUi.rowRule)),
         ),
         child: Row(children: [for (var i = 0; i < columns.length; i++) _flatCell(columns[i], cells[i])]),
       ),
@@ -621,13 +621,13 @@ class FlatLoading extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                if (!compact) Container(height: 40, color: DashUi.line),
+                if (!compact) Container(height: 40, color: DashUi.rowHead),
                 for (var r = 0; r < 8; r++)
                   Container(
                     padding: EdgeInsets.symmetric(horizontal: 24, vertical: compact ? 12 : 17),
                     decoration: BoxDecoration(
-                      color: r.isOdd ? DashUi.faint : null,
-                      border: const Border(top: BorderSide(color: DashUi.line)),
+                      color: r.isOdd ? DashUi.rowStripe : null,
+                      border: const Border(top: BorderSide(color: DashUi.rowRule)),
                     ),
                     child: compact
                         ? const Column(

@@ -141,6 +141,7 @@ String _actionLabel(String? a) => switch (a) {
   'set_weight' => 'Weight changed',
   'clear_weight' => 'Weight fix removed',
   'unlock_job' => 'Job unlocked',
+  'move_close_date' => 'Close date moved',
   _ => a ?? 'Change',
 };
 
@@ -148,7 +149,11 @@ IconData _actionIcon(String? a) => switch (_fieldOf(a)) {
   'verified' => Icons.task_alt_rounded,
   'callback' => Icons.replay_rounded,
   'weight' => Icons.balance_rounded,
-  _ => a == 'unlock_job' ? Icons.lock_open_rounded : Icons.edit_rounded,
+  _ => switch (a) {
+    'unlock_job' => Icons.lock_open_rounded,
+    'move_close_date' => Icons.event_repeat_rounded,
+    _ => Icons.edit_rounded,
+  },
 };
 
 /// The field a correction is about: 'verified', 'callback' or 'weight' (null for an unlock).
@@ -170,6 +175,7 @@ String _prettyValue(String? action, dynamic raw) {
   if (raw == null) return '—';
   final s = raw.toString();
   if (s == 'back to sync') return 'Sync decides';
+  if (action == 'move_close_date') return 'Closed ${_day(s)}';
   final isTrue = s == 'true';
   final isFalse = s == 'false';
   if (action != null && action.endsWith('verified') && (isTrue || isFalse)) return isTrue ? 'Verified' : 'Not verified';
@@ -185,6 +191,9 @@ String _prettyValue(String? action, dynamic raw) {
 /// What a correction did in one line, e.g. "Weight 0 → 1.5" or "Verified → Not verified".
 String _changeLine(Map<String, dynamic> c) {
   final action = c['action']?.toString();
+  if (action == 'move_close_date' && c['old_value'] != null && c['new_value'] != null) {
+    return '${_prettyValue(action, c['old_value'])} → ${_day(c['new_value'].toString())}';
+  }
   final field = _fieldOf(action);
   if (field == null || action!.startsWith('clear_') || c['old_value'] == null || c['new_value'] == null) {
     return _actionLabel(action);
@@ -556,6 +565,21 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
         lock: lock,
         paidWeeks: paidWeeks,
         onSave: (reason) => _save('/unlock', {'reason': reason}, done: 'Job unlocked.'),
+      ),
+    );
+  }
+
+  Future<void> _moveCloseDate(Map<String, dynamic> job, Map<String, dynamic> lock, List<Map<String, dynamic>> days) async {
+    final goLive = DateTime.tryParse(_detail?['goLiveDate']?.toString() ?? '') ?? DateTime(2026, 10, 5);
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _CloseDateDialog(
+        job: job,
+        lock: lock,
+        days: days,
+        goLive: goLive,
+        weekPaid: (monday) => _stateOf(_ymd(monday), lockSaysPaid: false) == _WeekState.paid,
+        onSave: (v) => _save('/close-date', {'date': v.date, 'reason': v.reason}, done: 'Close date moved.'),
       ),
     );
   }
@@ -1082,7 +1106,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
                   _summaryStrip(job, lock: lock, weeks: weeks, inScope: inScope),
                   if (lock != null) ...[
                     const SizedBox(height: 16),
-                    _lockBand(job, lock, closing: closing, paid: paid, paidWeeks: paidWeeks),
+                    _lockBand(job, lock, closing: closing, paid: paid, inScope: inScope, paidWeeks: paidWeeks, days: days),
                   ],
                   if (paid) ...[
                     const SizedBox(height: 12),
@@ -1318,26 +1342,53 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     Map<String, dynamic> lock, {
     required bool closing,
     required bool paid,
+    required bool inScope,
     required List<DateTime> paidWeeks,
+    required List<Map<String, dynamic>> days,
   }) {
     final canUnlock = !closing && !paid && _canCorrect;
     final why = paid
         ? 'Commission is already paid, so this job cannot be unlocked.'
         : 'Change the job to a non-closing status in Service Fusion first.';
-    final button = Tooltip(
-      message: canUnlock ? 'Remove the lock so commission is recalculated' : why,
-      child: OutlinedButton.icon(
-        onPressed: canUnlock ? () => _unlock(job, lock, paidWeeks) : null,
-        icon: const Icon(Icons.lock_open_rounded, size: 16),
-        label: const Text('Unlock'),
-        style: OutlinedButton.styleFrom(
-          foregroundColor: _ink,
-          backgroundColor: Colors.white,
-          side: BorderSide(color: canUnlock ? _ink : _line),
-          minimumSize: const Size(0, 38),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    final closeWeekPaid = lock['week_paid'] == true;
+    final canMove = !paid && inScope && !closeWeekPaid && _canCorrect;
+    final whyNoMove = paid
+        ? 'Commission is already paid, so the close date cannot be moved.'
+        : !inScope
+        ? 'This job started before go-live, so it earns no commission.'
+        : closeWeekPaid
+        ? 'Payroll was already run for the week it closed, so its commission was paid.'
+        : 'Saving corrections is switched off for you. An admin can turn it on in Team.';
+    ButtonStyle style(bool on) => OutlinedButton.styleFrom(
+      foregroundColor: _ink,
+      backgroundColor: Colors.white,
+      side: BorderSide(color: on ? _ink : _line),
+      minimumSize: const Size(0, 38),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+    );
+    final button = Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        Tooltip(
+          message: canMove ? 'Pay this job in the week it should have closed' : whyNoMove,
+          child: OutlinedButton.icon(
+            onPressed: canMove ? () => _moveCloseDate(job, lock, days) : null,
+            icon: const Icon(Icons.event_repeat_rounded, size: 16),
+            label: const Text('Change close date'),
+            style: style(canMove),
+          ),
         ),
-      ),
+        Tooltip(
+          message: canUnlock ? 'Remove the lock so commission is recalculated' : why,
+          child: OutlinedButton.icon(
+            onPressed: canUnlock ? () => _unlock(job, lock, paidWeeks) : null,
+            icon: const Icon(Icons.lock_open_rounded, size: 16),
+            label: const Text('Unlock'),
+            style: style(canUnlock),
+          ),
+        ),
+      ],
     );
     final text = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1348,7 +1399,8 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
         ),
         const SizedBox(height: 3),
         const Text(
-          'Its commission was frozen when it closed. Changing the status back in Service Fusion does not unlock it.',
+          'Its commission was frozen when it closed and is paid in the week it closed. Changing the status back in '
+          'Service Fusion does not unlock it. If it closed late, change the close date to pay it in the right week.',
           style: TextStyle(fontSize: 13, color: _slate, height: 1.4),
         ),
         if (closing && !paid)
@@ -1822,7 +1874,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
                           text: _actionLabel(action),
                           style: const TextStyle(fontWeight: FontWeight.w800, color: _ink),
                         ),
-                        if (target.isNotEmpty)
+                        if (target.isNotEmpty && action != 'move_close_date')
                           TextSpan(
                             text: isUnlock ? '  ·  Was $target' : '  ·  $target',
                             style: const TextStyle(color: _slate),
@@ -2705,6 +2757,263 @@ class _UnlockDialogState extends State<_UnlockDialog> {
         children: [
           SizedBox(
             width: 172,
+            child: Text(label, style: const TextStyle(fontSize: 13, color: _slate)),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                fontSize: 13.5,
+                color: _ink,
+                fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
+                fontFeatures: _figures,
+              ),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// Moves a closed job's close date so its commission is paid in the week it should have closed (a job closed late in
+/// Service Fusion is paid in the week it actually closed). The server sets the close to 6 pm that day, after the Monday
+/// grace cutoff, so the job always pays in the week of the day picked here.
+class _CloseDateDialog extends StatefulWidget {
+  final Map<String, dynamic> job;
+  final Map<String, dynamic> lock;
+  final List<Map<String, dynamic>> days;
+  final DateTime goLive;
+
+  /// Whether a pay week (its Monday) already has a finalized payroll run.
+  final bool Function(DateTime monday) weekPaid;
+  final _Save<({String date, String reason})> onSave;
+  const _CloseDateDialog({
+    required this.job,
+    required this.lock,
+    required this.days,
+    required this.goLive,
+    required this.weekPaid,
+    required this.onSave,
+  });
+
+  @override
+  State<_CloseDateDialog> createState() => _CloseDateDialogState();
+}
+
+class _CloseDateDialogState extends State<_CloseDateDialog> {
+  final _reason = TextEditingController();
+  DateTime? _closedOn;
+  DateTime? _date;
+  String? _error;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _reason.addListener(() => setState(() {}));
+    final closed = DateTime.tryParse(widget.lock['locked_at']?.toString() ?? '')?.toLocal();
+    _closedOn = closed == null ? null : DateTime(closed.year, closed.month, closed.day);
+    _date = _suggestion();
+  }
+
+  @override
+  void dispose() {
+    _reason.dispose();
+    super.dispose();
+  }
+
+  DateTime get _today {
+    final n = DateTime.now();
+    return DateTime(n.year, n.month, n.day);
+  }
+
+  /// The last verified visit worked in an earlier pay week than the one the job closed in: usually the day it should
+  /// have closed. Null when there is none, so the office picks the day.
+  DateTime? _suggestion() {
+    final closed = _closedOn;
+    if (closed == null) return null;
+    final closeWeek = _mondayOf(closed);
+    DateTime? best;
+    for (final d in widget.days) {
+      if (d['is_verified'] != true || d['is_callback'] == true) continue;
+      final date = DateTime.tryParse(d['work_date']?.toString() ?? '');
+      if (date == null || date.isBefore(widget.goLive) || !_mondayOf(date).isBefore(closeWeek)) continue;
+      if (best == null || date.isAfter(best)) best = date;
+    }
+    return best;
+  }
+
+  int get _left => _minReason - _reason.text.trim().length;
+  bool get _changed => _date != null && _date != _closedOn;
+  bool get _valid => _left <= 0 && _changed && !_saving;
+
+  Future<void> _pick() async {
+    final last = _today;
+    final first = widget.goLive.isAfter(last) ? last : widget.goLive;
+    var initial = _date ?? _closedOn ?? last;
+    if (initial.isAfter(last)) initial = last;
+    if (initial.isBefore(first)) initial = first;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: first,
+      lastDate: last,
+      helpText: 'SHOULD HAVE CLOSED ON',
+    );
+    if (picked != null && mounted) setState(() => _date = DateTime(picked.year, picked.month, picked.day));
+  }
+
+  Future<void> _submit() async {
+    if (!_valid) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    final err = await widget.onSave((date: _ymd(_date!), reason: _reason.text.trim()));
+    if (!mounted) return;
+    if (err == null) {
+      Navigator.pop(context);
+    } else {
+      setState(() {
+        _saving = false;
+        _error = err;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = widget.job;
+    final lock = widget.lock;
+    final nowWeek = DateTime.tryParse(lock['pay_week']?.toString() ?? '');
+    final date = _date;
+    final newWeek = date == null ? null : _mondayOf(date);
+    final sameWeek = newWeek != null && nowWeek != null && newWeek == nowWeek;
+    final newWeekPaid = newWeek != null && !sameWeek && widget.weekPaid(newWeek);
+    final closed = _closedOn;
+    final otherMonth = date != null && closed != null && (date.year != closed.year || date.month != closed.month);
+
+    return PopScope(
+      canPop: !_saving,
+      child: CallbackShortcuts(
+        bindings: {const SingleActivator(LogicalKeyboardKey.enter, control: true): _submit},
+        child: AppDialog(
+          title: 'Change close date',
+          subtitle: '${job['customer_name'] ?? 'Job'} · #${job['job_id']}',
+          icon: Icons.event_repeat_rounded,
+          width: 520,
+          body: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const AppNotice(
+                'Commission is paid in the week a job first closed. Use this when the job was closed late in Service '
+                'Fusion, so it pays in the week it should have closed. Nothing changes in Service Fusion.',
+              ),
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+                decoration: BoxDecoration(color: _faint, borderRadius: BorderRadius.circular(10)),
+                child: Column(
+                  children: [
+                    _fact('Closed', _stamp(lock['locked_at'])),
+                    _fact('Pays now in', nowWeek == null ? '—' : 'the week of ${_weekRange(nowWeek)}'),
+                    _fact(
+                      'Will pay in',
+                      newWeek == null ? 'Pick a day below' : 'the week of ${_weekRange(newWeek)}',
+                      strong: newWeek != null,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              const AppFieldLabel(
+                'Should have closed on',
+                help: 'Any day in the pay week it should be paid in. Filled in with the last day worked before it closed.',
+              ),
+              Semantics(
+                button: true,
+                label: 'Should have closed on, ${date == null ? 'not picked' : DateFormat('EEEE, MMMM d, yyyy').format(date)}',
+                excludeSemantics: true,
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : _pick,
+                  icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                  label: Text(date == null ? 'Pick a day' : DateFormat('EEE, MMM d, yyyy').format(date)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _ink,
+                    backgroundColor: Colors.white,
+                    side: const BorderSide(color: _line),
+                    minimumSize: const Size(0, 42),
+                    padding: const EdgeInsets.symmetric(horizontal: 14),
+                    textStyle: Theme.of(context).textTheme.labelLarge?.copyWith(fontSize: 14, fontWeight: FontWeight.w700),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+              if (date != null && date == closed) ...[
+                const SizedBox(height: 10),
+                const AppNotice('That is the day it already closed. Pick a different day.', kind: AppNoticeKind.warning),
+              ] else if (sameWeek) ...[
+                const SizedBox(height: 10),
+                const AppNotice(
+                  "That day is in the same pay week it closed in, so pay doesn't change. Only the date does.",
+                  kind: AppNoticeKind.warning,
+                ),
+              ],
+              if (newWeekPaid) ...[
+                const SizedBox(height: 10),
+                AppNotice(
+                  _paidWeeksNotice(
+                    [newWeek],
+                    'This job shows up as an adjustment the next time payroll is run for that week.',
+                  ),
+                  kind: AppNoticeKind.error,
+                ),
+              ],
+              if (otherMonth) ...[
+                const SizedBox(height: 10),
+                const AppNotice(
+                  "The close moves to a different month, so any sales commission on this job moves to that month's payday too.",
+                ),
+              ],
+              const SizedBox(height: 18),
+              const AppFieldLabel('Why are you doing this?', help: 'Required.'),
+              TextField(
+                controller: _reason,
+                enabled: !_saving,
+                minLines: 2,
+                maxLines: 3,
+                maxLength: 1000,
+                buildCounter: (_, {required currentLength, required isFocused, maxLength}) => null,
+                decoration: appFieldDecoration(
+                  hint: 'e.g. Finished Nov 12 but not closed in Service Fusion until Nov 19',
+                  helper: _left > 0 && _reason.text.isNotEmpty
+                      ? '$_left more character${_left == 1 ? '' : 's'} needed'
+                      : 'Saved in the history with your name.',
+                ),
+              ),
+            ],
+          ),
+          footer: _error == null
+              ? null
+              : Semantics(liveRegion: true, child: AppNotice(_error!, kind: AppNoticeKind.error)),
+          actions: [
+            AppButton.ghost('Cancel', _saving ? null : () => Navigator.pop(context)),
+            AppButton.ink(_saving ? 'Moving…' : 'Move close date', _valid ? _submit : null),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _fact(String label, String value, {bool strong = false}) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: MergeSemantics(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
             child: Text(label, style: const TextStyle(fontSize: 13, color: _slate)),
           ),
           Expanded(

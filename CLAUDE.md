@@ -62,3 +62,23 @@ analyze or tests passed.
   at them before reporting.
 
 Skills for common tasks are in `.claude/skills/`.
+
+### Plugin skills (enabled in the user's settings, invoke with the Skill tool)
+
+Project skills and the rules above win when they conflict with a plugin skill.
+
+- `superpowers:*`: process skills. `brainstorming` before new features, `systematic-debugging` for bugs and test failures,
+  `test-driven-development`, `writing-plans` / `executing-plans`, `requesting-code-review`, `verification-before-completion`
+  (before claiming analyze/tests/renders pass), `using-git-worktrees`, `finishing-a-development-branch`.
+- `design:*` and `design-skills:*`: critique and polish. `design:design-critique`, `design:accessibility-review` /
+  `design-skills:accessibility-audit`, `design:ux-copy` / `design-skills:ux-writing`, `design:design-handoff`,
+  `design-skills:interaction-design`, `design-skills:design-systems`. Use alongside `ui-review` and `accessibility`;
+  the IOHD tokens (`DashUi`, `AppTheme`) stay the source of truth.
+- `frontend-design:frontend-design`: web/HTML visuals only (artifacts, docs pages). Not for Flutter screens: use `design-system` and the ribbon rules.
+- `stripe:*`: payments work (Payments screen, `stripe_payments`). `stripe-best-practices`, `explain-error`, `test-cards`, `stripe-docs`.
+  Never put keys in source.
+- `claude-security:*`: `/claude-security` scans and patch files. Run only when the user asks (heavy token use).
+- `product-management:*`: `write-spec`, `sprint-planning`, `roadmap-update`, `stakeholder-update` when the user wants a spec or update written.
+- `skill-creator:skill-creator`: create or tune skills in `.claude/skills/`.
+- `remotion:*` and `motion-reel:motion-reel`: video work only (the intro video side project, not this app).
+- `legal:*`: contracts and compliance questions only. Not used for app work.

@@ -8,13 +8,13 @@ class AppTheme {
   static const Color primaryText = Color(0xFF1A1C1E);
   static const Color secondaryText = Color(0xFF4B5563);
   static const Color sectionLabel = Color(0xFF9CA3AF);
-  static const Color strokeBorder = Color(0xFFE5E7EB);
-  static const Color dividerColor = Color(0xFFE5E7EB);
+  static const Color strokeBorder = Color(0xFFE5E5E5);
+  static const Color dividerColor = Color(0xFFE5E5E5);
 
   // Quiet surfaces and readable muted text (about 4.8:1 on white, unlike sectionLabel) for dense schedule screens.
   static const Color mutedText = Color(0xFF6B7280);
-  static const Color subtleFill = Color(0xFFF3F4F6);
-  static const Color subtleFillLight = Color(0xFFF9FAFB);
+  static const Color subtleFill = Color(0xFFF3F3F3);
+  static const Color subtleFillLight = Color(0xFFF9F9F9);
   static const Color todayTint = Color(0xFFE6EDF7);
 
   // Accent Colors
@@ -44,7 +44,7 @@ class AppTheme {
   margin: EdgeInsets.zero,
   shape: RoundedRectangleBorder(
     borderRadius: BorderRadius.all(Radius.circular(14)),
-    side: BorderSide(color: Color(0xFFE5E7EB), width: 1),
+    side: BorderSide(color: Color(0xFFE5E5E5), width: 1),
   ),
 ),
 
@@ -87,7 +87,7 @@ class AppTheme {
       // --- Input Decorations (Text Fields) ---
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: const Color(0xFFF9FAFB),
+        fillColor: const Color(0xFFF9F9F9),
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         hintStyle: const TextStyle(color: sectionLabel, fontSize: 14),
         border: OutlineInputBorder(

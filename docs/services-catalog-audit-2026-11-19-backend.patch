@@ -1,0 +1,133 @@
+diff --git a/src/catalog.js b/src/catalog.js
+index bc352771..d2196c4b 100644
+--- a/src/catalog.js
++++ b/src/catalog.js
+@@ -45,6 +45,8 @@ const TTL_MS = 30 * 60 * 1000;
+ const HISTORY_DAYS = 540;
+ 
+ const norm = (s) => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
++// A name as the catalog matches it: case, spacing and the spacing around "|" don't make two names different.
++const foldName = (s) => norm(s).replace(/\s*\|\s*/g, '|');
+ const money = (v) => (v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Math.round(Number(v) * 100) / 100);
+ 
+ /** Groups Service Fusion lines into one price-list entry per product or service name. */
+@@ -867,6 +869,11 @@ module.exports = function (pool, requireAuth) {
+             const { key: _k, ...rest } = req.body;
+             const change = cleanServiceInput(rest, { canSeeCost: withCost });
+             if (!Object.keys(change).length) return res.status(400).json({ error: 'Nothing to change.' });
++            // Two services with one name could not be told apart in the add-line picker (audit 2026-11-19).
++            if (change.name) {
++                const taken = (await pickerList()).find((e) => e.kind === 'service' && e.key !== key && foldName(e.name) === foldName(change.name));
++                if (taken) return res.status(409).json({ error: `Another service is already called "${taken.name}".` });
++            }
+             const cur = (await pool.query('SELECT * FROM service_overrides WHERE key = $1', [key])).rows[0] || {};
+             const next = { name: cur.name ?? null, category: cur.category ?? null, description: cur.description ?? null, rate: cur.rate ?? null, cost: cur.cost ?? null, taxable: cur.taxable ?? null, active: cur.active ?? null, ...change };
+             if (Object.values(next).every((v) => v === null)) {
+@@ -932,8 +939,8 @@ module.exports = function (pool, requireAuth) {
+             const key = serviceKey(req.query.key);
+             const withCost = canDo(req.user, 'line_items', 'view');
+             if (!key || !(await serviceEntry(key, withCost))) return res.status(404).json({ error: 'That service is not in the catalog.' });
+-            await pool.query('DELETE FROM service_overrides WHERE key = $1', [key]);
+-            await pool.query('DELETE FROM service_rates WHERE service_key = $1', [key]);
++            // One statement: the edits and the rates go together, so a failure can't leave half a reset.
++            await pool.query('WITH gone AS (DELETE FROM service_overrides WHERE key = $1) DELETE FROM service_rates WHERE service_key = $1', [key]);
+             overrideCache = null;
+             res.json({ service: await serviceEntry(key, withCost) });
+         } catch (err) {
+diff --git a/src/serviceOverrides.js b/src/serviceOverrides.js
+index 10e9c3f9..f2d8dbcd 100644
+--- a/src/serviceOverrides.js
++++ b/src/serviceOverrides.js
+@@ -206,9 +206,13 @@ function applyServiceOverrides(list, rows, rateRows = []) {
+     if ((!rows || !rows.length) && (!rateRows || !rateRows.length)) return list;
+     const byKey = new Map((rows || []).map((r) => [r.key, rowToOverride(r)]));
+     const ratesByKey = new Map();
++    const ratesMeta = new Map(); // service key -> { at, by } of its newest rate row (a rates-only edit has who and when too)
+     for (const r of [...(rateRows || [])].sort((a, b) => a.position - b.position)) {
+         if (!ratesByKey.has(r.service_key)) ratesByKey.set(r.service_key, []);
+         ratesByKey.get(r.service_key).push(rateRowToJson(r));
++        const at = r.updated_at ? new Date(r.updated_at) : null;
++        const m = ratesMeta.get(r.service_key);
++        if (!m || (at && (!m.at || at > m.at))) ratesMeta.set(r.service_key, { at, by: r.updated_by ?? null });
+     }
+     return list.map((e) => {
+         if (e.kind !== 'service') return e;
+@@ -245,6 +249,13 @@ function applyServiceOverrides(list, rows, rateRows = []) {
+         if (rates) {
+             out = applyRates(out, rates);
+             if (!out.editedFields.includes('rates')) out.editedFields = [...out.editedFields, 'rates'];
++            // The newer of the fields' edit and the rates' save says who changed it last.
++            const m = ratesMeta.get(e.key);
++            const ratesAt = m && m.at ? m.at.toISOString() : null;
++            if (m && (!out.editedAt || (ratesAt && ratesAt > out.editedAt))) {
++                out.editedAt = ratesAt ?? out.editedAt;
++                out.editedBy = m.by ?? out.editedBy;
++            }
+         }
+         return out;
+     });
+diff --git a/test/service_overrides.test.js b/test/service_overrides.test.js
+index a70670f5..4365715d 100644
+--- a/test/service_overrides.test.js
++++ b/test/service_overrides.test.js
+@@ -30,7 +30,7 @@ const LEGACY_LINES = [
+     { name: 'Residential Service', is_service: true, rate: '45', ext_cost: '10', qty: '1', description: 'Service call', taxed: false, at: '2026-10-02' },
+ ];
+ 
+-function db() {
++function db(lines = LEGACY_LINES) {
+     const store = new Map();
+     let rates = []; // service_rates rows
+     let nextId = 1;
+@@ -42,7 +42,12 @@ function db() {
+         }
+         if (/^\s*WITH gone AS \(DELETE FROM service_rates/i.test(sql)) {
+             rates = rates.filter((x) => x.service_key !== params[0]);
+-            for (const x of JSON.parse(params[1])) rates.push({ id: nextId++, service_key: params[0], ...x, updated_by: params[2] });
++            for (const x of JSON.parse(params[1])) rates.push({ id: nextId++, service_key: params[0], ...x, updated_by: params[2], updated_at: new Date() });
++            return { rows: [] };
++        }
++        if (/^\s*WITH gone AS \(DELETE FROM service_overrides/i.test(sql)) {
++            store.delete(params[0]);
++            rates = rates.filter((x) => x.service_key !== params[0]);
+             return { rows: [] };
+         }
+         if (/^\s*DELETE FROM service_rates/i.test(sql)) {
+@@ -63,7 +68,7 @@ function db() {
+             return { rows: [] };
+         }
+         if (/AS rate_id/.test(sql) && /it \? 'service'/.test(sql)) return { rows: [] };
+-        if (/AS is_service/.test(sql)) return { rows: LEGACY_LINES };
++        if (/AS is_service/.test(sql)) return { rows: lines };
+         return { rows: [] };
+     });
+     pool.store = store;
+@@ -238,3 +243,28 @@ test('rates without the cost switch: costs and commissions hidden; such a person
+         assert.equal(pool.rates().length, 2);
+     });
+ });
++
++// Audit 2026-11-19 (Services Catalog redesign).
++test('a rename to a name another service has is refused (409), whatever its case and spacing; its own name is fine', async () => {
++    const lines = [...LEGACY_LINES, { name: 'Commercial Service | Call', is_service: true, rate: '99', ext_cost: '20', qty: '1', description: '', taxed: false, at: '2026-10-03' }];
++    const pool = db(lines);
++    await withServer(app(pool), async (base) => {
++        const r = await call(base, 'PUT', '/api/catalog/services/override', { body: { key: KEY, name: '  commercial service|CALL ' } });
++        assert.equal(r.status, 409);
++        assert.equal(r.body.error, 'Another service is already called "Commercial Service | Call".');
++        assert.equal(pool.store.size, 0, 'nothing saved');
++        const own = await call(base, 'PUT', '/api/catalog/services/override', { body: { key: KEY, name: 'RESIDENTIAL SERVICE' } });
++        assert.equal(own.status, 200);
++    });
++});
++
++test('a rates-only edit says who changed it and when', async () => {
++    await withServer(app(db()), async (base) => {
++        const r = await call(base, 'PUT', '/api/catalog/services/rates', { body: { key: KEY, rates: [{ name: 'Visit', qty: 1, rate: 50 }] } });
++        assert.equal(r.status, 200);
++        const s = await service(base);
++        assert.deepEqual(s.editedFields, ['rates']);
++        assert.equal(s.editedBy, 'Test Admin');
++        assert.ok(s.editedAt, 'has a time');
++    });
++});

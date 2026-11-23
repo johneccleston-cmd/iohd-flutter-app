@@ -36,23 +36,23 @@
       "expect": { "itemsCents": 1298, "discountCents": 0, "taxableCents": 4298, "taxCents": 355, "totalCents": 1653, "costCents": 1611, "profitCents": null, "marginPct": null, "unpricedLines": 0, "missingCostLines": 1, "zeroUnconfirmedLines": 0 }
     },
     {
-      "name": "a taxable discount lowers the taxed amount; an unpriced line counts $0 and is flagged",
+      "name": "a discount never lowers the taxed amount, even one marked taxable (USER RULE 2026-11-20: tax is per line, a discount comes off the total); an unpriced line counts $0 and is flagged",
       "taxRate": 10,
       "items": [
         { "kind": "item", "quantity": 1, "rate": 1000, "cost": 600, "taxable": true },
         { "kind": "item", "quantity": 2, "rate": null, "cost": 50, "taxable": true },
         { "kind": "discount", "rate": 100, "taxable": true }
       ],
-      "expect": { "itemsCents": 100000, "discountCents": 10000, "taxableCents": 90000, "taxCents": 9000, "totalCents": 99000, "costCents": 70000, "profitCents": 20000, "marginPct": 22.2, "unpricedLines": 1, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
+      "expect": { "itemsCents": 100000, "discountCents": 10000, "taxableCents": 100000, "taxCents": 10000, "totalCents": 100000, "costCents": 70000, "profitCents": 20000, "marginPct": 22.2, "unpricedLines": 1, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
     },
     {
-      "name": "no tax rate, and a discount bigger than the taxable items never makes tax negative",
+      "name": "no tax rate: nothing is taxed; a discount bigger than the items takes the total below 0",
       "taxRate": null,
       "items": [
         { "kind": "item", "quantity": 1, "rate": 50, "cost": 20, "taxable": true },
         { "kind": "discount", "rate": 80, "taxable": true }
       ],
-      "expect": { "itemsCents": 5000, "discountCents": 8000, "taxableCents": 0, "taxCents": 0, "totalCents": -3000, "costCents": 2000, "profitCents": -5000, "marginPct": null, "unpricedLines": 0, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
+      "expect": { "itemsCents": 5000, "discountCents": 8000, "taxableCents": 5000, "taxCents": 0, "totalCents": -3000, "costCents": 2000, "profitCents": -5000, "marginPct": null, "unpricedLines": 0, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
     },
     {
       "name": "SF estimate 1044450930: a 10% discount line is 35,125.3 x -$0.10, above the old 9,999.999 quantity cap",

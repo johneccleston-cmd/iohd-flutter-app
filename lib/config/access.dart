@@ -20,17 +20,25 @@ const Set<AccessAction> _payments = {AccessAction.view, AccessAction.create};
 const Set<AccessAction> _payroll = {AccessAction.view, AccessAction.create, AccessAction.delete};
 const Set<AccessAction> _viewUpdate = {AccessAction.view, AccessAction.update};
 const Set<AccessAction> _team = {AccessAction.view, AccessAction.create, AccessAction.update};
+const Set<AccessAction> _poolLog = {AccessAction.view, AccessAction.create};
+const Set<AccessAction> _changes = {AccessAction.create, AccessAction.update, AccessAction.delete};
+const Set<AccessAction> _updateOnly = {AccessAction.update};
 
 /// Sent with every permissions save: this app knows every key, so the server takes the list as it is. (An older build
-/// leaves it out, and the server keeps the saved value of the keys that build doesn't know.)
-const int kAccessVersion = 2;
+/// sends a lower number or none, and the server keeps the saved value of the keys that build doesn't know.) 3: the
+/// Product Catalog, Services Catalog and pool log switches of 2026-11-19; 4: Tax, Discounts & Fees (2026-11-20).
+const int kAccessVersion = 4;
 
 /// One row of the permissions grid: a page (or a part of pages) and the actions it really has. The server checks every
 /// one of them, and an action only counts while View is on. Admin and Owner roles can do everything; for everyone else
 /// the Team screen decides, nothing is held back. [help] says in plain words what each ticked box lets the person do;
-/// the Team screen shows it under the row's name. [defaultOff] rows (pay, profit, Team, Jarvis, the Services Catalog)
-/// start switched off for someone whose permissions were never saved; everything else starts on. Same list as
-/// accessKeys.js in the backend.
+/// the Team screen shows it under the row's name. [defaultOff] rows (pay, profit, Team, Jarvis, the Services Catalog, the
+/// pool logs) start switched off for someone whose permissions were never saved, and so do a row's [defaultOffActions]
+/// (changing the Product Catalog); everything else starts on. Same list as accessKeys.js in the backend.
+///
+/// Every page and every kind of change on one has a row or an action here: the Team screen is the only place anyone's
+/// access is set, so a new screen (or a new kind of change) needs its switch added here and in accessKeys.js, never a
+/// check of its own.
 class AccessResource {
   final String key;
   final String label;
@@ -39,7 +47,17 @@ class AccessResource {
   final Set<AccessAction> actions;
   final String help;
   final bool defaultOff;
-  const AccessResource(this.key, this.label, this.icon, {this.route, this.actions = _viewOnly, this.help = '', this.defaultOff = false});
+  final Set<AccessAction> defaultOffActions;
+  const AccessResource(
+    this.key,
+    this.label,
+    this.icon, {
+    this.route,
+    this.actions = _viewOnly,
+    this.help = '',
+    this.defaultOff = false,
+    this.defaultOffActions = const {},
+  });
 
   String keyFor(AccessAction a) => '$key.${a.name}';
 }
@@ -53,6 +71,7 @@ class AccessGroup {
 const List<AccessGroup> kAccessGroups = [
   AccessGroup('Dashboards', [
     AccessResource('dash_financial', 'Financial', Icons.attach_money_rounded, route: '/dashboards/financial', defaultOff: true, help: 'Company revenue and profit.'),
+    AccessResource('company_pool', 'Company & Commercial Pools', Icons.savings_outlined, actions: _poolLog, defaultOff: true, help: 'On the Financial dashboard. View: open the company and commercial pool logs. Create: add a company pool transaction.'),
     AccessResource('dash_commissions', 'Commissions', Icons.payments_outlined, route: '/dashboards/commissions', defaultOff: true, help: "Everyone's commission pay."),
     AccessResource('dash_technicians', 'Technicians', Icons.engineering_outlined, route: '/dashboards/technicians', defaultOff: true, help: 'Revenue and profit per technician.'),
     AccessResource('dash_inventory', 'Inventory', Icons.inventory_2_outlined, route: '/dashboards/inventory', help: 'Stock value, low stock and strikes.'),
@@ -71,7 +90,7 @@ const List<AccessGroup> kAccessGroups = [
     AccessResource('customers', 'Customers', Icons.groups_rounded, route: '/customers', help: 'Customer list and contact details.'),
     AccessResource('estimates', 'Estimates', Icons.request_quote_rounded, route: '/estimates', actions: _record, help: 'Update: notes, tasks, pictures and documents. Delete: remove one deleted in Service Fusion.'),
     AccessResource('jobs', 'Jobs', Icons.build_rounded, route: '/jobs', actions: _record, help: 'Update: notes, tasks, pictures and documents. Delete: remove one deleted in Service Fusion.'),
-    AccessResource('line_items', 'Line Items & Costs', Icons.list_alt_rounded, actions: _viewUpdate, defaultOff: true, help: 'View: costs, profit and margin on jobs, estimates and the catalog. Update: edit line items and options, accept, send to job; add, edit and delete products, manage categories and change several products at once in the Product Catalog.'),
+    AccessResource('line_items', 'Line Items & Costs', Icons.list_alt_rounded, actions: _viewUpdate, defaultOff: true, help: 'View: costs, profit and margin on jobs, estimates and both catalogs. Update: edit line items and options, accept, send to job; services show in the add-line picker.'),
     AccessResource('communications', 'Calls & Texts', Icons.forum_rounded, actions: _crud, help: 'On job and customer pages. Create: send a text. Update: link a call, add call details. Delete: remove a call or text.'),
     AccessResource('statuses', 'Statuses', Icons.timeline_rounded, route: '/statuses', actions: _crud, help: 'Add, rename, recolor, reorder and remove job statuses.'),
     AccessResource('payments', 'Payments', Icons.payment_rounded, route: '/payments', actions: _payments, help: 'Payments from Service Fusion and Stripe. Create: send a card payment link.'),
@@ -82,10 +101,11 @@ const List<AccessGroup> kAccessGroups = [
   ]),
   AccessGroup('Inventory', [
     AccessResource('stock', 'Stock Levels', Icons.stacked_bar_chart_rounded, route: '/inventory', help: 'What is on the shelves.'),
-    AccessResource('catalog', 'Product Catalog', Icons.category_rounded, route: '/inventory/catalog', help: 'Products and prices.'),
-    AccessResource('services_catalog', 'Services Catalog', Icons.handyman_rounded, route: '/inventory/services', defaultOff: true, help: 'Services and what they are billed at. Anyone who can edit line items also gets services in the job/estimate add-line picker.'),
+    AccessResource('catalog', 'Product Catalog', Icons.category_rounded, route: '/inventory/catalog', actions: _crud, defaultOffActions: _changes, help: 'Products and prices. Create: add products or categories. Update: edit them, change several at once, mark Cleanup findings. Delete: remove them.'),
+    AccessResource('services_catalog', 'Services Catalog', Icons.handyman_rounded, route: '/inventory/services', actions: _viewUpdate, defaultOff: true, help: "Services and what they are billed at. Update: edit a service's info and rates (needs Line Items & Costs > View too)."),
     AccessResource('purchase_orders', 'Purchase Orders', Icons.shopping_cart_checkout_rounded, route: '/inventory/purchase-orders', actions: _crud, help: 'Add, change and remove purchase orders.'),
     AccessResource('vendors', 'Vendors', Icons.storefront_rounded, route: '/inventory/vendors', help: 'Vendor list.'),
+    AccessResource('tax_settings', 'Tax, Discounts & Fees', Icons.percent_rounded, route: '/inventory/tax-discounts-fees', actions: _viewUpdate, defaultOffActions: _updateOnly, help: 'What the Tax, discounts & fees panel offers on jobs and estimates. Update: change the discount and fee presets, the out-of-state tax and Arkansas rate changes.'),
   ]),
   AccessGroup('Other', [
     AccessResource('projects', 'Projects', Icons.folder_copy_rounded, route: '/projects', actions: _crud, help: 'Add (or import from the sheet), change and remove projects.'),
@@ -106,9 +126,8 @@ final List<String> kAllAccessKeys = [
 final List<String> kDefaultOffKeys = [
   for (final g in kAccessGroups)
     for (final r in g.items)
-      if (r.defaultOff)
-        for (final a in AccessAction.values)
-          if (r.actions.contains(a)) r.keyFor(a),
+      for (final a in AccessAction.values)
+        if (r.actions.contains(a) && (r.defaultOff || r.defaultOffActions.contains(a))) r.keyFor(a),
 ];
 
 /// The keys a person is switched off from: their saved list, or the defaults when nothing was saved (null).

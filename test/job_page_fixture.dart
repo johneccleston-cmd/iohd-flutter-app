@@ -217,6 +217,9 @@ class FakeJobServer {
   /// Calls and texts the Communications tab (Quo) gets for a job, oldest first.
   List<Map<String, dynamic>> quoActivity = [];
 
+  /// More catalog entries the search finds, after [kCatalog] (a service package with its rates, say).
+  List<Map<String, dynamic>> extraCatalog = [];
+
   /// Plays a backend that doesn't have the line-item routes yet (not deployed): they answer 404.
   bool optionsDown = false;
 
@@ -338,7 +341,7 @@ class FakeJobServer {
     if (path == '/api/catalog/search') {
       final q = (req.url.queryParameters['q'] ?? '').toLowerCase();
       final found = [
-        for (final e in kCatalog)
+        for (final e in [...kCatalog, ...extraCatalog])
           if ('${e['name']} ${e['sku']} ${e['category']}'.toLowerCase().contains(q)) canSeeCost ? e : (Map<String, dynamic>.from(e)..remove('cost')..remove('costSource')),
       ];
       return _ok({'results': found, 'canSeeCost': canSeeCost});

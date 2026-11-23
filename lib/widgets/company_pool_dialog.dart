@@ -158,7 +158,7 @@ class _CompanyPoolDialogState extends State<CompanyPoolDialog> {
   _Filter _filter = _Filter.all;
   bool _changed = false;
 
-  bool get _canAdd => AuthSession.instance.can('hr_payroll', AccessAction.create);
+  bool get _canAdd => AuthSession.instance.can('company_pool', AccessAction.create);
 
   @override
   void initState() {
@@ -491,7 +491,7 @@ class _CompanyPoolDialogState extends State<CompanyPoolDialog> {
     final row = Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
+        color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: DashUi.line),
       ),

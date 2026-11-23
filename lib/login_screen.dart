@@ -547,7 +547,7 @@ class _BrandPanel extends StatelessWidget {
                     'Jobs, estimates, the calendar, payroll and live dashboards, all in IOHD Office.',
                     style: TextStyle(
                       fontSize: 15.5,
-                      color: Color(0xFFCBD5E1),
+                      color: Color(0xFFD4D4D4),
                       height: 1.5,
                     ),
                   ),
@@ -612,7 +612,7 @@ class _Chip extends StatelessWidget {
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w600,
-              color: Color(0xFFE2E8F0),
+              color: Color(0xFFE4E4E4),
             ),
           ),
         ],

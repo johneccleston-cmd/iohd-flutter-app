@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
+import '../theme/app_theme.dart';
+import 'app_menu.dart';
 import 'app_ribbon.dart';
 import 'dashboard_kit.dart';
+import 'focus_ring.dart';
 
 /// The Product Catalog's own design system (Phase 1 redesign, 2026-11-16): the list, its filters and the product page are
 /// built from these pieces so they share one rhythm. The language follows the redesigned Products & Services block
@@ -26,9 +30,9 @@ class CatalogUi {
   static const double leadInset = 8;
   static const double leadWidth = 34;
 
-  // Surfaces. A stripe is half way between white and `faint`, so rows separate without a rule between them.
-  static final Color stripe = Color.lerp(Colors.white, DashUi.faint, 0.55)!;
-  static const Color hover = DashUi.faint;
+  // Surfaces, in neutral grey. A stripe is half way between white and `rowStripe`, so rows separate without a rule between them.
+  static final Color stripe = Color.lerp(Colors.white, DashUi.rowStripe, 0.55)!;
+  static const Color hover = DashUi.rowStripe;
   static final Color picked = DashUi.ink.withValues(alpha: 0.06);
   static final Color pickedHover = DashUi.ink.withValues(alpha: 0.1);
 
@@ -47,6 +51,96 @@ class CatalogUi {
 
   /// Motion that stops when the system asks for reduced motion.
   static Duration motion(BuildContext context, [int ms = 180]) => MediaQuery.disableAnimationsOf(context) ? Duration.zero : Duration(milliseconds: ms);
+
+  // ---- boxes (UX audit 2026-11-19) ----
+  // One size and one set of states for every text box, select field and search box in the catalog. The height is set
+  // here, not left to the platform: desktop density (Windows, and the web app on Windows) takes 8 px off every Material
+  // box, so the service page's boxes were 25-30 px in the app while the test pictures (drawn as Android) showed 33-38.
+
+  /// A one-line box at 100% text; larger text makes it taller, never cut off.
+  static const double fieldHeight = 40;
+  static const TextStyle fieldText = TextStyle(fontSize: 14.5, color: DashUi.ink, height: 1.3);
+  static const TextStyle fieldHint = TextStyle(fontSize: 14.5, color: DashUi.subtle, height: 1.3);
+
+  /// A box's edge at rest: between the hairline and the field edge, so a box is plainly a box on white.
+  static final Color fieldRest = Color.lerp(DashUi.line, DashUi.fieldEdge, 0.55)!;
+
+  /// The fill of a record page's form boxes (catalogFieldDecoration `filled`): the light neutral the product page's
+  /// boxes use (theirs is a literal F8F8F8; this is the theme's token one step lighter).
+  static const Color formFill = AppTheme.subtleFillLight;
+
+  /// Where the text in a one-line box starts (for labels and read-only figures lined up beside boxes).
+  static const double fieldTextTop = (fieldHeight - 14.5 * 1.3) / 2;
+
+  /// The text cursor: ink (the theme's), 2 px, with the plain on/off blink of Windows. A fading blink
+  /// (cursorOpacityAnimates) was tried and dropped: it redraws the page every frame while a box has the keyboard,
+  /// which kept the browser's main thread about 27% busy (1,378 ms per 5 s against 61 ms) in the real-browser check.
+  static const double cursorWidth = 2;
+  static const Radius cursorRadius = Radius.circular(1);
+}
+
+/// The catalog's text box: white, an 8 px corner, a quiet edge that darkens on hover, an ink ring when focused, red with
+/// its reason under it when wrong. [CatalogUi.fieldHeight] tall at any platform density. Pair it with
+/// `cursorWidth: CatalogUi.cursorWidth`, `cursorRadius: CatalogUi.cursorRadius` and
+/// `textAlignVertical: TextAlignVertical.center` on one-line boxes (see the service page's boxes and [CatalogSearchField]).
+InputDecoration catalogFieldDecoration({
+  String? hint,
+  String? error,
+
+  /// False draws a wrong box red without its reason under it (a narrow table cell that says why elsewhere).
+  bool errorText = true,
+  String? prefix,
+  String? suffix,
+  Widget? prefixIcon,
+  BoxConstraints? prefixIconConstraints,
+  Widget? suffixIcon,
+  BoxConstraints? suffixIconConstraints,
+  double height = CatalogUi.fieldHeight,
+  EdgeInsetsGeometry? padding,
+  bool enabled = true,
+
+  /// The form look of the catalog's record pages (the product page's boxes, appFieldDecoration): a soft grey fill,
+  /// a hairline edge and 10 px corners, at the same 40 px. Off (the default) is the white box of the lists' bars.
+  bool filled = false,
+}) {
+  OutlineInputBorder edge(Color c, [double w = 1]) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(filled ? 10 : 8),
+    borderSide: BorderSide(color: c, width: w),
+  );
+  const figure = TextStyle(fontSize: 14.5, color: DashUi.slate, height: 1.3);
+  return InputDecoration(
+    enabled: enabled,
+    isDense: true,
+    visualDensity: VisualDensity.standard,
+    constraints: BoxConstraints(minHeight: height),
+    filled: true,
+    fillColor: !enabled ? DashUi.faint : (filled ? CatalogUi.formFill : Colors.white),
+    hoverColor: Colors.transparent, // no grey wash on hover: the edge says it
+    hintText: hint,
+    hintStyle: CatalogUi.fieldHint,
+    hintMaxLines: 1,
+    errorText: errorText ? error : null,
+    error: error != null && !errorText ? const SizedBox.shrink() : null,
+    errorMaxLines: 3,
+    errorStyle: const TextStyle(fontSize: 12.5, color: DashUi.redText, height: 1.3),
+    prefixText: prefix,
+    prefixStyle: figure,
+    suffixText: suffix,
+    suffixStyle: figure,
+    prefixIcon: prefixIcon,
+    prefixIconConstraints: prefixIconConstraints,
+    suffixIcon: suffixIcon,
+    suffixIconConstraints: suffixIconConstraints,
+    contentPadding: padding ?? const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    border: WidgetStateInputBorder.resolveWith((s) {
+      if (s.contains(WidgetState.disabled)) return edge(DashUi.line);
+      final wrong = s.contains(WidgetState.error);
+      if (s.contains(WidgetState.focused)) return edge(wrong ? DashUi.red : DashUi.ink, 1.5);
+      if (wrong) return edge(DashUi.red);
+      if (filled) return edge(s.contains(WidgetState.hovered) ? CatalogUi.fieldRest : DashUi.line);
+      return edge(s.contains(WidgetState.hovered) ? DashUi.fieldEdge : CatalogUi.fieldRest);
+    }),
+  );
 }
 
 /// A catalog name with its "|" separators drawn quieter than its words, as the Products & Services block draws them.
@@ -131,7 +225,7 @@ class CatalogLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
+    final label = Row(
       children: [
         Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.head)),
         if (note != null) ...[
@@ -140,13 +234,17 @@ class CatalogLabel extends StatelessWidget {
             child: Text(note!, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.meta),
           ),
         ],
-        if (trailing != null) ...[const Spacer(), trailing!],
       ],
     );
+    if (trailing == null) return label;
+    // The label and note take the free space, so the trailing button sits flush right.
+    return Row(children: [Expanded(child: label), const SizedBox(width: 12), trailing!]);
   }
 }
 
-/// The catalog's search box: white with a hairline, an ink ring when focused, and a "/" key hint while it's empty.
+/// The catalog's search box: the catalog's box ([catalogFieldDecoration]) with a search icon, a clear button while it
+/// has text, and a "/" key hint while it's empty. [height] is the box as drawn (UX audit 2026-11-19: the old box sat in a
+/// [height] SizedBox but drew its outline at its own dense height, about 29 px in the app).
 class CatalogSearchField extends StatefulWidget {
   final TextEditingController controller;
   final FocusNode? focusNode;
@@ -168,7 +266,7 @@ class CatalogSearchField extends StatefulWidget {
     this.onSubmitted,
     this.onClear,
     this.shortcutHint = false,
-    this.height = 38,
+    this.height = CatalogUi.fieldHeight,
     this.autofocus = false,
   });
 
@@ -177,14 +275,8 @@ class CatalogSearchField extends StatefulWidget {
 }
 
 class _CatalogSearchFieldState extends State<CatalogSearchField> {
-  bool _hover = false;
-
   @override
   Widget build(BuildContext context) {
-    OutlineInputBorder border(Color c, [double w = 1]) => OutlineInputBorder(
-      borderRadius: BorderRadius.circular(10),
-      borderSide: BorderSide(color: c, width: w),
-    );
     final hasText = widget.controller.text.isNotEmpty;
     Widget? suffix;
     if (hasText && widget.onClear != null) {
@@ -197,8 +289,12 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
     } else if (widget.shortcutHint) {
       // Tells keyboard users that "/" jumps here.
       suffix = ExcludeSemantics(
+        // heightFactor 1: only as tall as the key cap. Without it the Center took all the height it was offered and
+        // the Products search drew about 50 px tall, flush against the ribbon, where the Services search (no "/") is 40
+        // (audit round 2, 2026-11-20, real Chrome).
         child: Center(
           widthFactor: 1,
+          heightFactor: 1,
           child: Container(
             margin: const EdgeInsets.only(right: 10),
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
@@ -214,37 +310,28 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
         ),
       );
     }
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: SizedBox(
+    // A compact box (a picker's search) keeps a little less padding, so its text is never squeezed.
+    final v = widget.height >= CatalogUi.fieldHeight ? 10.0 : 8.0;
+    return TextField(
+      controller: widget.controller,
+      focusNode: widget.focusNode,
+      autofocus: widget.autofocus,
+      style: CatalogUi.fieldText,
+      cursorWidth: CatalogUi.cursorWidth,
+      cursorRadius: CatalogUi.cursorRadius,
+      textInputAction: TextInputAction.search,
+      textAlignVertical: TextAlignVertical.center,
+      decoration: catalogFieldDecoration(
+        hint: widget.hint,
         height: widget.height,
-        child: TextField(
-          controller: widget.controller,
-          focusNode: widget.focusNode,
-          autofocus: widget.autofocus,
-          style: const TextStyle(fontSize: 14.5, color: DashUi.ink),
-          textInputAction: TextInputAction.search,
-          textAlignVertical: TextAlignVertical.center,
-          decoration: InputDecoration(
-            hintText: widget.hint,
-            hintStyle: const TextStyle(color: DashUi.subtle, fontSize: 14.5),
-            prefixIcon: const Icon(Icons.search_rounded, size: 20, color: DashUi.slate),
-            prefixIconConstraints: const BoxConstraints(minWidth: 40),
-            suffixIcon: suffix,
-            suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
-            isDense: true,
-            filled: true,
-            fillColor: Colors.white,
-            contentPadding: const EdgeInsets.symmetric(vertical: 8),
-            border: border(DashUi.line),
-            enabledBorder: border(_hover ? DashUi.fieldEdge : DashUi.line),
-            focusedBorder: border(DashUi.ink, 1.5),
-          ),
-          onChanged: widget.onChanged,
-          onSubmitted: widget.onSubmitted,
-        ),
+        padding: EdgeInsets.symmetric(vertical: v),
+        prefixIcon: const Icon(Icons.search_rounded, size: 20, color: DashUi.slate),
+        prefixIconConstraints: const BoxConstraints(minWidth: 40),
+        suffixIcon: suffix,
+        suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
       ),
+      onChanged: widget.onChanged,
+      onSubmitted: widget.onSubmitted,
     );
   }
 }
@@ -262,17 +349,27 @@ class CatalogFilterChip extends StatefulWidget {
 
 class _CatalogFilterChipState extends State<CatalogFilterChip> {
   bool _hover = false;
+  bool _ring = false;
 
   @override
   Widget build(BuildContext context) {
+    // Reachable with Tab and removed with Enter, Space or Delete (UX audit 2026-11-19: it was mouse-only).
     return Semantics(
       button: true,
       label: 'Remove filter ${widget.group} ${widget.value}',
       excludeSemantics: true,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
+      child: FocusRing(
+        borderRadius: BorderRadius.circular(999),
+        outset: const EdgeInsets.all(2),
+        child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        onShowFocusHighlight: (v) => setState(() => _ring = v),
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.delete): ActivateIntent(),
+          SingleActivator(LogicalKeyboardKey.backspace): ActivateIntent(),
+        },
+        actions: {ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => widget.onRemove())},
         child: GestureDetector(
           onTap: widget.onRemove,
           child: TweenAnimationBuilder<double>(
@@ -287,7 +384,12 @@ class _CatalogFilterChipState extends State<CatalogFilterChip> {
               duration: CatalogUi.motion(context, 120),
               height: 30,
               padding: const EdgeInsets.fromLTRB(11, 0, 5, 0),
-              decoration: BoxDecoration(color: _hover ? CatalogUi.pickedHover : CatalogUi.picked, borderRadius: BorderRadius.circular(999)),
+              decoration: BoxDecoration(
+                color: _hover || _ring ? CatalogUi.pickedHover : CatalogUi.picked,
+                borderRadius: BorderRadius.circular(999),
+                // Its old focus edge, kept clear: it holds the chip's size (the ring is FocusRing's now).
+                border: Border.all(color: Colors.transparent, width: 1.5),
+              ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -314,14 +416,15 @@ class _CatalogFilterChipState extends State<CatalogFilterChip> {
                     duration: CatalogUi.motion(context, 120),
                     width: 20,
                     height: 20,
-                    decoration: BoxDecoration(shape: BoxShape.circle, color: _hover ? DashUi.ink : Colors.transparent),
-                    child: Icon(Icons.close_rounded, size: 14, color: _hover ? Colors.white : DashUi.slate),
+                    decoration: BoxDecoration(shape: BoxShape.circle, color: _hover || _ring ? DashUi.ink : Colors.transparent),
+                    child: Icon(Icons.close_rounded, size: 14, color: _hover || _ring ? Colors.white : DashUi.slate),
                   ),
                 ],
               ),
             ),
           ),
         ),
+      ),
       ),
     );
   }
@@ -348,10 +451,12 @@ class CatalogCheckRow extends StatelessWidget {
       checked: selected,
       label: n == null ? label : '$label, $n',
       excludeSemantics: true,
-      child: InkWell(
+      child: FocusRing(
+        child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         hoverColor: selected ? CatalogUi.pickedHover : DashUi.faint,
+        focusColor: Colors.transparent, // the ring says it (a picked row's fill hid the grey wash)
         child: AnimatedContainer(
           duration: CatalogUi.motion(context),
           curve: Curves.easeOutCubic,
@@ -388,6 +493,7 @@ class CatalogCheckRow extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -439,8 +545,10 @@ class _CatalogFilterGroupState extends State<CatalogFilterGroup> {
           Semantics(
             button: true,
             expanded: _open,
-            child: InkWell(
+            child: FocusRing(
+              child: InkWell(
               borderRadius: BorderRadius.circular(8),
+              focusColor: Colors.transparent,
               onTap: () => setState(() => _open = !_open),
               child: SizedBox(
                 height: 34,
@@ -468,6 +576,7 @@ class _CatalogFilterGroupState extends State<CatalogFilterGroup> {
                   ),
                 ),
               ),
+            ),
             ),
           ),
           AnimatedSize(
@@ -586,13 +695,17 @@ class _HeaderLabelState extends State<_HeaderLabel> {
     final Widget? arrow = widget.active
         ? Icon(widget.ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: DashUi.ink)
         : (_hover ? const Icon(Icons.unfold_more_rounded, size: 14, color: DashUi.muted) : null);
+    // Reachable with Tab and sorted with Enter or Space (UX audit 2026-11-20: it was a bare GestureDetector, mouse-only).
     return Semantics(
       button: true,
       value: widget.active ? (widget.ascending ? 'Sorted ascending' : 'Sorted descending') : null,
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
+      child: FocusRing(
+        borderRadius: BorderRadius.circular(5),
+        outset: const EdgeInsets.symmetric(horizontal: 5, vertical: 4),
+        child: FocusableActionDetector(
+        mouseCursor: SystemMouseCursors.click,
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        actions: {ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => widget.onSort(c.sortKey!))},
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: () => widget.onSort(c.sortKey!),
@@ -606,6 +719,7 @@ class _HeaderLabelState extends State<_HeaderLabel> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
@@ -870,9 +984,11 @@ class _SizePill extends StatelessWidget {
       selected: selected,
       label: '$size rows per page',
       excludeSemantics: true,
-      child: InkWell(
+      child: FocusRing(
+        child: InkWell(
         onTap: selected ? null : onTap,
         borderRadius: BorderRadius.circular(8),
+        focusColor: Colors.transparent,
         child: AnimatedContainer(
           duration: CatalogUi.motion(context, 140),
           height: 28,
@@ -884,6 +1000,7 @@ class _SizePill extends StatelessWidget {
             style: TextStyle(fontSize: 13, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: selected ? DashUi.ink : DashUi.slate),
           ),
         ),
+      ),
       ),
     );
   }
@@ -905,9 +1022,11 @@ class _PageButton extends StatelessWidget {
       selected: selected,
       label: tooltip ?? 'Page $label',
       excludeSemantics: true,
-      child: InkWell(
+      child: FocusRing(
+        child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
+        focusColor: Colors.transparent,
         child: AnimatedContainer(
           duration: CatalogUi.motion(context, 140),
           constraints: const BoxConstraints(minWidth: 30),
@@ -922,6 +1041,7 @@ class _PageButton extends StatelessWidget {
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: selected ? Colors.white : DashUi.ink, fontFeatures: CatalogUi.figures),
                 ),
         ),
+      ),
       ),
     );
     return Padding(
@@ -968,10 +1088,19 @@ class RibbonGhostButton extends StatelessWidget {
 class CatalogSwitch extends StatelessWidget {
   final bool value;
   final ValueChanged<bool>? onChanged;
-  const CatalogSwitch({super.key, required this.value, required this.onChanged});
+
+  /// Drawn at 40 x 24 instead of Material's 52 x 32: beside a setting's name and caption in a form (the service page),
+  /// where the full-size switch out-weighed the words it belongs to.
+  final bool compact;
+  const CatalogSwitch({super.key, required this.value, required this.onChanged, this.compact = false});
 
   @override
   Widget build(BuildContext context) {
+    final s = _switch();
+    return compact ? SizedBox(width: 40, height: 24, child: FittedBox(fit: BoxFit.contain, child: s)) : s;
+  }
+
+  Widget _switch() {
     return Switch(
       value: value,
       onChanged: onChanged,
@@ -1011,10 +1140,15 @@ class CatalogSelectBox extends StatelessWidget {
       child: SizedBox(
         width: 32,
         height: 26,
-        child: InkWell(
+        // The ring sits 3 px round the 16 px box (it had no visible focus: the row's own fill hid the ink).
+        child: FocusRing(
+          borderRadius: BorderRadius.circular(6),
+          outset: const EdgeInsets.symmetric(horizontal: -5, vertical: -2),
+          child: InkWell(
           borderRadius: BorderRadius.circular(7),
           onTap: () => onChanged(value != true),
           hoverColor: DashUi.ink.withValues(alpha: 0.06),
+          focusColor: Colors.transparent,
           child: Center(
             child: AnimatedContainer(
               duration: CatalogUi.motion(context, 140),
@@ -1030,6 +1164,7 @@ class CatalogSelectBox extends StatelessWidget {
                   : (value! ? const Icon(Icons.check_rounded, size: 12, color: Colors.white) : null),
             ),
           ),
+        ),
         ),
       ),
     );
@@ -1224,6 +1359,116 @@ class CatalogPaneHeader extends StatelessWidget {
         border: Border(bottom: BorderSide(color: DashUi.line)),
       ),
       child: child,
+    );
+  }
+}
+
+/// The filters that are on, as chips on one line: as many as fit, then "+N more", which lists the rest to take off.
+class CatalogChipStrip extends StatelessWidget {
+  final List<({String group, String value, VoidCallback remove})> chips;
+  const CatalogChipStrip({super.key, required this.chips});
+
+  static const _gap = 6.0;
+
+  static double _width(BuildContext context, String group, String value) {
+    final p = TextPainter(
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: '$group  ',
+            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+          ),
+          TextSpan(
+            text: value,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+          ),
+        ],
+      ),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    return p.width + 11 + 4 + 20 + 5 + 2; // padding, gap, the x, padding, rounding
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (chips.isEmpty) return const SizedBox.shrink();
+    return LayoutBuilder(
+      builder: (context, c) {
+        const moreWidth = 84.0;
+        var used = 0.0;
+        var fit = 0;
+        for (var i = 0; i < chips.length; i++) {
+          final w = _width(context, chips[i].group, chips[i].value) + (i > 0 ? _gap : 0);
+          final reserve = i < chips.length - 1 ? moreWidth + _gap : 0;
+          if (used + w + reserve > c.maxWidth) break;
+          used += w;
+          fit++;
+        }
+        final hidden = chips.skip(fit).toList();
+        return ClipRect(
+          child: Row(
+            children: [
+              for (var i = 0; i < fit; i++) ...[
+                if (i > 0) const SizedBox(width: _gap),
+                Flexible(
+                  child: CatalogFilterChip(
+                    key: ValueKey('${chips[i].group}:${chips[i].value}'),
+                    group: chips[i].group,
+                    value: chips[i].value,
+                    onRemove: chips[i].remove,
+                  ),
+                ),
+              ],
+              if (hidden.isNotEmpty) ...[
+                if (fit > 0) const SizedBox(width: _gap),
+                // The shared menu (app_menu.dart): one motion and look with every other list the catalog opens.
+                AppMenu(
+                  minWidth: 200,
+                  semanticLabel: 'More filters',
+                  items: [
+                    for (final h in hidden)
+                      AppMenuItem(
+                        onPressed: h.remove,
+                        trailing: const Icon(Icons.close_rounded, size: 16, color: DashUi.slate),
+                        child: Text.rich(
+                          TextSpan(
+                            children: [
+                              TextSpan(
+                                text: '${h.group}  ',
+                                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.slate),
+                              ),
+                              TextSpan(
+                                text: h.value,
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                  builder: (context, menu) => TextButton(
+                    focusNode: menu.focusNode,
+                    onPressed: menu.toggle,
+                    style: TextButton.styleFrom(
+                      foregroundColor: DashUi.ink,
+                      minimumSize: const Size(0, 30),
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(999),
+                        side: const BorderSide(color: DashUi.line),
+                      ),
+                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    ),
+                    child: Text('+${hidden.length} more'),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 }

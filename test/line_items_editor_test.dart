@@ -204,7 +204,7 @@ void main() {
       expect(t.widget<TextField>(field(1, 'description')).focusNode!.hasFocus, isTrue, reason: 'not the name');
     });
 
-    testWidgets('a line closed with a bad number is marked; reopened, it starts clean from its last good figure', (t) async {
+    testWidgets('a line closed with a bad number keeps its good figure and says so; reopened, it starts clean', (t) async {
       await _pump(t, const _Host(lines));
       await t.tap(find.text('Opener'));
       await t.pumpAndSettle();
@@ -212,7 +212,9 @@ void main() {
       await t.pump();
       await t.sendKeyEvent(LogicalKeyboardKey.escape);
       await t.pumpAndSettle();
-      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget, reason: 'the closed line says it had a bad number');
+      // Audit round 2 (2026-11-20): nothing half-typed is ever charged, so the closed line has nothing bad left on it.
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'the line kept its good figure');
+      expect(find.textContaining("Line 2: that wasn't a number, so it keeps its quantity 1.00"), findsOneWidget);
       await t.tap(find.text('Opener'));
       await t.pumpAndSettle();
       expect(t.widget<TextField>(field(1, 'qty')).controller!.text, '1.00');
@@ -303,15 +305,19 @@ void main() {
       await t.pump();
       expect(find.text(r'$999,999.99'), findsWidgets);
       await t.enterText(field(0, 'qty'), '1000000');
-      await t.pump();
+      await t.pumpAndSettle(); // the totals count to their figure
       expect(find.text(r'$1,000,000.00'), findsNothing, reason: 'over the limit: not taken');
-      expect(find.text(r'$999,999.99'), findsWidgets, reason: 'the line keeps its last good quantity');
+      // Audit round 2 (2026-11-20): while the box holds no good number the line is as it was before this edit (typed a
+      // key at a time, "1000000" used to leave it at 100,000, the last keystroke that read as a number).
+      expect(find.text(r'$999,999.99'), findsNothing);
+      expect(find.text(r'$1.00'), findsWidgets, reason: 'the quantity from before this edit');
       await t.enterText(field(0, 'qty'), '-1000000');
       await t.pump();
       expect(find.text(r'-$1,000,000.00'), findsNothing);
       await t.sendKeyEvent(LogicalKeyboardKey.escape);
       await t.pumpAndSettle();
-      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget, reason: 'the closed line says it had a bad number');
+      expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'closed, the line kept its good figure');
+      expect(find.textContaining("that wasn't a number, so it keeps its quantity 1.00"), findsOneWidget);
     });
 
     testWidgets('the arrows step past 9,999 (they used to stop there), and down through 0 into a return', (t) async {

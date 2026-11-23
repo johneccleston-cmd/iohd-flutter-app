@@ -613,12 +613,12 @@ class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAli
     final address = [_clean(c['service_location']), _cityState(c)].whereType<String>().join(' · ');
     return InkWell(
       onTap: () => _open(c),
-      hoverColor: DashUi.line,
+      hoverColor: DashUi.rowHover,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
         decoration: BoxDecoration(
-          color: index.isOdd ? DashUi.faint : null,
-          border: const Border(top: BorderSide(color: DashUi.line)),
+          color: index.isOdd ? DashUi.rowStripe : null,
+          border: const Border(top: BorderSide(color: DashUi.rowRule)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

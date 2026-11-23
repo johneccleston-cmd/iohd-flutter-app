@@ -893,7 +893,7 @@ class _HeaderBadges extends StatelessWidget {
         if (rank != null) ...[
           Tooltip(
             message: 'Integrity rank: #$rank by integrity score among all employees.',
-            child: _pill(Icons.emoji_events_rounded, 'Rank #$rank', rank == 1 ? const Color(0xFFFBBF24) : const Color(0xFFCBD5E1)),
+            child: _pill(Icons.emoji_events_rounded, 'Rank #$rank', rank == 1 ? const Color(0xFFFBBF24) : const Color(0xFFD4D4D4)),
           ),
           const SizedBox(width: 8),
         ],
@@ -1425,7 +1425,7 @@ class _KpiTileState extends State<_KpiTile> with SingleTickerProviderStateMixin 
                       child: Row(
                         children: [
                           if (s.featured) ...[const Icon(Icons.shield_rounded, size: 14, color: DashUi.amber), const SizedBox(width: 5)],
-                          Flexible(child: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: s.featured ? _titleStyle.copyWith(color: const Color(0xFFE2E8F0), fontWeight: FontWeight.w700) : _titleStyle)),
+                          Flexible(child: Text(s.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: s.featured ? _titleStyle.copyWith(color: const Color(0xFFE4E4E4), fontWeight: FontWeight.w700) : _titleStyle)),
                         ],
                       ),
                     ),

@@ -1,0 +1,8 @@
+code,name,rate_percent,effective,note
+# Rate changes the Arkansas DFA has announced but that are not in a quarterly table yet. Copy them from
+# https://www.dfa.arkansas.gov/office/taxes/excise-tax-administration/sales-use-tax/recent-changes-in-sales-use-tax/recent-changes-for-local-taxes/
+# Only "Increased", "Decreased", "Enacted" and "Rescinded" rows change a rate (annexations move boundaries, not rates).
+# Remove a row once the quarterly table that contains it has been imported. Checked 2026-11-20.
+05-12,Harrison,1.000,2027-01-01,Decreased (DFA recent changes, January 2027)
+05-00,Boone County,1.000,2027-01-01,Decreased (DFA recent changes, January 2027)
+37-00,Lafayette County,1.625,2027-01-01,Decreased (DFA recent changes, January 2027)

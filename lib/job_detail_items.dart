@@ -4,13 +4,13 @@ part of 'job_detail_screen.dart';
 //
 // A record shows Service Fusion's own items, or the set kept in our tables when it has one (an estimate's options, a
 // job's items sent from an accepted option). Service Fusion's copy stays one click away for reference. Estimate
-// options are alternatives for the same job: each has its own lines, totals and notes for the customer, one can be
+// options are alternatives for the same job: each has its own lines and totals, one can be
 // marked recommended, one accepted (which locks it), and the accepted one is sent to the job once.
 //
 // The block, top to bottom: its title with the record's controls at the right; while editing, the preview strip; for an
 // estimate with options, a row of tabs on white (one per option: name, total, lines and margin, its marks; the open one
 // underlined in ink) and the open option's header (its name, where it stands, Accept or Send to job, and one menu for the
-// rest); then the lines and, under them, the notes for the customer beside the summary.
+// rest); then the lines and, under them, the summary.
 //
 // The lines are read-only until the ribbon's Edit Job / Edit Estimate. That opens a preview: the lines on show can be
 // changed and the totals follow, but nothing is saved, to our database or to Service Fusion. So the strip has no Save
@@ -31,6 +31,9 @@ const _tileTint = AppTheme.subtleFillLight;
 String _taxRowLabel(SalesTax t) => t.short.trim().toLowerCase() == 'sales tax' ? 'Sales tax ${SalesTax.rateText(t.rate)}%' : 'Sales tax ${t.label}';
 
 extension _JobItems on _JobDetailScreenState {
+  /// The discount and fee presets (and out-of-state start) for Tax, discounts & fees.
+  TaxSettings get _taxSettings => TaxSettingsStore.instance.value;
+
   /// The job's own set of items edited here, if it has one.
   LineOption? get _jobSet => _isEstimate ? null : _lines?.options.firstOrNull;
 
@@ -62,13 +65,23 @@ extension _JobItems on _JobDetailScreenState {
           // A return's cost comes as -$7 on -1: $7 a unit (it was shown as -$7 a unit, so +$7 extended, before).
           // Same rule as seedFromServiceFusion in line_items.js, where a cost of 0 is unknown too.
           cost: ext == null || ext == 0 ? null : (q != 0 ? (ext / q * 100).round() / 100 : null),
-          taxable: (it['tax'] ?? '').toString().trim().isNotEmpty,
+          // Service Fusion's exempt code ("No Sales Tax Applied") is a name, not a tax: such a line is untaxed.
+          taxable: sfTaxed(it['tax']),
           source: 'service_fusion',
           customerVisible: it['is_show_rate_items'] == true,
-          taxName: (it['tax'] ?? '').toString().trim().isEmpty ? null : (it['tax'] as Object).toString().trim(),
+          taxName: sfTaxed(it['tax']) ? (it['tax'] as Object).toString().trim() : null,
+          // Service Fusion names a service line's item under "service", a product's under "product".
+          service: it.containsKey('service'),
         );
       }(),
   ];
+
+  /// The names of this record's Service Fusion service lines, folded, so a saved copy of one (an estimate option, the
+  /// job's own set, seeded from them with only a name key) is still marked "S" in the table.
+  Set<String> get _sfServiceNames => {
+    for (final it in _sfItems)
+      if (it.containsKey('service')) serviceNameKey((it['name'] ?? it['service'] ?? '').toString()),
+  };
 
   /// Each Service Fusion line's own total, in cents, lined up with [_sfLines].
   List<int> get _sfAmounts => [for (final it in _sfItems) (_JobDetailScreenState._n(it['total']) * 100).round()];
@@ -81,7 +94,7 @@ extension _JobItems on _JobDetailScreenState {
     if (_sfCharges.isNotEmpty || _job?['total_revenue'] == null) return null;
     int cents(dynamic v) => (_JobDetailScreenState._n(v) * 100).round();
     final items = _sfItems;
-    final taxed = items.where((it) => (it['tax'] ?? '').toString().trim().isNotEmpty).toList();
+    final taxed = items.where((it) => sfTaxed(it['tax'])).toList();
     final names = {for (final it in taxed) it['tax'].toString().trim()};
     if (names.length != 1) return null;
     final itemsC = items.fold<int>(0, (s, it) => s + cents(it['total']));
@@ -102,16 +115,20 @@ extension _JobItems on _JobDetailScreenState {
   ///
   /// Each figure says what it is ([SummaryKind]), so the editor can work out profit on the money before tax: items,
   /// discounts (Service Fusion keeps its discounts as charges) and other charges, never tax or the unexplained rest.
-  List<LineSummaryRow> _sfSummaryRows([List<LineDraft>? lines, List<LineFigures>? figures]) {
+  ///
+  /// [taxes]: the preview's tax lines (Service Fusion's, and any added in Tax, discounts & fees). A line is taxed only at
+  /// a tax it has selected (USER RULE 2026-11-20); fees are never taxed; a discount comes off the total and never lowers
+  /// a tax (USER RULE 2026-11-20, it used to come off the first tax's lines when marked taxable).
+  List<LineSummaryRow> _sfSummaryRows([List<LineDraft>? lines, List<LineFigures>? figures, List<SalesTax>? taxes]) {
     int cents(dynamic v) => (_JobDetailScreenState._n(v) * 100).round();
     final sfItems = _sfItems;
     final wasItems = sfItems.fold<int>(0, (s, it) => s + cents(it['total']));
-    final wasTaxable = sfItems.where((it) => (it['tax'] ?? '').toString().trim().isNotEmpty).fold<int>(0, (s, it) => s + cents(it['total']));
+    final wasTaxable = sfItems.where((it) => sfTaxed(it['tax'])).fold<int>(0, (s, it) => s + cents(it['total']));
     final implied = _impliedTax;
     // The implied tax on Service Fusion's own lines: exactly what its total holds beyond the items (see _impliedTax).
     final impliedWas = implied == null ? 0 : mulDivRound(wasTaxable, (implied.rate * 10000).round(), 1000000);
     const impliedTip = 'Worked out from Service Fusion\'s total: it doesn\'t send the tax line for estimates.';
-    var items = wasItems, discounts = 0, taxable = wasTaxable;
+    var items = wasItems, discounts = 0, fees = 0, taxable = wasTaxable;
     final preview = lines != null && figures != null;
     if (preview) {
       items = discounts = taxable = 0;
@@ -119,54 +136,60 @@ extension _JobItems on _JobDetailScreenState {
         final amount = figures[i].amountCents;
         if (lines[i].isDiscount) {
           discounts -= amount; // a discount's amount is negative
+        } else if (lines[i].isFee) {
+          fees += amount;
+          continue; // never taxed
         } else {
           items += amount;
         }
-        if (lines[i].taxable) taxable += amount;
+        // A discount never lowers the tax (USER RULE 2026-11-20): only items count toward the taxed amount.
+        if (lines[i].taxable && !lines[i].isDiscount) taxable += amount;
       }
       if (taxable < 0) taxable = 0;
     }
-    final net = items - discounts;
+    final net = items - discounts + fees;
     int scaled(int was, int base, int wasBase) => wasBase <= 0 || base == wasBase ? was : (was * base / wasBase).round();
 
     final rows = <LineSummaryRow>[
       LineSummaryRow('Items', items, kind: SummaryKind.items),
       if (discounts != 0) LineSummaryRow('Discounts', -discounts, kind: SummaryKind.discount),
+      if (fees != 0) LineSummaryRow('Fees', fees, kind: SummaryKind.charge),
     ];
     var wasCharges = 0, charges = 0;
     if (preview) {
-      // Taxable cents per sales tax, in the order the lines name them.
-      final choices = _taxChoices;
-      final bases = <String, int>{};
+      // Each sales tax on the lines set to it, worked out as the editor's own totals are (computeLineTotals: each tax
+      // rounded once, a discount that comes off taxed lines spread over every tax's lines), on these lines' amounts.
+      final choices = taxes ?? _taxChoices;
       final byName = <String, SalesTax>{};
-      var discountBase = 0;
+      final named = <LineDraft>[];
       for (var i = 0; i < lines.length; i++) {
-        if (!lines[i].taxable) continue;
-        if (lines[i].isDiscount) {
-          discountBase += figures[i].amountCents; // negative
+        final l = lines[i];
+        final amount = figures[i].amountCents;
+        // Each line as a one-unit line of its own amount, so Service Fusion's own line totals are kept.
+        if (l.isFee || !l.taxable) {
+          named.add(LineDraft(name: l.name, quantity: 1, rate: l.isDiscount ? -amount / 100 : amount / 100, cost: 0));
           continue;
         }
-        final t = SalesTax.resolve(lines[i].taxName, choices);
-        final key = t?.name ?? lines[i].taxName ?? '';
+        if (l.isDiscount) continue; // off the total, never off a tax (USER RULE 2026-11-20)
+        final t = SalesTax.resolve(l.taxName, choices);
+        final key = t?.name ?? l.taxName ?? '(rate not known)';
         if (t != null) byName[key] = t;
-        bases[key] = (bases[key] ?? 0) + figures[i].amountCents;
+        named.add(LineDraft(name: l.name, quantity: 1, rate: amount / 100, cost: 0, taxable: true, taxName: key));
       }
-      // A taxable discount comes off the first tax's lines.
-      if (discountBase != 0 && bases.isNotEmpty) bases[bases.keys.first] = bases[bases.keys.first]! + discountBase;
-      for (final e in bases.entries) {
-        final t = byName[e.key];
-        final rate = t?.rate ?? 0;
-        final amount = e.value <= 0 ? 0 : mulDivRound(e.value, (rate * 10000).round(), 1000000);
-        charges += amount;
-        rows.add(
-          LineSummaryRow(
-            t == null ? 'Sales tax (rate not known)' : _taxRowLabel(t),
-            amount,
-            kind: SummaryKind.tax,
-            tip: t == implied ? impliedTip : null,
-          ),
-        );
+      // Every tax line on the record, in its order (one no line is set to yet shows at $0.00), then any a line names.
+      for (final t in choices) {
+        byName.putIfAbsent(t.name, () => t);
       }
+      final ordered = {for (final t in choices) t.name: t.rate, for (final e in byName.entries) e.key: e.value.rate};
+      final figuresByTax = computeLineTotals(named, null, taxRates: ordered).taxes;
+      final unknown = named.any((l) => l.taxable && !l.isDiscount && !byName.containsKey(l.taxName));
+      for (final f in figuresByTax) {
+        final t = byName[f.name];
+        if (t == null) continue;
+        charges += f.taxCents;
+        rows.add(LineSummaryRow(_taxRowLabel(t), f.taxCents, kind: SummaryKind.tax, tip: t == implied ? impliedTip : null));
+      }
+      if (unknown) rows.add(const LineSummaryRow('Sales tax (rate not known)', 0, kind: SummaryKind.tax));
     } else if (implied != null) {
       charges += impliedWas;
       rows.add(LineSummaryRow(_taxRowLabel(implied), impliedWas, kind: SummaryKind.tax, tip: impliedTip));
@@ -182,9 +205,12 @@ extension _JobItems on _JobDetailScreenState {
       // Service Fusion names its tax charges in full ("Sales Tax (State, County, & Local Use Tax, Prairie Grove)").
       final isTax = _isTaxCharge(c);
       if (isTax && preview) continue; // worked out above, per tax
+      // A percentage charge of Service Fusion's (its builder discount, its card fee) follows the ITEMS in the proportion
+      // Service Fusion had. It followed the net, which counts the preview's own fees and discounts, so adding a $50 fee
+      // grew a 10% discount by $5 and a 5% discount shrank it (audit round 2, 2026-11-20).
       final now = isTax
-          ? (wasTaxable > 0 ? scaled(was, taxable, wasTaxable) : scaled(was, net, wasItems))
-          : (c['is_percentage'] == true ? scaled(was, net, wasItems) : was);
+          ? (wasTaxable > 0 ? scaled(was, taxable, wasTaxable) : scaled(was, items, wasItems))
+          : (c['is_percentage'] == true ? scaled(was, items, wasItems) : was);
       charges += now;
       rows.add(
         LineSummaryRow(
@@ -253,6 +279,7 @@ extension _JobItems on _JobDetailScreenState {
   LineItemsEditor _sfEditor({Key key = const ValueKey('sf-items'), required String emptyTitle, required String emptyMessage, Widget? banner}) =>
       LineItemsEditor(
         key: key,
+        serviceNames: _sfServiceNames,
         lines: _editSfLines ?? _sfLines,
         taxRate: null,
         editable: _editing && _canEditLines,
@@ -261,6 +288,7 @@ extension _JobItems on _JobDetailScreenState {
         summaryBuilder: _sfSummaryRows,
         fixedAmounts: _editSfAmounts ?? _sfAmounts,
         taxOptions: _taxChoices,
+        taxSettings: _taxSettings,
         totalLabel: _isEstimate ? 'Estimate total' : 'Job total',
         onPreviewSave: _previewSave,
         // The estimate's own option's tab follows a changed draft's figures (see _OptionTabs).
@@ -386,12 +414,14 @@ extension _JobItems on _JobDetailScreenState {
               enabled: !_showSfItems,
               child: LineItemsEditor(
                 key: ValueKey('job-set-${set.id}'),
+                serviceNames: _sfServiceNames,
                 lines: set.items,
                 taxRate: set.taxRate,
                 editable: _editing && _canEditLines,
                 showCost: _canSeeCost,
                 totalLabel: 'Job total',
-                // No taxOptions: this set has its own tax rate (its tax line), so a line is taxed at that or not at all.
+                taxSettings: _taxSettings,
+                // No taxOptions: this set starts with its own tax rate (its tax line); Tax, discounts & fees adds more.
                 onPreviewSave: _previewSave,
                 onDirtyChanged: (d) => _set(() => d ? _dirty.add(set.id) : _dirty.remove(set.id)),
                 onConfirmZero: _canEditLines && !set.locked ? (line) => _confirmZero(set, line) : null,
@@ -511,12 +541,14 @@ extension _JobItems on _JobDetailScreenState {
                 enabled: o.id == selected,
                 child: LineItemsEditor(
                   key: ValueKey('option-${o.id}'),
+                  serviceNames: _sfServiceNames,
                   lines: o.items,
                   taxRate: o.taxRate,
                   editable: _editing && _canEditLines && !o.locked,
                   showCost: _canSeeCost,
                   totalLabel: 'Estimate total',
-                  // No taxOptions: the option has its own tax rate (its tax line); a line is taxed at that or not at all.
+                  taxSettings: _taxSettings,
+                  // No taxOptions: the option starts with its own tax rate (its tax line); Tax, discounts & fees adds more.
                   onPreviewSave: _previewSave,
                   onDirtyChanged: (d) => _set(() => d ? _dirty.add(o.id) : _dirty.remove(o.id)),
                   onFigures: (total, margin) => _set(() => _liveFigures[o.id] = (total, margin)),
@@ -525,7 +557,6 @@ extension _JobItems on _JobDetailScreenState {
                   emptyMessage: _editing && !o.locked
                       ? 'Search the catalog below to try a line. Lines tried here are a preview and aren\'t kept.'
                       : 'Nothing has been added to this option. Line items can\'t be saved from this page yet, so a blank option stays empty.',
-                  aside: _ProposalNotes(state: this, option: o),
                 ),
               ),
             ),
@@ -608,42 +639,6 @@ extension _JobItems on _JobDetailScreenState {
     );
     if (name == null || name.trim() == o.name) return;
     await _run('rename', () => _api.update(o.id, o.version, {'name': name.trim()}));
-  }
-
-  Future<void> _toggleRecommended(LineOption o) => _run(
-    'recommend',
-    () => _api.update(o.id, o.version, {'isRecommended': !o.isRecommended}),
-    done: o.isRecommended ? '${o.name} is no longer recommended.' : '${o.name} is marked recommended.',
-  );
-
-  /// The option's notes for the customer.
-  Future<void> _editOptionNotes(LineOption o) async {
-    await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _TextDialog(
-        title: o.notes.trim().isEmpty ? 'Add notes for the customer' : 'Notes for the customer',
-        hint: 'For ${o.name}: what is included, lead time, warranty...',
-        initial: o.notes,
-        allowEmpty: true,
-        maxLength: 4000,
-        maxLines: 10,
-        onSave: (text) async {
-          final current = _lines?.byId(o.id) ?? o;
-          try {
-            final s = await _api.update(o.id, current.version, {'notes': text});
-            _set(() {
-              _lines = s;
-              _keepOptionInView();
-            });
-            return null;
-          } on LineItemsException catch (e) {
-            if (e.isConflict) unawaited(_loadLines());
-            return e.message;
-          }
-        },
-      ),
-    );
   }
 
   Future<void> _deleteOption(LineOption o) async {
@@ -1411,7 +1406,7 @@ class _SwitchFadeState extends State<_SwitchFade> with SingleTickerProviderState
   );
 }
 
-/// "Option actions": where the option stands, then rename, recommend, duplicate, notes for the customer, delete; on a
+/// "Option actions": where the option stands, then rename, duplicate, delete; on a
 /// narrow strip its next step too (Accept, Send to job...). What a locked (accepted) option can't have done to it isn't
 /// offered.
 class _OptionMenu extends StatelessWidget {
@@ -1435,9 +1430,7 @@ class _OptionMenu extends StatelessWidget {
       'convert': () => s._convert(o),
       'open': () => s._openRecord(o.convertedJobId!, estimate: false),
       'rename': () => s._renameOption(o),
-      'recommend': () => s._toggleRecommended(o),
       'duplicate': () => s._newOption('copy', copyOf: o.id),
-      'notes': () => s._editOptionNotes(o),
       'delete': () => s._deleteOption(o),
     };
     return PsMenuButton<String>(
@@ -1455,23 +1448,8 @@ class _OptionMenu extends StatelessWidget {
         return [
           if (about.isNotEmpty) PsMenuHeading(about),
           if (withActions && steps.isNotEmpty) ...[...steps, const PsMenuDivider()],
-          if (!o.accepted) ...[
-            PsMenuItem('rename', 'Rename', icon: Icons.drive_file_rename_outline_rounded, enabled: !busy),
-            PsMenuItem(
-              'recommend',
-              o.isRecommended ? 'Remove the recommendation' : 'Mark as recommended',
-              icon: o.isRecommended ? Icons.star_outline_rounded : Icons.star_rounded,
-              enabled: !busy,
-            ),
-          ],
+          if (!o.accepted) PsMenuItem('rename', 'Rename', icon: Icons.drive_file_rename_outline_rounded, enabled: !busy),
           PsMenuItem('duplicate', dirty ? 'Duplicate (as saved)' : 'Duplicate as a new option', icon: Icons.copy_all_rounded, enabled: !busy && canAddOption),
-          if (!o.locked)
-            PsMenuItem(
-              'notes',
-              o.notes.trim().isEmpty ? 'Add notes for the customer' : 'Edit notes for the customer',
-              icon: Icons.description_outlined,
-              enabled: !busy,
-            ),
           if (!o.accepted && !o.converted) ...[
             const PsMenuDivider(),
             PsMenuItem('delete', 'Delete option', icon: Icons.delete_outline_rounded, danger: true, enabled: !busy),
@@ -1572,67 +1550,6 @@ class _QuietLink extends StatelessWidget {
       style: TextButton.styleFrom(foregroundColor: DashUi.ink, minimumSize: const Size(0, 34), padding: const EdgeInsets.symmetric(horizontal: 10)),
     ),
   );
-}
-
-// ---- beside the totals ---------------------------------------------------------------------------------------------
-
-/// Beside an option's summary: its notes for the customer (what is included, lead times, warranty). They read as the
-/// customer will read them, as a passage beside a hairline rather than another box, under a small heading.
-class _ProposalNotes extends StatelessWidget {
-  final _JobDetailScreenState state;
-  final LineOption option;
-  const _ProposalNotes({required this.state, required this.option});
-
-  @override
-  Widget build(BuildContext context) {
-    final o = option;
-    final text = o.notes.trim();
-    final canEdit = state._canEditLines && !o.locked;
-    if (text.isEmpty && !canEdit) return const SizedBox();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          children: [
-            const Icon(Icons.description_outlined, size: 16, color: DashUi.ink),
-            const SizedBox(width: 8),
-            const Expanded(
-              child: Text(
-                'Notes for the customer',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: DashUi.ink),
-              ),
-            ),
-            if (canEdit)
-              TextButton.icon(
-                onPressed: () => state._editOptionNotes(o),
-                icon: Icon(text.isEmpty ? Icons.add_rounded : Icons.edit_rounded, size: text.isEmpty ? 18 : 16),
-                label: Text(text.isEmpty ? 'Add notes' : 'Edit notes', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                style: _addStyle,
-              )
-            else
-              const SizedBox(height: 32),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Container(
-          margin: const EdgeInsets.only(left: 7),
-          padding: const EdgeInsets.fromLTRB(16, 2, 8, 2),
-          decoration: const BoxDecoration(
-            border: Border(left: BorderSide(color: DashUi.line, width: 2)),
-          ),
-          child: text.isEmpty
-              ? const Text(
-                  'None yet. Use them for what is included, lead times or warranty terms.',
-                  style: TextStyle(fontSize: 13, color: DashUi.ink, height: 1.45),
-                )
-              : SelectableText(text, style: const TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.55)),
-        ),
-      ],
-    );
-  }
 }
 
 /// While the lines load: placeholder rows shaped like the table (an item with its code under it, then qty, rate and

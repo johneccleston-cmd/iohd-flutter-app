@@ -18,7 +18,8 @@ import 'package:iohd_desktop/widgets/main_navigation_shell.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _restrictedDenied = [
-  'stock.view', 'catalog.view', 'services_catalog.view', 'purchase_orders.view', 'vendors.view', //
+  // tax_settings.view: off with catalog.view, as the 2026-11-20 migration sets it on a saved list.
+  'stock.view', 'catalog.view', 'services_catalog.view', 'purchase_orders.view', 'vendors.view', 'tax_settings.view', //
   'hr_payroll.view', 'projects.view', 'payments.view',
 ];
 

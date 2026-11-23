@@ -351,13 +351,13 @@ void main() {
     );
   });
 
-  testWidgets('without the Payroll switch the figure is a plain number', (tester) async {
+  testWidgets('without the pools switch the figure is a plain number', (tester) async {
     AuthSession.instance.logout();
     final payload = base64Url.encode(utf8.encode(json.encode({'exp': DateTime(2100).millisecondsSinceEpoch})));
     SharedPreferences.setMockInitialValues({
       'iohd_auth_session': json.encode({
         'token': '$payload.sig', 'name': 'Test Office', 'role': 'Office', 'is_admin': false,
-        'denied': <String>['hr_payroll.view'],
+        'denied': <String>['company_pool.view'],
       }),
     });
     await AuthSession.instance.restore();

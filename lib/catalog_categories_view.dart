@@ -17,7 +17,8 @@ import 'widgets/flat_page.dart';
 ///
 /// A product's category is still its own text, so renaming or merging a category moves its products in one server
 /// transaction (every product or none) and changes nothing else about them. Changing categories follows the Team
-/// screen's Line Items & Costs > Update switch; everyone with the page can look.
+/// screen's Product Catalog switches (Create adds, Update renames, describes and merges, Delete removes); everyone with
+/// the page can look.
 class CatalogCategoriesView extends StatefulWidget {
   /// Every product loaded (active and inactive).
   final List<CatalogEntry> entries;
@@ -26,6 +27,10 @@ class CatalogCategoriesView extends StatefulWidget {
   /// products and cannot change them).
   final List<CatalogCategory>? categories;
   final bool canEdit;
+
+  /// New categories (Product Catalog > Create) and deleting one (> Delete). Null: the same as [canEdit].
+  final bool? canCreate;
+  final bool? canDelete;
   final CatalogManager manager;
 
   /// After a change: reload the products and categories. Returns when they are back.
@@ -42,6 +47,8 @@ class CatalogCategoriesView extends StatefulWidget {
     required this.entries,
     required this.categories,
     required this.canEdit,
+    this.canCreate,
+    this.canDelete,
     required this.manager,
     required this.onChanged,
     required this.onShowInList,
@@ -92,6 +99,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
 
   bool get _live => widget.categories != null;
   bool get _canChange => widget.canEdit && _live;
+  bool get _canDelete => (widget.canDelete ?? widget.canEdit) && _live;
 
   /// The categories: the server's, or (an older server) the products' own.
   List<CatalogCategory> get _cats {
@@ -249,7 +257,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
       entries: picked,
       categories: _counts,
       manager: widget.manager,
-      canCreate: widget.canEdit,
+      canCreate: widget.canCreate ?? widget.canEdit,
       exclude: from.name,
     );
     if (r == null) return;
@@ -405,7 +413,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
               else if (!widget.canEdit)
                 const Padding(
                   padding: EdgeInsets.only(top: 12),
-                  child: AppNotice('You can look at the categories. Changing them needs the Line Items & Costs > Update switch on the Team screen.'),
+                  child: AppNotice('You can look at the categories. Changing them needs the Product Catalog > Update switch on the Team screen.'),
                 ),
               const _Heading('Naming to check', 'Categories that look like one written two ways, or a word spelt two ways across the list.'),
               if (issues.isEmpty)
@@ -438,7 +446,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
                     icon: Icons.folder_open_outlined,
                     message: c.name,
                     chips: const [],
-                    action: _canChange
+                    action: _canDelete
                         ? CatalogOutlineButton(label: 'Delete…', dense: true, danger: true, icon: Icons.delete_outline_rounded, onPressed: () => _delete(c))
                         : null,
                   ),

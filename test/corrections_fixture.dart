@@ -17,6 +17,22 @@ const farmId = '1099544037'; // locked, closing status, office fixes with histor
 const lennarId = '1094982451'; // started before go-live and commission paid: everything frozen
 const smithId = '1094810505'; // locked but no longer closing, its close week already paid: Unlock is enabled
 const multiId = '1096000111'; // worked across two pay weeks, the first of them already paid
+const lateId = '1101272271'; // worked Nov 12 but closed late (Nov 19): its close date needs moving back a week
+
+/// Only found by searching "lane", so the other tests' search results stay as they were.
+final lateJob = {'job_id': lateId, 'customer_name': 'Lane Valente Industries', 'status': 'Final Invoice Sent', 'start_date': '2026-11-12', 'is_commission_paid': false, 'locked': true};
+
+Map<String, dynamic> lateDetail({String lockedAt = '2026-11-19T21:36:07Z', String payWeek = '2026-11-16', List<Map<String, dynamic>>? history}) => {
+  'success': true,
+  'goLiveDate': '2026-10-05',
+  'job': {...lateJob, 'inScope': true, 'statusIsClosing': true, 'total_revenue': '750.00', 'commission_projected': '33.00', 'commission_earned': '33.00'},
+  'lock': {'locked_at': lockedAt, 'locked_status': 'Final Invoice Sent', 'pay_week': payWeek, 'week_paid': false},
+  'days': [
+    corrDay(51, 'Daniel Baty', '2026-11-12', weight: 1.5, payWeek: payWeek),
+    corrDay(52, 'Nick Smith', '2026-11-12', weight: 1.5, payWeek: payWeek),
+  ],
+  'corrections': history ?? <Map<String, dynamic>>[],
+};
 
 Map<String, dynamic> corrDay(
   int id,
@@ -63,6 +79,7 @@ final farmHistory = <Map<String, dynamic>>[
 ];
 
 Map<String, dynamic> corrDetail(String id, {List<Map<String, dynamic>>? history}) {
+  if (id == lateId) return lateDetail(history: history);
   if (id == lennarId) {
     return {
       'success': true,
@@ -168,7 +185,7 @@ class FakeCorrApi {
     if (p.endsWith('/corrections')) return http.Response(jsonEncode({'success': true, 'corrections': recent}), 200);
     if (p.endsWith('/jobs')) {
       final q = (r.url.queryParameters['q'] ?? '').toLowerCase();
-      final jobs = q == 'zzz' ? [] : corrJobs;
+      final jobs = q == 'zzz' ? [] : q == 'lane' ? [lateJob] : corrJobs;
       return http.Response(jsonEncode({'success': true, 'jobs': jobs}), 200);
     }
     if (r.method == 'POST') {
@@ -193,6 +210,15 @@ class FakeCorrApi {
 
   /// What the server sends back after a day fix: the job reloaded with the new values (the real route calls loadJob).
   Map<String, dynamic> _afterSave(String id, Map<String, dynamic> body) {
+    if (id == lateId && body['date'] == '2026-11-12') {
+      // POST /close-date: the lock moves to 6 pm Chicago that day and the history gains the move.
+      return {
+        ...lateDetail(lockedAt: '2026-11-13T00:00:00Z', payWeek: '2026-11-09', history: [
+          {'action': 'move_close_date', 'target': 'close date', 'old_value': '2026-11-19', 'new_value': '2026-11-12', 'reason': body['reason'], 'changed_by_name': 'John Eccleston', 'changed_at': '2026-11-19T22:10:00Z'},
+        ]),
+        'warnings': <String>[],
+      };
+    }
     final d = corrDetail(id);
     final days = List<Map<String, dynamic>>.from(d['days'] as List);
     for (final day in days) {
