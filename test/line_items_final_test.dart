@@ -51,7 +51,7 @@ void _seed(FakeJobServer s, {int extra = 0}) {
 }
 
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -65,7 +65,7 @@ double _lum(Color c) => c.computeLuminance();
 void main() {
   setUpAll(jobPageSetUp);
 
-  testWidgets('1-2. the open tab has the ink cap; a hovered tab goes darker, not toward white, and keeps its width', (t) async {
+  testWidgets('1-2. the open tab has the ink cap; a hovered tab does not shade (USER RULE 2026-11-24) and keeps its width', (t) async {
     final s = FakeJobServer();
     _seed(s);
     await pumpJobPage(t, s, id: kEstimateId, size: const Size(1366, 1600), body: () async {
@@ -82,9 +82,9 @@ void main() {
       await mouse.moveTo(t.getCenter(shut));
       await settle(t, frames: 4);
       final hoverFill = _painter(t, shut).fill as Color, hoverEdge = _painter(t, shut).edge as Color;
-      expect(_lum(hoverFill), lessThan(_lum(restFill)), reason: 'darker under the pointer');
-      expect(_lum(hoverFill), lessThan(_lum(Colors.white)));
-      expect(_lum(hoverEdge), lessThan(_lum(restEdge)), reason: 'a firmer edge');
+      // No hover shading on the job and estimate pages (USER RULE 2026-11-24).
+      expect(hoverFill, restFill, reason: 'no shade under the pointer');
+      expect(hoverEdge, restEdge, reason: 'no firmer edge under the pointer');
       expect(_painter(t, shut).cap, 0.0, reason: 'only the open tab has the cap');
       expect(t.getSize(shut).width, width, reason: 'no width change on hover');
       // Its name turns ink, never blue.

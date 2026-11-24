@@ -10,6 +10,7 @@ import 'widgets/app_dialog.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'theme/app_theme.dart';
 
 /// The Product Catalog's Cleanup view (Phase 3, refined 2026-11-18): one compact list of every data-quality check with
 /// its count, and beside it the picked check's findings to go through one at a time.
@@ -405,7 +406,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
       foregroundColor: DashUi.slate,
       padding: const EdgeInsets.symmetric(horizontal: 8),
       minimumSize: const Size(0, 32),
-      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 12.5, fontWeight: FontWeight.w700),
     ),
     child: Text(label),
   );
@@ -503,7 +504,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
                 label: const Text('In the list'),
                 style: TextButton.styleFrom(
                   foregroundColor: DashUi.ink,
-                  textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
                 ),
               ),
             ),
@@ -715,7 +716,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
     onPressed: () => _makeInactive(e),
     style: TextButton.styleFrom(
       foregroundColor: DashUi.slate,
-      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 12.5, fontWeight: FontWeight.w700),
       padding: const EdgeInsets.symmetric(horizontal: 8),
     ),
     child: const Text('Make inactive…'),
@@ -726,6 +727,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
       color: i.isOdd ? CatalogUi.stripe : Colors.white,
       borderRadius: last ? const BorderRadius.vertical(bottom: Radius.circular(12)) : null,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         key: ValueKey('member:${e.key}'),
         onTap: () => widget.onOpenProduct(e),
         hoverColor: CatalogUi.hover,
@@ -757,7 +759,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
               SizedBox(
                 width: 92,
                 child: Text(
-                  e.rate == null ? 'Per job' : dashMoney(e.rate!),
+                  e.rate == null ? 'No price' : dashMoney(e.rate!),
                   textAlign: TextAlign.right,
                   style: e.rate == null ? CatalogUi.cellQuiet.copyWith(fontSize: 13.5) : CatalogUi.cellStrong.copyWith(fontSize: 13.5),
                 ),
@@ -873,7 +875,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
         ];
       case CatalogCheck.costAbove || CatalogCheck.highMarkup:
         return [
-          ('PRICE', 96, (e) => money(e.rate, none: 'Per job')),
+          ('PRICE', 96, (e) => money(e.rate, none: 'No price')),
           ('COST', 96, (e) => money(e.cost)),
           (
             'MARGIN',
@@ -906,7 +908,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
           ),
         ];
       default:
-        return [('PRICE', 96, (e) => money(e.rate, none: 'Per job')), ('STOCK', 120, _stockText)];
+        return [('PRICE', 96, (e) => money(e.rate, none: 'No price')), ('STOCK', 120, _stockText)];
     }
   }
 
@@ -992,6 +994,7 @@ class _CatalogCleanupViewState extends State<CatalogCleanupView> {
       key: ValueKey('finding:${c.key}:${e.key}'),
       color: i.isOdd ? CatalogUi.stripe : Colors.white,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: () => widget.onOpenProduct(e),
         hoverColor: CatalogUi.hover,
         child: Container(

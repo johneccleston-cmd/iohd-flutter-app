@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import 'dashboard_data.dart';
 import 'app_ribbon.dart';
 import 'dashboard_kit.dart';
+import 'page_selection.dart';
 
 /// Design tokens in one place so the header, selector and body stay consistent (the ribbon's own are [RibbonColors]).
 abstract final class _DashTokens {
@@ -575,7 +576,7 @@ class _YearSelectorState extends State<_YearSelector> {
                   ),
                 ),
             ],
-            child: Padding(
+            child: ClickCursor(child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -589,7 +590,7 @@ class _YearSelectorState extends State<_YearSelector> {
                   ),
                 ],
               ),
-            ),
+            )),
           ),
           _StepButton(
             icon: Icons.chevron_right_rounded,

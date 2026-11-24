@@ -237,6 +237,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
         ? 'Projected on jobs that aren\'t closed yet'
         : '${_techs.length} ${_techs.length == 1 ? 'tech' : 'techs'} on $_jobCount ${_jobCount == 1 ? 'job' : 'jobs'}, not earned until each job closes';
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: widget.asPage
           ? null
           : () {
@@ -318,6 +319,7 @@ class _PayrollPendingPanelState extends State<PayrollPendingPanel> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: () => setState(() => open ? _expanded.remove(t.name) : _expanded.add(t.name)),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),

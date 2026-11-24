@@ -3,10 +3,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
+
 import 'theme/app_theme.dart';
 import 'config/access.dart';
 import 'config/api_config.dart';
+
 import 'package:go_router/go_router.dart';
+
 import 'product_catalog_screen.dart';
 import 'product_detail_screen.dart';
 import 'service_detail_screen.dart';
@@ -18,8 +22,8 @@ import 'jobs_screen.dart';
 import 'profile_screen.dart';
 import 'projects_screen.dart';
 import 'job_detail_screen.dart';
-import 'payroll_screen.dart'; 
-import 'estimates_screen.dart'; 
+import 'payroll_screen.dart';
+import 'estimates_screen.dart';
 import 'calendar_screen.dart';
 import 'customer_detail_screen.dart';
 import 'customers_screen.dart';
@@ -49,9 +53,6 @@ import 'widgets/smooth_wheel_scroll.dart';
 import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_kit.dart';
 
-
-
-
 // --- ROUTER CONFIGURATION ---
 final GoRouter _router = GoRouter(
   initialLocation: '/calendar',
@@ -67,164 +68,278 @@ final GoRouter _router = GoRouter(
     // Page access follows the Permissions card on the Team screen. Someone who opens a page they're
     // switched off from lands on the calendar, or on the first page they can use.
     final session = AuthSession.instance;
-    final path = state.matchedLocation == '/dashboards' ? '/dashboards/financial' : state.matchedLocation;
+    final path = state.matchedLocation == '/dashboards'
+        ? '/dashboards/financial'
+        : state.matchedLocation;
     if (signedIn && !session.isAdmin) {
       // A record's own page (/jobs/123, /estimates/123, /customers/9, /hr/kpis/4) needs its list's permission.
       final page = accessPageFor(path);
       if (page != null && !session.canView(page.key)) {
         if (session.canView('calendar')) return '/calendar';
-        return kAccessPages.where((p) => session.canView(p.key)).firstOrNull?.route;
+        return kAccessPages
+            .where((p) => session.canView(p.key))
+            .firstOrNull
+            ?.route;
       }
     }
     return null;
   },
   routes: [
-    GoRoute(path: '/login', builder: (context, state) => const RouteSelection(child: LoginScreen())),
+    GoRoute(
+      path: '/login',
+      builder: (context, state) => const RouteSelection(child: LoginScreen()),
+    ),
     StatefulShellRoute(
       builder: (context, state, navigationShell) {
-        return RouteSelection(child: MainNavigationShell(navigationShell: navigationShell));
+        return RouteSelection(
+          child: MainNavigationShell(navigationShell: navigationShell),
+        );
       },
       // go_router's indexedStack container, with each hidden tab's text kept out of the page selection (page_selection.dart).
-      navigatorContainerBuilder: (context, navigationShell, children) => BranchStack(currentIndex: navigationShell.currentIndex, children: children),
+      navigatorContainerBuilder: (context, navigationShell, children) =>
+          BranchStack(
+            currentIndex: navigationShell.currentIndex,
+            children: children,
+          ),
       branches: [
-       // OFFICE BRANCH (Index 0)
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/office', builder: (context, state) => const _PlaceholderScreen(title: "My Office")),
-          // Add the new routes here so they live inside the same indexed shell
-          GoRoute(path: '/statuses', builder: (context, state) => const StatusesScreen()),
-          GoRoute(path: '/payments', builder: (context, state) => const PaymentsScreen()),
-          GoRoute(path: '/invoices', builder: (context, state) => InvoicesScreen(initialQuery: state.uri.queryParameters['q'])),
-          GoRoute(path: '/documents', builder: (context, state) => const DocumentsScreen()),
-          GoRoute(path: '/site-checks', builder: (context, state) => const SiteChecksScreen()),
-          GoRoute(path: '/takeoffs', builder: (context, state) => const TakeoffsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          // ?q= comes from the nav bar search and the job page's customer link.
-          GoRoute(
-            path: '/customers',
-            builder: (context, state) => CustomersScreen(initialQuery: state.uri.queryParameters['q']),
-            // One customer's own page (/customers/<id>).
-            routes: [customerDetailRoute()],
-          ),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/projects', builder: (context, state) => const ProjectsScreen()),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(
-            path: '/estimates',
-            builder: (context, state) => EstimatesScreen(initialQuery: state.uri.queryParameters['q']),
-            // An estimate's own page (/estimates/<number>): the same screen as a job's, so the Estimates item stays lit in the nav.
-            routes: [jobDetailRoute()],
-          ),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(
-            path: '/jobs',
-            builder: (context, state) => JobsScreen(initialQuery: state.uri.queryParameters['q']),
-            routes: [
-              // One job's own page (/jobs/<job number>), inside the shell so the top nav stays. The clicked row rides
-              // along as `extra` to show instantly.
-              jobDetailRoute(),
-            ],
-          ),
-        ]),
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/calendar', builder: (context, state) => const CalendarScreen()),
-        ]),
-       // INVENTORY BRANCH (Index 6)
-        StatefulShellBranch(routes: [
-          GoRoute(
-            path: '/inventory', 
-            builder: (context, state) => const InventoryScreen(), // "Stock Levels"
-            routes: [
-              GoRoute(
-                path: 'catalog',
-                builder: (context, state) => const ProductCatalogScreen(),
-                // A product's own page (/inventory/catalog/<id>, ?edit=1 to edit) and /inventory/catalog/new.
-                routes: productDetailRoutes(),
-              ),
-              GoRoute(
-                path: 'services',
-                builder: (context, state) => const ServicesCatalogScreen(),
-                // A service's own page (/inventory/services/item?key=...).
-                routes: serviceDetailRoutes(),
-              ),
-              // What the Products & Services "Tax, discounts & fees" panel offers (2026-11-20).
-              GoRoute(path: 'tax-discounts-fees', builder: (context, state) => const TaxSettingsScreen()),
-              // 🔥 UPDATED: Live Purchase Orders Screen
-              GoRoute(
-                path: 'purchase-orders', 
-                builder: (context, state) => PurchaseOrdersScreen(initialQuery: state.uri.queryParameters['q']),
-              ),
-              // 🔥 UPDATED: Live Vendors Screen
-              GoRoute(
-                path: 'vendors', 
-                builder: (context, state) => const VendorsScreen(),
-              ),
-            ],
-          ),
-        ]),
-        
-        // HR BRANCH
-        StatefulShellBranch(routes: [
-          GoRoute(
-            path: '/hr',
-            // Bare /hr (old links, bookmarks) lands on Payroll, keeping any ?start/end/tech query.
-            redirect: (context, state) => state.uri.path == '/hr'
-                ? Uri(path: '/hr/payroll', queryParameters: state.uri.queryParameters.isEmpty ? null : state.uri.queryParameters).toString()
-                : null,
-            routes: [
-              GoRoute(
-                path: 'payroll',
-                builder: (context, state) => PayrollScreen(
-                  initialStart: state.uri.queryParameters['start'],
-                  initialEnd: state.uri.queryParameters['end'],
-                  initialTech: state.uri.queryParameters['tech'],
+        // OFFICE BRANCH (Index 0)
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/office',
+              builder: (context, state) =>
+                  const _PlaceholderScreen(title: "My Office"),
+            ),
+            // Add the new routes here so they live inside the same indexed shell
+            GoRoute(
+              path: '/statuses',
+              builder: (context, state) => const StatusesScreen(),
+            ),
+            GoRoute(
+              path: '/payments',
+              builder: (context, state) => const PaymentsScreen(),
+            ),
+            GoRoute(
+              path: '/invoices',
+              builder: (context, state) =>
+                  InvoicesScreen(initialQuery: state.uri.queryParameters['q']),
+            ),
+            GoRoute(
+              path: '/documents',
+              builder: (context, state) => const DocumentsScreen(),
+            ),
+            GoRoute(
+              path: '/site-checks',
+              builder: (context, state) => const SiteChecksScreen(),
+            ),
+            GoRoute(
+              path: '/takeoffs',
+              builder: (context, state) => const TakeoffsScreen(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            // ?q= comes from the nav bar search and the job page's customer link.
+            GoRoute(
+              path: '/customers',
+              builder: (context, state) =>
+                  CustomersScreen(initialQuery: state.uri.queryParameters['q']),
+              // One customer's own page (/customers/<id>).
+              routes: [customerDetailRoute()],
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/projects',
+              builder: (context, state) => const ProjectsScreen(),
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/estimates',
+              builder: (context, state) =>
+                  EstimatesScreen(initialQuery: state.uri.queryParameters['q']),
+              // An estimate's own page (/estimates/<number>): the same screen as a job's, so the Estimates item stays lit in the nav.
+              routes: [jobDetailRoute()],
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/jobs',
+              builder: (context, state) =>
+                  JobsScreen(initialQuery: state.uri.queryParameters['q']),
+              routes: [
+                // One job's own page (/jobs/<job number>), inside the shell so the top nav stays. The clicked row rides
+                // along as `extra` to show instantly.
+                jobDetailRoute(),
+              ],
+            ),
+          ],
+        ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/calendar',
+              builder: (context, state) => const CalendarScreen(),
+            ),
+          ],
+        ),
+        // INVENTORY BRANCH (Index 6)
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/inventory',
+              builder: (context, state) =>
+                  const InventoryScreen(), // "Stock Levels"
+              routes: [
+                GoRoute(
+                  path: 'catalog',
+                  builder: (context, state) => const ProductCatalogScreen(),
+                  // A product's own page (/inventory/catalog/<id>, ?edit=1 to edit) and /inventory/catalog/new.
+                  routes: productDetailRoutes(),
                 ),
-              ),
-              GoRoute(
-                path: 'kpis',
-                builder: (context, state) => const KPIDashboardScreen(),
-                routes: [
-                  GoRoute(
-                    path: ':id',
-                    builder: (context, state) => EmployeeKpiScreen(
-                      employeeId: state.pathParameters['id'] ?? '',
-                      extra: state.extra,
-                    ),
+                GoRoute(
+                  path: 'services',
+                  builder: (context, state) => const ServicesCatalogScreen(),
+                  // A service's own page (/inventory/services/item?key=...).
+                  routes: serviceDetailRoutes(),
+                ),
+                // What the Products & Services "Tax, discounts & fees" panel offers (2026-11-20).
+                GoRoute(
+                  path: 'tax-discounts-fees',
+                  builder: (context, state) => const TaxSettingsScreen(),
+                ),
+                // 🔥 UPDATED: Live Purchase Orders Screen
+                GoRoute(
+                  path: 'purchase-orders',
+                  builder: (context, state) => PurchaseOrdersScreen(
+                    initialQuery: state.uri.queryParameters['q'],
                   ),
-                ],
-              ),
-              // 🔥 FIX: Relative path matches 'kpis' pattern
-              GoRoute(path: 'team', builder: (context, state) => const TeamAdminScreen()),
-              GoRoute(path: 'corrections', builder: (context, state) => const CommissionCorrectionsScreen()),
-            ],
-          ),
-        ]),
+                ),
+                // 🔥 UPDATED: Live Vendors Screen
+                GoRoute(
+                  path: 'vendors',
+                  builder: (context, state) => const VendorsScreen(),
+                ),
+              ],
+            ),
+          ],
+        ),
+
+        // HR BRANCH
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/hr',
+              // Bare /hr (old links, bookmarks) lands on Payroll, keeping any ?start/end/tech query.
+              redirect: (context, state) => state.uri.path == '/hr'
+                  ? Uri(
+                      path: '/hr/payroll',
+                      queryParameters: state.uri.queryParameters.isEmpty
+                          ? null
+                          : state.uri.queryParameters,
+                    ).toString()
+                  : null,
+              routes: [
+                GoRoute(
+                  path: 'payroll',
+                  builder: (context, state) => PayrollScreen(
+                    initialStart: state.uri.queryParameters['start'],
+                    initialEnd: state.uri.queryParameters['end'],
+                    initialTech: state.uri.queryParameters['tech'],
+                  ),
+                ),
+                GoRoute(
+                  path: 'kpis',
+                  builder: (context, state) => const KPIDashboardScreen(),
+                  routes: [
+                    GoRoute(
+                      path: ':id',
+                      builder: (context, state) => EmployeeKpiScreen(
+                        employeeId: state.pathParameters['id'] ?? '',
+                        extra: state.extra,
+                      ),
+                    ),
+                  ],
+                ),
+                // 🔥 FIX: Relative path matches 'kpis' pattern
+                GoRoute(
+                  path: 'team',
+                  builder: (context, state) => const TeamAdminScreen(),
+                ),
+                GoRoute(
+                  path: 'corrections',
+                  builder: (context, state) =>
+                      const CommissionCorrectionsScreen(),
+                ),
+              ],
+            ),
+          ],
+        ),
 
         // DASHBOARDS BRANCH
-        StatefulShellBranch(routes: [
-          GoRoute(
-            path: '/dashboards',
-            builder: (context, state) => const ReportsScreen(),
-            routes: [
-              GoRoute(path: 'financial', builder: (context, state) => const ReportsScreen()),
-              GoRoute(path: 'commissions', builder: (context, state) => const CommissionDashboardScreen()),
-              GoRoute(path: 'technicians', builder: (context, state) => const TechniciansDashboardScreen()),
-              GoRoute(path: 'inventory', builder: (context, state) => const InventoryDashboardScreen()),
-              GoRoute(path: 'jobs', builder: (context, state) => const JobsDashboardScreen()),
-              GoRoute(path: 'estimates', builder: (context, state) => const EstimatesDashboardScreen()),
-              GoRoute(path: 'sales', builder: (context, state) => const SalesDashboardScreen()),
-              GoRoute(path: 'collections', builder: (context, state) => const CollectionsDashboardScreen()),
-            ],
-          ),
-        ]),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/dashboards',
+              builder: (context, state) => const ReportsScreen(),
+              routes: [
+                GoRoute(
+                  path: 'financial',
+                  builder: (context, state) => const ReportsScreen(),
+                ),
+                GoRoute(
+                  path: 'commissions',
+                  builder: (context, state) =>
+                      const CommissionDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'technicians',
+                  builder: (context, state) =>
+                      const TechniciansDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'inventory',
+                  builder: (context, state) => const InventoryDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'jobs',
+                  builder: (context, state) => const JobsDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'estimates',
+                  builder: (context, state) => const EstimatesDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'sales',
+                  builder: (context, state) => const SalesDashboardScreen(),
+                ),
+                GoRoute(
+                  path: 'collections',
+                  builder: (context, state) =>
+                      const CollectionsDashboardScreen(),
+                ),
+              ],
+            ),
+          ],
+        ),
 
         // MY PROFILE BRANCH (Index 9): opened from the account menu, so it belongs to no top-bar module.
-        StatefulShellBranch(routes: [
-          GoRoute(path: '/profile', builder: (context, state) => const ProfileScreen()),
-        ]),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/profile',
+              builder: (context, state) => const ProfileScreen(),
+            ),
+          ],
+        ),
       ],
     ),
   ],
@@ -232,6 +347,10 @@ final GoRouter _router = GoRouter(
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // The bundled IBM Plex Sans font's licence, listed on the About > Licenses page.
+  LicenseRegistry.addLicense(() async* {
+    yield LicenseEntryWithLineBreaks(['IBM Plex Sans'], await rootBundle.loadString('assets/fonts/IBMPlexSans-OFL.txt'));
+  });
   await AuthSession.instance.restore();
   SmoothWheelScroll.install();
   // The hosted backend sleeps when idle; waking it now means the first real screen doesn't pay for it.
@@ -269,6 +388,16 @@ class IohdHubApp extends StatelessWidget {
 /// The office app's theme. A function of its own so the review harnesses (test/services_catalog_shots_test.dart and the
 /// real-browser harness in tool/ux_harness/) draw with exactly what the app draws with: a stand-in theme there hid the
 /// red text cursor below (UX audit 2026-11-19).
+const ButtonStyle _buttonCursor = ButtonStyle(mouseCursor: _clickWhenEnabled);
+
+const WidgetStateMouseCursor _clickWhenEnabled = WidgetStateMouseCursor.resolveWith(
+  _clickCursor,
+  debugDescription: 'WidgetStateMouseCursor(clickWhenEnabled)',
+);
+
+MouseCursor _clickCursor(Set<WidgetState> states) =>
+    states.contains(WidgetState.disabled) ? SystemMouseCursors.basic : SystemMouseCursors.click;
+
 ThemeData officeTheme() {
   const bgColor = IohdHubApp.bgColor;
   const brandRed = IohdHubApp.brandRed;
@@ -277,9 +406,16 @@ ThemeData officeTheme() {
   return ThemeData(
     useMaterial3: true,
     brightness: Brightness.light,
-    scaffoldBackgroundColor: AppTheme.bgColor, // same page colour as the dashboards
+    scaffoldBackgroundColor:
+        AppTheme.bgColor, // same page colour as the dashboards
     typography: Typography.material2021(platform: defaultTargetPlatform),
-    textTheme: const TextTheme().apply(displayColor: primaryText, bodyColor: primaryText),
+    // One bundled typeface on every platform; without it Windows drew Segoe UI and the web build Roboto.
+    fontFamily: AppTheme.fontFamily,
+    fontFamilyFallback: AppTheme.fontFamilyFallback,
+    textTheme: const TextTheme().apply(
+      displayColor: primaryText,
+      bodyColor: primaryText,
+    ),
     colorScheme: ColorScheme.fromSeed(
       seedColor: brandRed,
       primary: brandRed,
@@ -293,6 +429,14 @@ ThemeData officeTheme() {
       selectionColor: Color(0x663390FF),
       selectionHandleColor: Color(0xFF1A73E8),
     ),
+    // Cursor standard (user, 2026-11-23): every button shows the pointer. Flutter's own buttons only do on the web;
+    // on Windows and macOS they stay the plain arrow. Only the cursor is set here, so each button keeps its own look.
+    textButtonTheme: const TextButtonThemeData(style: _buttonCursor),
+    filledButtonTheme: const FilledButtonThemeData(style: _buttonCursor),
+    elevatedButtonTheme: const ElevatedButtonThemeData(style: _buttonCursor),
+    outlinedButtonTheme: const OutlinedButtonThemeData(style: _buttonCursor),
+    iconButtonTheme: const IconButtonThemeData(style: _buttonCursor),
+    segmentedButtonTheme: const SegmentedButtonThemeData(style: _buttonCursor),
     appBarTheme: const AppBarTheme(
       backgroundColor: Colors.white,
       surfaceTintColor: Colors.transparent,
@@ -321,10 +465,14 @@ ThemeData officeTheme() {
       titleTextStyle: const TextStyle(
         fontSize: 18,
         fontWeight: FontWeight.w800,
-        color: Color(0xFF0F172A),
+        color: DashUi.ink,
         letterSpacing: -0.3,
       ),
-      contentTextStyle: const TextStyle(fontSize: 14, color: Color(0xFF475569), height: 1.45),
+      contentTextStyle: const TextStyle(
+        fontSize: 14,
+        color: DashUi.slate,
+        height: 1.45,
+      ),
       actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 18),
     ),
     popupMenuTheme: PopupMenuThemeData(
@@ -333,18 +481,26 @@ ThemeData officeTheme() {
       elevation: 8,
       shadowColor: Colors.black.withValues(alpha: 0.14),
       menuPadding: const EdgeInsets.all(6),
+      mouseCursor: WidgetStateMouseCursor.clickable,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: const BorderSide(color: Color(0xFFE4E4E4)),
       ),
-      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
+      textStyle: const TextStyle(
+        fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback,
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+        color: DashUi.ink,
+      ),
     ),
     menuTheme: MenuThemeData(
       style: MenuStyle(
         backgroundColor: const WidgetStatePropertyAll(Colors.white),
         surfaceTintColor: const WidgetStatePropertyAll(Colors.transparent),
         elevation: const WidgetStatePropertyAll(8),
-        shadowColor: WidgetStatePropertyAll(Colors.black.withValues(alpha: 0.14)),
+        shadowColor: WidgetStatePropertyAll(
+          Colors.black.withValues(alpha: 0.14),
+        ),
         padding: const WidgetStatePropertyAll(EdgeInsets.all(6)),
         shape: WidgetStatePropertyAll(
           RoundedRectangleBorder(
@@ -379,7 +535,11 @@ ThemeData officeTheme() {
     snackBarTheme: SnackBarThemeData(
       behavior: SnackBarBehavior.floating,
       backgroundColor: const Color(0xFF0F172A),
-      contentTextStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: Colors.white),
+      contentTextStyle: const TextStyle(
+        fontSize: 13.5,
+        fontWeight: FontWeight.w600,
+        color: Colors.white,
+      ),
       actionTextColor: const Color(0xFF93C5FD),
       elevation: 6,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -390,7 +550,7 @@ ThemeData officeTheme() {
 
 class _PlaceholderScreen extends StatelessWidget {
   final String title;
-  const _PlaceholderScreen({super.key, required this.title});
+  const _PlaceholderScreen({required this.title});
 
   @override
   Widget build(BuildContext context) {
@@ -402,10 +562,17 @@ class _PlaceholderScreen extends StatelessWidget {
           const SizedBox(height: 16),
           Text(
             "$title Screen",
-            style: const TextStyle(fontSize: 22, color: Color(0xFF1A1C1E), fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              fontSize: 22,
+              color: Color(0xFF1A1C1E),
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 6),
-          const Text("Under Construction", style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 14)),
+          const Text(
+            "Under Construction",
+            style: TextStyle(color: DashUi.muted, fontSize: 14),
+          ),
         ],
       ),
     );

@@ -150,10 +150,10 @@ class _ChargesRoute extends PopupRoute<ChargesResult> {
   String? get barrierLabel => 'Close Tax, discounts and fees';
 
   @override
-  Duration get transitionDuration => still ? Duration.zero : kPsMenuOpen;
+  Duration get transitionDuration => still ? Duration.zero : kPsPanelOpen;
 
   @override
-  Duration get reverseTransitionDuration => still ? Duration.zero : kPsMenuClose;
+  Duration get reverseTransitionDuration => still ? Duration.zero : kPsPanelClose;
 
   @override
   Widget buildPage(BuildContext context, Animation<double> animation, Animation<double> secondaryAnimation) => themes.wrap(_ChargesPage(route: this));
@@ -175,19 +175,15 @@ String _sectionTitle(_Section s) => switch (s) {
   _Section.fees => 'Fees',
 };
 
-/// One choice in the list: its title and quiet line, its figure and the quiet one under it, whether it is already on
-/// the record, and what picking it opens.
+/// One choice in the list: its title and quiet line, its one figure, whether it is already on the record, and what
+/// picking it opens.
 class _Choice {
   final String key;
   final String title;
   final String sub;
   final String trailing;
-  final String? trailingSub;
   final bool onRecord;
   final bool enabled;
-
-  /// A change DFA announced (or one typed in), shown in amber in the quiet line.
-  final String? notice;
   final _View Function()? open;
   final String search;
   const _Choice({
@@ -195,10 +191,8 @@ class _Choice {
     required this.title,
     required this.sub,
     required this.trailing,
-    this.trailingSub,
     this.onRecord = false,
     this.enabled = true,
-    this.notice,
     this.open,
     String? search,
   }) : search = search ?? '';
@@ -262,8 +256,6 @@ class _ChargesPage extends StatefulWidget {
 }
 
 class _ChargesPageState extends State<_ChargesPage> {
-  late final CurvedAnimation _fade;
-  late final CurvedAnimation _move;
   final _search = TextEditingController();
   // The search's own node takes the arrows, Enter and Esc first: in the browser the field's text handling stopped them
   // before they reached the panel (found in real Chrome 2026-11-20; the widget tests run as Android and didn't show it).
@@ -280,20 +272,11 @@ class _ChargesPageState extends State<_ChargesPage> {
   @override
   void initState() {
     super.initState();
-    final a = widget.route.animation!;
-    _fade = CurvedAnimation(
-      parent: a,
-      curve: const Interval(0, 0.62, curve: Curves.easeOut),
-      reverseCurve: Curves.easeIn,
-    );
-    _move = CurvedAnimation(parent: a, curve: const Cubic(0.16, 1, 0.3, 1), reverseCurve: Curves.easeOut);
     _search.addListener(() => setState(() => _hi = null));
   }
 
   @override
   void dispose() {
-    _fade.dispose();
-    _move.dispose();
     _search.dispose();
     _searchFocus.dispose();
     _panelFocus.dispose();
@@ -369,12 +352,13 @@ class _ChargesPageState extends State<_ChargesPage> {
     }
 
     section(_Section.record, _recordChoices());
+    // Discounts and fees, then the taxes with out of state first, before the long Arkansas list (user 2026-11-23).
+    section(_Section.discounts, _presetChoices(fee: false));
+    section(_Section.fees, _presetChoices(fee: true));
+    section(_Section.outOfState, [_outOfStateChoice()]);
     section(_Section.state, [_stateChoice()]);
     section(_Section.county, [for (final c in ArkansasTax.counties(_day)) _countyChoice(c)]);
     section(_Section.city, [for (final c in ArkansasTax.cities(_day)) _cityChoice(c)]);
-    section(_Section.outOfState, [_outOfStateChoice()]);
-    section(_Section.discounts, _presetChoices(fee: false));
-    section(_Section.fees, _presetChoices(fee: true));
     return out;
   }
 
@@ -397,7 +381,7 @@ class _ChargesPageState extends State<_ChargesPage> {
         sub: [
           switch (t.kind) {
             SalesTaxKind.record => 'On this record',
-            SalesTaxKind.arkansas => t.parts.map((p) => '${p.name} ${milliText(p.milli)}').join(' + '),
+            SalesTaxKind.arkansas => 'Added here',
             SalesTaxKind.outOfState => 'Out of state, rate entered',
           },
           _lines(_s.taxedLines[t.name] ?? 0),
@@ -431,24 +415,21 @@ class _ChargesPageState extends State<_ChargesPage> {
       ),
   ];
 
+  // One figure per row: the rate a line set to it is charged (state + county + city), never the part rates or the day
+  // a rate took effect (user 2026-11-23: "too many different numbers for each line, only need the figures that matter").
+  // The breakdown is still on the place's own page.
   _Choice _stateChoice() {
     final r = ArkansasTax.rateOn(ArkansasTax.state, _day)!;
     final name = TaxComposition(day: _day).serviceFusionName;
     return _Choice(
       key: 'state',
       title: 'Arkansas',
-      sub: 'State rate · since ${dayText(r.from)}',
+      sub: 'State tax only',
       trailing: milliText(r.milli),
       onRecord: _taxNames.contains(name),
       open: () => const _PlaceView(),
       search: 'state',
     );
-  }
-
-  String? _notice(TaxJurisdiction j) {
-    final n = ArkansasTax.nextAfter(j, _day);
-    if (n == null) return null;
-    return n.$1 == 0 ? 'Ends ${dayText(n.$2)}' : 'Changes to ${milliText(n.$1)} on ${dayText(n.$2)}';
   }
 
   _Choice _countyChoice(TaxJurisdiction c) {
@@ -457,11 +438,9 @@ class _ChargesPageState extends State<_ChargesPage> {
     return _Choice(
       key: c.id,
       title: c.name,
-      sub: 'County rate · since ${dayText(r.from)}${r.typed ? ' (entered)' : ''}',
-      trailing: milliText(r.milli),
-      trailingSub: '${milliText(comp.milli)} with state',
+      sub: 'State + county${r.typed ? ' · rate entered' : ''}',
+      trailing: milliText(comp.milli),
       onRecord: _taxNames.contains(comp.serviceFusionName),
-      notice: _notice(c),
       open: () => _PlaceView(county: c),
       search: c.code,
     );
@@ -476,11 +455,9 @@ class _ChargesPageState extends State<_ChargesPage> {
     return _Choice(
       key: c.id,
       title: c.name,
-      sub: '$where · since ${dayText(r.from)}${r.typed ? ' (entered)' : ''}',
-      trailing: milliText(r.milli),
-      trailingSub: totals.length == 1 ? '${milliText(totals.single)} total' : '${milliText(totals.first)}–${milliText(totals.last)} total',
+      sub: '$where${r.typed ? ' · rate entered' : ''}',
+      trailing: totals.length == 1 ? milliText(totals.single) : '${milliText(totals.first)}–${milliText(totals.last)}',
       onRecord: names.any(_taxNames.contains),
-      notice: _notice(c),
       open: () => _PlaceView(county: counties.first, city: c),
       search: '${c.code} ${counties.map((k) => k.name).join(' ')}',
     );
@@ -611,20 +588,7 @@ class _ChargesPageState extends State<_ChargesPage> {
               top: top,
               width: w,
               height: h,
-              child: FadeTransition(
-                opacity: _fade,
-                child: AnimatedBuilder(
-                  animation: _move,
-                  builder: (context, child) {
-                    final m = _move.value;
-                    return Transform.translate(
-                      offset: Offset(0, (down ? -6 : 6) * (1 - m)),
-                      child: Transform.scale(scale: 0.97 + 0.03 * m, alignment: origin, child: child),
-                    );
-                  },
-                  child: _panel(),
-                ),
-              ),
+              child: PsPopMotion(animation: widget.route.animation!, down: down, origin: origin, child: _panel()),
             ),
           ],
         );
@@ -670,21 +634,26 @@ class _ChargesPageState extends State<_ChargesPage> {
             type: MaterialType.transparency,
             child: Container(
               decoration: psMenuPanelDecoration(),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(9),
-                child: AnimatedSwitcher(
-                  duration: still ? Duration.zero : const Duration(milliseconds: 160),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeIn,
-                  transitionBuilder: (child, anim) => FadeTransition(
-                    opacity: anim,
-                    child: SlideTransition(
-                      position: Tween(begin: const Offset(0.03, 0), end: Offset.zero).animate(anim),
-                      child: child,
+              // A menu, not a page: its text is never selected, so the pointer stays the arrow/hand over every label
+              // (the page-wide selection showed an I-beam and a highlight over its rows; user 2026-11-23). Its own
+              // fields keep their editing cursor.
+              child: SelectionContainer.disabled(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(9),
+                  child: AnimatedSwitcher(
+                    duration: still ? Duration.zero : const Duration(milliseconds: 160),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeIn,
+                    transitionBuilder: (child, anim) => FadeTransition(
+                      opacity: anim,
+                      child: SlideTransition(
+                        position: Tween(begin: const Offset(0.03, 0), end: Offset.zero).animate(anim),
+                        child: child,
+                      ),
                     ),
+                    layoutBuilder: (current, previous) => Stack(alignment: Alignment.topLeft, children: [...previous, ?current]),
+                    child: KeyedSubtree(key: ValueKey(_view.runtimeType.toString() + body.key.toString()), child: body),
                   ),
-                  layoutBuilder: (current, previous) => Stack(alignment: Alignment.topLeft, children: [...previous, ?current]),
-                  child: KeyedSubtree(key: ValueKey(_view.runtimeType.toString() + body.key.toString()), child: body),
                 ),
               ),
             ),
@@ -905,6 +874,7 @@ class _SectionHead extends StatelessWidget {
             ),
             Text(switch (section) {
               _Section.record || _Section.discounts || _Section.fees => 'Amount',
+              _Section.county || _Section.city => 'Total rate',
               _ => 'Rate',
             }, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle, height: 1.3)),
           ],
@@ -934,14 +904,7 @@ class _ChoiceRow extends StatelessWidget {
       button: on,
       enabled: on,
       selected: c.onRecord,
-      label: [
-        c.title,
-        c.sub,
-        if (c.notice != null) c.notice!,
-        if (c.trailing.isNotEmpty) c.trailing,
-        ?c.trailingSub,
-        if (c.onRecord) 'on this record',
-      ].join(', '),
+      label: [c.title, c.sub, if (c.trailing.isNotEmpty) c.trailing, if (c.onRecord) 'on this record'].join(', '),
       excludeSemantics: true,
       onTap: on ? onTap : null,
       child: MouseRegion(
@@ -972,16 +935,7 @@ class _ChoiceRow extends StatelessWidget {
                         style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: on ? DashUi.ink : DashUi.slate, height: 1.3),
                       ),
                       Text.rich(
-                        TextSpan(
-                          children: [
-                            TextSpan(text: c.sub),
-                            if (c.notice != null)
-                              TextSpan(
-                                text: '  ·  ${c.notice}',
-                                style: const TextStyle(color: DashUi.amberText, fontWeight: FontWeight.w600),
-                              ),
-                          ],
-                        ),
+                        TextSpan(text: c.sub),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12, color: DashUi.slate, height: 1.35, fontFeatures: _figures),
@@ -990,20 +944,9 @@ class _ChoiceRow extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 12),
-                Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      c.trailing,
-                      style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: on ? DashUi.ink : DashUi.slate, height: 1.3, fontFeatures: _figures),
-                    ),
-                    if (c.trailingSub != null)
-                      Text(
-                        c.trailingSub!,
-                        style: const TextStyle(fontSize: 12, color: DashUi.slate, height: 1.35, fontFeatures: _figures),
-                      ),
-                  ],
+                Text(
+                  c.trailing,
+                  style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: on ? DashUi.ink : DashUi.slate, height: 1.3, fontFeatures: _figures),
                 ),
               ],
             ),

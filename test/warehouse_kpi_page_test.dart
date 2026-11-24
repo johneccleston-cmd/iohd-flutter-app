@@ -12,6 +12,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:iohd_desktop/theme/app_theme.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
 import 'package:iohd_desktop/kpi_dashboard_screen.dart';
 
@@ -120,7 +121,8 @@ void main() {
       for (final z in ['Zone 1', 'Zone 2', 'Zone 3', 'Zone 4']) {
         expect(find.text(z), findsOneWidget, reason: z);
       }
-      expect(find.text('Dennis 15 + techs 5, all time'), findsOneWidget);
+      // The caption names his own strikes; ", all time" joins it when the card is wide enough (its hover card says so too).
+      expect(find.textContaining('Dennis 15 + techs 5'), findsOneWidget);
       // Removed at the user's request (2026-10-30): his own strikes card and the warehouse strikes card.
       expect(find.text('Inv. strikes'), findsNothing);
       expect(find.text('Warehouse strikes'), findsNothing);
@@ -142,7 +144,8 @@ void main() {
       expect(find.text('41'), findsOneWidget); // jobs completed
       expect(find.text('132'), findsOneWidget); // low stock
       expect(find.text('7'), findsOneWidget); // open POs
-      expect(find.textContaining('159 item counts'), findsOneWidget); // in the finished zones
+      // In the finished zones; the card's widest caption that fits, which always keeps the figure.
+      expect(find.textContaining(RegExp(r'159 (item )?counts')), findsOneWidget);
       // Low stock says how many are empty outright (the stock value too when the card is wide enough).
       expect(find.textContaining('86 empty'), findsOneWidget);
       // How much of the warehouse this year's counts reached, over the zones.
@@ -153,7 +156,8 @@ void main() {
       expect(find.text('Jan 1 – today'), findsOneWidget);
       // Strikes: the team's 20 (his own 15 and the techs' 5), no callbacks.
       expect(find.text('20'), findsOneWidget);
-      expect(find.text('Dennis 15 + techs 5, all time'), findsOneWidget);
+      // The caption names his own strikes; ", all time" joins it when the card is wide enough (its hover card says so too).
+      expect(find.textContaining('Dennis 15 + techs 5'), findsOneWidget);
       expect(find.text('0'), findsOneWidget);
       // Zones.
       expect(find.text('Overdue'), findsNWidgets(2));
@@ -492,7 +496,7 @@ void main() {
       ],
     );
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true)));
+      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: AppTheme.fontFamily, useMaterial3: true)));
       await settleDashboard(t);
       expect(find.text('DENNIS GRAY'), findsOneWidget);
       await t.tap(find.byTooltip('All employees'));

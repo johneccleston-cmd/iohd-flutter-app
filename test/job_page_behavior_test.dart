@@ -95,7 +95,7 @@ void main() {
         await settle(t, frames: 2);
         await _type(t, _cell(0, 'qty'), '3');
         await _type(t, _cell(0, 'rate'), '95');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 4);
         expect(find.text(r'$285.00'), findsWidgets, reason: '3 x \$95');
         // No margin per line (user 2026-11-13): neither the spring's (79.5%) nor the opener's (41.7%).
@@ -103,11 +103,12 @@ void main() {
         expect(find.text('41.7%'), findsNothing);
         expect(find.text('MARGIN'), findsNothing);
         // Items 285 + 689 = 974; cost 58.50 + 401.37 = 459.87; profit 514.13; margin 52.8%; tax 10.5% of 974 = 102.27.
-        expect(find.text(r'$974.00'), findsOneWidget);
+        // No Items line in the summary any more (USER RULE 2026-11-24): $974 is the profit's basis only, on hover.
+        expect(find.text(r'$974.00'), findsNothing);
         expect(find.text(r'$459.87'), findsOneWidget);
         expect(find.text(r'$514.13'), findsOneWidget);
-        expect(find.text('52.8%'), findsOneWidget);
-        expect(find.text(r'$102.27'), findsOneWidget);
+        expect(find.text('(52.8%)'), findsOneWidget);
+        expect(find.text(r'$102.27'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
         expect(find.text(r'$1,076.27'), findsNWidgets(2), reason: 'the receipt, and the option\'s tab, which follows the draft (round 4)');
 
         // No Save to press: nothing can be kept yet. Ctrl+S from a field says so in the strip.
@@ -137,8 +138,8 @@ void main() {
         expect(find.textContaining('Price varies'), findsNothing, reason: 'the results show no price (user 2026-11-20)');
         await t.tap(find.text('Clopay Rolling Door').last);
         await settle(t, frames: 4);
-        expect(find.text('Not priced'), findsOneWidget);
-        expect(find.textContaining('1 line not priced yet'), findsOneWidget);
+        expect(find.text('No price'), findsOneWidget);
+        expect(find.textContaining('1 line has no price'), findsOneWidget);
       });
       expect(lineSaves(s), isEmpty);
     });
@@ -153,7 +154,7 @@ void main() {
         await t.tap(find.textContaining('Add a custom line'));
         await settle(t, frames: 3);
         await _type(t, _cell(0, 'rate'), '59');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 3);
         expect(find.text('Discount'), findsNothing, reason: 'the discount is behind the Tax, discounts & fees panel');
         await t.tap(find.text('Tax, discounts & fees'));
@@ -187,7 +188,7 @@ void main() {
         await t.tap(find.text('Torsion Spring'));
         await settle(t, frames: 2);
         await _type(t, _cell(0, 'qty'), '2..5');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 3);
         // Audit round 2 (2026-11-20): the line never takes a half-typed figure, so once closed nothing bad is left on
         // it; a note says what it kept.
@@ -203,17 +204,17 @@ void main() {
       final s = FakeJobServer();
       final errors = await pumpJobPage(t, s, body: () async {
         // Its lines say just "Sales Tax"; the record's one tax line is Prairie Grove's.
-        expect(find.text('Prairie Grove 10.5%'), findsNWidgets(2));
-        expect(find.text('Sales tax 10.5%'), findsOneWidget);
+        expect(find.text('Prairie Grove'), findsNWidgets(2));
+        expect(find.text('Sales tax Prairie Grove 10.5%'), findsOneWidget, reason: 'the tax by its place (user 2026-11-24)');
         expect(find.text(r'$1,735.97'), findsOneWidget);
-        // The known costs still add up (1,014.32 + 17.84 = 1,032.16), but the installation line's Service Fusion cost is 0,
-        // which means "not entered" (Services Catalog Phase 2): no profit or margin is worked out as if it cost $0. Before
-        // Phase 2 this showed $591.12 (36.4%).
+        // The known costs add up (1,014.32 + 17.84 = 1,032.16); the installation line's Service Fusion cost is 0 ("not
+        // entered"), which nothing on the page notes (USER RULE 2026-11-24). The gross profit is always filled in, on the known costs (USER RULE
+        // 2026-11-24; Services Catalog Phase 2 had left it a dash).
         expect(find.text(r'$1,032.16'), findsOneWidget);
-        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
-        expect(find.text('1 line has no cost'), findsOneWidget);
-        expect(find.text(r'$591.12'), findsNothing);
-        expect(find.text('36.4%'), findsNothing);
+        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
+        expect(find.textContaining('no cost'), findsNothing); // USER RULE 2026-11-24: no note
+        expect(find.text(r'$591.12'), findsOneWidget);
+        expect(find.text('(36.4%)'), findsOneWidget);
       });
       expect(errors.messages, isEmpty);
     });
@@ -226,7 +227,7 @@ void main() {
         await t.tap(find.text("Stop Mold | 7' Sandtone"));
         await settle(t, frames: 2);
         await _type(t, _cell(2, 'qty'), '6');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 3);
         expect(find.text(r'$26.76'), findsWidgets);
         expect(find.text('Changed, not saved'), findsOneWidget);
@@ -252,7 +253,7 @@ void main() {
         await t.tap(find.text('Spring Replacement | Labor'));
         await settle(t, frames: 2);
         await _type(t, _cell(1, 'rate'), '175');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 3);
         expect(find.text(r'$175.00'), findsWidgets);
         await t.tap(find.descendant(of: find.byWidgetPredicate((w) => w is DashSegmented), matching: find.text('Service Fusion')));
@@ -382,7 +383,7 @@ void main() {
         await t.tap(find.text('Torsion Spring'));
         await settle(t, frames: 2);
         await _type(t, _cell(0, 'rate'), '99');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 3);
         await t.tap(find.byKey(const ValueKey('option-actions')));
         await settle(t, frames: 4);

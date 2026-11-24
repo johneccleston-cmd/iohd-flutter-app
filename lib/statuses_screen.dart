@@ -826,6 +826,7 @@ class _StatusEditorState extends State<_StatusEditor> {
                 selected: _color.toARGB32() == v,
                 label: 'Color ${_hex(Color(v))}',
                 child: InkWell(
+                  mouseCursor: WidgetStateMouseCursor.clickable,
                   onTap: () => _setColor(Color(v)),
                   customBorder: const CircleBorder(),
                   child: Container(

@@ -50,9 +50,9 @@ class ProposalInput {
   });
 }
 
-final PdfColor _ink = PdfColor.fromInt(0xFF0F172A);
-final PdfColor _slate = PdfColor.fromInt(0xFF475569);
-final PdfColor _subtle = PdfColor.fromInt(0xFF64748B);
+final PdfColor _ink = PdfColor.fromInt(0xFF111111);
+final PdfColor _slate = PdfColor.fromInt(0xFF505050);
+final PdfColor _subtle = PdfColor.fromInt(0xFF6B6B6B);
 final PdfColor _line = PdfColor.fromInt(0xFFE4E4E4);
 final PdfColor _faint = PdfColor.fromInt(0xFFF2F2F2);
 final PdfColor _red = PdfColor.fromInt(0xFFB91C1C);

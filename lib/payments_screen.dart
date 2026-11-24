@@ -312,9 +312,8 @@ class _PaymentsScreenState extends State<PaymentsScreen> with SingleTickerProvid
     // A Stripe payment with no job on file still names who paid, from its memo.
     final customer = '${p['customer'] ?? ''}'.isNotEmpty ? '${p['customer']}' : stripeMemoCustomer(p['stripe_memo']);
     if (customer.isEmpty) return const Text('No job on file', style: flatCellMuted, maxLines: 1, overflow: TextOverflow.ellipsis);
-    return Tooltip(
+    return OverflowTooltip(
       message: customer,
-      waitDuration: const Duration(milliseconds: 400),
       child: Text(customer, style: flatCellBold, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }
@@ -346,9 +345,8 @@ class _PaymentsScreenState extends State<PaymentsScreen> with SingleTickerProvid
     final type = '${p['payment_type'] ?? ''}'.trim();
     if (p['via_stripe'] != true) {
       if (type.isEmpty) return const Text('—', style: flatCellMuted);
-      return Tooltip(
+      return OverflowTooltip(
         message: type,
-        waitDuration: const Duration(milliseconds: 400),
         child: Text(type, style: flatCellStyle, maxLines: 1, overflow: TextOverflow.ellipsis),
       );
     }
@@ -728,6 +726,6 @@ class _JobLink extends StatelessWidget {
     if (!onFile) {
       return Tooltip(message: 'Job $jobId is not in the app, so there is no job page to open.', child: Text(jobId, style: flatCellMuted));
     }
-    return FlatLink(jobId, tip: 'Open job $jobId', onTap: () => context.go('/jobs/${Uri.encodeComponent(jobId)}'));
+    return FlatLink(jobId, onTap: () => context.go('/jobs/${Uri.encodeComponent(jobId)}'));
   }
 }

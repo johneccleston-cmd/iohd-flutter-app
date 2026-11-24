@@ -202,6 +202,7 @@ class _CustomerDetailScreenState extends State<CustomerDetailScreen> {
           children: [
             for (var i = 0; i < _tabs.length; i++)
               InkWell(
+                mouseCursor: WidgetStateMouseCursor.clickable,
                 onTap: () => setState(() => _tab = i),
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
@@ -372,6 +373,7 @@ class _Field extends StatelessWidget {
           Tooltip(
             message: 'Click to copy',
             child: InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
               borderRadius: BorderRadius.circular(6),
               onTap: () async {
                 await Clipboard.setData(ClipboardData(text: value!));

@@ -515,7 +515,7 @@ class _BrandPanel extends StatelessWidget {
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [DashUi.ink, Color(0xFF1E293B)],
+            colors: [DashUi.navy, Color(0xFF1E293B)],
           ),
         ),
         child: Stack(
@@ -575,7 +575,7 @@ class _BrandPanel extends StatelessWidget {
                     '${copyrightLine()}  ·  $kAppName v$kAppVersion',
                     style: const TextStyle(
                       fontSize: 12.5,
-                      color: Color(0xFF64748B),
+                      color: DashUi.subtle,
                     ),
                   ),
                 ],

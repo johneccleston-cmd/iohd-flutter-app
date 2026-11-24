@@ -18,7 +18,13 @@ class AppSelection extends StatefulWidget {
 
 class _AppSelectionState extends State<AppSelection> {
   late final OverlayEntry _entry = OverlayEntry(
-    builder: (context) => SelectionArea(child: PageSelection(child: widget.child)),
+    // Text does not bring its own I-beam: left alone, every label inside a button, tab, menu row or tile showed the
+    // I-beam over the button's hand. With `defer`, text takes the cursor of whatever it sits in: the hand on anything
+    // clickable, the I-beam in an input box (the box sets it), the arrow elsewhere.
+    builder: (context) => DefaultSelectionStyle.merge(
+      mouseCursor: MouseCursor.defer,
+      child: SelectionArea(child: PageSelection(child: widget.child)),
+    ),
   );
 
   @override
@@ -166,4 +172,19 @@ class _BandedDelegate extends StaticSelectionContainerDelegate {
         if (byTop != 0) return byTop;
         return ra.right.compareTo(rb.right);
       };
+}
+
+/// The pointer over [child], words included. Flutter's own popup button (and other widgets that take a `child` and
+/// bring their own cursor) show the arrow on Windows and macOS, so a button face built from a Container and a Text
+/// is wrapped in this. A bare [MouseRegion] is not enough: the words in the face pick their own cursor first.
+class ClickCursor extends StatelessWidget {
+  const ClickCursor({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: DefaultSelectionStyle.merge(mouseCursor: SystemMouseCursors.click, child: child),
+      );
 }

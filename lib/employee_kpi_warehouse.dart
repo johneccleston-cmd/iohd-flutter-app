@@ -277,7 +277,14 @@ class _WhBody extends StatelessWidget {
       format: (v) => '${v.round()}',
       captions: last == null
           ? [now ? 'None completed yet' : 'None in $year']
-          : ['${dashCount(w.itemsCounted, 'item count')} in finished zones · last $lastDay', '${dashCount(w.itemsCounted, 'item count')} · last $lastDay', 'Last $lastDay', period],
+          : [
+              '${dashCount(w.itemsCounted, 'item count')} in finished zones · last $lastDay',
+              '${dashCount(w.itemsCounted, 'item count')} · last $lastDay',
+              // Keeps the figure on a card a little narrower than the line above needs (seven cards at 1500 px).
+              '${dashCount(w.itemsCounted, 'count')} · last $lastDay',
+              'Last $lastDay',
+              period,
+            ],
       definition: 'Zone counts finished in $year (a zone is one cycle count of part of the warehouse), and the item counts in them: '
           '${w.itemsCounted}, an item counted in two zones or weeks counting twice. Nothing records who did a count, so this is the '
           'whole warehouse team.',

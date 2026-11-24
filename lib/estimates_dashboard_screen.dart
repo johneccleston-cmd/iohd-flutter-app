@@ -9,6 +9,7 @@ import 'widgets/dashboard_layout.dart';
 import 'widgets/dash_story.dart';
 import 'widgets/dashboard_panels.dart';
 import 'widgets/estimate_list_dialog.dart';
+import 'widgets/flat_page.dart' show OverflowTooltip;
 
 // The Estimates dashboard. Lost value, win rate, estimates sent and the chart follow the selected year (by estimate
 // date); the open pipeline, its ages and the stale estimates are as of today, whatever year they are dated.
@@ -870,9 +871,8 @@ class _StalePanel extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Tooltip(
+                  OverflowTooltip(
                     message: e.customerName,
-                    waitDuration: const Duration(milliseconds: 600),
                     child: Text(e.customerName, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.name),
                   ),
                   Text(

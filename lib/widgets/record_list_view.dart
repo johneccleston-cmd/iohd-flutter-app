@@ -13,6 +13,7 @@ import '../utils/status_colors.dart';
 import 'app_ribbon.dart';
 import 'dashboard_kit.dart';
 import 'flat_page.dart';
+import 'page_selection.dart';
 
 /// What differs between the Jobs list and the Estimates list. Everything else is shared.
 class RecordListConfig {
@@ -524,6 +525,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
         selected: selected,
         label: count == null ? name : '$name, $shown',
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: () => _setStatus(name),
           borderRadius: BorderRadius.circular(10),
           hoverColor: DashUi.faint,
@@ -594,7 +596,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
               ),
             ),
         ],
-        child: Container(
+        child: ClickCursor(child: Container(
           height: 42,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
@@ -614,7 +616,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
               const Icon(Icons.arrow_drop_down_rounded, color: DashUi.slate),
             ],
           ),
-        ),
+        )),
       ),
     );
   }
@@ -795,7 +797,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
     return people.isEmpty ? cfg.peopleEmpty : people;
   }
 
-  Widget _tip(String message, Widget child) => Tooltip(message: message, waitDuration: const Duration(milliseconds: 400), child: child);
+  Widget _tip(String message, Widget child) => OverflowTooltip(message: message, child: child);
 
   Widget _idCell(Map<String, dynamic> r) => Text(_idOf(r), style: flatCellBold, maxLines: 1, overflow: TextOverflow.ellipsis);
 
@@ -815,7 +817,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
         _tip(customer, Text(customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: flatCellBold)),
         const SizedBox(height: 2),
         _tip(
-          address.isEmpty ? 'No address on file' : address,
+          address.isEmpty ? 'No address' : address,
           Text(
             address.isEmpty ? 'No address' : address,
             maxLines: 1,
@@ -871,6 +873,7 @@ class _RecordListViewState extends State<RecordListView> with AutomaticKeepAlive
 
   Widget _compactRow(Map<String, dynamic> r, int index) {
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: () => _open(r),
       hoverColor: DashUi.rowHover,
       child: Container(

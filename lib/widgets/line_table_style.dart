@@ -11,11 +11,11 @@ import 'dashboard_kit.dart';
 abstract final class LineTable {
   static const List<FontFeature> figures = [FontFeature.tabularFigures()];
 
-  /// Column headings: 12 px caps, ink.
-  static const head = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.ink, letterSpacing: 0.7, height: 1.2);
+  /// Column headings: 14 px caps, bold, ink (bigger and bolder, then 14 px, user 2026-11-23).
+  static const head = TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.7, height: 1.2);
 
   /// A figure in a cell, and what is typed in a value box.
-  static const cell = TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.35, fontFeatures: figures);
+  static const cell = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w500, color: DashUi.ink, height: 1.35, fontFeatures: figures);
 
   /// A worked-out amount (a line's total): semibold.
   static const amount = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, fontFeatures: figures);
@@ -27,10 +27,10 @@ abstract final class LineTable {
   static const name = TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, letterSpacing: -0.1);
 
   /// The quiet line under a name (an SKU, a count).
-  static const meta = TextStyle(fontSize: 12, color: DashUi.ink, height: 1.4, fontFeatures: figures);
+  static const meta = TextStyle(fontSize: 12, fontWeight: FontWeight.w500, color: DashUi.ink, height: 1.4, fontFeatures: figures);
 
   /// An opened description.
-  static const description = TextStyle(fontSize: 13, color: DashUi.ink, height: 1.5);
+  static const description = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: DashUi.ink, height: 1.5);
 
   /// A box's placeholder.
   static const hint = TextStyle(fontSize: 13, color: DashUi.slate, height: 1.35);
@@ -59,6 +59,14 @@ abstract final class LineTable {
   /// Behind the line being worked on.
   static final Color rowTint = DashUi.faint.withValues(alpha: 0.5);
 
+  /// An editable line under the pointer, in both tables (decision A3, 2026-11-23: one hover for Products & Services and
+  /// the rates table, which had it alone).
+  static final Color rowHover = Color.lerp(Colors.white, DashUi.faint, 0.55)!;
+
+  /// The line open for typing (a box in it has the keyboard), in both tables: deeper than [rowHover], with an ink edge
+  /// down its left, so hovered and open lines never look alike.
+  static final Color rowActive = Color.lerp(Colors.white, DashUi.faint, 0.85)!;
+
   /// Where a box puts its text: this far in from its sides, and above and below the text's line.
   static const cellX = 8.0;
   static const cellY = 6.0;
@@ -67,6 +75,45 @@ abstract final class LineTable {
   /// above and below it (31 px at 100%).
   static double boxHeight(BuildContext context) => (MediaQuery.textScalerOf(context).scale(14) * 1.35).ceilToDouble() + 2 * cellY;
 
+  /// A quantity arrow's fill: shaded at rest so the arrows read as buttons (user 2026-11-23), darker under the pointer,
+  /// darker again while pressed. Both tables' arrows use these.
+  static const stepRest = DashUi.faint, stepHover = DashUi.line, stepDown = Color(0xFFD6D6D6);
+
   /// A motion's length, or none with reduce motion.
   static Duration motion(BuildContext context, int ms) => MediaQuery.disableAnimationsOf(context) ? Duration.zero : Duration(milliseconds: ms);
+}
+
+/// A quantity arrow's chevron, filling its size: pointing up or down, round ends. Drawn rather than taken from the icon
+/// font, whose up and down chevrons sit a pixel off centre in opposite directions, so the pair looked uneven in its box
+/// (user 2026-11-23). Both tables' arrows draw it at 8 x 4.5.
+class StepChevronPainter extends CustomPainter {
+  final bool up;
+  final Color color;
+  const StepChevronPainter({required this.up, required this.color});
+
+  static const size = Size(8, 4.5);
+  static const _stroke = 1.6;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const i = _stroke / 2;
+    final top = up ? i : size.height - i;
+    final bottom = up ? size.height - i : i;
+    final path = Path()
+      ..moveTo(i, bottom)
+      ..lineTo(size.width / 2, top)
+      ..lineTo(size.width - i, bottom);
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(StepChevronPainter old) => old.up != up || old.color != color;
 }

@@ -38,6 +38,14 @@ class CatalogSearchField extends StatefulWidget {
   /// own height comes from its font, and its intrinsic height, which a Row stretched to, is taller than it draws).
   static const height = 40.0;
 
+  /// The room the results need under the box (the list is at most 440 px, with its margins). When the box sits closer
+  /// than this to the window's bottom, the page is scrolled up to make it; a page whose search is its last part adds
+  /// [CatalogSearchRoom] under it so there is page to scroll.
+  static const roomBelow = 460.0;
+
+  /// How many catalog search fields have the keyboard (0 or 1): a page's [CatalogSearchRoom] follows it.
+  static final typing = ValueNotifier<int>(0);
+
   final ValueChanged<CatalogChoice> onPick;
 
   /// Kept for the callers; the results no longer show price or cost (user 2026-11-20).
@@ -46,7 +54,21 @@ class CatalogSearchField extends StatefulWidget {
   /// Swappable for tests; the real search is [LineItemsApi.searchCatalog].
   final Future<List<CatalogEntry>> Function(String q)? search;
   final FocusNode? focusNode;
-  const CatalogSearchField({super.key, required this.onPick, required this.showCost, this.search, this.focusNode});
+
+  /// The words in the empty box (a job's table: "Add a line: ...").
+  final String hint;
+
+  /// Whether "Add a custom line" is offered (a service package's products are catalog products only, 2026-11-24).
+  final bool allowCustom;
+  const CatalogSearchField({
+    super.key,
+    required this.onPick,
+    required this.showCost,
+    this.search,
+    this.focusNode,
+    this.hint = 'Add a line: search products and services by name or SKU',
+    this.allowCustom = true,
+  });
 
   @override
   State<CatalogSearchField> createState() => _CatalogSearchFieldState();
@@ -60,8 +82,30 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
   String _lastQ = '';
   List<CatalogChoice> _last = const [];
 
+  /// Whether this field is counted in [CatalogSearchField.typing].
+  bool _counted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(_focusChanged);
+  }
+
+  void _focusChanged() {
+    final has = _focus.hasFocus;
+    if (has == _counted) return;
+    _counted = has;
+    CatalogSearchField.typing.value += has ? 1 : -1;
+  }
+
   @override
   void dispose() {
+    _focus.removeListener(_focusChanged);
+    if (_counted) {
+      _counted = false;
+      // After this frame: the tree is locked while it is taken down, and the room under the page listens.
+      scheduleMicrotask(() => CatalogSearchField.typing.value -= 1);
+    }
     _controller.dispose();
     if (widget.focusNode == null) _focus.dispose();
     super.dispose();
@@ -85,11 +129,12 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
       ]);
       out = [
         for (final e in found) CatalogChoice.entry(e),
-        if (found.isEmpty) const CatalogChoice.message('Nothing in the catalog matches. Add it as a custom line below.'),
-        CatalogChoice.custom(q),
+        if (found.isEmpty)
+          CatalogChoice.message(widget.allowCustom ? 'Nothing in the catalog matches. Add it as a custom line below.' : 'Nothing in the catalog matches.'),
+        if (widget.allowCustom) CatalogChoice.custom(q),
       ];
     } catch (e) {
-      out = [CatalogChoice.message('Couldn\'t search the catalog: $e'), CatalogChoice.custom(q)];
+      out = [CatalogChoice.message('Couldn\'t search the catalog: $e'), if (widget.allowCustom) CatalogChoice.custom(q)];
     }
     if (ticket != _asked) return _last;
     _lastQ = q;
@@ -148,17 +193,16 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
     }
   }
 
-  /// The list drops down under the field. When the field sits too low for it (under [_roomBelow] to the window's
-  /// bottom), the page scrolls the field up, as far as the page can go.
-  static const _roomBelow = 460.0;
-
+  /// The list drops down under the field. When the field sits too low for it (under [CatalogSearchField.roomBelow] to
+  /// the window's bottom), the page scrolls the field up, as far as the page can go (see [CatalogSearchRoom] for a
+  /// field at the very end of its page).
   void _makeRoomBelow() {
     final fieldContext = _fieldKey.currentContext;
     final box = fieldContext?.findRenderObject();
     final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
     if (fieldContext == null || box is! RenderBox || overlay is! RenderBox || !box.hasSize) return;
     final bottom = box.localToGlobal(Offset(0, box.size.height), ancestor: overlay).dy;
-    final short = _roomBelow - (overlay.size.height - bottom);
+    final short = CatalogSearchField.roomBelow - (overlay.size.height - bottom);
     if (short <= 0) return;
     final position = Scrollable.maybeOf(fieldContext)?.position;
     if (position == null) return;
@@ -185,7 +229,6 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
       optionsViewOpenDirection: OptionsViewOpenDirection.down,
       fieldViewBuilder: (context, controller, focus, onSubmit) => TextField(
         key: _fieldKey,
-        mouseCursor: SystemMouseCursors.click,
         controller: controller,
         focusNode: focus,
         onSubmitted: (_) => onSubmit(),
@@ -205,7 +248,7 @@ class _CatalogSearchFieldState extends State<CatalogSearchField> {
           filled: true,
           fillColor: Colors.white.withValues(alpha: 0),
           hoverColor: DashUi.faint.withValues(alpha: 0.6),
-          hintText: 'Add a line: search products and services by name or SKU',
+          hintText: widget.hint,
           hintStyle: const TextStyle(fontSize: 13, color: DashUi.ink, fontWeight: FontWeight.w500),
           prefixIcon: const Icon(Icons.add_rounded, size: 18, color: DashUi.ink),
           prefixIconConstraints: const BoxConstraints(minWidth: 34, minHeight: 36),
@@ -443,6 +486,7 @@ class _ChoiceRow extends StatelessWidget {
   /// pointer's, which moves it), a touch darker while pressed, as the block's menus have it. No hover colour of its own:
   /// the pointer moves the highlight, so two rows are never lit at once.
   Widget _tap({required EdgeInsets padding, required Widget child}) => InkWell(
+    mouseCursor: WidgetStateMouseCursor.clickable,
     onTap: onTap,
     onHover: (inside) {
       if (inside) onHover?.call();
@@ -457,4 +501,109 @@ class _ChoiceRow extends StatelessWidget {
       child: child,
     ),
   );
+}
+
+/// Blank page at the end of a page that holds a [CatalogSearchField], while a search has the keyboard: the page can
+/// then scroll the field up and the results drop down in full. Without it a page with little under its search had
+/// nothing to scroll to, and the results were squeezed into the strip between the field and the window's bottom (the
+/// service page's PRODUCTS USED search, 2026-11-24: one 38 px row, nothing readable; a job's "Add a line" got about three
+/// rows). Put it last in the page's scrolling content.
+///
+/// It never moves what is on screen. It appears in full when a search takes the keyboard (below the window, so nothing
+/// moves). When the search lets go, only the part below the window goes at once; what is in view stays and goes as the
+/// page is scrolled up past it (checked in Chrome 2026-11-24: taking it all away at once slid the page 383 px down right
+/// after a click into a box above).
+///
+/// [focusNode] ties it to one field; without one it follows every catalog search ([CatalogSearchField.typing]).
+class CatalogSearchRoom extends StatefulWidget {
+  final FocusNode? focusNode;
+  const CatalogSearchRoom({super.key, this.focusNode});
+
+  @override
+  State<CatalogSearchRoom> createState() => _CatalogSearchRoomState();
+}
+
+class _CatalogSearchRoomState extends State<CatalogSearchRoom> {
+  Listenable get _source => widget.focusNode ?? CatalogSearchField.typing;
+  bool get _open => widget.focusNode?.hasFocus ?? CatalogSearchField.typing.value > 0;
+
+  /// The room's height now: [CatalogSearchField.roomBelow] while a search has the keyboard, then what is still in view.
+  double _height = 0;
+
+  /// The page's scroll position, followed while some room is left over after the search let go.
+  ScrollPosition? _position;
+
+  @override
+  void initState() {
+    super.initState();
+    _source.addListener(_changed);
+    _height = _open ? CatalogSearchField.roomBelow : 0;
+  }
+
+  @override
+  void didUpdateWidget(CatalogSearchRoom old) {
+    super.didUpdateWidget(old);
+    final was = old.focusNode ?? CatalogSearchField.typing;
+    if (was != _source) {
+      was.removeListener(_changed);
+      _source.addListener(_changed);
+    }
+  }
+
+  @override
+  void dispose() {
+    _source.removeListener(_changed);
+    _follow(null);
+    super.dispose();
+  }
+
+  void _follow(ScrollPosition? p) {
+    if (p == _position) return;
+    _position?.removeListener(_scrolled);
+    _position = p;
+    _position?.addListener(_scrolled);
+  }
+
+  /// How much of the room is in view: from its top to the bottom of the page's viewport (0 when it is below it).
+  double _inView() {
+    final box = context.findRenderObject();
+    final scrollable = Scrollable.maybeOf(context);
+    final viewport = scrollable?.context.findRenderObject();
+    if (box is! RenderBox || !box.attached || viewport is! RenderBox || !viewport.attached) return 0;
+    final top = box.localToGlobal(Offset.zero).dy;
+    final bottom = viewport.localToGlobal(Offset(0, viewport.size.height)).dy;
+    return (bottom - top).clamp(0.0, _height);
+  }
+
+  void _changed() {
+    if (!mounted) return;
+    if (_open) {
+      _follow(null);
+      if (_height != CatalogSearchField.roomBelow) setState(() => _height = CatalogSearchField.roomBelow);
+      return;
+    }
+    // Let go: keep only what is in view, then follow the page as it scrolls.
+    final keep = _inView();
+    setState(() => _height = keep);
+    _follow(keep > 0 ? Scrollable.maybeOf(context)?.position : null);
+  }
+
+  bool _measuring = false;
+
+  /// The page scrolled: once it is laid out at its new offset (positions read before that are the old ones), the room
+  /// keeps only what is still in view.
+  void _scrolled() {
+    if (!mounted || _open || _measuring) return;
+    _measuring = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _measuring = false;
+      if (!mounted || _open) return;
+      final keep = _inView();
+      if (keep < _height) setState(() => _height = keep);
+      if (keep <= 0) _follow(null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => SizedBox(key: const ValueKey('catalog-search-room'), height: _height);
 }

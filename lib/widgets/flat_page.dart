@@ -4,6 +4,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph, RenderProxyBox;
 import 'package:intl/intl.dart';
 
 import '../theme/app_theme.dart';
@@ -49,7 +50,7 @@ class PageBanner extends StatelessWidget {
     disabledBackgroundColor: Colors.white.withValues(alpha: 0.14),
     disabledForegroundColor: RibbonColors.quiet,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+    textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 12.5, fontWeight: FontWeight.w700),
   );
 
   /// A white button that stays visible on the dark banner.
@@ -112,16 +113,16 @@ class _BannerMore extends StatelessWidget {
   }
 }
 
-/// The standard page edge for every full screen (user rule, 2026-11-12; bottom removed 2026-11-16): everything below the
-/// ribbon sits on a white sheet with a slight [edge] of the page backdrop on the left and right, none on top or bottom, so
-/// the sheet runs straight out of the ribbon and down to the window's bottom edge. Wrap the whole body under the ribbon in it (the 3 px loading strip can stay above it,
-/// full width under the ribbon). Pages made of blocks (Job detail) use [edge] for their outer padding instead.
+/// The standard body for every full screen: everything below the ribbon sits on a white sheet that runs edge to edge,
+/// lined up with the navy ribbon's left and right edges (user 2026-11-24: the outer side margin is gone app-wide; before
+/// that an 8 px [edge] of backdrop showed on each side). Wrap the whole body under the ribbon in it (the 3 px loading
+/// strip can stay above it, full width under the ribbon). Content spacing belongs inside the page, not around the sheet.
 class PageSheet extends StatelessWidget {
-  /// The margin on the left and right. The same as the gutter between Job detail's blocks.
+  /// The gutter between a block page's blocks (Job detail). No longer used as an outer margin.
   static const double edge = 8;
 
-  /// The page edge as padding: the sides only, nothing on top or bottom.
-  static const EdgeInsets padding = EdgeInsets.symmetric(horizontal: edge);
+  /// The sheet's outer margin: none (user 2026-11-24).
+  static const EdgeInsets padding = EdgeInsets.zero;
 
   final Widget child;
 
@@ -328,6 +329,7 @@ class FlatTableHeader extends StatelessWidget {
         button: true,
         value: active ? (ascending ? 'Sorted ascending' : 'Sorted descending') : null,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: () => onSort!(key),
           borderRadius: BorderRadius.circular(6),
           child: Row(
@@ -366,6 +368,7 @@ class FlatTableRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: onTap,
       hoverColor: striped ? DashUi.rowHover : DashUi.rowStripe,
       child: Container(
@@ -432,36 +435,123 @@ Widget flatRowEntrance(Animation<double> run, int index, Widget child) {
   );
 }
 
-/// A link inside a table cell. Not selectable text: the app-wide selection's I-beam would replace the click cursor.
-class FlatLink extends StatelessWidget {
-  final String text;
-  final String tip;
-  final VoidCallback onTap;
-  const FlatLink(this.text, {super.key, required this.tip, required this.onTap});
+/// Hover text that only appears when the text inside [child] is cut short with an ellipsis. A tooltip that just repeats
+/// what is already on screen is noise (user rule 2026-11-23), so a name that fits shows no tooltip at all, and one cut
+/// off by a narrow column shows its full wording. The first [Text] found under [child] is the one checked.
+class OverflowTooltip extends StatefulWidget {
+  final String message;
+  final Widget child;
+  const OverflowTooltip({super.key, required this.message, required this.child});
+
+  @override
+  State<OverflowTooltip> createState() => _OverflowTooltipState();
+}
+
+class _OverflowTooltipState extends State<OverflowTooltip> {
+  bool _cut = false;
+
+  bool _measure() {
+    RenderParagraph? text;
+    void visit(RenderObject o) {
+      if (text != null) return;
+      if (o is RenderParagraph) {
+        text = o;
+        return;
+      }
+      o.visitChildren(visit);
+    }
+
+    final root = context.findRenderObject();
+    if (root != null) visit(root);
+    final t = text;
+    return t != null && t.hasSize && t.didExceedMaxLines;
+  }
+
+  // Checked after every build, whenever the cell's width changes (a window resize does not rebuild it), and on hover.
+  void _sync() {
+    if (!mounted) return;
+    final cut = _measure();
+    if (cut != _cut) setState(() => _cut = cut);
+  }
+
+  void _syncAfterFrame() => WidgetsBinding.instance.addPostFrameCallback((_) => _sync());
 
   @override
   Widget build(BuildContext context) {
-    return Tooltip(
-      message: tip,
-      child: SelectionContainer.disabled(
-        child: Semantics(
-          link: true,
-          child: InkWell(
-            onTap: onTap,
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: flatCellStyle.copyWith(
-                color: DashUi.blue,
-                decoration: TextDecoration.underline,
-                decorationColor: DashUi.blue.withValues(alpha: 0.4),
-              ),
+    _syncAfterFrame();
+    return MouseRegion(
+      onEnter: (_) => _sync(),
+      child: _SizeProbe(
+        onResize: _syncAfterFrame,
+        child: Tooltip(
+          message: _cut ? widget.message : '',
+          waitDuration: const Duration(milliseconds: 400),
+          child: widget.child,
+        ),
+      ),
+    );
+  }
+}
+
+/// Calls [onResize] when its laid-out size changes. Unlike a LayoutBuilder it is safe inside intrinsic sizing.
+class _SizeProbe extends SingleChildRenderObjectWidget {
+  final VoidCallback onResize;
+  const _SizeProbe({required this.onResize, super.child});
+
+  @override
+  RenderObject createRenderObject(BuildContext context) => _RenderSizeProbe(onResize);
+
+  @override
+  void updateRenderObject(BuildContext context, _RenderSizeProbe renderObject) => renderObject.onResize = onResize;
+}
+
+class _RenderSizeProbe extends RenderProxyBox {
+  VoidCallback onResize;
+  Size? _last;
+  _RenderSizeProbe(this.onResize);
+
+  @override
+  void performLayout() {
+    super.performLayout();
+    if (size != _last) {
+      _last = size;
+      onResize();
+    }
+  }
+}
+
+/// A link inside a table cell. Not selectable text: the app-wide selection's I-beam would replace the click cursor.
+/// [tip] is only for hover text that adds something the link does not say; without it the full link text shows on
+/// hover only when the column cuts it short.
+class FlatLink extends StatelessWidget {
+  final String text;
+  final String? tip;
+  final VoidCallback onTap;
+  const FlatLink(this.text, {super.key, this.tip, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final tip = this.tip;
+    final link = SelectionContainer.disabled(
+      child: Semantics(
+        link: true,
+        child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
+          onTap: onTap,
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: flatCellStyle.copyWith(
+              color: DashUi.blue,
+              decoration: TextDecoration.underline,
+              decorationColor: DashUi.blue.withValues(alpha: 0.4),
             ),
           ),
         ),
       ),
     );
+    return tip == null ? OverflowTooltip(message: text, child: link) : Tooltip(message: tip, child: link);
   }
 }
 

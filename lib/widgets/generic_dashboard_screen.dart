@@ -51,7 +51,7 @@ class GenericDashboardScreen extends StatelessWidget {
               Text(
                 '$title metrics layout ready for implementation ($selectedYear)',
                 style: const TextStyle(
-                  color: Color(0xFF9CA3AF),
+                  color: Color(0xFF9E9E9E),
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
                 ),

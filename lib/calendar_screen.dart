@@ -1819,6 +1819,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       child: Material(
         color: bg,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: events.isEmpty ? null : () => _openDay(day), // an empty day has nothing to show
           hoverColor: events.isEmpty ? Colors.transparent : _ink.withValues(alpha: 0.035),
           child: Container(
@@ -1946,6 +1947,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             child: Material(
               color: Colors.white,
               child: InkWell(
+                mouseCursor: WidgetStateMouseCursor.clickable,
                 onTap: events.isEmpty ? null : () => _openDay(day),
                 hoverColor: _ink.withValues(alpha: 0.035),
                 child: Container(
@@ -2069,6 +2071,7 @@ class _EventChipState extends State<_EventChip> {
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: widget.onTap,
           onHover: (h) => setState(() => _hover = h),
           hoverColor: Colors.transparent,
@@ -2255,6 +2258,7 @@ class _EventCardState extends State<_EventCard> {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: widget.onTap,
         onHover: (h) => setState(() => _hover = h),
         hoverColor: Colors.transparent,

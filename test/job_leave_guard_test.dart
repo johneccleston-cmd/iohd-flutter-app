@@ -5,7 +5,6 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -77,7 +76,7 @@ Future<void> _change(WidgetTester t) async {
   await _frames(t, 2);
   await t.enterText(find.byKey(const ValueKey('line-2-qty')), '6');
   await t.pump(const Duration(milliseconds: 50));
-  await t.sendKeyEvent(LogicalKeyboardKey.escape);
+  await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
   await _frames(t, 3);
   expect(find.text('Changed, not saved'), findsOneWidget);
 }

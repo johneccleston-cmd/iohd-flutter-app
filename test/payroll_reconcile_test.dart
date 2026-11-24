@@ -113,9 +113,12 @@ void main() {
           final totals = t['totals'] as Map;
           final why = '${reg.names[r]} in "${e.key}"';
           final parts = [
-            'Closed-Job Net', 'Advances', 'Callbacks', 'Sales Commission', 'Retainage Held', 'Other', 'Rounding',
+            'Closed-Job Net', 'Advances', 'Callbacks', 'Sales Commission', 'Retainage Held', 'Other',
           ].fold<double>(0, (s, h) => s + v(row, h));
-          expect(parts, closeTo(v(row, 'Gross'), 0.005), reason: 'pieces = gross: $why');
+          // Without an Other column, per-job rounding (under 5 cents a week) isn't shown, so allow those cents.
+          final weeks = ((t['weeks'] as List?) ?? const []).length;
+          final slack = reg.heads.contains('Other') ? 0.005 : 0.05 * (weeks < 1 ? 1 : weeks);
+          expect(parts, closeTo(v(row, 'Gross'), slack), reason: 'pieces = gross: $why');
           expect(v(row, 'Gross') + v(row, 'Hurdle') + v(row, 'Advances Recovered'), closeTo(v(row, 'Cash Pay'), 0.005),
               reason: 'gross - hurdle - recovered = cash pay: $why');
           expect(v(row, 'Cash Pay') + v(row, 'Retainage Released') + v(row, 'Owed Recovered'), closeTo(v(row, 'Total Due'), 0.005),
@@ -134,7 +137,7 @@ void main() {
       });
     }
 
-    test('optional columns appear only when someone has them, and rounding is called rounding', () {
+    test('optional columns appear only when someone has them, and rounding has no column', () {
       final plain = payrollRegisterForTest(standard1).heads;
       for (final h in ['Advances Recovered', 'Owed Recovered', 'Other', 'Rounding']) {
         expect(plain, isNot(contains(h)), reason: 'an ordinary week has no "$h"');
@@ -144,13 +147,13 @@ void main() {
       final edge = payrollRegisterForTest(payrollEdgeReport()).heads;
       expect(edge, containsAllInOrder(['Retainage Held', 'Other', 'Gross', 'Hurdle', 'Advances Recovered', 'Cash Pay', 'Retainage Released', 'Owed Recovered', 'Total Due']));
 
-      // Only a cent of per-job rounding: the column says so instead of calling it an adjustment.
+      // Only a cent of per-job rounding: no column for it, and it isn't called an adjustment.
       final cents = payrollApplyEdges(
         jsonDecode(payrollReport(DateTime(2026, 10, 18), 1)) as Map<String, dynamic>,
         const {12: PayrollEdge(drift: 0.01), 16: PayrollEdge(drift: -0.01)},
       );
       final heads = payrollRegisterForTest(cents).heads;
-      expect(heads, contains('Rounding'));
+      expect(heads, isNot(contains('Rounding')));
       expect(heads, isNot(contains('Other')));
     });
 
@@ -229,7 +232,7 @@ void main() {
       final report = payrollCrowdReport(40);
       final pages = await _pdf(report);
       final coverStart = pages.indexWhere((p) => p.contains('register'));
-      final coverEnd = pages.indexWhere((p) => p.contains('Each') && p.contains('across:'));
+      final coverEnd = pages.indexWhere((p) => p.contains('following') && p.contains('pages'));
       expect(coverEnd, greaterThan(coverStart), reason: '40 rows do not fit one landscape page');
       expect(pages[coverEnd], contains('Technician'), reason: 'the register header repeats on the next page');
       expect(pages[coverEnd], contains('Total'));
@@ -341,7 +344,7 @@ void main() {
             expect(onRow, isNotEmpty, reason: '${reg.names[r]}: ${reg.heads[i]} should show $want');
           }
         }
-        expect(find.textContaining('Each row adds across'), findsOneWidget);
+        expect(find.textContaining('Each row adds across'), findsNothing, reason: 'no helper sentence under the register');
       });
     });
 
@@ -389,7 +392,8 @@ void main() {
         expect(find.text('-\$150.00'), findsWidgets);
       });
       await withScreen(t, payrollEdgeReport(), tech: '26', () async {
-        expect(find.text('Rounding'), findsOneWidget, reason: 'a cent of per-job rounding is named, not hidden');
+        expect(find.text('Rounding'), findsNothing, reason: 'per-job rounding cents have no ledger line');
+        expect(find.text('Other adjustments'), findsNothing, reason: 'a cent of rounding is not an adjustment');
       });
     });
 

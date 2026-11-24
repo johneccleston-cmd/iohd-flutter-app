@@ -155,10 +155,11 @@ void main() {
     );
     await http.runWithClient(() async {
       await _pump(t, r);
-      await t.ensureVisible(find.text('Products & Services'));
-      expect(find.text('Products & Services'), findsOneWidget);
+      await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
+      expect(find.text('PRODUCTS & SERVICES'), findsOneWidget);
       expect(find.text('Complete door'), findsOneWidget);
-      expect(find.text('Sales tax'), findsOneWidget);
+      // The tax by its place (user 2026-11-24): "Sales Tax (Fayetteville)" reads "Sales tax Fayetteville".
+      expect(find.text('Sales tax Fayetteville'), findsOneWidget);
       expect(find.text('Same Day Service Credit'), findsOneWidget);
       expect(find.text(r'-$10.00'), findsOneWidget, reason: 'a discount shows as a negative');
       expect(find.text(r'$1,087.75'), findsWidgets);
@@ -169,7 +170,7 @@ void main() {
     final gap = _record(total: 1100, itemsTotal: 1000);
     await http.runWithClient(() async {
       await _pump(t, gap);
-      await t.ensureVisible(find.text('Products & Services'));
+      await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
       expect(find.text('Tax and other charges'), findsOneWidget);
     }, () => _mock(gap));
   });

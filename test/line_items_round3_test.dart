@@ -57,7 +57,7 @@ final _platforms = TargetPlatformVariant({TargetPlatform.android, TargetPlatform
 Finder _inTable(Finder f) => find.descendant(of: _editor, matching: f);
 
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -162,32 +162,49 @@ List<(String, Rect)> _textsIn(Element slot) {
   return out;
 }
 
-/// Each column's heading against each value under it: right edges for the figures, left edges for the item and the
-/// tax. Returns the misses, each saying how far off it was.
+/// Each column's heading against each value under it, every column left-aligned (user 2026-11-23): a heading starts
+/// where its values start. In a box a figure follows its "$ ": the "$" starts at the heading, and a boxed figure starts
+/// one "$ " further in, the same in every column, closed or open (an open field's "$" is its own prefix, not found as a
+/// text here, so its figure is checked against that same offset). Returns the misses, each saying how far off it was.
 List<String> _misaligned(WidgetTester t, {double tolerance = 0.75}) {
   final misses = <String>[];
+  final cols = <String, (double, List<List<(String, Rect)>>)>{};
   for (final col in ['qty', 'rate', 'amount', 'cost', 'tax', 'item']) {
     final slots = _inTable(find.byKey(ValueKey('col-$col'))).evaluate().toList();
     if (slots.isEmpty) continue;
     final head = _textsIn(slots.first);
     expect(head, isNotEmpty, reason: 'the $col heading');
-    final left = col == 'tax' || col == 'item';
-    // A selection box takes in the letter spacing after a heading's last letter: measure to where the letter ends.
-    final spacing = (_inTable(find.byKey(ValueKey('col-$col'))).evaluate().first.findRenderObject() == null)
-        ? 0.0
-        : (find.descendant(of: find.byElementPredicate((e) => e == slots.first), matching: find.byType(Text)).evaluate().first.widget as Text).style?.letterSpacing ?? 0.0;
-    final h = left ? head.first.$2.left : head.last.$2.right - spacing;
-    for (final slot in slots.skip(1)) {
-      // A discount's tax cell says "Off the total" (USER RULE 2026-11-20: no "Off taxed lines" checkbox any more): text,
-      // measured like every other value.
-      final texts = _textsIn(slot);
-      if (texts.isEmpty) continue;
-      // The value: the figure at the right of a figure's cell ("$" sits at a box's left), the first text of the others.
-      final (text, r) = left ? texts.first : texts.reduce((a, b) => a.$2.right >= b.$2.right ? a : b);
-      final at = left ? r.left : r.right;
-      if ((at - h).abs() > tolerance) misses.add('$col "$text" ${left ? 'starts' : 'ends'} at ${at.toStringAsFixed(2)}, heading at ${h.toStringAsFixed(2)}');
+    cols[col] = (head.first.$2.left, [for (final slot in slots.skip(1)) _textsIn(slot)]);
+  }
+  // How far a boxed figure sits after its "$": measured where both are texts (a closed box).
+  double? dollarGap;
+  for (final (h, rows) in cols.values) {
+    for (final texts in rows) {
+      final d = texts.where((x) => x.$1.trim() == r'$').firstOrNull;
+      final f = texts.where((x) => x.$1.trim() != r'$').firstOrNull;
+      if (d != null && f != null) {
+        dollarGap ??= f.$2.left - h;
+      }
     }
   }
+  String at(double x) => x.toStringAsFixed(2);
+  cols.forEach((col, entry) {
+    final (h, rows) = entry;
+    for (final texts in rows) {
+      // A discount's tax cell says "Off the total" (USER RULE 2026-11-20): text, measured like every other value.
+      if (texts.isEmpty) continue;
+      final d = texts.where((x) => x.$1.trim() == r'$').firstOrNull;
+      final f = texts.where((x) => x.$1.trim() != r'$').firstOrNull;
+      if (d != null && (d.$2.left - h).abs() > tolerance) misses.add('$col "\$" starts at ${at(d.$2.left)}, heading at ${at(h)}');
+      if (f == null) continue;
+      final x = f.$2.left;
+      final plain = (x - h).abs() <= tolerance;
+      final boxed = dollarGap != null && !f.$1.startsWith(r'$') && (x - (h + dollarGap)).abs() <= tolerance;
+      if (d != null ? !boxed : !(plain || boxed)) {
+        misses.add('$col "${f.$1}" starts at ${at(x)}, heading at ${at(h)}${dollarGap == null ? '' : ' (a boxed figure at ${at(h + dollarGap)})'}');
+      }
+    }
+  });
   return misses;
 }
 
@@ -198,7 +215,7 @@ Map<String, Rect> _figures(WidgetTester t) {
     final slots = _inTable(find.byKey(ValueKey('col-$col'))).evaluate().toList();
     for (var i = 1; i < slots.length; i++) {
       for (final (text, r) in _textsIn(slots[i])) {
-        if (text == r'$') continue;
+        if (text.trim() == r'$') continue;
         out['$col $i $text'] = r;
       }
     }
@@ -438,7 +455,8 @@ void main() {
         }
       });
     }, variant: _platforms);
-    testWidgets('an empty cost box: its "Cost" stays put as the line opens', (t) async {
+    // No cost reads 0.00, closed and open (user 2026-11-23; it was a "Cost" placeholder).
+    testWidgets('an empty cost box: its "0.00" stays put as the line opens', (t) async {
       final s = FakeJobServer();
       s.addOption(kEstimateId, 'Option 1', [_l('Keyless Entry Pad', rate: 79), _l('Torsion Spring', qty: 2, rate: 89, cost: 19.5)], taxRate: 10.5);
       await pumpJobPage(t, s, id: kEstimateId, size: const Size(1500, 1400), body: () async {
@@ -446,7 +464,7 @@ void main() {
         await _edit(t);
         Rect costWord() {
           final slot = find.byKey(const ValueKey('col-cost')).at(1);
-          final e = find.descendant(of: slot, matching: find.text('Cost')).evaluate().first;
+          final e = find.descendant(of: slot, matching: find.text('0.00')).evaluate().first;
           return _glyphs(e)!;
         }
 
@@ -456,7 +474,7 @@ void main() {
         expect(find.byKey(const ValueKey('line-0-cost')), findsOneWidget, reason: 'the line is open');
         final open = costWord();
         expect(open.right, closeTo(closed.right, 0.5));
-        expect(open.left, closeTo(closed.left, 0.5), reason: 'the placeholder grew as its line opened');
+        expect(open.left, closeTo(closed.left, 0.5), reason: 'the 0.00 grew as its line opened');
         expect(open.top, closeTo(closed.top, 0.5));
       });
     }, variant: _platforms);
@@ -540,7 +558,7 @@ void main() {
     });
   });
 
-  group('5. read-only lines alternate white and a faint cool off-white', () {
+  group('5. read-only lines are all white (USER RULE 2026-11-24: no stripes, a black rule under each line)', () {
     Color? shellColor(WidgetTester t, String name) {
       // The line's own background: the first box with a fill above its name.
       for (final e in find.ancestor(of: _inTable(find.text(name)).first, matching: find.byType(AnimatedContainer)).evaluate()) {
@@ -550,26 +568,26 @@ void main() {
       return null;
     }
 
-    testWidgets('white first, then the stripe; no rules between lines; editing keeps its lines white', (t) async {
+    testWidgets('every line white, a black rule under each product and service; editing keeps its lines white', (t) async {
       final s = FakeJobServer();
       _seed(s);
       await pumpJobPage(t, s, id: kEstimateId, size: const Size(1500, 1800), body: () async {
         await _toBlock(t);
         final names = ['Clopay | Classic Steel | 4300 | Complete Door | Almond', 'LiftMaster 87504 Smart Opener', 'Torsion Spring | 0.250 x 2" x 32"', 'Stop Mold | Install New Standard Color'];
         final colors = [for (final n in names) shellColor(t, n)];
-        expect(colors[0], Colors.white);
-        expect(colors[2], Colors.white);
-        expect(colors[1], colors[3]);
-        final stripe = colors[1]!;
-        expect(stripe, isNot(Colors.white));
-        // Barely there and cool: every channel within 8 of white, blue the highest.
-        expect(255 - (stripe.r * 255).round(), inInclusiveRange(1, 8));
-        expect((stripe.b * 255).round(), greaterThanOrEqualTo((stripe.r * 255).round()));
+        expect(colors, everyElement(Colors.white), reason: 'no stripes');
+        final inkRules = _inTable(find.byWidgetPredicate((w) => w is Container && w.color == DashUi.line && w.constraints?.maxHeight == 1));
+        expect(inkRules.evaluate().length, greaterThanOrEqualTo(names.length), reason: 'a dark rule under each line');
         final firstTop = t.getTopLeft(_inTable(find.text(names.first))).dy;
         final lastBottom = t.getBottomLeft(_inTable(find.text('Loyal customer discount'))).dy;
         final rules = [for (final e in _inTable(find.byType(Divider)).evaluate()) t.getTopLeft(find.byWidget(e.widget)).dy];
-        expect(rules.where((y) => y > firstTop && y < lastBottom), isEmpty, reason: 'no rules between the lines');
-        expect(rules.where((y) => y > lastBottom && y < lastBottom + 40), hasLength(1), reason: 'one hairline closes the table');
+        // One rule only: between the products and services and the discounts and fees (USER RULE 2026-11-24).
+        final split = t.getTopLeft(_inTable(find.byKey(const ValueKey('charges-rule')))).dy;
+        expect(split, lessThan(t.getTopLeft(_inTable(find.text('Loyal customer discount'))).dy));
+        expect(split, greaterThan(t.getBottomLeft(_inTable(find.text(names.last))).dy));
+        expect(rules.where((y) => y > firstTop && y < lastBottom && y != split), isEmpty, reason: 'no rules between the lines');
+        // The table's last rows are now its taxes (under the discounts): one hairline closes it, under them.
+        expect(rules.where((y) => y > lastBottom), hasLength(1), reason: 'one hairline closes the table');
         await _edit(t);
         for (final n in names) {
           final c = shellColor(t, n);

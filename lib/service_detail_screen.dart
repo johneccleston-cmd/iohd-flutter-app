@@ -9,7 +9,8 @@ import 'services/line_items_api.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/app_menu.dart';
 import 'widgets/app_ribbon.dart';
-import 'widgets/catalog_kit.dart';
+import 'widgets/catalog_kit.dart' hide CatalogSearchField;
+import 'widgets/catalog_search_field.dart' show CatalogChoice, CatalogSearchField, CatalogSearchRoom;
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 import 'widgets/focus_ring.dart';
@@ -62,6 +63,13 @@ String serviceLocation(String key) => Uri(path: '/inventory/services/item', quer
 /// The service a page just saved or reset, so the Services Catalog list shows it without reloading.
 final serviceChanged = ValueNotifier<CatalogEntry?>(null);
 
+/// The most rate lines a service can have (MAX_RATES in the backend's src/serviceOverrides.js). The page stops at it,
+/// so a 26th line can't be made and then refused by the server after the info was saved (P&S round 2, B10).
+const kMaxServiceRates = 25;
+
+/// The most products a package can list (MAX_PRODUCTS in the backend's src/serviceOverrides.js, 2026-11-24).
+const kMaxServiceProducts = 50;
+
 class ServiceDetailScreen extends StatefulWidget {
   final String serviceKey;
 
@@ -72,8 +80,21 @@ class ServiceDetailScreen extends StatefulWidget {
   final Future<({List<CatalogEntry> entries, bool canSeeCost, int historyDays})> Function()? loader;
   final Future<CatalogEntry> Function(String key, Map<String, dynamic> fields)? saver;
   final Future<CatalogEntry> Function(String key, List<ServiceRate> rates)? ratesSaver;
+  final Future<CatalogEntry> Function(String key, List<ServiceProduct> products)? productsSaver;
 
-  const ServiceDetailScreen({super.key, required this.serviceKey, this.initial, this.loader, this.saver, this.ratesSaver});
+  /// The PRODUCTS USED search (tests pass a fake; the app searches the catalog). Only products are offered.
+  final Future<List<CatalogEntry>> Function(String q)? productSearch;
+
+  const ServiceDetailScreen({
+    super.key,
+    required this.serviceKey,
+    this.initial,
+    this.loader,
+    this.saver,
+    this.ratesSaver,
+    this.productsSaver,
+    this.productSearch,
+  });
 
   @override
   State<ServiceDetailScreen> createState() => _ServiceDetailScreenState();
@@ -100,14 +121,14 @@ class _RateDraft {
   /// The other boxes' focus: each box draws its own focused edge from it, and the figures are tidied as it leaves.
   final FocusNode descFocus = FocusNode(debugLabel: 'rate description');
   final FocusNode qtyFocus = FocusNode(debugLabel: 'rate quantity');
-  final FocusNode rateFocus = FocusNode(debugLabel: 'rate regular rate');
-  final FocusNode costFocus = FocusNode(debugLabel: 'rate internal cost');
+  final FocusNode rateFocus = FocusNode(debugLabel: 'rate rate');
+  final FocusNode costFocus = FocusNode(debugLabel: 'rate cost');
 
   _RateDraft(ServiceRate r)
     : name = TextEditingController(text: r.name),
       description = TextEditingController(text: r.description),
       // A whole quantity reads "2", as it does on the page, not "2.00" (UX audit 2026-11-19).
-      qty = TextEditingController(text: r.qty == r.qty.roundToDouble() ? r.qty.toStringAsFixed(0) : _num(r.qty)),
+      qty = TextEditingController(text: _ServiceDetailScreenState._qty(r.qty)),
       rate = TextEditingController(text: _num(r.rate)),
       cost = TextEditingController(text: _num(r.cost)),
       // A whole percentage reads "20", not "20.00"; a fixed amount keeps its cents.
@@ -116,11 +137,26 @@ class _RateDraft {
             ? ''
             : r.commissionType == 'percent' && r.commissionValue != null && r.commissionValue == r.commissionValue!.roundToDouble()
             ? r.commissionValue!.toStringAsFixed(0)
+            : r.commissionType == 'percent'
+            ? _ServiceDetailScreenState._qty(r.commissionValue!)
             : _num(r.commissionValue),
       ),
       commissionType = r.commissionType ?? 'percent';
 
-  static String _num(double? v) => v == null ? '' : v.toStringAsFixed(2);
+  /// A money figure as its box shows it: cents and thousands commas ("12,450.50"), as the page reads it (review
+  /// 2026-11-24: the boxes showed "12450.50" beside a read "$12,450.50"). [parse] drops the commas again.
+  static String _num(double? v) {
+    if (v == null) return '';
+    final fixed = v.toStringAsFixed(2);
+    final dot = fixed.indexOf('.');
+    final whole = fixed.substring(0, dot);
+    final b = StringBuffer();
+    for (var i = 0; i < whole.length; i++) {
+      if (i > 0 && (whole.length - i) % 3 == 0) b.write(',');
+      b.write(whole[i]);
+    }
+    return '$b${fixed.substring(dot)}';
+  }
 
   List<TextEditingController> get boxes => [name, description, qty, rate, cost, commission];
 
@@ -139,7 +175,7 @@ class _RateDraft {
     final v = parse(c.text);
     if (v == null || v.isNaN) return;
     final whole = c == qty || (c == commission && commissionType == 'percent');
-    final t = whole ? (v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2)) : v.toStringAsFixed(2);
+    final t = whole ? _ServiceDetailScreenState._qty(v) : _num(v);
     if (t != c.text) c.text = t;
   }
 
@@ -161,6 +197,28 @@ class _RateDraft {
     commissionType: paysCommission ? commissionType : null,
     commissionValue: paysCommission ? parse(commission.text) : null,
   );
+}
+
+/// One product line being edited (Products Used, 2026-11-24): which product (with its catalog entry, for the price) and
+/// its qty box. The price is never edited here: it is the product's own.
+class _ProductDraft {
+  final ServiceProduct product;
+  final TextEditingController qty;
+  final FocusNode qtyFocus = FocusNode(debugLabel: 'product quantity');
+  final Key key = UniqueKey();
+
+  _ProductDraft(this.product) : qty = TextEditingController(text: _ServiceDetailScreenState._qty(product.qty));
+
+  /// The line as it would be saved (qty 1 while its box can't be read: [_check] stops the save first).
+  ServiceProduct toProduct() {
+    final v = _RateDraft.parse(qty.text);
+    return product.copyWith(qty: v == null || v.isNaN ? 1 : v);
+  }
+
+  void dispose() {
+    qty.dispose();
+    qtyFocus.dispose();
+  }
 }
 
 class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
@@ -188,6 +246,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   bool _taxable = false;
   bool _active = true;
   List<_RateDraft> _rates = [];
+  List<_ProductDraft> _products = [];
   VoidCallback? _unguard;
 
   /// The page's own focus, so Esc and Ctrl+S still reach it when the button just pressed (Edit, Save) is gone.
@@ -220,25 +279,57 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     _unguard?.call();
     _pageFocus.dispose();
     _addRateFocus.dispose();
+    _productSearchFocus.dispose();
     _name.dispose();
     _description.dispose();
     for (final r in [..._rates, ..._retired]) {
       r.dispose();
+    }
+    for (final p in [..._products, ..._retiredProducts]) {
+      p.dispose();
     }
     super.dispose();
   }
 
   void _typed() {
     if (!mounted || !_editing) return;
-    setState(() {
-      // After a Save found problems, each one clears as soon as it is put right (no new ones are raised while typing).
-      if (_errors.isNotEmpty) {
-        final now = _check();
-        _errors = {
-          for (final e in _errors.entries) e.key: ?now[e.key],
-        };
+    setState(_recheck);
+  }
+
+  /// After a Save found problems, each one clears as soon as it is put right (no new ones are raised while editing).
+  /// Call inside setState.
+  void _recheck() {
+    if (_errors.isEmpty) return;
+    final now = _check();
+    _errors = {
+      for (final e in _errors.entries) e.key: ?now[e.key],
+    };
+  }
+
+  /// Rows were added, removed or moved (call inside setState, after the change): a problem the last Save found stays
+  /// with its row, wherever that row went, and goes with it when it is deleted; then each is checked again. Before, a
+  /// Copy left every later row's problems one row too high, and a move or delete dropped them all (audit 2026-11-24).
+  void _keepErrorsWithRows({List<_RateDraft>? ratesBefore, List<_ProductDraft>? productsBefore}) {
+    if (_errors.isEmpty) return;
+    final rows = <(String, List<Object>, List<Object>)>[
+      if (ratesBefore != null) ('rate', ratesBefore, _rates),
+      if (productsBefore != null) ('product', productsBefore, _products),
+    ];
+    final kept = <String, String>{};
+    for (final e in _errors.entries) {
+      var key = e.key;
+      for (final (prefix, before, now) in rows) {
+        final m = RegExp('^$prefix(\\d+)\\.(.+)\$').firstMatch(key);
+        if (m == null) continue;
+        final was = int.parse(m[1]!);
+        final at = was < before.length ? now.indexOf(before[was]) : -1;
+        key = at < 0 ? '' : '$prefix$at.${m[2]}';
+        break;
       }
-    });
+      if (key.isNotEmpty) kept[key] = e.value;
+    }
+    _errors = kept;
+    _recheck();
   }
 
   static String _groupOf(CatalogEntry s) => (s.group.isEmpty ? s.category : s.group).trim();
@@ -250,6 +341,31 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     _taxable = s.taxable;
     _active = s.active;
     _setRates(s.rates);
+    _setProducts(s.products);
+    // Opened by row number: after a save that moved or removed rates, another rate's description opened.
+    _readDescOpen.clear();
+  }
+
+  /// Product drafts just replaced or removed: disposed at the next replacement or with the page (see [_retired]).
+  List<_ProductDraft> _retiredProducts = [];
+
+  void _setProducts(List<ServiceProduct> products) {
+    for (final p in _retiredProducts) {
+      p.dispose();
+    }
+    _retiredProducts = _products;
+    _products = [for (final p in products) _newProductDraft(p)];
+  }
+
+  _ProductDraft _newProductDraft(ServiceProduct p) {
+    final d = _ProductDraft(p);
+    d.qty.addListener(_typed);
+    d.qtyFocus.addListener(() {
+      if (d.qtyFocus.hasFocus || !mounted || !_editing || !_products.contains(d)) return;
+      final v = _RateDraft.parse(d.qty.text);
+      if (v != null && !v.isNaN && _qty(v) != d.qty.text) d.qty.text = _qty(v);
+    });
+    return d;
   }
 
   /// Drafts just replaced or removed. Their boxes can still be on screen for a moment (the read/edit cross-fade keeps the
@@ -293,12 +409,17 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       final found = r.entries.where((e) => e.key == widget.serviceKey).firstOrNull;
       if (found == null) throw const LineItemsException('It may have been renamed, or not used in the last 18 months.', status: 404);
       setState(() {
-        _s = found;
+        // While editing, the page keeps the version the edits started from: replacing it here made a save by someone
+        // else look like the page's own starting point, so Save's "someone else saved this" check could never see it
+        // and wrote over their work (audit 2026-11-24). Save reads the service again and compares with that version.
+        if (!_editing) {
+          _s = found;
+          _fill(found);
+        }
         _canSeeCost = r.canSeeCost;
         _loading = false;
         _error = null;
         _otherNames = _namesBesides(r.entries);
-        if (!_editing) _fill(found);
       });
     } on LineItemsException catch (e) {
       if (!mounted) return;
@@ -352,7 +473,18 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     return false;
   }
 
-  bool get _changed => _s != null && _editing && (_infoChanges().isNotEmpty || _ratesChanged);
+  List<ServiceProduct> get _draftProducts => [for (final d in _products) d.toProduct()];
+
+  bool get _productsChanged {
+    final now = _draftProducts, was = _s!.products;
+    if (now.length != was.length) return true;
+    for (var i = 0; i < now.length; i++) {
+      if (now[i].key != was[i].key || now[i].qty != was[i].qty) return true;
+    }
+    return false;
+  }
+
+  bool get _changed => _s != null && _editing && (_infoChanges().isNotEmpty || _ratesChanged || _productsChanged);
 
   /// A name as the catalog matches it: case, spaces and the "|" separators' spacing don't make two names different.
   static String _foldName(String s) => s.toLowerCase().replaceAll(RegExp(r'\s*\|\s*'), '|').replaceAll(RegExp(r'\s+'), ' ').trim();
@@ -397,9 +529,18 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           errors['rate$i.commission'] = 'Enter a number, like 5 or 2.50.';
         } else if (percent && v > 100) {
           errors['rate$i.commission'] = 'A percentage is 100 at most.';
+        } else if (_commissionLimit(d) case final m?) {
+          errors['rate$i.commission'] = m;
         }
       }
     }
+    if (_rates.length > kMaxServiceRates) errors['rates'] = 'A service can have $kMaxServiceRates rates at most.';
+    for (var i = 0; i < _products.length; i++) {
+      final v = _RateDraft.parse(_products[i].qty.text);
+      if (v == null || v.isNaN) errors['product$i.qty'] = 'Enter a quantity.';
+    }
+    if (_products.length > kMaxServiceProducts) errors['products'] = 'A package can have $kMaxServiceProducts products at most.';
+    if (_products.isNotEmpty && _rates.isEmpty) errors['products'] = 'Add a rate before listing products, or remove the products.';
     return errors;
   }
 
@@ -444,6 +585,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       e.commission?.value ?? '',
       e.editedAt ?? '',
       for (final r in e.rates) r.toJson(withCost: true).toString(),
+      // Which product and its qty only: the name is the catalog's, which changes when the product is renamed there.
+      for (final p in e.products) '${p.key}x${p.qty}',
     ].join('\u0001');
   }
 
@@ -465,7 +608,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     final errors = _check();
     setState(() => _errors = errors);
     if (errors.isNotEmpty) return;
-    if (_infoChanges().isEmpty && !_ratesChanged) {
+    if (_infoChanges().isEmpty && !_ratesChanged && !_productsChanged) {
       setState(() => _editing = false);
       return;
     }
@@ -496,6 +639,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     }
     final info = _infoChanges();
     final rates = _ratesChanged ? _draftRates : null;
+    final products = _productsChanged ? _draftProducts : null;
     final key = _s!.key;
     CatalogEntry? saved;
     try {
@@ -503,6 +647,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       if (rates != null) {
         saved = await (widget.ratesSaver ?? (k, r) => LineItemsApi.saveServiceRates(k, r, withCost: _canSeeCost))(key, rates);
       }
+      if (products != null) saved = await (widget.productsSaver ?? LineItemsApi.saveServiceProducts)(key, products);
       if (!mounted) return;
       _done(saved!, 'Saved');
     } catch (e) {
@@ -513,6 +658,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         if (saved != null) _s = saved;
         _saveError = _failText(e, 'Could not save the service. Try again.');
       });
+      // What did save shows on the Services Catalog list too (it kept the old name until a reload).
+      if (saved != null) serviceChanged.value = saved;
     }
   }
 
@@ -533,7 +680,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         subtitle: 'This service has changes that are not saved.',
         icon: Icons.edit_off_rounded,
         width: 460,
-        body: const Text('If you leave now they are lost.', style: TextStyle(fontSize: 14, color: DashUi.slate)),
+        body: const Text('If you leave now they are lost.', style: TextStyle(fontSize: 14, color: DashUi.ink)),
         actions: [
           // Opens on the safe answer: Enter keeps the work (UX audit 2026-11-20: nothing had the keyboard).
           AppButton.ghost('Keep editing', () => Navigator.pop(ctx, false), autofocus: true),
@@ -580,6 +727,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     if (theirs == null) return;
     final mine = _infoChanges(); // against the version this page started from
     final myRates = _ratesChanged ? _draftRates : null;
+    final myProducts = _productsChanged ? _draftProducts : null;
     final now = (name: _name.text, category: _category, description: _description.text, taxable: _taxable, active: _active);
     setState(() {
       _s = theirs;
@@ -591,6 +739,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       if (mine.containsKey('taxable')) _taxable = now.taxable;
       if (mine.containsKey('active')) _active = now.active;
       if (myRates != null) _setRates(myRates); // the rates (with their commissions) go as a whole set
+      if (myProducts != null) _setProducts(myProducts); // so do the products
     });
     _save(overTheirs: true);
   }
@@ -598,7 +747,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   /// The + button: a new rate line. The first one starts from the service itself (its name, description, price, cost).
   void _addRate() {
     final s = _s!;
-    if (!_editing) return;
+    if (!_editing || _rates.length >= kMaxServiceRates) return;
     setState(() {
       _rates = [
         ..._rates,
@@ -608,6 +757,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           _rates.isEmpty ? ServiceRate(name: s.name, description: s.description, rate: s.rate, cost: _canSeeCost ? s.cost : null) : const ServiceRate(name: '', qty: 0),
         ),
       ];
+      // "Add a rate before listing products" is put right by this, not by typing.
+      _recheck();
     });
     // The keyboard goes into the new line's name box, as a spreadsheet's new row would take it.
     final added = _rates.last;
@@ -622,12 +773,10 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     final focus = FocusManager.instance.primaryFocus;
     final hadFocus = focus != null && (focus.context?.findAncestorWidgetOfExactType<_RateLine>()?.index == i);
     setState(() {
-      _retire([_rates.removeAt(i)]);
-      _rates = [..._rates];
-      _errors = {
-        for (final e in _errors.entries)
-          if (!e.key.startsWith('rate')) e.key: e.value,
-      };
+      final before = [..._rates];
+      _rates = [...before]..removeAt(i);
+      _retire([before[i]]);
+      _keepErrorsWithRows(ratesBefore: before);
     });
     if (hadFocus) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _addRateFocus.requestFocus() : null);
   }
@@ -648,7 +797,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   // ---- build --------------------------------------------------------------------
   //
   // The page (redesign 2026-11-19 evening): one header for both modes (the name, its status and category, who changed
-  // it last; editing adds an ink rule, an "Editing" chip and whether anything is unsaved), then two sections on white:
+  // it last; editing keeps the title where it is and adds an "Editing" tag and whether anything is unsaved), then two sections on white:
   //   Service information  a property sheet (label column, values two to a row, hairlines between rows). Edit turns
   //                        each value into its box in the same place, so nothing moves when editing starts.
   //   Rates                a table with the same columns read and edited; edited, every cell is a compact box and the
@@ -773,39 +922,27 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         );
         // One traversal group each, so Tab finishes the form before the rail's switches (by height alone it went from
         // Category to Active and from Description straight to Add rate).
-        final main = FocusTraversalGroup(child: _editing ? _editMain() : _readMain());
-        final railBody = FocusTraversalGroup(child: _editing ? _editRail() : _readRail());
-        final columns = two
-            ? Stack(
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Padding(
-                          padding: const EdgeInsets.only(right: _columnGap),
-                          child: main,
-                        ),
-                      ),
-                      SizedBox(
-                        width: rail,
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: _columnGap),
-                          child: railBody,
-                        ),
-                      ),
-                    ],
-                  ),
-                  // The rail's edge runs the full height of the two columns, however long either one is.
-                  Positioned(
-                    top: 22,
-                    bottom: 0,
-                    right: rail,
-                    child: const SizedBox(width: 1, child: ColoredBox(color: DashUi.line)),
-                  ),
-                ],
-              )
-            : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [main, railBody]);
+        // Read: one DETAILS section (the description beside a compact strip of price, cost and tax), then RATES. Each
+        // section opens with a grey band (the user 2026-11-24: "the different sections need to be separated").
+        // Editing: the form on the left, status and tax in the rail, each block under its own band (the bands replace
+        // the rail's vertical rule).
+        final Widget columns;
+        if (!_editing) {
+          columns = FocusTraversalGroup(child: _readMain(two));
+        } else {
+          final main = FocusTraversalGroup(child: _editMain());
+          final railBody = FocusTraversalGroup(child: _editRail());
+          columns = two
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(child: main),
+                    const SizedBox(width: _columnGap),
+                    SizedBox(width: rail, child: railBody),
+                  ],
+                )
+              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [main, railBody]);
+        }
         return SingleChildScrollView(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -829,7 +966,12 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           columns,
-                          _section('RATES', _editing ? _ratesEdit(inner) : _ratesRead(inner), note: _rateNote(), top: 34),
+                          // No note beside RATES: the user deleted "N rates. Each is its own line..." (2026-11-24).
+                          _section('SERVICE RATES', _editing ? _ratesEdit(inner) : _ratesRead(inner), top: _editing ? 34 : 22),
+                          // Only a package lists products: on a service without rates they would replace its own price
+                          // and its line on a job (final review, 2026-11-24). Shown while it still holds some, so they
+                          // can be removed.
+                          if (_showsProducts) _section('PRODUCTS USED', _editing ? _productsEdit(inner) : _productsRead(inner), top: _editing ? 34 : 22),
                         ],
                       ),
                     ),
@@ -845,36 +987,36 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
 
   static const double _columnGap = 28;
 
-  /// The quiet words beside RATES: how many, and what a rate is (USER RULE 2026-11-20: no rate is the main one; each
-  /// is its own line under the package, starting at its own quantity).
-  String? _rateNote() {
-    final n = _editing ? _rates.length : _s!.rates.length;
-    if (n == 0) return null;
-    return '${n == 1 ? '1 rate' : '$n rates'}. Each is its own line under the package on a job, starting at its qty.';
-  }
+  /// Read, the space between the header's rule and the first section.
+  static const double _readTop = 16;
 
   // ---- the product page's pieces: a section, a labelled field, a switch row (redesign 2026-11-20) ----
 
-  /// A block: its small-caps label (with a quiet note), then its content.
-  Widget _section(String label, Widget child, {String? note, double top = 20, Widget? trailing}) {
+  /// The text inside a section's band, from its edge; [_section]'s [inset] lines plain content up with it.
+  static const double _bandX = 12;
+
+  /// A block: its small-caps label in a grey band across the block (the user 2026-11-24: "the different sections need
+  /// to be separated ... like a filled in ribbon of gray"), then its content. [inset] moves text content in to start
+  /// under the label; boxes and the rates table keep the band's edges (the table insets its own text).
+  Widget _section(String label, Widget child, {String? note, double top = 20, Widget? trailing, bool inset = false}) {
     return Padding(
       padding: EdgeInsets.only(top: top),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          CatalogLabel(label, note: note, trailing: trailing),
-          const SizedBox(height: 10),
-          child,
+          Container(
+            constraints: const BoxConstraints(minHeight: 32),
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: _bandX, vertical: 7),
+            decoration: BoxDecoration(color: DashUi.rowHead, borderRadius: BorderRadius.circular(6)),
+            child: CatalogLabel(label, note: note, trailing: trailing, color: DashUi.ink),
+          ),
+          const SizedBox(height: 12),
+          inset ? Padding(padding: const EdgeInsets.symmetric(horizontal: _bandX), child: child) : child,
         ],
       ),
     );
   }
-
-  /// A thin rule between the rail's blocks.
-  Widget _rule() => const Padding(
-    padding: EdgeInsets.only(top: 18),
-    child: Divider(height: 1, color: DashUi.line),
-  );
 
   /// A field with its label over it (every box on the page has one: the user, "no label for package name").
   Widget _labelled(String label, Widget field, {bool optional = false, String? help}) {
@@ -902,7 +1044,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     required ValueChanged<bool> onChanged,
   }) {
     final motion = CatalogUi.motion(context, 140);
-    const helpStyle = TextStyle(fontSize: 13, height: 1.4, color: DashUi.slate);
+    const helpStyle = TextStyle(fontSize: 13, height: 1.4, color: DashUi.ink);
     return Semantics(
       container: true,
       toggled: value,
@@ -913,6 +1055,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         borderRadius: BorderRadius.circular(10),
         outset: const EdgeInsets.symmetric(horizontal: 6),
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           key: ValueKey('switch:$id'),
           borderRadius: BorderRadius.circular(10),
           onTap: _saving ? null : () => onChanged(!value),
@@ -1066,16 +1209,21 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       children: [
         Text(label, style: _smallLabel),
         const SizedBox(height: 3),
-        Text(value, style: quiet ? CatalogUi.cellQuiet : CatalogUi.cellStrong),
+        Text(value, style: quiet ? CatalogUi.cell : CatalogUi.cellStrong),
       ],
     );
   }
 
-  static const _smallLabel = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.slate, height: 1.3);
+  /// Small quiet words (who changed it, what editing does): black, like all text on the page (USER RULE 2026-11-23,
+  /// the user again 2026-11-24: "font should be black").
+  static const _meta = TextStyle(fontSize: 13, color: DashUi.ink, height: 1.35);
+
+  static const _smallLabel = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.3);
 
   static String _money(double? v, [String none = '—']) => v == null ? none : dashMoney(v);
 
-  static String _qty(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+  /// A count or a percentage: "2", "12.5", "12.75" (no trailing zero: review 2026-11-24, "12.50" read like money).
+  static String _qty(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2).replaceFirst(RegExp(r'0$'), '');
 
   // ---- boxes ---------------------------------------------------------------------
 
@@ -1092,17 +1240,22 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     enabled: !_saving,
     filled: true,
     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-  );
+  ).copyWith(hintStyle: CatalogUi.fieldHint.copyWith(color: DashUi.ink, fontStyle: FontStyle.italic));
 
-  /// A box for [ctl] in the service's own part of the page (its name, its description). [grow] lets it take up to that
-  /// many lines as the text needs; [lines] makes it that tall from the start. [label] names it for screen readers.
-  Widget _input(String key, TextEditingController ctl, {int lines = 1, int grow = 1, String? hint, String? label}) {
-    final multi = lines > 1 || grow > 1;
+  /// The "$" and "%" in the rate boxes: black like every text on the page (the user 2026-11-24), in the figures' own
+  /// style so "$395.00" in a box matches the table's read "$395.00".
+  static const _currency = LineTable.cell;
+
+  /// A box for [ctl] in the service's own part of the page (its name, its description). [lines] makes it that tall
+  /// from the start; a multi-line box then grows with its text, never scrolling inside itself (the user 2026-11-24:
+  /// the whole description shows without scrolling). [label] names it for screen readers.
+  Widget _input(String key, TextEditingController ctl, {int lines = 1, String? hint, String? label}) {
+    final multi = lines > 1;
     Widget field = TextField(
       key: ValueKey('field:$key'),
       controller: ctl,
       minLines: lines,
-      maxLines: multi ? (lines > grow ? lines : grow) : 1,
+      maxLines: multi ? null : 1,
       enabled: !_saving,
       textAlignVertical: multi ? TextAlignVertical.top : TextAlignVertical.center,
       cursorWidth: CatalogUi.cursorWidth,
@@ -1118,7 +1271,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   // ---- header (redesign 2026-11-20) ----------------------------------------------------
   //
   // Read: the name as the page's title, and under it its status, its category and who changed it last. Editing (as the
-  // product page does): a pencil, "Editing <name>", what saving changes, and "Unsaved changes" once something is. The
+  // product page did, before the review of 2026-11-24): the same title, an "Editing" tag and what saving changes under
+  // it, and "Unsaved changes" once something is. The
   // name itself is edited in the form below, under its own label (it was an unlabelled box up here).
 
   static const _titleStyle = TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.3, height: 1.3);
@@ -1129,42 +1283,37 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     final Widget content;
     if (_editing) {
       final name = _name.text.trim().isEmpty ? s.name : _name.text.trim();
+      // The same title, in the same place and size, as read: only the line under it changes (review 2026-11-24: the
+      // title shrank and moved 46 px right when Edit was pressed).
       content = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 34,
-            height: 34,
-            decoration: BoxDecoration(color: CatalogUi.picked, borderRadius: BorderRadius.circular(10)),
-            child: const Icon(Icons.edit_rounded, size: 18, color: DashUi.ink),
-          ),
-          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      const TextSpan(text: 'Editing '),
-                      catalogNameSpan(name, const TextStyle()),
-                    ],
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3),
+                Text.rich(catalogNameSpan(name, _titleStyle), maxLines: 2, overflow: TextOverflow.ellipsis),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    const CatalogTag('Editing', key: ValueKey('editing'), icon: Icons.edit_rounded),
+                    const Text('Changes apply to new lines. Jobs and estimates already written keep theirs.', style: _meta),
+                    // On this line, not beside the title, so the title has the width it has when read and a long name
+                    // wraps the same way in both modes.
+                    Semantics(
+                      liveRegion: true,
+                      child: AnimatedOpacity(
+                        opacity: _changed ? 1 : 0,
+                        duration: motion,
+                        child: const CatalogTag('Unsaved changes', key: ValueKey('unsaved'), tone: CatalogTone.warn, icon: Icons.circle),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
-                const Text('Changes apply to new lines. Jobs and estimates already written keep theirs.', style: CatalogUi.meta),
               ],
-            ),
-          ),
-          const SizedBox(width: 16),
-          Semantics(
-            liveRegion: true,
-            child: AnimatedOpacity(
-              opacity: _changed ? 1 : 0,
-              duration: motion,
-              child: const CatalogTag('Unsaved changes', key: ValueKey('unsaved'), tone: CatalogTone.warn, icon: Icons.circle),
             ),
           ),
         ],
@@ -1182,25 +1331,28 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text.rich(catalogNameSpan(s.name, _titleStyle), maxLines: 2, overflow: TextOverflow.ellipsis),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Wrap(
             spacing: 14,
             runSpacing: 6,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               s.active ? const CatalogTag('Active', tone: CatalogTone.good) : const CatalogTag('Inactive'),
-              if (!s.active) const Text(_inactiveNote, style: CatalogUi.meta),
+              if (!s.active) const Text(_inactiveNote, style: _meta),
+              // "No category" is an absence, not a category's name: lighter and italic (review 2026-11-24).
               Text(
                 category.isEmpty ? 'No category' : category,
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: category.isEmpty ? DashUi.slate : DashUi.ink),
+                style: category.isEmpty
+                    ? const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w400, fontStyle: FontStyle.italic, color: DashUi.ink)
+                    : const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink),
               ),
               if (changed != null)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.history_rounded, size: 15, color: DashUi.subtle),
+                    const Icon(Icons.history_rounded, size: 15, color: DashUi.ink),
                     const SizedBox(width: 5),
-                    Text(changed, style: CatalogUi.meta),
+                    Text(changed, style: _meta),
                   ],
                 ),
             ],
@@ -1214,7 +1366,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       ),
       child: band(
         Padding(
-          padding: EdgeInsets.fromLTRB(side, 18, side, 16),
+          padding: EdgeInsets.fromLTRB(side, 14, side, 12),
           child: AnimatedSwitcher(
             duration: CatalogUi.motion(context, 160),
             layoutBuilder: (current, previous) => Stack(alignment: Alignment.centerLeft, children: [...previous, ?current]),
@@ -1234,82 +1386,73 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   static const _inactiveNote = 'Not offered on new lines. Jobs and estimates that have it keep it.';
   static const _activeNote = 'Offered when adding lines to jobs and estimates.';
 
-  Widget _readText(String text, {bool quiet = false}) => Text(text, style: (quiet ? CatalogUi.cellQuiet : CatalogUi.cell).copyWith(height: 1.5));
+  Widget _readText(String text, {bool quiet = false}) => Text(text, style: (quiet ? CatalogUi.cell : CatalogUi.cell).copyWith(height: 1.5));
 
-  Widget _readMain() {
+  /// Read: DETAILS (the description, and beside it, or under it when [two] is false, the price, cost and tax), then
+  /// what replaced it or what it replaces, each under its band.
+  Widget _readMain(bool two) {
     final s = _s!;
     final description = s.description.trim();
+    final text = _readText(description.isEmpty ? 'No description' : description);
+    final details = two
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: text),
+              const SizedBox(width: 48),
+              _readFacts(),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [text, const SizedBox(height: 14), _readFacts()],
+          );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _section('DESCRIPTION', _readText(description.isEmpty ? 'No description' : description, quiet: description.isEmpty)),
-        if (s.supersededBy case final by?) _section('REPLACED BY', _readText(by.name)),
-        if (s.replaces.isNotEmpty) _section('REPLACES', _readText(s.replaces.map((r) => r.name).join('\n'))),
+        _section('DETAILS', details, top: _readTop, inset: true),
+        if (s.supersededBy case final by?) _section('REPLACED BY', _readText(by.name), inset: true),
+        if (s.replaces.isNotEmpty) _section('REPLACES', _readText(s.replaces.map((r) => r.name).join('\n')), inset: true),
       ],
     );
   }
 
-  /// Read, the rail holds what the product page's does: the price (and cost, for those who may see it), then sales
-  /// tax. The status is in the header, once.
-  Widget _readRail() {
+  /// Read, beside the description: the price (and cost, for those who may see it) and sales tax, each a small label over
+  /// its value, side by side. The status is in the header, once.
+  Widget _readFacts() {
     final s = _s!;
-    // A package (a service with rates) has no one price: what it comes to at its rates' starting quantities (the lines
-    // at 0 add nothing until a job needs them). A service without rates keeps its own price.
-    final package = s.rates.isNotEmpty;
-    final priced = s.rates.where((r) => r.rate != null).toList();
-    final double? price = !package ? s.rate : (priced.isEmpty ? null : priced.fold<double>(0, (sum, r) => sum + (r.total ?? 0)));
-    final costed = s.rates.where((r) => r.cost != null).toList();
-    final double? cost = !package ? s.cost : (costed.isEmpty ? null : costed.fold<double>(0, (sum, r) => sum + (r.totalCost ?? 0)));
-    Widget figure(String label, String value, {bool big = false, bool quiet = false}) => Column(
+    // A package (a service with rates or products) has no one price: what its rates and products come to at their
+    // starting quantities (the lines at 0 add nothing until a job needs them; products at the catalog's price). A
+    // service without either keeps its own price.
+    final package = s.rates.isNotEmpty || s.products.isNotEmpty;
+    final lines = [...s.rates, ...CatalogEntry.productsAsRates(s.products)];
+    final double? price = !package ? s.rate : CatalogEntry.startsAt(lines);
+    final double? cost = !package ? s.cost : CatalogEntry.startsAt(lines, cost: true);
+    Widget fact(String label, String value, {bool strong = false, bool quiet = false}) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text(
-          label,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.3),
-        ),
-        const SizedBox(height: 4),
+        Text(label, style: CatalogUi.head.copyWith(color: DashUi.ink)),
+        const SizedBox(height: 10),
         Text(
           value,
           style: TextStyle(
-            fontSize: big ? 26 : 16,
-            fontWeight: big ? FontWeight.w700 : FontWeight.w600,
-            color: quiet ? DashUi.slate : DashUi.ink,
-            letterSpacing: big ? -0.4 : 0,
-            height: 1.2,
+            fontSize: strong ? 17 : 14.5,
+            fontWeight: strong ? FontWeight.w700 : FontWeight.w500,
+            color: DashUi.ink,
+            height: 1.25,
             fontFeatures: CatalogUi.figures,
           ),
         ),
       ],
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Wrap(
+      spacing: 36,
+      runSpacing: 12,
       children: [
-        _section(
-          'PRICE',
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: figure(package ? 'Starts at' : 'Price', price == null ? 'No price' : dashMoney(price), big: price != null, quiet: price == null),
-                  ),
-                  if (_canSeeCost) Expanded(child: figure('Cost', cost == null ? 'Not entered' : dashMoney(cost), quiet: cost == null)),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                package
-                    ? 'Its lines at their starting quantities. A line at 0 adds to it when a job needs it.'
-                    : (price == null ? 'New lines start without a price.' : 'What new lines start at.'),
-                style: CatalogUi.meta,
-              ),
-            ],
-          ),
-        ),
-        _rule(),
-        _section('SALES TAX', _readText(s.taxWarning ?? (s.taxable ? 'Taxable' : 'No sales tax'))),
+        fact(package ? 'STARTS AT' : 'PRICE', price == null ? 'No price' : dashMoney(price), strong: price != null, quiet: price == null),
+        if (_canSeeCost) fact('COST', cost == null ? 'Not entered' : dashMoney(cost), quiet: cost == null),
+        fact('SALES TAX', s.taxWarning ?? (s.taxable ? 'Taxable' : 'No sales tax')),
       ],
     );
   }
@@ -1340,7 +1483,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           // Room to write (the user: "description box too slim"): three lines to start, growing to ten as it is typed.
           _labelled(
             'Description',
-            _input('description', _description, lines: 3, grow: 10, hint: 'What the service includes', label: 'Description'),
+            _input('description', _description, lines: 3, hint: 'What the service includes', label: 'Description'),
             optional: true,
           ),
         ],
@@ -1358,8 +1501,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         _section(
           'STATUS',
           _switchRow(id: 'active', label: 'Active', helpOn: _activeNote, helpOff: _inactiveNote, value: _active, onChanged: (v) => setState(() => _active = v)),
+          inset: true,
         ),
-        _rule(),
         _section(
           'SALES TAX',
           _switchRow(
@@ -1370,6 +1513,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
             value: _taxable,
             onChanged: (v) => setState(() => _taxable = v),
           ),
+          inset: true,
         ),
       ],
     );
@@ -1441,50 +1585,71 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   _RateCols get _cols => _RateCols(costs: _canSeeCost, k: _scale);
 
   /// The box fields of a rate, in the order they run, with the words a problem with each is said with.
-  static const _rateFieldNames = {'name': '', 'description': 'Description', 'qty': 'Qty', 'rate': 'Regular rate', 'cost': 'Internal cost', 'commission': 'Commission'};
-
-  /// Where the quantity's figure ends: in from its box's right edge past the arrows (read, the same place).
-  static const double _qtyInset = _StepArrows.width + LineTable.cellX;
+  static const _rateFieldNames = {'name': '', 'description': 'Description', 'qty': 'Qty', 'rate': 'Rate', 'cost': 'Cost', 'commission': 'Commission'};
 
   /// A figure or a read value in a cell: as tall as a box, its text level with the boxes' and [inset] in from its side.
-  Widget _cellText(String text, {bool right = true, TextStyle? style, double inset = LineTable.cellX, Key? key}) => SizedBox(
+  /// Left-aligned, where a box's text starts (user 2026-11-23: every box, heading and figure left-aligned). One too wide
+  /// for its column is drawn smaller, never cut off (review 2026-11-24: "$19,842.…" hid a figure's digits).
+  Widget _cellText(String text, {bool right = false, TextStyle? style, double inset = LineTable.cellX, Key? key}) => SizedBox(
     height: LineTable.boxHeight(context),
     child: Align(
       alignment: right ? Alignment.centerRight : Alignment.centerLeft,
       child: Padding(
         padding: EdgeInsets.only(left: right ? 0 : inset, right: right ? inset : 0),
-        child: Text(
-          text,
-          key: key,
-          maxLines: 1,
-          softWrap: false,
-          overflow: TextOverflow.ellipsis,
-          style: style ?? (text == '—' ? LineTable.quiet : LineTable.cell),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: right ? Alignment.centerRight : Alignment.centerLeft,
+          child: Text(text, key: key, maxLines: 1, softWrap: false, style: style ?? LineTable.cell),
         ),
       ),
     ),
   );
 
+  /// A worked-out figure while editing (a total, a total cost): a box like the ones beside it, grey with a lighter edge,
+  /// because it can't be typed into (user 2026-11-23, as the Products & Services table's line totals). Its text starts
+  /// where a box's does; one too wide is drawn smaller.
+  Widget _figureBox(String text, {TextStyle? style}) => Container(
+    height: LineTable.boxHeight(context),
+    padding: const EdgeInsets.symmetric(horizontal: LineTable.cellX - LineTable.edgeWidth),
+    alignment: Alignment.centerLeft,
+    decoration: BoxDecoration(
+      color: DashUi.faint,
+      borderRadius: BorderRadius.circular(LineTable.radius),
+      border: Border.all(color: DashUi.line, width: LineTable.edgeWidth),
+    ),
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Text(text, maxLines: 1, softWrap: false, style: style ?? LineTable.cell),
+    ),
+  );
+
   /// The headings, each over where its column's text sits.
   Widget _tHeader(_RateCols cols) {
-    Widget h(String s, {bool right = true, double inset = LineTable.cellX}) => Padding(
+    // Left-aligned over where their values start (user 2026-11-23). One line each, in the catalog's small heading size
+    // (two-line 14 px headings were bulky, the user 2026-11-24); one still too wide for its column is drawn smaller.
+    const style = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.6, height: 1.2);
+    Widget h(String s, {bool right = false, double inset = LineTable.cellX}) => Padding(
       padding: EdgeInsets.only(left: right ? 0 : inset, right: right ? inset : 0),
-      child: Text(s, maxLines: 1, softWrap: false, overflow: TextOverflow.fade, textAlign: right ? TextAlign.right : TextAlign.left, style: LineTable.head),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: right ? Alignment.centerRight : Alignment.centerLeft,
+        child: Text(s, maxLines: 1, softWrap: false, style: style),
+      ),
     );
     return Container(
-      padding: const EdgeInsets.fromLTRB(_RateCols.side, 10, _RateCols.side, 9),
+      padding: const EdgeInsets.fromLTRB(_RateCols.side, 8, _RateCols.side, 8),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: DashUi.line)),
       ),
       child: cols.line(
         cross: CrossAxisAlignment.center,
-        item: h('RATE', right: false),
-        qty: h('QTY', inset: _qtyInset),
-        rate: h('REGULAR RATE'),
+        item: h('RATE NAME'),
+        qty: h('QTY'),
+        rate: h('RATE'),
         total: h('TOTAL'),
-        cost: h('INTERNAL COST'),
-        totalCost: h('TOTAL COST'),
-        commission: h('COMMISSION', right: false, inset: 0),
+        cost: h('COST'),
+        commission: h('COMMISSION', inset: 0),
         pays: h('PAYS'),
       ),
     );
@@ -1501,6 +1666,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       child: FocusRing(
         borderRadius: BorderRadius.circular(5),
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           key: ValueKey(id),
           onTap: onTap,
           borderRadius: BorderRadius.circular(5),
@@ -1515,13 +1681,13 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
               children: [
                 Text(
                   'Description',
-                  style: TextStyle(fontSize: 12, fontWeight: has || open ? FontWeight.w600 : FontWeight.w500, color: has || open ? DashUi.ink : DashUi.slate, height: 1.2),
+                  style: TextStyle(fontSize: 12, fontWeight: has || open ? FontWeight.w600 : FontWeight.w500, color: DashUi.ink, height: 1.2),
                 ),
                 AnimatedRotation(
                   turns: open ? 0.5 : 0,
                   duration: LineTable.motion(context, 160),
                   curve: Curves.easeOutCubic,
-                  child: const Icon(Icons.expand_more_rounded, size: 16, color: DashUi.slate),
+                  child: const Icon(Icons.expand_more_rounded, size: 16, color: DashUi.ink),
                 ),
               ],
             ),
@@ -1535,7 +1701,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   Widget _sym(String s) => SizedBox(
     height: LineTable.boxHeight(context),
     child: Center(
-      child: Text(s, style: const TextStyle(fontSize: 13, color: DashUi.subtle, height: 1.35)),
+      child: Text(s, style: const TextStyle(fontSize: 13, color: DashUi.ink, height: 1.35)),
     ),
   );
 
@@ -1564,7 +1730,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
             if (sub != null && sub.isNotEmpty)
               TextSpan(
                 text: '   $sub',
-                style: const TextStyle(color: DashUi.slate),
+                style: const TextStyle(color: DashUi.ink),
               ),
           ],
         ),
@@ -1581,9 +1747,481 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     padding: const EdgeInsets.fromLTRB(_RateCols.side, 12, 0, 0),
     child: Align(
       alignment: Alignment.centerLeft,
-      child: _AddRateButton(key: const ValueKey('add-rate'), focusNode: _addRateFocus, onPressed: _saving ? null : _addRate),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _AddRateButton(
+            key: const ValueKey('add-rate'),
+            focusNode: _addRateFocus,
+            onPressed: _saving || _rates.length >= kMaxServiceRates ? null : _addRate,
+          ),
+          // At the cap the button is greyed out and says why beside it (the server refuses a 26th line).
+          if (_rates.length >= kMaxServiceRates) ...[
+            const SizedBox(width: 12),
+            const Text('$kMaxServiceRates rates at most', style: TextStyle(fontSize: 13, color: DashUi.ink, height: 1.3)),
+          ],
+        ],
+      ),
     ),
   );
+
+  // ---- PRODUCTS USED (2026-11-24) ------------------------------------------------------------------------------------
+  //
+  // The products a package uses, in order, each with its qty. PRICE is the product's catalog price (read-only, it is
+  // never the package's) and TOTAL qty x price. The columns sit under the rates table's QTY, RATE and TOTAL. Editing:
+  // a qty box with arrows, the row menu (Move up / Move down / Delete), and a products-only search under the table that
+  // adds a line at qty 1 (or raises the qty of one already listed). One gone from the catalog reads "Not in the
+  // catalog"; a job leaves it off.
+
+  /// Whether the page shows PRODUCTS USED: a package (it has rates), or a service still holding products.
+  bool get _showsProducts => _editing ? (_rates.isNotEmpty || _products.isNotEmpty) : (_s!.rates.isNotEmpty || _s!.products.isNotEmpty);
+
+  /// Picking a product in the search: a new line at qty 1 at the end, or one more of a product already listed.
+  void _pickProduct(CatalogChoice c) {
+    final e = c.entry;
+    if (e == null || e.isService || !_editing || _saving) return;
+    final at = _products.indexWhere((d) => d.product.key == e.key);
+    setState(() {
+      if (at >= 0) {
+        final d = _products[at];
+        final v = _RateDraft.parse(d.qty.text);
+        d.qty.text = _qty((v == null || v.isNaN ? 0 : v) + 1);
+      } else if (_products.length < kMaxServiceProducts) {
+        _products = [..._products, _newProductDraft(ServiceProduct(key: e.key, name: e.name, entry: e))];
+        _recheck();
+      }
+    });
+  }
+
+  /// The products search, where the keyboard goes when the product it was on is deleted.
+  final _productSearchFocus = FocusNode(debugLabel: 'product search');
+
+  /// Products are put in order by dragging them by their handle (the user 2026-11-24: "moveable up and down by dragging,
+  /// not the 3 dots then click Move"), or with Alt+Up / Alt+Down in the row, for the keyboard. [to] is where it lands.
+  void _dragProduct(int from, int to) {
+    if (_saving || from < 0 || from >= _products.length) return;
+    final at = to.clamp(0, _products.length - 1);
+    if (at == from) return;
+    final moving = _products[from];
+    setState(() {
+      final before = [..._products];
+      _products = [...before]
+        ..removeAt(from)
+        ..insert(at, moving);
+      _keepErrorsWithRows(productsBefore: before);
+    });
+  }
+
+  /// Alt+Up / Alt+Down in a product's row: one place up or down, the keyboard staying in its qty box (a moved row is
+  /// built afresh by the reorderable list, which took the keyboard with it).
+  void _moveProduct(int i, int by) {
+    if (i + by < 0 || i + by >= _products.length) return;
+    final d = _products[i];
+    final hadFocus = d.qtyFocus.hasFocus;
+    _dragProduct(i, i + by);
+    if (hadFocus) WidgetsBinding.instance.addPostFrameCallback((_) => mounted && _products.contains(d) ? d.qtyFocus.requestFocus() : null);
+  }
+
+  /// A row's drag handle (rates and products alike, the user 2026-11-24): grab it and drag the row up or down. In the
+  /// table it fills the row's 12 px left margin, so neither a rate's name box nor a product's name moves when Edit is
+  /// pressed; stacked, it is [width] wide before the name. No hover tip (USER RULE 2026-11-20 for this page's tables); a
+  /// screen reader hears what it does and the keys that do the same.
+  Widget _dragHandle({required Key key, required int index, required String label, double width = _RateRowShell.leadW}) => Semantics(
+    label: label,
+    hint: 'Drag it up or down, or press Alt+Up or Alt+Down in its row',
+    child: ReorderableDragStartListener(
+      key: key,
+      index: index,
+      enabled: !_saving,
+      child: MouseRegion(
+        cursor: _saving ? SystemMouseCursors.basic : SystemMouseCursors.grab,
+        child: SizedBox(
+          width: width,
+          // The grip's dots are about 6 px wide inside its 16 px glyph: it may spill its empty sides, never its dots.
+          child: Center(
+            child: OverflowBox(
+              maxWidth: 16,
+              child: Icon(Icons.drag_indicator_rounded, size: 16, color: _saving ? DashUi.line : DashUi.ink),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  /// The handle's room before the name in a stacked rate or product.
+  static const double _stackHandleW = 20;
+
+  Widget _productHandle(int i, {double width = _RateRowShell.leadW}) =>
+      _dragHandle(key: ValueKey('product-drag:$i'), index: i, label: 'Move product ${i + 1}', width: width);
+
+  Widget _rateHandle(int i, {double width = _RateRowShell.leadW}) =>
+      _dragHandle(key: ValueKey('rate-drag:$i'), index: i, label: 'Move rate ${i + 1}', width: width);
+
+  void _removeProduct(int i) {
+    // As a deleted rate's, the keyboard moves on (to the search) rather than falling back to the page.
+    final focus = FocusManager.instance.primaryFocus;
+    final hadFocus = focus != null && focus.context?.findAncestorWidgetOfExactType<_ProductLine>()?.index == i;
+    setState(() {
+      final before = [..._products];
+      _products = [...before]..removeAt(i);
+      _retiredProducts = [..._retiredProducts, before[i]];
+      _keepErrorsWithRows(productsBefore: before);
+    });
+    if (hadFocus) WidgetsBinding.instance.addPostFrameCallback((_) => mounted ? _productSearchFocus.requestFocus() : null);
+  }
+
+  /// One more / one less (never under 0). An empty box counts as 0, so the up arrow gives 1, not 2.
+  void _stepProductQty(int i, int by) {
+    final d = _products[i];
+    final v = _RateDraft.parse(d.qty.text);
+    final now = v == null || v.isNaN ? 0.0 : v;
+    setState(() => d.qty.text = _qty((now + by).clamp(0.0, 999999.0).toDouble()));
+  }
+
+  /// The headings: PRODUCT NAME over the names, then QTY, PRICE and TOTAL over the rates table's QTY, RATE and TOTAL.
+  Widget _productsHeader(_RateCols cols) {
+    const style = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.6, height: 1.2);
+    Widget h(String s) => Padding(
+      padding: const EdgeInsets.only(left: LineTable.cellX),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Text(s, maxLines: 1, softWrap: false, style: style),
+      ),
+    );
+    return Container(
+      padding: const EdgeInsets.fromLTRB(_RateCols.side, 8, _RateCols.side, 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: DashUi.line)),
+      ),
+      child: cols.line(cross: CrossAxisAlignment.center, item: h('PRODUCT NAME'), qty: h('QTY'), rate: h('PRICE'), total: h('TOTAL')),
+    );
+  }
+
+  /// A product's name, and "Not in the catalog" after it when it is gone or inactive. At qty 0 it reads a weight
+  /// lighter, as a rate at 0 does. [inset] 0 lines it up with the stacked rates' names.
+  Widget _productName(int i, ServiceProduct p, {bool zero = false, double inset = LineTable.cellX}) => SizedBox(
+    height: LineTable.boxHeight(context),
+    child: Padding(
+      padding: EdgeInsets.only(left: inset),
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(p.name, key: ValueKey('product-name:$i'), maxLines: 1, overflow: TextOverflow.ellipsis, style: _quietly(LineTable.name, zero)),
+          ),
+          if (!p.available) ...[const SizedBox(width: 8), const CatalogTag('Not in the catalog', tone: CatalogTone.warn)],
+        ],
+      ),
+    ),
+  );
+
+  /// No products yet (read: and how to add some), as the rates table says it has none.
+  Widget _noProducts({required bool edit}) => Container(
+    key: const ValueKey('no-products'),
+    padding: const EdgeInsets.symmetric(horizontal: _RateCols.side, vertical: 13),
+    decoration: const BoxDecoration(
+      border: Border(
+        top: BorderSide(color: DashUi.line),
+        bottom: BorderSide(color: DashUi.line),
+      ),
+    ),
+    child: Text.rich(
+      TextSpan(
+        children: [
+          const TextSpan(
+            text: 'No products yet',
+            style: TextStyle(fontWeight: FontWeight.w600, color: DashUi.ink),
+          ),
+          if (!edit && _canEdit) const TextSpan(text: '   Add some with Edit.'),
+          if (edit) const TextSpan(text: '   Search below to add one.'),
+        ],
+      ),
+      style: LineTable.cell,
+    ),
+  );
+
+  Widget _productsRead(double width) {
+    final items = _s!.products;
+    if (items.isEmpty) return _noProducts(edit: false);
+    final cols = _cols;
+    if (!cols.fits(width)) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < items.length; i++)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: _RateCols.side),
+              decoration: BoxDecoration(
+                border: Border(
+                  top: const BorderSide(color: DashUi.line),
+                  bottom: i == items.length - 1 ? const BorderSide(color: DashUi.line) : BorderSide.none,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _productName(i, items[i], zero: items[i].qty == 0, inset: 0),
+                  const SizedBox(height: 6),
+                  _grid(
+                    [
+                      _value('Qty', _qty(items[i].qty)),
+                      _value('Price', items[i].available ? _money(items[i].price) : '—'),
+                      _value('Total', items[i].available ? _money(items[i].total) : '—'),
+                    ],
+                    columns: 3,
+                    runGap: 8,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _productsHeader(cols),
+        for (var i = 0; i < items.length; i++)
+          _RateRowShell(
+            edit: false,
+            stripe: i.isOdd,
+            // A product at 0 reads quieter, as a rate at 0 does (it was the only line at full weight).
+            child: cols.line(
+              item: _productName(i, items[i], zero: items[i].qty == 0),
+              qty: _cellText(_qty(items[i].qty), style: _quietly(LineTable.cell, items[i].qty == 0)),
+              rate: _cellText(items[i].available ? _money(items[i].price) : '—', style: _quietly(LineTable.cell, items[i].qty == 0)),
+              total: _cellText(items[i].available ? _money(items[i].total) : '—', style: items[i].available ? _quietly(LineTable.amount, items[i].qty == 0) : null),
+            ),
+          ),
+        const Divider(height: 1, thickness: 1, color: DashUi.line),
+      ],
+    );
+  }
+
+  /// A product's qty: its figure, its arrows inside the box at the right; Up and Down step it while typing in it.
+  Widget _productQtyBox(int i) {
+    final d = _products[i];
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.arrowUp): () => _stepProductQty(i, 1),
+        const SingleActivator(LogicalKeyboardKey.arrowDown): () => _stepProductQty(i, -1),
+      },
+      child: _RateBox(
+        focusNode: d.qtyFocus,
+        error: _errors.containsKey('product$i.qty'),
+        enabled: !_saving,
+        end: _StepArrows(enabled: !_saving, onStep: (by) => _stepProductQty(i, by)),
+        endWidth: _StepArrows.width,
+        field: _rateField('product$i.qty', d.qty, d.qtyFocus, hint: 'Qty', numeric: true, label: 'Product ${i + 1} quantity'),
+      ),
+    );
+  }
+
+  Widget _productMenu(int i) => AppMenu(
+    alignEnd: true,
+    minWidth: 190,
+    semanticLabel: 'Product ${i + 1} actions',
+    // No Move up / Move down here: products are dragged by their handle (the user 2026-11-24).
+    items: [
+      AppMenuItem(key: ValueKey('remove-product:$i'), icon: Icons.delete_outline_rounded, label: 'Delete', danger: true, onPressed: _saving ? null : () => _removeProduct(i)),
+    ],
+    builder: (context, menu) => _RowMenuButton(key: ValueKey('product-menu:$i'), menu: menu, label: 'More for product ${i + 1}', enabled: !_saving),
+  );
+
+  /// What is wrong in a product's qty after a Save, under its row.
+  Widget? _productError(int i) {
+    final m = _errors['product$i.qty'];
+    if (m == null) return null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(LineTable.cellX, 6, 0, 2),
+      child: Semantics(
+        liveRegion: true,
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, size: 14, color: DashUi.redText),
+            const SizedBox(width: 5),
+            Text('Qty: $m', style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.redText, height: 1.3)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Whether a product's qty box holds 0 (its line then reads quieter, as a rate's does).
+  bool _productZero(int i) => _RateDraft.parse(_products[i].qty.text) == 0;
+
+  /// A product's PRICE and TOTAL while editing: the grey worked-out boxes (user 2026-11-23: a figure that can't be typed
+  /// into is a grey box like the ones beside it; PRICE was bare text between two boxes).
+  Widget _productPrice(ServiceProduct p, bool zero) => _figureBox(p.available ? _money(p.price) : '—', style: _quietly(LineTable.cell, zero));
+  /// [counted] is false while the qty box is empty or not a number: the total waits for it (it read 1 x the price).
+  Widget _productTotal(ServiceProduct p, bool zero, {bool counted = true}) =>
+      _figureBox(p.available && counted ? _readMoney(p.total) : '—', style: p.available && counted ? _quietly(LineTable.amount, zero) : null);
+
+  Widget _productRow(int i, _RateCols cols) {
+    final p = _products[i].toProduct();
+    final zero = _productZero(i);
+    final line = cols.line(
+      item: _productName(i, p, zero: zero),
+      qty: _productQtyBox(i),
+      times: _sym('×'),
+      rate: _productPrice(p, zero),
+      equals: _sym('='),
+      total: _productTotal(p, zero, counted: _readable(_products[i].qty)),
+      menu: Align(alignment: Alignment.topRight, child: _productMenu(i)),
+    );
+    final error = _productError(i);
+    return _RateRowShell(
+      edit: true,
+      lead: _productHandle(i),
+      child: error == null ? line : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [line, error]),
+    );
+  }
+
+  /// One product stacked, for a window too narrow for the table: its handle, name and menu, then its Qty, Price and
+  /// Total boxes, each labelled, as a stacked rate's (the qty box had no label beside a labelled Price and Total).
+  Widget _productBlock(int i) {
+    final p = _products[i].toProduct();
+    final zero = _productZero(i);
+    final cols = _cols;
+    final error = _productError(i);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: DashUi.line)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              SizedBox(height: LineTable.boxHeight(context), child: _productHandle(i, width: _stackHandleW)),
+              Expanded(child: _productName(i, p, zero: zero, inset: 0)),
+              const SizedBox(width: 8),
+              _productMenu(i),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 12,
+            runSpacing: 10,
+            children: [
+              _stackedField('Qty', cols.w(_RateCols.qtyW), _productQtyBox(i)),
+              _stackedField('Price', cols.w(_RateCols.rateW), _productPrice(p, zero)),
+              _stackedField('Total', cols.w(_RateCols.totalW), _productTotal(p, zero, counted: _readable(_products[i].qty))),
+            ],
+          ),
+          ?error,
+        ],
+      ),
+    );
+  }
+
+  /// A box with its small label over it, [width] wide (the stacked rates and products).
+  Widget _stackedField(String label, double width, Widget child) => SizedBox(
+    width: width,
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: _smallLabel),
+        const SizedBox(height: 4),
+        child,
+      ],
+    ),
+  );
+
+  /// The products-only search under the table.
+  Widget _productSearch() => Padding(
+    padding: const EdgeInsets.fromLTRB(_RateCols.side, 12, _RateCols.side, 0),
+    child: Align(
+      alignment: Alignment.centerLeft,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: CatalogSearchField(
+          key: const ValueKey('product-search'),
+          focusNode: _productSearchFocus,
+          showCost: false,
+          allowCustom: false,
+          hint: 'Add a product: search by name or SKU',
+          search: (q) async => [
+            for (final e in await (widget.productSearch ?? (q) => LineItemsApi.searchCatalog(q, kind: 'product'))(q))
+              if (!e.isService) e,
+          ],
+          onPick: _pickProduct,
+        ),
+      ),
+    ),
+  );
+
+  Widget _productsEdit(double width) {
+    final cols = _cols;
+    final stacked = !cols.fits(width);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_products.isEmpty)
+          _noProducts(edit: true)
+        else ...[
+          if (!stacked) _productsHeader(cols),
+          // Dragged by the handle at each row's left (as the job page's lines are); Alt+Up / Alt+Down in a row too.
+          ReorderableListView.builder(
+            key: const ValueKey('products-list'),
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            buildDefaultDragHandles: false,
+            itemCount: _products.length,
+            onReorderItem: _dragProduct,
+            proxyDecorator: _liftedRow,
+            itemBuilder: (context, i) => KeyedSubtree(
+              key: _products[i].key,
+              child: CallbackShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): () => _moveProduct(i, -1),
+                  const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): () => _moveProduct(i, 1),
+                },
+                child: _ProductLine(index: i, child: stacked ? _productBlock(i) : _productRow(i, cols)),
+              ),
+            ),
+          ),
+          const Divider(height: 1, thickness: 1, color: DashUi.line),
+        ],
+        if (_errors['products'] case final m?)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(_RateCols.side, 10, 0, 0),
+            child: Semantics(
+              liveRegion: true,
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline_rounded, size: 14, color: DashUi.redText),
+                  const SizedBox(width: 5),
+                  Flexible(
+                    child: Text(m, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: DashUi.redText, height: 1.3)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        // At the most a package can list, the search gives way to why (a 51st pick used to do nothing, silently).
+        if (_products.length >= kMaxServiceProducts)
+          const Padding(
+            padding: EdgeInsets.fromLTRB(_RateCols.side, 14, _RateCols.side, 0),
+            child: Text(
+              '$kMaxServiceProducts products at most. Delete one to add another.',
+              key: ValueKey('products-cap'),
+              style: TextStyle(fontSize: 13, color: DashUi.ink, height: 1.3),
+            ),
+          )
+        else ...[
+          _productSearch(),
+          // The search is the page's last part: while it has the keyboard there is page under it, so its results open
+          // in full under it (they were squeezed into the last 38 px of the window: the user, 2026-11-24).
+          CatalogSearchRoom(focusNode: _productSearchFocus),
+        ],
+      ],
+    );
+  }
 
   /// The read table's rates whose description is open (the "Description" toggle under the name).
   final Set<int> _readDescOpen = {};
@@ -1603,13 +2241,14 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     if (rates.isEmpty) return _noRates(edit: false);
     final cols = _cols;
     if (!cols.fits(width)) {
-      // Stacked (a narrow window or large text): one block per rate, hairlines between.
+      // Stacked (a narrow window or large text): one block per rate, hairlines between. Its text starts where the
+      // band's label and the DETAILS text do, 12 px in (audit 2026-11-24: it sat on the band's edge).
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (var i = 0; i < rates.length; i++)
             Container(
-              padding: const EdgeInsets.symmetric(vertical: 12),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: _RateCols.side),
               decoration: BoxDecoration(
                 border: Border(
                   top: const BorderSide(color: DashUi.line),
@@ -1626,23 +2265,23 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
                   ),
                   if (rates[i].description.isNotEmpty) ...[
                     const SizedBox(height: 2),
-                    Text(rates[i].description, style: LineTable.description.copyWith(color: DashUi.slate)),
+                    Text(rates[i].description, style: LineTable.description),
                   ],
                   const SizedBox(height: 10),
                   _grid(
                     [
                       _value('Qty', _qty(rates[i].qty)),
-                      _value('Regular rate', _money(rates[i].rate), quiet: rates[i].rate == null),
+                      _value('Rate', _money(rates[i].rate), quiet: rates[i].rate == null),
                       _value('Total', _money(rates[i].total), quiet: rates[i].total == null),
                       if (_canSeeCost) ...[
-                        _value('Internal cost', _money(rates[i].cost), quiet: rates[i].cost == null),
-                        _value('Total cost', _money(rates[i].totalCost), quiet: rates[i].cost == null),
+                        // No cost reads $0.00, as in the table (user 2026-11-23; stacked, it read "—").
+                        _value('Cost', _money(rates[i].cost ?? 0)),
                         _value('Commission', _rateCommissionRead(rates[i]).$1, quiet: !rates[i].paysCommission),
                         _value('Pays', _rateCommissionRead(rates[i]).$2, quiet: !rates[i].paysCommission),
                       ],
                     ],
-                    columns: 3,
-                    runGap: 10,
+                    columns: width >= 1000 ? 4 : 3,
+                    runGap: 8,
                   ),
                 ],
               ),
@@ -1667,29 +2306,31 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
                     height: boxH,
                     child: Padding(
                       padding: const EdgeInsets.only(left: LineTable.cellX),
+                      // The "Description" toggle sits after the name on the same line, so a rate is one row tall
+                      // until its description is opened (under the name it doubled the row, the user 2026-11-24).
                       child: Row(
                         children: [
                           Flexible(
                             child: Text.rich(
-                              catalogNameSpan(rates[i].name, rates[i].qty == 0 ? LineTable.name.copyWith(fontWeight: FontWeight.w500, color: DashUi.slate) : LineTable.name),
+                              catalogNameSpan(rates[i].name, rates[i].qty == 0 ? LineTable.name.copyWith(fontWeight: FontWeight.w500) : LineTable.name),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
+                          if (rates[i].description.isNotEmpty) ...[
+                            const SizedBox(width: 8),
+                            _descToggle(
+                              id: 'rate-desc-read:$i',
+                              open: _readDescOpen.contains(i),
+                              has: true,
+                              onTap: () => setState(() => _readDescOpen.contains(i) ? _readDescOpen.remove(i) : _readDescOpen.add(i)),
+                            ),
+                          ],
                         ],
                       ),
                     ),
                   ),
                   if (rates[i].description.isNotEmpty) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(left: LineTable.cellX - 6),
-                      child: _descToggle(
-                        id: 'rate-desc-read:$i',
-                        open: _readDescOpen.contains(i),
-                        has: true,
-                        onTap: () => setState(() => _readDescOpen.contains(i) ? _readDescOpen.remove(i) : _readDescOpen.add(i)),
-                      ),
-                    ),
                     AnimatedSize(
                       duration: LineTable.motion(context, 180),
                       curve: Curves.easeOutCubic,
@@ -1705,18 +2346,16 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
                 ],
               ),
               // A line at 0 reads quieter, as the Products & Services table draws its 0 lines.
-              qty: _cellText(_qty(rates[i].qty), inset: _qtyInset, style: _quietly(LineTable.cell, rates[i].qty == 0)),
+              qty: _cellText(_qty(rates[i].qty), style: _quietly(LineTable.cell, rates[i].qty == 0)),
               rate: _cellText(_money(rates[i].rate), style: rates[i].rate == null ? null : _quietly(LineTable.cell, rates[i].qty == 0)),
-              total: _cellText(_money(rates[i].total), style: rates[i].total == null ? LineTable.quiet : _quietly(LineTable.amount, rates[i].qty == 0)),
-              cost: _cellText(_money(rates[i].cost), style: rates[i].cost == null ? null : _quietly(LineTable.cell, rates[i].qty == 0)),
-              totalCost: _cellText(
-                _money(rates[i].cost == null ? null : rates[i].totalCost),
-                style: rates[i].cost == null ? null : _quietly(LineTable.cell, rates[i].qty == 0),
-              ),
+              total: _cellText(_money(rates[i].total), style: rates[i].total == null ? LineTable.cell : _quietly(LineTable.amount, rates[i].qty == 0)),
+              // No cost reads $0.00, as the Products & Services table (user 2026-11-23).
+              cost: _cellText(_money(rates[i].cost ?? 0), style: _quietly(LineTable.cell, rates[i].qty == 0)),
+              // At the column's edge, under COMMISSION (which sits over the % / $ switch while editing).
               commission: _cellText(
                 _rateCommissionRead(rates[i]).$1,
-                right: false,
-                style: rates[i].paysCommission ? _quietly(LineTable.cell, rates[i].qty == 0) : LineTable.quiet,
+                inset: 0,
+                style: rates[i].paysCommission ? _quietly(LineTable.cell, rates[i].qty == 0) : LineTable.cell,
               ),
               pays: _cellText(_rateCommissionRead(rates[i]).$2, style: rates[i].paysCommission ? _quietly(LineTable.cell, rates[i].qty == 0) : null),
             ),
@@ -1729,10 +2368,19 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   /// A rate's figures as it is typed: its total and total cost (null while a box holds something that isn't a number).
   ({double? total, double? totalCost}) _figures(_RateDraft d) {
     final r = d.toRate();
+    // An empty quantity box is not 1 (it is saved only once a figure is typed): the total waits for it (audit
+    // 2026-11-24: an emptied box still showed 1 x the rate).
+    final noQty = !_readable(d.qty);
     return (
-      total: r.rate == null || r.rate!.isNaN || r.qty.isNaN ? null : r.total,
-      totalCost: r.cost == null || r.cost!.isNaN || r.qty.isNaN ? null : r.totalCost,
+      total: r.rate == null || r.rate!.isNaN || r.qty.isNaN || noQty ? null : r.total,
+      totalCost: r.cost == null || r.cost!.isNaN || r.qty.isNaN || noQty ? null : r.totalCost,
     );
+  }
+
+  /// Whether [c] holds a figure (not empty, and a number).
+  static bool _readable(TextEditingController c) {
+    final v = _RateDraft.parse(c.text);
+    return v != null && !v.isNaN;
   }
 
   String _readMoney(double? v) => v == null || v.isNaN ? '—' : dashMoney(v);
@@ -1749,6 +2397,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     bool right = false,
     bool numeric = false,
     bool multiline = false,
+    bool afterLead = false,
     TextStyle? style,
   }) {
     // The page's text style (what the read cells inherit: the theme's body text, under this page's Scaffold) and then
@@ -1765,7 +2414,8 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         focusNode: node,
         enabled: !_saving,
         minLines: multiline ? 2 : 1,
-        maxLines: multiline ? 8 : 1,
+        // A rate's description grows with its text (no inner scroll, the user 2026-11-24).
+        maxLines: multiline ? null : 1,
         textAlign: right ? TextAlign.right : TextAlign.left,
         textAlignVertical: multiline ? TextAlignVertical.top : TextAlignVertical.center,
         cursorWidth: CatalogUi.cursorWidth,
@@ -1786,12 +2436,14 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           hoverColor: Colors.transparent,
           hintText: hint,
           hintMaxLines: 1,
-          hintStyle: s.copyWith(color: DashUi.slate, fontWeight: FontWeight.w400),
+          // Black (the user 2026-11-24: edit-mode greys black too) but italic, so an empty box's "Rate name" or "None"
+          // can't be taken for something typed (review 2026-11-24).
+          hintStyle: s.copyWith(color: DashUi.ink, fontWeight: FontWeight.w400, fontStyle: FontStyle.italic),
           // A right-aligned field keeps room after its text for the caret: given back, so a typed figure ends where
           // the read one does, 8 px in from the box's edge.
           contentPadding: multiline
               ? const EdgeInsets.fromLTRB(LineTable.cellX - 1, 7, LineTable.cellX - 1, 7)
-              : EdgeInsets.fromLTRB(right ? 2 : LineTable.cellX - 1, 4, right ? LineTable.cellX - 1 - _caretRoom : 2, 4),
+              : EdgeInsets.fromLTRB(right ? 2 : (afterLead ? 0 : LineTable.cellX - 1), 4, right ? LineTable.cellX - 1 - _caretRoom : 2, 4),
         ),
       ),
     );
@@ -1806,7 +2458,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
   /// a weight lighter, as the Products & Services table draws its 0 lines, so the lines a package starts with stand out.
   bool _zero(int i) => _RateDraft.parse(_rates[i].qty.text) == 0;
 
-  TextStyle _quietly(TextStyle t, bool zero) => zero ? t.copyWith(color: DashUi.slate, fontWeight: t.fontWeight == FontWeight.w600 ? FontWeight.w500 : t.fontWeight) : t;
+  TextStyle _quietly(TextStyle t, bool zero) => zero ? t.copyWith(fontWeight: t.fontWeight == FontWeight.w600 ? FontWeight.w500 : t.fontWeight) : t;
 
   /// A rate's name box: the name, "Description" at its end; the description opens in a box under it.
   Widget _nameCell(int i) {
@@ -1846,11 +2498,11 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     );
   }
 
-  /// One more / one less on a quantity (never under 0).
+  /// One more / one less on a quantity (never under 0). An empty box counts as 0, so the up arrow gives 1, not 2.
   void _stepQty(int i, int by) {
     final d = _rates[i];
     final v = _RateDraft.parse(d.qty.text);
-    final now = v == null || v.isNaN ? 1.0 : v;
+    final now = v == null || v.isNaN ? 0.0 : v;
     final next = (now + by).clamp(0.0, 999999.0);
     setState(() => d.qty.text = _qty(next.toDouble()));
   }
@@ -1869,18 +2521,18 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         enabled: !_saving,
         end: _StepArrows(enabled: !_saving, onStep: (by) => _stepQty(i, by)),
         endWidth: _StepArrows.width,
-        field: _rateField('rate$i.qty', d.qty, d.qtyFocus, hint: '0', right: true, numeric: true, label: 'Rate ${i + 1} quantity', style: _quietly(LineTable.cell, _zero(i))),
+        field: _rateField('rate$i.qty', d.qty, d.qtyFocus, hint: 'Qty', numeric: true, label: 'Rate ${i + 1} quantity', style: _quietly(LineTable.cell, _zero(i))),
       ),
     );
   }
 
-  /// A money box: "$" at its left, the amount at its right.
+  /// A money box: "$" at its left, the amount right after it (left-aligned, user 2026-11-23).
   Widget _moneyBox(int i, String field, TextEditingController ctl, FocusNode node, {required String hint, required String label}) => _RateBox(
     focusNode: node,
     error: _bad(i, field),
     enabled: !_saving,
-    lead: const Text('\$', style: LineTable.currency),
-    field: _rateField('rate$i.$field', ctl, node, hint: hint, right: true, numeric: true, label: label, style: _quietly(LineTable.cell, _zero(i))),
+    lead: const Text('\$', style: _currency),
+    field: _rateField('rate$i.$field', ctl, node, hint: hint, numeric: true, afterLead: true, label: label, style: _quietly(LineTable.cell, _zero(i))),
   );
 
   /// What is wrong with a commission as it is typed, in the few words its PAYS cell has room for, or null.
@@ -1889,12 +2541,58 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     if (v == null) return null;
     if (v.isNaN) return 'Not a number';
     if (d.commissionType == 'percent' && v > 100) return 'Over 100%';
+    if (_commissionLimit(d) != null) return d.commissionType == 'percent' ? 'No price' : 'Over rate'; // short, to fit PAYS (as 'Over 100%')
     return null;
   }
 
+  /// The commission limits the user approved (decision A5, 2026-11-23; the server checks the same, commissionProblem in
+  /// src/serviceOverrides.js): a $ commission can't be more than its line's rate, and a % commission needs a priced
+  /// line. Null when it is within them (an empty box, no commission, always is). Never changes what was typed.
+  static String? _commissionLimit(_RateDraft d) {
+    final v = _RateDraft.parse(d.commission.text);
+    if (v == null || v.isNaN || v <= 0) return null;
+    final rate = _RateDraft.parse(d.rate.text);
+    final priced = rate != null && !rate.isNaN;
+    if (d.commissionType == 'percent') {
+      return priced && rate > 0 ? null : 'A % commission needs a price on the line. Enter the rate first, or pay a \$ commission.';
+    }
+    return priced && v > rate ? "A \$ commission can't be more than the line's rate (${_money(rate)})." : null;
+  }
+
+  /// The "%" just after a percentage typed in its box: placed by measuring the typed text, and kept inside the box when
+  /// the text runs long. It ignores the pointer, so a click on it still lands in the field. Right against the figure,
+  /// as read ("10%"), and only while the box has the keyboard does it leave the caret's room (audit 2026-11-24: it
+  /// always did, so every box read "10 %" beside the table's "10%").
+  Widget _percentAfter(TextEditingController ctl, FocusNode node) {
+    final style = (Theme.of(context).textTheme.bodyMedium ?? const TextStyle()).merge(LineTable.cell);
+    final scaler = MediaQuery.textScalerOf(context);
+    return Positioned.fill(
+      child: IgnorePointer(
+        child: LayoutBuilder(
+          builder: (context, c) => ListenableBuilder(
+            listenable: Listenable.merge([ctl, node]),
+            builder: (context, _) {
+              double width(String t) {
+                final p = TextPainter(text: TextSpan(text: t, style: style), textDirection: Directionality.of(context), textScaler: scaler, maxLines: 1)..layout();
+                final w = p.width;
+                p.dispose();
+                return w;
+              }
+              final typed = width(ctl.text), sign = width('%');
+              final left = (typed + (node.hasFocus ? _caretRoom : 0)).clamp(0.0, (c.maxWidth - sign - 2).clamp(0.0, double.infinity));
+              return Align(
+                alignment: Alignment.centerLeft,
+                child: Padding(padding: EdgeInsets.only(left: left), child: const Text('%', style: _currency)),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   /// A rate's commission while editing (USER RULE 2026-11-20: the % / $ toggle and an amount; an empty box is none).
-  /// The switch and the box are fixed widths, and the box's unit sits in a fixed slot at each end ("$" before a fixed
-  /// amount, "%" after a percentage, shown once something is typed), so changing the unit moves nothing.
+  /// The switch and the box are fixed widths; "$" leads a fixed amount and "%" follows a percentage, as read.
   Widget _commissionCell(int i) {
     final d = _rates[i];
     final n = i + 1;
@@ -1914,10 +2612,9 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
                 ? null
                 : (p) => setState(() {
                     d.commissionType = p ? 'percent' : 'fixed';
-                    _errors = {
-                      for (final e in _errors.entries)
-                        if (e.key != 'rate$i.commission') e.key: e.value,
-                    };
+                    // Checked again for the new unit: 150 is fine as dollars, not as a percentage (it used to clear
+                    // the problem either way, and the next Save raised it again).
+                    _recheck();
                   }),
           ),
         ),
@@ -1927,20 +2624,25 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
             focusNode: d.commissionFocus,
             error: _bad(i, 'commission') || _commissionProblem(d) != null,
             enabled: !_saving,
-            lead: Text(has && !percent ? '\$' : '', style: LineTable.currency),
-            end: Padding(
-              padding: const EdgeInsets.only(right: 2),
-              child: Text(has && percent ? '%' : '', style: LineTable.currency),
-            ),
-            endWidth: 16,
-            field: _rateField(
-              'rate$i.commission',
-              d.commission,
-              d.commissionFocus,
-              hint: 'None',
-              right: true,
-              numeric: true,
-              label: percent ? 'Rate $n commission, percent of the total' : 'Rate $n commission, dollars for each one sold',
+            // "$" before a fixed amount, "%" right after a percentage, as the table reads them ("$5.00", "5%"). The "$"
+            // keeps its own width when hidden, so switching % and $ moves nothing (the "None" used to slide); the "%"
+            // takes no room of its own (review 2026-11-24: an empty "%" slot cut a "$500.00" off, and a "%" pinned to
+            // the far edge read "5        %").
+            lead: Opacity(opacity: has && !percent ? 1 : 0, child: const Text('\$', style: _currency)),
+            field: Stack(
+              alignment: Alignment.centerLeft,
+              children: [
+                _rateField(
+                  'rate$i.commission',
+                  d.commission,
+                  d.commissionFocus,
+                  hint: 'None',
+                  numeric: true,
+                  afterLead: true,
+                  label: percent ? 'Rate $n commission, percent of the total' : 'Rate $n commission, dollars for each one sold',
+                ),
+                if (has && percent) _percentAfter(d.commission, d.commissionFocus),
+              ],
             ),
           ),
         ),
@@ -1950,13 +2652,14 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
 
   /// PAYS: what the commission comes to on this line, worked out as it is typed ("—" for none), or what is wrong with
   /// it, in red. A screen reader hears it in words: "pays $19.75, 5% of $395.00".
-  Widget _paysCell(int i, {bool right = true, double inset = LineTable.cellX}) {
+  Widget _paysCell(int i, {bool right = false, double inset = LineTable.cellX}) {
     final d = _rates[i];
     final f = _figures(d);
     final v = _RateDraft.parse(d.commission.text);
     final problem = _commissionProblem(d) ?? (_bad(i, 'commission') ? 'Check it' : null);
     final qty = d.toRate().qty;
-    final pays = problem != null || v == null ? null : _commissionPays(d.commissionType, v, qty: qty, total: f.total);
+    // Nothing to work out while the quantity box is empty (it read as 1).
+    final pays = problem != null || v == null || !_readable(d.qty) ? null : _commissionPays(d.commissionType, v, qty: qty, total: f.total);
     final text = problem ?? (pays == null ? '—' : dashMoney(pays));
     final words = problem ??
         (v == null
@@ -1980,7 +2683,6 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
 
   /// The row's ⋮ menu: duplicate, move, remove.
   Widget _rowMenu(int i) {
-    final last = i == _rates.length - 1;
     return _RateLine(
       index: i,
       child: AppMenu(
@@ -1988,9 +2690,14 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
         minWidth: 190,
         semanticLabel: 'Rate ${i + 1} actions',
         items: [
-          AppMenuItem(key: ValueKey('duplicate-rate:$i'), icon: Icons.content_copy_rounded, label: 'Duplicate rate', onPressed: _saving ? null : () => _duplicateRate(i)),
-          AppMenuItem(key: ValueKey('move-rate-up:$i'), icon: Icons.arrow_upward_rounded, label: 'Move up', onPressed: _saving || i == 0 ? null : () => _moveRate(i, -1)),
-          AppMenuItem(key: ValueKey('move-rate-down:$i'), icon: Icons.arrow_downward_rounded, label: 'Move down', onPressed: _saving || last ? null : () => _moveRate(i, 1)),
+          // The Products & Services table's words (decision A2, 2026-11-23): Copy / Delete. No Move up / Move down: rates
+          // are dragged by their handle, as products are (the user 2026-11-24).
+          AppMenuItem(
+            key: ValueKey('duplicate-rate:$i'),
+            icon: Icons.content_copy_rounded,
+            label: 'Copy',
+            onPressed: _saving || _rates.length >= kMaxServiceRates ? null : () => _duplicateRate(i),
+          ),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 4),
             child: Divider(height: 1, thickness: 1, color: DashUi.line),
@@ -1998,7 +2705,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           AppMenuItem(
             key: ValueKey('remove-rate:$i'),
             icon: Icons.delete_outline_rounded,
-            label: 'Remove rate',
+            label: 'Delete',
             danger: true,
             onPressed: _saving ? null : () => _removeRate(i),
           ),
@@ -2053,11 +2760,26 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (!stacked) _tHeader(cols),
-              for (var i = 0; i < _rates.length; i++)
-                KeyedSubtree(
+              // Dragged by the handle at each row's left, as the products are; Alt+Up / Alt+Down in a row too.
+              ReorderableListView.builder(
+                key: const ValueKey('rates-list'),
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                buildDefaultDragHandles: false,
+                itemCount: _rates.length,
+                onReorderItem: _dragRate,
+                proxyDecorator: _liftedRow,
+                itemBuilder: (context, i) => KeyedSubtree(
                   key: _rates[i].key,
-                  child: _RateLine(index: i, child: stacked ? _rateBlock(i, first: i == 0) : _rateRow(i, cols)),
+                  child: CallbackShortcuts(
+                    bindings: {
+                      const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): () => _moveRate(i, -1),
+                      const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): () => _moveRate(i, 1),
+                    },
+                    child: _RateLine(index: i, child: stacked ? _rateBlock(i, first: i == 0) : _rateRow(i, cols)),
+                  ),
                 ),
+              ),
               if (!stacked) const Divider(height: 1, thickness: 1, color: DashUi.line),
             ],
           ),
@@ -2078,17 +2800,17 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
       item: _nameCell(i),
       qty: _qtyBox(i),
       times: _sym('×'),
-      rate: _moneyBox(i, 'rate', d.rate, d.rateFocus, hint: '0.00', label: 'Rate $n regular rate'),
+      rate: _moneyBox(i, 'rate', d.rate, d.rateFocus, hint: '0.00', label: 'Rate $n rate'),
       equals: _sym('='),
-      total: _cellText(_readMoney(f.total), style: f.total == null ? LineTable.quiet : _quietly(LineTable.amount, _zero(i))),
-      cost: _moneyBox(i, 'cost', d.cost, d.costFocus, hint: 'Cost', label: 'Rate $n internal cost'),
-      totalCost: _cellText(_readMoney(f.totalCost), style: f.totalCost == null ? LineTable.quiet : _quietly(LineTable.cell, _zero(i))),
+      total: _figureBox(_readMoney(f.total), style: f.total == null ? LineTable.cell : _quietly(LineTable.amount, _zero(i))),
+      cost: _moneyBox(i, 'cost', d.cost, d.costFocus, hint: '0.00', label: 'Rate $n cost'),
       commission: _commissionCell(i),
       pays: _paysCell(i),
       menu: Align(alignment: Alignment.topRight, child: _rowMenu(i)),
     );
     return _RateRowShell(
       edit: true,
+      lead: _rateHandle(i),
       child: errors == null ? line : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [line, errors]),
     );
   }
@@ -2101,22 +2823,12 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
     final n = i + 1;
     final k = _scale;
     final cols = _cols;
-    Widget labelled(String label, double width, Widget child) => SizedBox(
-      width: width,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: _smallLabel),
-          const SizedBox(height: 4),
-          child,
-        ],
-      ),
-    );
+    final labelled = _stackedField;
     final errors = _rowErrors(i, left: 0);
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 12),
       decoration: BoxDecoration(
+        color: Colors.white,
         border: Border(
           top: first ? const BorderSide(color: DashUi.line) : BorderSide.none,
           bottom: const BorderSide(color: DashUi.line),
@@ -2128,6 +2840,7 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              SizedBox(height: LineTable.boxHeight(context), child: _rateHandle(i, width: _stackHandleW)),
               Expanded(child: _nameCell(i)),
               const SizedBox(width: 8),
               _rowMenu(i),
@@ -2139,15 +2852,15 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
             runSpacing: 10,
             children: [
               labelled('Qty', cols.w(_RateCols.qtyW), _qtyBox(i)),
-              labelled('Regular rate', cols.w(_RateCols.rateW), _moneyBox(i, 'rate', d.rate, d.rateFocus, hint: '0.00', label: 'Rate $n regular rate')),
+              labelled('Rate', cols.w(_RateCols.rateW), _moneyBox(i, 'rate', d.rate, d.rateFocus, hint: '0.00', label: 'Rate $n rate')),
               labelled(
                 'Total',
-                96 * k,
-                _cellText(_readMoney(f.total), right: false, inset: 0, style: f.total == null ? LineTable.quiet : LineTable.amount),
+                cols.w(_RateCols.totalW),
+                // The grey worked-out box, as in the table (review 2026-11-24: stacked, it was bare text).
+                _figureBox(_readMoney(f.total), style: f.total == null ? LineTable.cell : _quietly(LineTable.amount, _zero(i))),
               ),
               if (_canSeeCost) ...[
-                labelled('Internal cost', cols.w(_RateCols.costW), _moneyBox(i, 'cost', d.cost, d.costFocus, hint: 'Cost', label: 'Rate $n internal cost')),
-                labelled('Total cost', 96 * k, _cellText(_readMoney(f.totalCost), right: false, inset: 0)),
+                labelled('Cost', cols.w(_RateCols.costW), _moneyBox(i, 'cost', d.cost, d.costFocus, hint: '0.00', label: 'Rate $n cost')),
                 labelled('Commission', cols.commissionW, _commissionCell(i)),
                 labelled('Pays', 96 * k, _paysCell(i, right: false, inset: 0)),
               ],
@@ -2161,32 +2874,56 @@ class _ServiceDetailScreenState extends State<ServiceDetailScreen> {
 
   /// ⋮ > Duplicate rate: a copy right under it, the keyboard in its name.
   void _duplicateRate(int i) {
+    if (_rates.length >= kMaxServiceRates) return;
     final from = _rates[i];
     final copy = _newDraft(from.toRate())
       ..commissionType = from.commissionType
       ..descOpen = from.descOpen;
-    setState(() => _rates = [..._rates]..insert(i + 1, copy));
+    setState(() {
+      final before = [..._rates];
+      _rates = [...before]..insert(i + 1, copy);
+      _keepErrorsWithRows(ratesBefore: before);
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && _rates.contains(copy)) copy.nameFocus.requestFocus();
     });
   }
 
-  /// ⋮ > Move up / Move down: the order the lines take under the package on a job or estimate.
-  void _moveRate(int i, int by) {
-    final j = i + by;
-    if (j < 0 || j >= _rates.length) return;
+  /// A rate dragged by its handle to where it lands ([to]): the order its line takes under the package on a job or
+  /// estimate (the user 2026-11-24: dragged, as products are, not ⋮ > Move up / Move down).
+  void _dragRate(int from, int to) {
+    if (_saving || from < 0 || from >= _rates.length) return;
+    final at = to.clamp(0, _rates.length - 1);
+    if (at == from) return;
+    final moving = _rates[from];
     setState(() {
-      final next = [..._rates];
-      final r = next.removeAt(i);
-      next.insert(j, r);
-      _rates = next;
+      final before = [..._rates];
+      _rates = [...before]
+        ..removeAt(from)
+        ..insert(at, moving);
       // A problem found by the last Save belongs to the rate, not the row it was on.
-      _errors = {
-        for (final e in _errors.entries)
-          if (!e.key.startsWith('rate')) e.key: e.value,
-      };
+      _keepErrorsWithRows(ratesBefore: before);
     });
   }
+
+  /// Alt+Up / Alt+Down in a rate's row: one place up or down, the keyboard staying in the box it was in (the moved row
+  /// is built afresh by the reorderable list).
+  void _moveRate(int i, int by) {
+    if (i + by < 0 || i + by >= _rates.length) return;
+    final d = _rates[i];
+    final had = [d.nameFocus, d.descFocus, d.qtyFocus, d.rateFocus, d.costFocus, d.commissionFocus].where((n) => n.hasFocus).firstOrNull;
+    _dragRate(i, i + by);
+    if (had != null) WidgetsBinding.instance.addPostFrameCallback((_) => mounted && _rates.contains(d) ? had.requestFocus() : null);
+  }
+
+  /// A row lifted while it is dragged, as the job page's lines (white, a soft shadow).
+  static Widget _liftedRow(Widget child, int index, Animation<double> animation) => Material(
+    elevation: 4,
+    shadowColor: Colors.black12,
+    color: Colors.white,
+    borderRadius: BorderRadius.circular(8),
+    child: child,
+  );
 }
 
 /// The rates table's columns, one layout for the headings, the read rows and the edited rows, so a value can only sit
@@ -2197,10 +2934,13 @@ class _RateCols {
   final double k;
   const _RateCols({required this.costs, required this.k});
 
-  // As narrow as their widest figures allow ("$12,345.00" in the totals, "999,999" in the quantity), so the rate's
-  // name keeps the room at 1280.
-  static const qtyW = 80.0, symW = 20.0, rateW = 112.0, totalW = 90.0, costW = 116.0, totalCostW = 90.0;
-  static const unitW = 64.0, unitGap = 6.0, amountW = 80.0, paysW = 78.0, menuW = 32.0;
+  // The money columns are one width, just room for "$ 999,000.00", as the Products & Services table's (user 2026-11-23:
+  // "all same size and only big enough to fit the number 999,000.00"); a bigger figure is drawn smaller. The quantity
+  // fits "999,999".
+  static const figureW = 100.0;
+  static const qtyW = 80.0, symW = 20.0, rateW = figureW, totalW = figureW, costW = figureW;
+  // The amount box fits "$1,234.56" and PAYS "$12,345.67" (review 2026-11-24: a $500.00 commission was cut off).
+  static const unitW = 64.0, unitGap = 6.0, amountW = 92.0, paysW = 88.0, menuW = 32.0;
 
   /// Between the rate's name and its quantity, and between the later columns.
   static const itemGap = 12.0, gap = 10.0;
@@ -2221,7 +2961,7 @@ class _RateCols {
       w(rateW) +
       symW +
       w(totalW) +
-      (costs ? gap + w(costW) + gap + w(totalCostW) + gap + commissionW + gap + w(paysW) : 0) +
+      (costs ? gap + w(costW) + gap + commissionW + gap + w(paysW) : 0) +
       gap +
       menuW;
 
@@ -2236,7 +2976,6 @@ class _RateCols {
     Widget? equals,
     Widget? total,
     Widget? cost,
-    Widget? totalCost,
     Widget? commission,
     Widget? pays,
     Widget? menu,
@@ -2255,8 +2994,6 @@ class _RateCols {
         const SizedBox(width: gap),
         SizedBox(key: const ValueKey('rate-col-cost'), width: w(costW), child: cost),
         const SizedBox(width: gap),
-        SizedBox(key: const ValueKey('rate-col-total-cost'), width: w(totalCostW), child: totalCost),
-        const SizedBox(width: gap),
         SizedBox(key: const ValueKey('rate-col-commission'), width: commissionW, child: commission),
         const SizedBox(width: gap),
         SizedBox(key: const ValueKey('rate-col-pays'), width: w(paysW), child: pays),
@@ -2274,11 +3011,18 @@ class _RateRowShell extends StatefulWidget {
   final bool edit;
   final bool stripe;
   final Widget child;
-  const _RateRowShell({required this.edit, this.stripe = false, required this.child});
 
-  /// Under the pointer, and while a box in the row has the keyboard.
-  static final Color hover = Color.lerp(Colors.white, DashUi.faint, 0.55)!;
-  static final Color active = Color.lerp(Colors.white, DashUi.faint, 0.85)!;
+  /// A drag handle in the row's left margin, level with its line ([leadW] wide: the margin, so a rate's name box and a
+  /// product's name stay where they are read).
+  final Widget? lead;
+  static const leadW = _RateCols.side;
+
+  const _RateRowShell({required this.edit, this.stripe = false, required this.child, this.lead});
+
+  /// Under the pointer, and while a box in the row has the keyboard: the same as the Products & Services table's
+  /// (decision A3, 2026-11-23: one hover for both tables, in line_table_style.dart).
+  static final Color hover = LineTable.rowHover;
+  static final Color active = LineTable.rowActive;
 
   @override
   State<_RateRowShell> createState() => _RateRowShellState();
@@ -2315,6 +3059,8 @@ class _RateRowShellState extends State<_RateRowShell> {
             color: DashUi.ink,
           ),
         ),
+        if (widget.lead case final lead?)
+          Positioned(left: 0, top: widget.edit ? 7 : 5, width: _RateRowShell.leadW, height: LineTable.boxHeight(context), child: lead),
       ],
     );
     if (!widget.edit) return body;
@@ -2357,9 +3103,6 @@ class _RateBox extends StatefulWidget {
     this.enabled = true,
     this.multiline = false,
   });
-
-  /// The "$" slot's width, its padding included.
-  static const leadWidth = 18.0;
 
   @override
   State<_RateBox> createState() => _RateBoxState();
@@ -2422,12 +3165,9 @@ class _RateBoxState extends State<_RateBox> {
         crossAxisAlignment: widget.multiline ? CrossAxisAlignment.start : CrossAxisAlignment.center,
         children: [
           if (widget.lead case final lead?)
-            Container(
-              width: _RateBox.leadWidth,
-              padding: const EdgeInsets.only(left: LineTable.cellX - 1),
-              alignment: Alignment.centerLeft,
-              child: lead,
-            ),
+            // As wide as the "$" itself, so "$395.00" reads in the box as it does in the table (review 2026-11-24: a
+            // fixed slot left a gap that read mode doesn't have, and closed it at 130% text).
+            Padding(padding: const EdgeInsets.only(left: LineTable.cellX - 1), child: lead),
           Expanded(
             child: Align(alignment: widget.multiline ? Alignment.topLeft : Alignment.centerLeft, child: widget.field),
           ),
@@ -2482,7 +3222,7 @@ class _StepArrows extends StatelessWidget {
   );
 }
 
-/// One arrow: a light fill and an ink arrow under the pointer, a touch darker pressed (the Products & Services
+/// One arrow: shaded at rest, darker with an ink arrow under the pointer, darker again pressed (the Products & Services
 /// quantity's arrow). No hover tip (USER RULE 2026-11-20); a screen reader hears "One more" / "One less".
 class _StepArrow extends StatefulWidget {
   final bool up;
@@ -2523,13 +3263,13 @@ class _StepArrowState extends State<_StepArrow> {
           height: 13,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: !widget.enabled ? null : (_down ? DashUi.line : (_hover ? LineTable.press : null)),
+            // Shaded at rest, as the Products & Services quantity's arrows (user 2026-11-23).
+            color: !widget.enabled ? LineTable.stepRest : (_down ? LineTable.stepDown : (_hover ? LineTable.stepHover : LineTable.stepRest)),
             borderRadius: BorderRadius.circular(3),
           ),
-          child: Icon(
-            widget.up ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-            size: 16,
-            color: !widget.enabled ? DashUi.line : (_hover || _down ? DashUi.ink : DashUi.slate),
+          child: CustomPaint(
+            size: StepChevronPainter.size,
+            painter: StepChevronPainter(up: widget.up, color: !widget.enabled ? DashUi.line : DashUi.ink),
           ),
         ),
       ),
@@ -2594,7 +3334,7 @@ class _RowMenuButtonState extends State<_RowMenuButton> {
                 borderRadius: BorderRadius.circular(LineTable.radius),
                 border: Border.all(color: open ? DashUi.ink : DashUi.ink.withValues(alpha: 0), width: LineTable.edgeWidth),
               ),
-              child: Icon(Icons.more_vert_rounded, size: 18, color: !widget.enabled ? DashUi.line : (lit ? DashUi.ink : DashUi.slate)),
+              child: Icon(Icons.more_vert_rounded, size: 18, color: !widget.enabled ? DashUi.line : DashUi.ink),
             ),
           ),
         ),
@@ -2603,7 +3343,8 @@ class _RowMenuButtonState extends State<_RowMenuButton> {
   }
 }
 
-/// "+ Add rate": the Products & Services table's outlined "Add a line" box, as tall as the table's boxes.
+/// "+ Add rate": the Products & Services table's outlined "Add a line" box, as tall as it (40 px) and as the "Add a
+/// product" search under the products, so the page's two add controls match (audit 2026-11-24: it was 31 px).
 class _AddRateButton extends StatefulWidget {
   final FocusNode focusNode;
   final VoidCallback? onPressed;
@@ -2638,7 +3379,7 @@ class _AddRateButtonState extends State<_AddRateButton> {
             child: AnimatedContainer(
               duration: LineTable.motion(context, 120),
               curve: Curves.easeOut,
-              height: LineTable.boxHeight(context),
+              height: CatalogSearchField.height,
               constraints: const BoxConstraints(minWidth: 160),
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
@@ -2801,7 +3542,7 @@ class _UnitSideState extends State<_UnitSide> {
               fontSize: 13.5,
               height: 1.2,
               fontWeight: on ? FontWeight.w700 : FontWeight.w500,
-              color: !widget.enabled ? DashUi.slate : (on || _hover ? DashUi.ink : DashUi.slate),
+              color: !widget.enabled ? DashUi.slate : DashUi.ink,
             ),
           ),
         ),
@@ -2815,6 +3556,16 @@ class _RateLine extends StatelessWidget {
   final int index;
   final Widget child;
   const _RateLine({required this.index, required this.child});
+
+  @override
+  Widget build(BuildContext context) => child;
+}
+
+/// Marks a product row with its place, so deleting it knows whether the keyboard was on it (as [_RateLine]).
+class _ProductLine extends StatelessWidget {
+  final int index;
+  final Widget child;
+  const _ProductLine({required this.index, required this.child});
 
   @override
   Widget build(BuildContext context) => child;

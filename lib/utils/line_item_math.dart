@@ -17,6 +17,19 @@
 // as $0 showed a 100% margin on lines nobody had costed). A line at $0.00 with a quantity is a no-charge line:
 // zeroUnconfirmedLines counts the ones nobody has confirmed ([LineDraft.zeroPriceConfirmed]), so a silent $0 can't slip
 // through. An unpriced line (rate null) is not a $0 line.
+//
+// P&S round 2 finalization (2026-11-23, approved by the user):
+//   ROUNDING       every rounding is half AWAY FROM ZERO, positive and negative alike (Dart's round(), mulDivRound,
+//                  divRound). The server rounded a negative half toward zero until then (JavaScript's Math.round):
+//                  -0.0625 x $10 was -$0.63 here and -$0.62 there. Boundary cases are in the shared cases file.
+//   FEE BASE       a percentage fee is its percent of the items less EVERY discount: the draft's own and the record's
+//                  ([outsideDiscountCents], Service Fusion's discount charges). 3% of $1,000 less a $100 discount is $27.
+//   TAX            each sales tax is worked out on its own lines and may be negative (a return gives back its own tax),
+//                  so a return on one tax offsets a sale on another. The tax as a whole is never below $0 (the server's
+//                  one-rate rule): a larger credit is cut back to what is charged, so the rows still add up.
+//   CARD FEES      a card processing fee ([isCardProcessingFee]) is charged and totalled like any fee, but it goes to the
+//                  processor, so it is not profit: profit and margin are worked out on the money before tax less it.
+//                  Every other fee still counts.
 
 /// What a line is: something sold, a discount taken off (entered as a positive amount), or a fee added on (a card fee).
 /// A discount or a fee is a dollar amount ([LineDraft.rate]) or a percentage ([LineDraft.percent]).
@@ -158,6 +171,8 @@ class LineDraft {
     bool? zeroPriceConfirmed,
     String? zeroPriceConfirmedBy,
     Object? percent = _keep,
+    String? packageId,
+    String? packageName,
   }) => LineDraft(
     id: identical(id, _keep) ? this.id : id as String?,
     kind: kind,
@@ -183,8 +198,8 @@ class LineDraft {
         ? (zeroPriceConfirmed ? zeroPriceConfirmedBy : null)
         : (_stillSame(name, quantity, rate) ? this.zeroPriceConfirmedBy : null),
     zeroPriceConfirmedAt: zeroPriceConfirmed == null && _stillSame(name, quantity, rate) ? zeroPriceConfirmedAt : null,
-    packageId: packageId,
-    packageName: packageName,
+    packageId: packageId ?? this.packageId,
+    packageName: packageName ?? this.packageName,
     service: service,
     percent: identical(percent, _keep) ? this.percent : (percent as num?)?.toDouble(),
   );
@@ -328,6 +343,12 @@ class LineTotals {
   /// set's own rate, [TaxFigure.name] null, first). [taxCents] is their sum.
   final List<TaxFigure> taxes;
 
+  /// What a percentage fee is worked out on: the items less every discount (the draft's and the record's).
+  final int feeBaseCents;
+
+  /// The card processing fees among [feeCents] ([isCardProcessingFee]): charged, but not profit.
+  final int processingFeeCents;
+
   const LineTotals({
     required this.itemsCents,
     required this.discountCents,
@@ -344,10 +365,21 @@ class LineTotals {
     required this.lines,
     this.feeCents = 0,
     this.taxes = const [],
+    this.feeBaseCents = 0,
+    this.processingFeeCents = 0,
   });
 
   double get total => totalCents / 100;
 }
+
+/// A card processing fee: what a customer is charged for paying by card, which goes to the card processor (Service
+/// Fusion's "Credit Card Convenience Fee - 3% discount for debit, ACH, check, or cash payment", 902 records; the app's
+/// preset of the same name). Known by its words: neither Service Fusion nor the app marks a fee's type. A trip charge,
+/// late interest or an adjustment is not one. Decision 8, 2026-11-23: these are left out of profit.
+bool isCardProcessingFee(String name) => RegExp(
+  r'\b(credit|debit)\s+card\b|\bcard\s+(processing|convenience|surcharge|fee)|\b(convenience|processing|merchant)\s+fee\b|\bsurcharge\b',
+  caseSensitive: false,
+).hasMatch(name);
 
 /// One sales tax in a set's totals: [name] (null: the set's own rate), its [rate] percent, the money of the lines set
 /// to it ([baseCents]) and the tax, rounded once to the cent.
@@ -376,7 +408,10 @@ int percentOf(int cents, double percent) {
 ///   a percentage fee       = its percent of the items less discounts, before tax (the money the work comes to)
 ///   fees are never taxed (USER RULE 2026-11-20), have no cost and never count as a line with no cost
 ///   a discount never lowers any tax (USER RULE 2026-11-20): [LineDraft.taxable] on a discount is ignored.
-LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String, double>? taxRates}) {
+///
+/// [outsideDiscountCents]: discounts the record has outside these lines (Service Fusion's discount charges), taken off the
+/// base a percentage fee is worked out on. They are not part of these totals otherwise.
+LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String, double>? taxRates, int outsideDiscountCents = 0}) {
   var items = 0, cost = 0, unpriced = 0, missingCost = 0, zeroUnconfirmed = 0;
   // Taxable cents by tax: '' the set's own rate, then every named tax in [taxRates]'s order (the record's tax lines, so
   // a tax no line is set to yet still shows, at $0.00: adding a tax taxes nothing, USER RULE 2026-11-20).
@@ -416,35 +451,50 @@ LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String
     discounts += amount;
     amounts[i] = -amount;
   }
-  // Fees: a dollar amount, or a percentage of the items less discounts.
-  var fees = 0;
-  final feeBase = items - discounts;
+  // Fees: a dollar amount, or a percentage of the items less every discount (the draft's and the record's own).
+  var fees = 0, processing = 0;
+  final feeBase = items - discounts - outsideDiscountCents;
   for (var i = 0; i < lines.length; i++) {
     final l = lines[i];
     if (!l.isFee) continue;
     final amount = l.percent != null ? percentOf(feeBase, l.percent!.abs()) : (l.rate == null ? 0 : (l.rate! * 100).round().abs());
     fees += amount;
+    if (isCardProcessingFee(l.name)) processing += amount;
     amounts[i] = amount;
   }
 
+  // Each tax on its own lines, signed: a return gives back its own tax (rounded half away from zero, as everything is).
   int taxOn(int cents, double? rate) {
     final rateU = rate == null ? 0 : (rate * 10000).round(); // ten-thousandths of a percent
-    return rateU > 0 && cents > 0 ? mulDivRound(cents, rateU, 1000000) : 0;
+    return rateU > 0 && cents != 0 ? mulDivRound(cents, rateU, 1000000) : 0;
   }
 
-  var tax = 0, taxable = 0;
-  final taxes = <TaxFigure>[];
-  for (final e in pools.entries) {
-    final base = e.value < 0 ? 0 : e.value;
-    final rate = e.key.isEmpty ? taxRate : taxRates![e.key];
-    final t = taxOn(base, rate);
-    tax += t;
-    taxable += base;
-    if (rate != null && (e.key.isNotEmpty || base > 0 || t > 0)) taxes.add(TaxFigure(e.key.isEmpty ? null : e.key, rate, base, t));
+  final keys = pools.keys.toList();
+  final bases = [for (final k in keys) pools[k]!];
+  final rates = [for (final k in keys) k.isEmpty ? taxRate : taxRates![k]];
+  final each = [for (var i = 0; i < keys.length; i++) taxOn(bases[i], rates[i])];
+  // Never below $0 as a whole (the server's rule for one rate): a credit larger than what is charged is cut back, in
+  // order, until the tax is $0. Each tax used to be floored on its own, so a return on Rogers and a sale on Bentonville
+  // charged Bentonville's tax on $0 of items (P&S round 2 finalization, 2026-11-23).
+  var over = -each.fold<int>(0, (s, t) => s + t);
+  for (var i = 0; i < each.length && over > 0; i++) {
+    if (each[i] >= 0) continue;
+    final cut = -each[i] < over ? -each[i] : over;
+    each[i] += cut;
+    over -= cut;
   }
+  final tax = each.fold<int>(0, (s, t) => s + t);
+  final baseSum = bases.fold<int>(0, (s, b) => s + b);
+  final taxable = baseSum < 0 ? 0 : baseSum;
+  final taxes = <TaxFigure>[
+    for (var i = 0; i < keys.length; i++)
+      if (rates[i] != null && (keys[i].isNotEmpty || bases[i] != 0 || each[i] != 0)) TaxFigure(keys[i].isEmpty ? null : keys[i], rates[i]!, bases[i], each[i]),
+  ];
   final net = items - discounts + fees;
+  // Profit is on the money before tax less card processing fees, which go to the processor (decision 8, 2026-11-23).
+  final profitBase = net - processing;
   // Unknown while a line's cost is missing (costCents is then only the costs that are known).
-  final profit = missingCost > 0 ? null : net - cost;
+  final profit = missingCost > 0 ? null : profitBase - cost;
   return LineTotals(
     itemsCents: items,
     discountCents: discounts,
@@ -455,13 +505,15 @@ LineTotals computeLineTotals(List<LineDraft> lines, double? taxRate, {Map<String
     costCents: cost,
     profitCents: profit,
     // round() in Dart goes half away from zero; the backend does the same on purpose.
-    marginPct: profit != null && net > 0 ? (profit / net * 1000).round() / 10 : null,
+    marginPct: profit != null && profitBase > 0 ? (profit / profitBase * 1000).round() / 10 : null,
     unpricedLines: unpriced,
     missingCostLines: missingCost,
     zeroUnconfirmedLines: zeroUnconfirmed,
     lines: [for (var i = 0; i < lines.length; i++) LineFigures(amounts[i], exts[i])],
     feeCents: fees,
     taxes: taxes,
+    feeBaseCents: feeBase,
+    processingFeeCents: processing,
   );
 }
 
@@ -497,6 +549,39 @@ String qtyText(double q) {
 bool sfTaxed(Object? code) {
   final s = (code ?? '').toString().trim();
   return s.isNotEmpty && !RegExp(r'^no sales tax', caseSensitive: false).hasMatch(s);
+}
+
+/// A charge's display name (which the office can change on the record) and the Service Fusion charge it was made from.
+List<String> _chargeNames(Map<String, dynamic> c) => [
+  for (final v in [c['name'], c['other_charge']])
+    if ((v ?? '').toString().trim().isNotEmpty) v.toString().trim(),
+];
+
+Set<String> _lineTaxCodes(Iterable<Object?> lines) => {
+  for (final l in lines)
+    if (l is Map && (l['tax'] ?? '').toString().trim().isNotEmpty) l['tax'].toString().trim().toLowerCase(),
+};
+
+/// Whether the Service Fusion charge [c] (jobs.other_charges[]) is a sales tax, given the record's [lines]
+/// (raw_items). The backend has the same rule (sfChargeIsTax in src/sfTax.js). In order: a discount never is; a charge
+/// whose name or charge type is a tax code on the record's own lines is (two prod records name theirs "AR-Carroll-Eureka
+/// Springs" and " - Warranty", and were read as fees: P&S round 2, 2026-11-23); otherwise one whose name or charge type
+/// says "tax" or is a jurisdiction code ("AR-County-City").
+bool sfChargeIsTax(Map<String, dynamic> c, Iterable<Object?> lines) {
+  if (c['is_discount'] == true) return false;
+  final names = _chargeNames(c);
+  if (names.isEmpty) return false;
+  final codes = _lineTaxCodes(lines);
+  if (names.any((n) => codes.contains(n.toLowerCase()))) return true;
+  final jurisdiction = RegExp(r"^[A-Z]{2}-[A-Za-z][A-Za-z .'&]*(?:-[A-Za-z][A-Za-z .'&]*)+$");
+  return names.any((n) => n.toLowerCase().contains('tax') || jurisdiction.hasMatch(n));
+}
+
+/// The name a tax charge goes by: the one its lines use as their tax code (so they find it), else its display name.
+String sfChargeTaxName(Map<String, dynamic> c, Iterable<Object?> lines) {
+  final names = _chargeNames(c);
+  final codes = _lineTaxCodes(lines);
+  return names.where((n) => codes.contains(n.toLowerCase())).firstOrNull ?? names.firstOrNull ?? '';
 }
 
 /// Parses money typed into a field ("1,250", "$89.5", "-10") to dollars, or null when it isn't a number.

@@ -8,6 +8,8 @@ import 'widgets/app_dialog.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/page_selection.dart';
+import 'theme/app_theme.dart';
 
 /// The Product Catalog's History view (Phase 3): the catalog's change log, newest first. Who changed what and when:
 /// categories created, renamed, described, merged or deleted; changes to several products at once; one product added,
@@ -275,7 +277,7 @@ class CatalogHistoryViewState extends State<CatalogHistoryView> {
           onPressed: _clearFilters,
           style: TextButton.styleFrom(
             foregroundColor: DashUi.slate,
-            textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+            textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
           ),
           child: const Text('Clear'),
         ),
@@ -384,7 +386,7 @@ class CatalogHistoryViewState extends State<CatalogHistoryView> {
                     onPressed: () => widget.onOpenProduct(id),
                     style: TextButton.styleFrom(
                       foregroundColor: DashUi.ink,
-                      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+                      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 12.5, fontWeight: FontWeight.w700),
                     ),
                     child: const Text('Open'),
                   ),
@@ -434,6 +436,7 @@ class CatalogHistoryViewState extends State<CatalogHistoryView> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: () => setState(() => open ? _open.remove(e.id) : _open.add(e.id)),
             hoverColor: CatalogUi.hover,
             child: Container(
@@ -612,12 +615,12 @@ class _FilterMenu<T> extends StatelessWidget {
             child: Text(text, style: const TextStyle(fontSize: 13.5, color: DashUi.ink)),
           ),
       ],
-      child: _FilterFace(
+      child: ClickCursor(child: _FilterFace(
         icon: icon,
         label: label,
         active: active,
         trailing: const Icon(Icons.expand_more_rounded, size: 17, color: DashUi.slate),
-      ),
+      )),
     );
   }
 }
@@ -634,6 +637,7 @@ class _FilterButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: onPressed,
       borderRadius: BorderRadius.circular(9),
       child: _FilterFace(
@@ -643,6 +647,7 @@ class _FilterButton extends StatelessWidget {
         trailing: onClear == null
             ? const Icon(Icons.expand_more_rounded, size: 17, color: DashUi.slate)
             : InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
                 key: const ValueKey('history-product-clear'),
                 onTap: onClear,
                 borderRadius: BorderRadius.circular(6),
@@ -749,6 +754,7 @@ class _ProductPickerState extends State<_ProductPicker> {
                     children: [
                       for (final r in rows)
                         InkWell(
+                          mouseCursor: WidgetStateMouseCursor.clickable,
                           key: ValueKey('history-pick:${r.key}'),
                           borderRadius: BorderRadius.circular(8),
                           onTap: () => Navigator.pop(context, r.key),

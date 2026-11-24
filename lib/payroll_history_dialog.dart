@@ -560,6 +560,7 @@ class _PayrollHistoryDialogState extends State<_PayrollHistoryDialog> {
           expanded: open,
           hint: open ? 'Hides who was paid' : 'Shows who was paid in this run',
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: () => _toggle(r),
             child: Padding(
               padding: const EdgeInsets.fromLTRB(40, 10, 12, 10),

@@ -671,6 +671,7 @@ class _Note extends StatelessWidget {
                 const SizedBox(width: 10),
                 // Not focusable: focus stays in the field, which keeps the dropdown open.
                 InkWell(
+                  mouseCursor: WidgetStateMouseCursor.clickable,
                   canRequestFocus: false,
                   borderRadius: BorderRadius.circular(6),
                   onTap: onAction,
@@ -752,6 +753,7 @@ class _ResultRowState extends State<_ResultRow> {
         child: Material(
           color: widget.highlighted ? AppTheme.subtleFill : Colors.transparent,
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             canRequestFocus: false, // focus stays in the field, where the arrow keys work
             onTap: widget.onTap,
             child: Padding(

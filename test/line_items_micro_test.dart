@@ -123,7 +123,7 @@ void _same(Map<String, Rect> closed, Map<String, Rect> open, String what) {
 }
 
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -139,7 +139,7 @@ void main() {
           await _toBlock(t);
           await t.tap(find.text('Edit Estimate'));
           await settle(t, frames: 8);
-          // Line 2 ("Spring", rate and cost), line 3 (no cost: its "Cost" placeholder), line 4 (a long name).
+          // Line 2 ("Spring", rate and cost), line 3 (no cost: its "$ 0.00"), line 4 (a long name).
           for (final i in [1, 2, 3]) {
             final closed = _row(i);
             expect(closed.keys.where((k) => k.startsWith('rate')), isNotEmpty, reason: 'line ${i + 1} shows its rate');

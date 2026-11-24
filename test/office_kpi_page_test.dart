@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:iohd_desktop/theme/app_theme.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
 import 'package:iohd_desktop/kpi_dashboard_screen.dart';
 
@@ -527,7 +528,7 @@ void main() {
       ],
     );
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true)));
+      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: AppTheme.fontFamily, useMaterial3: true)));
       await settleDashboard(t);
       expect(find.text('BELLA HANSBERGER'), findsOneWidget);
       await t.tap(find.byTooltip('All employees'));

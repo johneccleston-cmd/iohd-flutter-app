@@ -10,6 +10,7 @@ import 'widgets/app_dialog.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'theme/app_theme.dart';
 
 /// The Product Catalog's Categories view (Phase 3): every category with how many products it holds, naming questions
 /// (the same name typed two ways, a word written two ways across the list), empty and one-product categories, and for
@@ -337,6 +338,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
           ),
           if (_uncategorized > 0)
             InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
               onTap: widget.onShowUncategorized,
               child: Container(
                 height: 44,
@@ -512,7 +514,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
                       iconAlignment: IconAlignment.end,
                       icon: const Icon(Icons.arrow_forward_rounded, size: 16),
                       label: const Text('Show in product list'),
-                      style: TextButton.styleFrom(foregroundColor: DashUi.ink, textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                      style: TextButton.styleFrom(foregroundColor: DashUi.ink, textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700)),
                     ),
                 ],
               ),
@@ -610,7 +612,7 @@ class _CatalogCategoriesViewState extends State<CatalogCategoriesView> {
               if (pickedHere.isNotEmpty) ...[
                 TextButton(
                   onPressed: () => setState(() => _picked.clear()),
-                  style: TextButton.styleFrom(foregroundColor: DashUi.slate, textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+                  style: TextButton.styleFrom(foregroundColor: DashUi.slate, textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700)),
                   child: const Text('Clear'),
                 ),
                 const SizedBox(width: 6),
@@ -718,6 +720,7 @@ class _CategoryRowState extends State<_CategoryRow> {
       label: '${c.name}, ${catalogPlural(c.products, 'product')}${widget.flagged ? ', naming to check' : ''}',
       excludeSemantics: true,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: widget.onTap,
         onHover: (v) => setState(() => _hover = v),
         borderRadius: BorderRadius.circular(8),
@@ -788,6 +791,7 @@ class _ProductLine extends StatelessWidget {
       button: true,
       label: 'Product ${e.name}',
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onOpen,
         hoverColor: picked ? CatalogUi.pickedHover : CatalogUi.hover,
         child: Container(
@@ -818,7 +822,7 @@ class _ProductLine extends StatelessWidget {
               SizedBox(
                 width: 84,
                 child: Text(
-                  e.rate == null ? 'Per job' : dashMoney(e.rate!),
+                  e.rate == null ? 'No price' : dashMoney(e.rate!),
                   textAlign: TextAlign.right,
                   style: e.rate == null ? CatalogUi.cellQuiet.copyWith(fontSize: 13.5) : CatalogUi.cellStrong.copyWith(fontSize: 13.5),
                 ),
@@ -924,6 +928,7 @@ class _NameChip extends StatelessWidget {
       label: 'Open the category $name',
       excludeSemantics: true,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onTap,
         borderRadius: BorderRadius.circular(999),
         child: Container(
@@ -1013,6 +1018,7 @@ class _MergeDialogState extends State<_MergeDialog> {
     Widget option(String name, String? count, {bool isNew = false}) {
       final on = _into == name;
       return InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         key: ValueKey('merge-into:$name'),
         borderRadius: BorderRadius.circular(8),
         onTap: () => setState(() {
@@ -1135,6 +1141,7 @@ class _MergeDialogState extends State<_MergeDialog> {
         const AppNotice('Only the category changes. Prices, costs, stock, inventory links and everything else stay exactly as they are.'),
         if (big)
           InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             borderRadius: BorderRadius.circular(8),
             onTap: () => setState(() => _ticked = !_ticked),
             child: Padding(

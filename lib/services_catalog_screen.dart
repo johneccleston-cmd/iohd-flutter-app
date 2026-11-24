@@ -18,6 +18,7 @@ import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 import 'widgets/focus_ring.dart';
+import 'theme/app_theme.dart';
 
 /// Services Catalog: every service the office has put on a job or estimate line, with the price it usually charges.
 /// Service Fusion has no price-list endpoint, so (like the job page's catalog search) the list is built from the
@@ -25,7 +26,7 @@ import 'widgets/focus_ring.dart';
 /// edited: the edit is saved in our own database as an override laid over what the lines say. Nothing here is ever
 /// written back to Service Fusion.
 ///
-/// Redesign (2026-11-19): search first, with the status as tabs beside it (Active / Inactive / All, each with how many
+/// Redesign (2026-11-19): search first; the status (Active / Inactive / All) sits in the filter sidebar, each with how many
 /// match); a Category column and the fixed service categories in the sidebar (with how many still have none); how much
 /// a service is used as a sort, a filter and a quiet flag on the rarely used ones (the Times used / Last used columns
 /// stay gone, USER RULE 11-19: the table's figures are Cost and Price); and pick boxes for moving several services to a
@@ -49,7 +50,7 @@ class ServicesCatalogScreen extends StatefulWidget {
 }
 
 /// The filters a count can leave out (each filter group counts as if its own picks were off).
-enum _Facet { status, category, price }
+enum _Facet { status, category }
 
 /// A sort the menu offers: its key, its direction and how it reads.
 typedef _SortOption = ({String key, bool ascending, String label});
@@ -109,7 +110,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
 
   // The filters. An empty group does not filter.
   final Set<String> _cats = {}; // a category of kServiceCategories, or '' for "No category"
-  final Set<String> _price = {}; // priced | unpriced
 
   // Pick boxes (with Services Catalog > Update): the services picked, and the last one clicked (for Shift+click ranges).
   final Set<String> _selected = {};
@@ -264,7 +264,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
   bool _match(CatalogEntry e, List<String> words, {_Facet? skip}) {
     if (skip != _Facet.status && !_statusPasses(e)) return false;
     if (skip != _Facet.category && _cats.isNotEmpty && !_cats.contains(_catOf(e))) return false;
-    if (skip != _Facet.price && _price.length == 1 && (e.rate != null) != _price.contains('priced')) return false;
     return _hit(e, words);
   }
 
@@ -319,8 +318,8 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     return out;
   }
 
-  /// How many filters are set (the status tabs are not filters: they are always one of three).
-  int get _filterCount => (_cats.isEmpty ? 0 : 1) + (_price.isEmpty ? 0 : 1);
+  /// How many filters are set: a category pick, and a status other than the starting Active.
+  int get _filterCount => (_cats.isEmpty ? 0 : 1) + (_status == 'active' ? 0 : 1);
 
   // ---- changing the view ------------------------------------------------------------------------------------------
 
@@ -369,7 +368,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
   void _resetFilters() {
     _newView(() {
       _cats.clear();
-      _price.clear();
+      _status = 'active';
       _page = 1;
     });
   }
@@ -378,7 +377,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     _debounce?.cancel();
     _search.clear();
     _query = '';
-    _status = 'active';
     _resetFilters();
   }
 
@@ -757,7 +755,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     final white = TextButton.styleFrom(
       foregroundColor: Colors.white,
       disabledForegroundColor: Colors.white.withValues(alpha: 0.4),
-      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
       padding: const EdgeInsets.symmetric(horizontal: 10),
       minimumSize: const Size(0, 36),
     );
@@ -822,7 +820,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
                             onPressed: () => setState(() => _selected.addAll(shown.map((e) => e.key))),
                             style: white.copyWith(
                               textStyle: const WidgetStatePropertyAll(
-                                TextStyle(fontSize: 13, fontWeight: FontWeight.w700, decoration: TextDecoration.underline, decorationColor: Colors.white),
+                                TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700, decoration: TextDecoration.underline, decorationColor: Colors.white),
                               ),
                             ),
                             child: Text(
@@ -921,12 +919,11 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     );
   }
 
-  /// What stands under a name: what replaced it, what it replaced, or its description.
+  /// What stands under a name: what replaced it or what it replaced. Its description is not shown in the table.
   static String? _note(CatalogEntry e) {
     if (e.supersededBy case final by?) return 'Superseded by ${by.name}';
     if (e.replaces.isNotEmpty) return 'Replaces ${e.replaces.map((r) => r.name).join(', ')}';
-    final d = e.description.trim().replaceAll(RegExp(r'\s+'), ' ');
-    return d.isEmpty ? null : d;
+    return null;
   }
 
   /// The name with its tags, and one quiet line under it: the category (when there is no Category column) and its note.
@@ -986,13 +983,13 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
       selected: picked,
       label: 'Service ${e.name}',
       child: SelectionContainer.disabled(
-        child: InkWell(
+        // The shared surface: hover shows on striped and picked rows too (decision A3, 2026-11-23).
+        child: CatalogRowSurface(
+          index: index,
+          selected: picked,
           onTap: () => _open(e),
-          hoverColor: CatalogUi.hover,
-          child: Container(
-            padding: EdgeInsets.fromLTRB(_canEdit ? 6 : 16, 10, 16, 10),
-            color: picked ? CatalogUi.picked : (index.isOdd ? CatalogUi.stripe : null),
-            child: Row(
+          padding: EdgeInsets.fromLTRB(_canEdit ? 6 : 16, 10, 16, 10),
+          child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (_canEdit) ...[_pickBox(e, position), const SizedBox(width: 4)],
@@ -1010,7 +1007,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
                 ),
               ],
             ),
-          ),
         ),
       ),
     );
@@ -1041,11 +1037,24 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
 
   Widget _filterGroups() {
     final cats = _facetCounts(_Facet.category, _catOf);
-    final priced = _facetCounts(_Facet.price, (e) => e.rate != null ? 'priced' : 'unpriced');
+    final n = _statusCounts();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Every group starts closed (USER RULE 2026-11-19): the person opens the one they need.
+        // Status: Active / Inactive / All, one at a time, with how many each holds under the search and the other
+        // filters. Open to begin with, since it is the view's main switch (Category stays closed, USER RULE 2026-11-19).
+        CatalogFilterGroup(
+          title: 'Status',
+          picked: _status == 'active' ? 0 : 1,
+          child: Column(
+            children: [
+              CatalogCheckRow(key: const ValueKey('status:active'), label: 'Active', count: n.active, selected: _status == 'active', onTap: () => _setStatus('active')),
+              CatalogCheckRow(key: const ValueKey('status:inactive'), label: 'Inactive', count: n.inactive, selected: _status == 'inactive', onTap: () => _setStatus('inactive')),
+              CatalogCheckRow(key: const ValueKey('status:all'), label: 'All', count: n.all, selected: _status == 'all', onTap: () => _setStatus('all')),
+            ],
+          ),
+        ),
+        // Every other group starts closed (USER RULE 2026-11-19): the person opens the one they need.
         CatalogFilterGroup(
           title: 'Category',
           initiallyOpen: false,
@@ -1061,17 +1070,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
                 dot: (cats[''] ?? 0) > 0 ? DashUi.amber : null,
                 onTap: () => _toggle(_cats, ''),
               ),
-            ],
-          ),
-        ),
-        CatalogFilterGroup(
-          title: 'Price',
-          initiallyOpen: false,
-          picked: _price.isEmpty ? 0 : 1,
-          child: Column(
-            children: [
-              CatalogCheckRow(label: 'Has a price', count: priced['priced'] ?? 0, selected: _price.contains('priced'), onTap: () => _toggle(_price, 'priced')),
-              CatalogCheckRow(label: 'No price', count: priced['unpriced'] ?? 0, selected: _price.contains('unpriced'), onTap: () => _toggle(_price, 'unpriced')),
             ],
           ),
         ),
@@ -1145,7 +1143,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     backgroundColor: Colors.white,
     side: const BorderSide(color: DashUi.line),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+    textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13.5, fontWeight: FontWeight.w700),
   );
 
   /// The Filters button: on a window too narrow for the sidebar it opens the filters in a dialog; where the sidebar
@@ -1202,7 +1200,7 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
   List<({String group, String value, VoidCallback remove})> get _chips => [
     for (final c in [...kServiceCategories, ''])
       if (_cats.contains(c)) (group: 'Category', value: c.isEmpty ? 'No category' : c, remove: () => _toggle(_cats, c)),
-    for (final p in _price) (group: 'Price', value: p == 'priced' ? 'Has a price' : 'No price', remove: () => _toggle(_price, p)),
+    if (_status != 'active') (group: 'Status', value: _status == 'inactive' ? 'Inactive' : 'All', remove: () => _setStatus('active')),
   ];
 
   // ---- the command row --------------------------------------------------------------------------------------------
@@ -1226,92 +1224,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
             if (mounted) _applyQuery(v);
           });
         },
-      ),
-    );
-  }
-
-  /// Active / Inactive / All, each with how many services it holds with the search and filters as they are: plain
-  /// tabs whose ink underline sits on the command row's hairline ([height] is the row's), flush right.
-  Widget _statusTabs({bool stretch = false, double height = CatalogUi.commandHeight - 1}) {
-    final n = _statusCounts();
-    final motion = CatalogUi.motion(context, 160);
-    Widget tab(String value, String label, int count) {
-      final on = _status == value;
-      final text = Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(fontSize: 13.5, fontWeight: on ? FontWeight.w700 : FontWeight.w600, color: on ? DashUi.ink : DashUi.slate),
-      );
-      final body = SizedBox(
-        height: height,
-        child: Stack(
-          children: [
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: stretch ? 6 : 10),
-              child: Center(
-                widthFactor: 1,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // A stretched tab (a phone-narrow pane) shares a fixed width: its label gives way before its count.
-                    if (stretch) Flexible(child: text) else text,
-                    const SizedBox(width: 6),
-                    Text(
-                      _count.format(count),
-                      maxLines: 1,
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: on ? DashUi.slate : DashUi.subtle, fontFeatures: CatalogUi.figures),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Positioned(
-              left: 4,
-              right: 4,
-              bottom: 0,
-              child: AnimatedContainer(
-                duration: motion,
-                curve: Curves.easeOutCubic,
-                height: 2,
-                decoration: BoxDecoration(
-                  color: on ? DashUi.ink : DashUi.ink.withValues(alpha: 0),
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-      final t = Semantics(
-        container: true,
-        button: true,
-        inMutuallyExclusiveGroup: true,
-        selected: on,
-        label: '$label, ${_plural(count, 'service')}',
-        excludeSemantics: true,
-        // The shared keyboard ring, round the label and not the whole row height (UX audit 2026-11-20: the ink wash these
-        // tabs used was painted under the white command row, so a focused tab looked like any other).
-        child: FocusRing(
-          borderRadius: BorderRadius.circular(6),
-          outset: EdgeInsets.symmetric(vertical: -(height - 32) / 2),
-          child: InkWell(
-            key: ValueKey('status:$value'),
-            onTap: () => _setStatus(value),
-            splashFactory: NoSplash.splashFactory,
-            hoverColor: Colors.transparent,
-            focusColor: Colors.transparent,
-            child: body,
-          ),
-        ),
-      );
-      return stretch ? Expanded(child: t) : t;
-    }
-
-    return SelectionContainer.disabled(
-      child: Row(
-        mainAxisSize: stretch ? MainAxisSize.max : MainAxisSize.min,
-        children: [tab('active', 'Active', n.active), tab('inactive', 'Inactive', n.inactive), tab('all', 'All', n.all)],
       ),
     );
   }
@@ -1353,22 +1265,22 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
     );
   }
 
-  /// The command row: search, the filters that are on, the sort and the status tabs on one 52 px line. A narrower pane
+  /// The command row: search, the filters that are on and the sort on one 52 px line. A narrower pane
   /// puts the tabs and the sort on a second line, and the chips under that.
   /// The search box's width on one command line [width] wide: about a third of it, giving way (down to 240) before the
-  /// line has to break. The sort and the status tabs (and the Filters button) grow with the text size; it does not.
+  /// line has to break. The sort (and the Filters button) grow with the text size; it does not.
   double _searchWidth(double width, {required bool filterButton}) {
     final scale = MediaQuery.textScalerOf(context);
-    final fixed = scale.scale(470) + (filterButton ? scale.scale(100) : 0);
+    final fixed = scale.scale(260) + (filterButton ? scale.scale(100) : 0);
     final third = (width * 0.32).clamp(240.0, 420.0);
     return width - third - fixed >= 120 ? third : (width - fixed - 120).clamp(240.0, 420.0);
   }
 
-  /// Whether search, the sort, the status tabs (and the Filters button) fit on one line of a pane [width] wide, with
+  /// Whether search, the sort (and the Filters button) fit on one line of a pane [width] wide, with
   /// room left for a chip.
   bool _fitsOneLine(double width, {required bool filterButton}) {
     final scale = MediaQuery.textScalerOf(context);
-    final fixed = scale.scale(470) + (filterButton ? scale.scale(100) : 0);
+    final fixed = scale.scale(260) + (filterButton ? scale.scale(100) : 0);
     return width - _searchWidth(width, filterButton: filterButton) - fixed >= 60;
   }
 
@@ -1395,8 +1307,6 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
             Expanded(child: CatalogChipStrip(chips: chips)),
             const SizedBox(width: 8),
             _sortMenu(),
-            Container(width: 1, height: 20, margin: const EdgeInsets.symmetric(horizontal: 8), color: DashUi.line),
-            _statusTabs(),
           ],
         ),
       );
@@ -1428,14 +1338,9 @@ class _ServicesCatalogScreenState extends State<ServicesCatalogScreen> with Auto
                 children: [for (final c in chips) CatalogFilterChip(key: ValueKey('${c.group}:${c.value}'), group: c.group, value: c.value, onRemove: c.remove)],
               ),
             ),
-          // The tabs' underline sits on the hairline under this line.
-          Row(
-            children: [
-              // Only a phone-narrow pane stretches the tabs across; otherwise they keep their size.
-              if (narrow) Expanded(child: _statusTabs(stretch: true, height: 39)) else ...[_statusTabs(height: 39), const Spacer()],
-              const SizedBox(width: 8),
-              _sortMenu(iconOnly: narrow),
-            ],
+          SizedBox(
+            height: 40,
+            child: Row(children: [const Spacer(), _sortMenu(iconOnly: narrow)]),
           ),
         ],
       ),
@@ -1764,6 +1669,7 @@ class _ChoiceRow extends StatelessWidget {
       excludeSemantics: true,
       child: FocusRing(
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onTap,
         autofocus: autofocus,
         borderRadius: BorderRadius.circular(8),

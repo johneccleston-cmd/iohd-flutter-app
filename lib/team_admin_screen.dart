@@ -20,7 +20,8 @@ import 'widgets/animated_select.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_kit.dart';
-import 'widgets/flat_page.dart' show PageSheet;
+import 'widgets/flat_page.dart' show OverflowTooltip, PageSheet;
+import 'widgets/page_selection.dart';
 
 part 'team_admin_widgets.dart';
 
@@ -1927,7 +1928,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                 PopupMenuItem(value: 'upload', child: Text('Replace photo…')),
                 PopupMenuItem(value: 'remove', child: Text('Remove photo')),
               ],
-              child: avatar,
+              child: ClickCursor(child: avatar),
             ),
     );
   }
@@ -2638,6 +2639,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                     child: Tooltip(
                       message: tip,
                       child: InkWell(
+                        mouseCursor: WidgetStateMouseCursor.clickable,
                         onTap: () => _set(key, _value(key) != true),
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(14, 9, 8, 9),
@@ -2807,6 +2809,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                 children: [
                   Expanded(
                     child: InkWell(
+                      mouseCursor: WidgetStateMouseCursor.clickable,
                       onTap: () => toggleRow(r),
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
@@ -2836,9 +2839,8 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
                                   ),
                                   // What the ticks let them do, in plain words (the full text on hover when it is cut off).
                                   if (r.help.isNotEmpty)
-                                    Tooltip(
+                                    OverflowTooltip(
                                       message: r.help,
-                                      waitDuration: const Duration(milliseconds: 400),
                                       child: Text(
                                         r.help,
                                         maxLines: 2,
@@ -3537,6 +3539,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       children: [
         _fieldLabel(label),
         InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           borderRadius: BorderRadius.circular(8),
           onTap: () async {
             final now = DateTime.now();
@@ -3715,6 +3718,7 @@ class _TeamAdminScreenState extends State<TeamAdminScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           borderRadius: BorderRadius.circular(8),
           onTap: () => _set(key, !on),
           child: Padding(

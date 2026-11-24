@@ -239,7 +239,7 @@ void main() {
         expect(_inTable(q), findsOneWidget, reason: 'read-only $q');
       }
       expect(_inTable(r'$41.83'), findsOneWidget, reason: '68.57 x 0.61, not rounded to a whole quantity');
-      expect(_inTable(r'$825.41'), findsOneWidget);
+      expect(_inTable(r'$825.41'), findsNWidgets(2), reason: 'the job total and the balance due (nothing paid)');
       await http.runWithClient(() async {
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
@@ -253,7 +253,7 @@ void main() {
         await t.enterText(find.byKey(const ValueKey('line-2-qty')), '3.5');
         await t.pumpAndSettle();
         expect(_inTable(r'$525.00'), findsOneWidget, reason: '3.5 x 150');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await t.pumpAndSettle();
         expect(_inTable('3.50'), findsOneWidget);
         expect(find.text('Changed, not saved'), findsOneWidget);
@@ -262,7 +262,7 @@ void main() {
         await t.pumpAndSettle();
         expect(_inTable('1.50'), findsOneWidget);
         expect(_inTable('3.50'), findsNothing);
-        expect(_inTable(r'$825.41'), findsOneWidget);
+        expect(_inTable(r'$825.41'), findsNWidgets(2), reason: 'the job total and the balance due (nothing paid)');
         // In again: no trace of the last preview.
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
@@ -298,7 +298,7 @@ void main() {
       expect(_inTable(r'$7.00'), findsOneWidget, reason: 'the return\'s -\$7 extended cost is \$7 a unit');
       expect(_inTable(r'-$7.00'), findsNothing, reason: 'it used to show -\$7 a unit, so +\$7 extended');
       expect(_inTable(r'$20,993.00'), findsOneWidget, reason: 'job cost: the return gives its \$7 back');
-      expect(_inTable(r'$36,076.47'), findsOneWidget);
+      expect(_inTable(r'$36,076.47'), findsNWidgets(2), reason: 'the job total and the balance due (nothing paid)');
       await _shot(t, 'line_items_job_big_negative_qty');
       await http.runWithClient(() async {
         await t.tap(find.text('Edit Job'));
@@ -311,7 +311,7 @@ void main() {
         await t.enterText(find.byKey(const ValueKey('line-1-qty')), '49376');
         await t.pumpAndSettle();
         expect(_inTable(r'-$4,937.60'), findsOneWidget, reason: '49,376 x -\$0.10');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await t.pumpAndSettle();
         expect(_inTable('49,376.00'), findsOneWidget);
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'a good quantity, not marked');
@@ -387,7 +387,7 @@ void main() {
         await t.tap(_inTable('2.00'));
         await t.pumpAndSettle();
         await t.enterText(find.byKey(const ValueKey('line-2-qty')), '4');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await t.pumpAndSettle();
         await t.tap(find.byTooltip('Refresh'));
         await t.pumpAndSettle();
@@ -402,7 +402,7 @@ void main() {
         await t.tap(_inTable('4.00'));
         await t.pumpAndSettle();
         await t.enterText(find.byKey(const ValueKey('line-2-qty')), '2');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await t.pumpAndSettle();
         expect(find.text('Changed, not saved'), findsNothing);
         expect(_inTable('Stop Mold | Install New Standard Color, 70 ft'), findsOneWidget, reason: 'back in step with the last load');
@@ -425,7 +425,7 @@ void main() {
         await t.tap(_inTable('1.50'));
         await t.pumpAndSettle();
         await t.enterText(find.byKey(const ValueKey('line-2-qty')), '9');
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await t.pumpAndSettle();
         await t.tap(find.text('Go to the estimate'));
         await t.pumpAndSettle();
@@ -440,7 +440,9 @@ void main() {
   });
 
   group('job', () {
-    testWidgets('every box, its hint text and the description toggle show the pointer, not the I-beam', (t) async {
+    // Every text box shows the I-beam (user 2026-11-23; it replaced the 2026-11-16 rule that only the description did);
+    // the buttons beside them keep the pointer.
+    testWidgets('every text box and its hint text show the I-beam; the description toggle the pointer', (t) async {
       final client = _server(_record(items: _threeItems(), total: '1565.00', charges: _tax), _options());
       await _open(t, client);
       final mouse = await t.createGesture(kind: PointerDeviceKind.mouse);
@@ -457,15 +459,14 @@ void main() {
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
         expect(await cursorOver(_more(1)), SystemMouseCursors.click, reason: 'Description on a line with none, editing');
-        expect(await cursorOver(find.text('SMH Installation | Gallery Steel | 16x7 | White')), SystemMouseCursors.click, reason: 'a closed box');
-        expect(await cursorOver(find.text('Add a line: search products and services by name or SKU')), SystemMouseCursors.click, reason: 'search hint');
+        expect(await cursorOver(find.text('SMH Installation | Gallery Steel | 16x7 | White')), SystemMouseCursors.text, reason: 'a closed box');
+        expect(await cursorOver(find.text('Add a line: search products and services by name or SKU')), SystemMouseCursors.text, reason: 'search hint');
         // An open row: its real fields and the description's hint text.
         await t.tap(find.text('SMH Installation | Gallery Steel | 16x7 | White'));
         await t.pumpAndSettle();
-        expect(await cursorOver(find.byKey(const ValueKey('line-2-name'))), SystemMouseCursors.click, reason: 'an open field');
+        expect(await cursorOver(find.byKey(const ValueKey('line-2-name'))), SystemMouseCursors.text, reason: 'an open field');
         await t.tap(_more(2));
         await t.pumpAndSettle();
-        // The description is free text: the I-beam (user 2026-11-16).
         expect(await cursorOver(find.text('Description or notes (optional)')), SystemMouseCursors.text, reason: 'description hint text');
         expect(await cursorOver(_more(2)), SystemMouseCursors.click, reason: 'the toggle beside an open row');
       }, () => client);
@@ -482,10 +483,16 @@ void main() {
       expect(find.text('Internal: not on customer documents'), findsNothing);
       expect(find.text(r'$900.00'), findsNWidgets(2)); // rate and amount of line 1
       expect(find.text(r'$250.00'), findsOneWidget); // 2 x $125.00
-      expect(find.text(r'$1,450.00'), findsOneWidget);
-      expect(find.text('Sales tax 10%'), findsOneWidget);
-      expect(find.text(r'$115.00'), findsOneWidget);
-      expect(find.text(r'$1,565.00'), findsOneWidget);
+      // The summary (USER RULE 2026-11-24): no Items line; the tax is a line of the table, under the rule, and the
+      // summary's "Taxes, fees & discounts"; the job total, then the payments (none) and the balance due.
+      expect(find.text(r'$1,450.00'), findsNothing);
+      expect(find.text('Sales tax Rogers'), findsOneWidget, reason: 'the tax by its place (user 2026-11-24)');
+      expect(_inTable('Sales tax Rogers'), findsOneWidget);
+      expect(find.text(r'$115.00'), findsNWidgets(2));
+      expect(find.text('Taxes, fees & discounts'), findsOneWidget);
+      expect(find.text(r'$1,565.00'), findsNWidgets(2));
+      expect(find.text('Payments/Deposits'), findsOneWidget);
+      expect(find.text('Balance due'), findsOneWidget);
       // The description is behind its toggle, one line of it to a line, and opens in place.
       expect(_inTable('Description'), findsOneWidget);
       expect(find.textContaining('SIZE : 10'), findsNothing);
@@ -511,7 +518,7 @@ void main() {
         expect(find.text('Cancel'), findsNothing);
         expect(find.text('Exit preview'), findsOneWidget);
         expect(find.text('Changed, not saved'), findsNothing);
-        expect(find.text(r'$1,565.00'), findsOneWidget, reason: 'nothing changed yet: Service Fusion\'s own total');
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'nothing changed yet: Service Fusion\'s own total (and the balance due)');
         await _shot(t, 'line_items_job_editing');
 
         // The description field is laid out like the opened description: one fact to a line, growing with its text.
@@ -531,20 +538,24 @@ void main() {
         // Quantity 2 -> 5 on the weather seal: 5 x $125 = $625; items $1,825; taxable $1,525 -> tax $152.50; total $1,977.50.
         await _type(t, 1, 'Weather Seal | Stop Mold | 7\' White', 'qty', '5');
         expect(find.text(r'$625.00'), findsOneWidget);
-        expect(find.text(r'$1,825.00'), findsOneWidget);
-        expect(find.text(r'$152.50'), findsOneWidget);
-        expect(find.text(r'$1,977.50'), findsOneWidget);
+        expect(find.text(r'$1,825.00'), findsNothing, reason: 'no Items line in the summary (USER RULE 2026-11-24)');
+        expect(find.text(r'$152.50'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
+        expect(find.text(r'$1,977.50'), findsNWidgets(2), reason: 'the job total and the balance due');
         expect(find.text('Changed, not saved'), findsOneWidget);
 
         // Price $300 -> $450 on the untaxed installation: items $1,975; tax unchanged; total $2,127.50.
         await _type(t, 2, 'SMH Installation | Gallery Steel | 16x7 | White', 'rate', '450');
-        expect(find.text(r'$1,975.00'), findsOneWidget);
-        expect(find.text(r'$152.50'), findsOneWidget);
-        expect(find.text(r'$2,127.50'), findsOneWidget);
+        expect(find.text(r'$1,975.00'), findsNothing);
+        expect(find.text(r'$152.50'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
+        expect(find.text(r'$2,127.50'), findsNWidgets(2), reason: 'the job total and the balance due');
 
         // The description can be changed too.
         await _type(t, 2, 'SMH Installation | Gallery Steel | 16x7 | White', 'description', 'Two installers, half a day.');
         expect(find.byType(TextField), findsWidgets, reason: 'the toggle kept the row open');
+        // A description box keeps what was typed when the keyboard moves on (Tab); Esc then closes the line
+        // with nothing left to undo (Esc cancels the box being edited since decision A1, 2026-11-23).
+        await t.sendKeyEvent(LogicalKeyboardKey.tab);
+        await t.pump();
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await t.pumpAndSettle();
         expect(find.text('Two installers, half a day.'), findsOneWidget, reason: 'it was left open');
@@ -555,7 +566,7 @@ void main() {
         await t.pumpAndSettle();
         await _ctrlS(t);
         expect(find.textContaining('Not saved: saving isn\'t available yet'), findsOneWidget);
-        expect(find.text(r'$2,127.50'), findsOneWidget, reason: 'the draft is still there after Ctrl+S');
+        expect(find.text(r'$2,127.50'), findsNWidgets(2), reason: 'the draft is still there after Ctrl+S (job total and balance due)');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await t.pumpAndSettle();
         expect(_writes, isEmpty);
@@ -570,15 +581,15 @@ void main() {
         expect(find.text('Two installers, half a day.'), findsNothing);
         expect(find.text(r'$250.00'), findsOneWidget);
         expect(find.text(r'$300.00'), findsNWidgets(2));
-        expect(find.text(r'$115.00'), findsOneWidget);
-        expect(find.text(r'$1,565.00'), findsOneWidget);
+        expect(find.text(r'$115.00'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
         expect(find.text(r'$2,127.50'), findsNothing);
 
         // Editing again starts from the original, not from the abandoned draft.
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
         expect(find.text('Changed, not saved'), findsNothing);
-        expect(find.text(r'$1,565.00'), findsOneWidget);
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
       }, () => client);
       expect(_writes, isEmpty, reason: 'only GETs: $_requests');
       expect(_requests.where((r) => r.contains('/items')), isEmpty);
@@ -603,7 +614,7 @@ void main() {
         await t.pumpAndSettle();
         expect(find.byIcon(Icons.visibility_off_outlined), findsNothing);
         expect(find.text('Changed, not saved'), findsOneWidget);
-        expect(find.text(r'$1,565.00'), findsOneWidget, reason: 'hiding or showing a line does not change what is charged');
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'hiding or showing a line does not change what is charged');
         await t.tap(said('Show to the customer', toggled: true).first);
         await t.pumpAndSettle();
         await _shot(t, 'line_items_job_eye');
@@ -635,6 +646,10 @@ void main() {
         expect(find.byKey(const ValueKey('line-1-description')), findsOneWidget);
         await t.enterText(find.byKey(const ValueKey('line-1-description')), 'Black, 10 ft.');
         await t.pumpAndSettle();
+        // A description box keeps what was typed when the keyboard moves on (Tab); Esc then closes the line
+        // with nothing left to undo (Esc cancels the box being edited since decision A1, 2026-11-23).
+        await t.sendKeyEvent(LogicalKeyboardKey.tab);
+        await t.pump();
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await t.pumpAndSettle();
         expect(find.text('Black, 10 ft.'), findsOneWidget);
@@ -682,37 +697,37 @@ void main() {
       final client = _server(_record(items: _threeItems(), total: '1565.00', charges: _tax), _options());
       await _open(t, client);
       // Read-only: the line's tax by its place and rate; no SKU column.
-      expect(find.text('Rogers 10%'), findsNWidgets(2));
+      expect(find.text('Rogers'), findsNWidgets(2));
       expect(find.text('No tax'), findsOneWidget);
       expect(find.text('SKU'), findsNothing);
       await http.runWithClient(() async {
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
         // The menu offers exactly the record's tax line (Rogers) and No tax.
-        await t.tap(find.text('Rogers 10%').at(1));
+        await t.tap(find.text('Rogers').at(1));
         await t.pumpAndSettle();
-        expect(find.text('Rogers'), findsOneWidget);
+        expect(find.text('Rogers'), findsNWidgets(3), reason: 'the two lines, and the menu');
         expect(find.text('No tax'), findsNWidgets(2), reason: 'the installation line, and the menu');
         expect(find.text('Bentonville'), findsNothing, reason: 'no taxes the record does not charge');
         await _shot(t, 'line_items_job_tax_menu');
         // The weather seal ($250) to No tax: Rogers is now on the door only, $90.00.
         await t.tap(find.text('No tax').last);
         await t.pumpAndSettle();
-        expect(find.text(r'$90.00'), findsOneWidget);
-        expect(find.text(r'$1,540.00'), findsOneWidget);
+        expect(find.text(r'$90.00'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
+        expect(find.text(r'$1,540.00'), findsNWidgets(2), reason: 'the job total and the balance due');
         // The installation ($300) to Rogers: Rogers on $1,200, $120.00.
         await t.tap(find.text('No tax').last);
         await t.pumpAndSettle();
-        await t.tap(find.text('Rogers'));
+        await t.tap(find.text('Rogers').last);
         await t.pumpAndSettle();
-        expect(find.text('Sales tax Rogers 10%'), findsOneWidget);
-        expect(find.text(r'$120.00'), findsOneWidget);
-        expect(find.text(r'$1,570.00'), findsOneWidget);
+        expect(find.text('Sales tax Rogers'), findsOneWidget);
+        expect(find.text(r'$120.00'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
+        expect(find.text(r'$1,570.00'), findsNWidgets(2), reason: 'the job total and the balance due');
         await _shot(t, 'line_items_job_tax_picked');
         await t.tap(find.text('Exit preview'));
         await t.pumpAndSettle();
-        expect(find.text('Rogers 10%'), findsNWidgets(2));
-        expect(find.text(r'$1,565.00'), findsOneWidget);
+        expect(find.text('Rogers'), findsNWidgets(2));
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
       }, () => client);
       expect(_writes, isEmpty);
     });
@@ -731,13 +746,13 @@ void main() {
         ]),
       );
       await _open(t, client);
-      expect(find.text('Taxable 9.5%'), findsOneWidget);
+      expect(find.text('Taxable'), findsOneWidget);
       await http.runWithClient(() async {
         await t.tap(find.text('Edit Estimate'));
         await t.pumpAndSettle();
-        await t.tap(find.text('Taxable 9.5%'));
+        await t.tap(find.text('Taxable'));
         await t.pumpAndSettle();
-        expect(find.text('Taxable'), findsOneWidget);
+        expect(find.text('Taxable'), findsNWidgets(2), reason: 'the line, and the menu');
         expect(find.text('No tax'), findsOneWidget);
         await t.tap(find.text('No tax'));
         await t.pumpAndSettle();
@@ -771,18 +786,20 @@ void main() {
         await t.pumpAndSettle();
         await t.tap(find.byKey(const ValueKey('line-2-actions')));
         await t.pumpAndSettle();
+        // Decision A2 (2026-11-23): the rates table's words, and no item that can never be used.
         expect(find.text('Copy'), findsOneWidget);
-        expect(find.text('Remove from group'), findsOneWidget);
-        expect(find.text('Move up'), findsNothing);
+        expect(find.text('Move up'), findsOneWidget);
+        expect(find.text('Move down'), findsOneWidget);
+        expect(find.text('Remove from group'), findsNothing);
         await t.tap(find.text('Delete').last); // (the ribbon has its own Delete)
         await t.pumpAndSettle();
         expect(find.text('SMH Installation | Gallery Steel | 16x7 | White'), findsNothing);
         expect(find.textContaining('from the preview'), findsOneWidget);
-        expect(find.text(r'$1,265.00'), findsOneWidget); // $1,150 + $115 tax
+        expect(find.text(r'$1,265.00'), findsNWidgets(2)); // $1,150 + $115 tax: the job total and the balance due
         await t.tap(find.text('Exit preview'));
         await t.pumpAndSettle();
         expect(find.text('SMH Installation | Gallery Steel | 16x7 | White'), findsOneWidget);
-        expect(find.text(r'$1,565.00'), findsOneWidget);
+        expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
       }, () => client);
       expect(_writes, isEmpty);
     });
@@ -908,9 +925,9 @@ void main() {
         // used to keep the saved total beside the changed one); the saved option itself is unchanged (Exit preview below).
         await _type(t, 1, 'LiftMaster 8500W wall mount opener', 'rate', '500');
         expect(find.text(r'$4,740.00'), findsNWidgets(2), reason: 'the receipt and the option\'s tab');
-        expect(find.text(r'$390.00'), findsOneWidget);
+        expect(find.text(r'$390.00'), findsNWidgets(2), reason: 'the tax line in the table, and Taxes, fees & discounts');
         expect(find.text(r'$4,905.00'), findsNothing);
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await _shot(t, 'line_items_estimate_edited');
 
         // The other option can be looked at while editing, and the draft is still there on the way back.

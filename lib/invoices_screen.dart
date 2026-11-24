@@ -304,21 +304,20 @@ class _InvoicesScreenState extends State<InvoicesScreen> with SingleTickerProvid
       'po' => ' Matched on the customer and PO number, not recorded in Service Fusion.',
       _ => '',
     };
-    return FlatLink(job, tip: 'Open job $job.$how', onTap: () => context.go('/jobs/${Uri.encodeComponent(job)}'));
+    return FlatLink(job, tip: how.isEmpty ? null : 'Open job $job.$how', onTap: () => context.go('/jobs/${Uri.encodeComponent(job)}'));
   }
 
   Widget _customerCell(Map<String, dynamic> i) {
     final name = '${i['customer'] ?? ''}';
     if (name.isEmpty) return const Text('No customer on file', style: flatCellMuted, maxLines: 1, overflow: TextOverflow.ellipsis);
-    return FlatLink(name, tip: 'Open $name', onTap: () => context.go('/customers?q=${Uri.encodeQueryComponent(name)}'));
+    return FlatLink(name, onTap: () => context.go('/customers?q=${Uri.encodeQueryComponent(name)}'));
   }
 
   Widget _poCell(Map<String, dynamic> i) {
     final po = '${i['po_number'] ?? ''}'.trim();
     if (po.isEmpty || po == 'null') return const Text('—', style: flatCellMuted);
-    return Tooltip(
+    return OverflowTooltip(
       message: po,
-      waitDuration: const Duration(milliseconds: 400),
       child: Text(po, style: flatCellMuted, maxLines: 1, overflow: TextOverflow.ellipsis),
     );
   }

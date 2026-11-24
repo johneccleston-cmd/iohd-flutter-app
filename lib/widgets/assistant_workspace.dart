@@ -132,6 +132,17 @@ List<_Suggestion> _pageSuggestions(String path) {
       _Suggestion(Icons.groups_outlined, 'Top customers', 'Who are our top 10 customers by revenue this year?'),
     ],
     '/estimates': [_Suggestion(Icons.mark_email_unread_outlined, 'Follow-ups', 'Which estimates need follow-up first?')],
+    '/inventory/catalog': [
+      _Suggestion(Icons.price_change_outlined, 'No price', 'Which active products have no price or no cost?'),
+      _Suggestion(Icons.category_outlined, 'By category', 'How many active products are in each category?'),
+    ],
+    '/inventory/services': [
+      _Suggestion(Icons.sell_outlined, 'Usual prices', 'What do we usually charge for our most used services?'),
+      _Suggestion(Icons.rule_rounded, 'Needs a category', 'Which active services are not in a category yet?'),
+    ],
+    '/inventory/tax-discounts-fees': [
+      _Suggestion(Icons.percent_rounded, 'Discounts and fees', 'What discounts and fees can we put on a job?'),
+    ],
     '/jobs': [_Suggestion(Icons.hourglass_bottom_rounded, 'Stuck jobs', 'Which jobs are stuck, and what is holding them up?')],
     '/calendar': [_Suggestion(Icons.event_available_outlined, 'This week', 'What is scheduled for the technicians this week?')],
     '/hr/kpis': [
@@ -212,6 +223,8 @@ const Map<String, (String, String)> _appPages = {
   'estimates': ('/estimates', 'Estimates'),
   'customers': ('/customers', 'Customers'),
   'inventory': ('/inventory', 'Inventory'),
+  'products': ('/inventory/catalog', 'the Product Catalog'),
+  'services': ('/inventory/services', 'the Services Catalog'),
   'payroll': ('/hr/payroll', 'Payroll'),
   'calendar': ('/calendar', 'the Calendar'),
   'invoices': ('/invoices', 'Invoices'),
@@ -242,6 +255,17 @@ final RegExp _recordIdRe = RegExp(r'^[A-Za-z0-9\-]{3,40}$');
     case 'page':
       final p = _appPages[target.toLowerCase()];
       return p == null ? null : (route: p.$1, what: 'Open ${p.$2}');
+    case 'product': // a product's own page, by its catalog id (catalog_lookup's link)
+      return RegExp(r'^\d{1,12}$').hasMatch(target) ? (route: '/inventory/catalog/$target', what: 'Open this product') : null;
+    case 'service': // a service's own page, by its catalog key, which comes encoded ("sf%3Aservice%20%7C%20tune-up")
+      String key;
+      try {
+        key = Uri.decodeComponent(target);
+      } catch (_) {
+        return null;
+      }
+      if (key.isEmpty || key.length > 200 || RegExp(r'[\u0000-\u001f<>]').hasMatch(key)) return null;
+      return (route: Uri(path: '/inventory/services/item', queryParameters: {'key': key}).toString(), what: 'Open this service');
   }
   return null;
 }
@@ -634,6 +658,7 @@ class _PageQuestions extends StatelessWidget {
                 color: Colors.white,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: const BorderSide(color: _stroke)),
                 child: InkWell(
+                  mouseCursor: WidgetStateMouseCursor.clickable,
                   borderRadius: BorderRadius.circular(8),
                   onTap: () => onAsk(s.question),
                   hoverColor: _fill,
@@ -812,6 +837,7 @@ class _QuestionCardState extends State<_QuestionCard> {
         side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.28) : _stroke),
       ),
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: widget.onTap,
         onHover: (v) => setState(() => _lit = v),
         onFocusChange: (v) => setState(() => _lit = v),

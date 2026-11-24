@@ -235,7 +235,9 @@ void main() {
       expect(t.feeCents, 2400 + 4500);
       expect(t.taxCents, 10000, reason: '10% of the door only: a discount does not lower it unless set to, a fee is never taxed');
       expect(t.missingCostLines, 0, reason: 'a fee has no cost to enter');
-      expect(t.profitCents, 100000 - 20000 + 6900 - 60000);
+      // Decision 8 (2026-11-23): the card fee goes to the processor, so it is not profit; the trip charge still is.
+      expect(t.processingFeeCents, 2400);
+      expect(t.profitCents, 100000 - 20000 + 6900 - 2400 - 60000);
       expect(t.totalCents, 100000 - 20000 + 6900 + 10000);
     });
 
@@ -295,31 +297,31 @@ void main() {
       await t.tap(find.byKey(const ValueKey('add-tax')));
       await t.pumpAndSettle();
       expect(find.textContaining('Choose it in a line\'s Tax column'), findsOneWidget);
-      expect(find.text('Sales tax Rogers 9.5%'), findsOneWidget, reason: 'the tax line is on the record');
+      expect(find.text('Sales tax Rogers'), findsOneWidget, reason: 'the tax line is on the record');
       expect(find.text(r'$1,500.00'), findsWidgets, reason: 'the total is unchanged: nothing is taxed yet');
       // Line 1's Tax: No tax -> Rogers.
       await t.tap(find.text('No tax').first);
       await t.pumpAndSettle();
       await t.tap(find.text('Rogers').last);
       await t.pumpAndSettle();
-      expect(find.text(r'$95.00'), findsOneWidget, reason: '9.5% of the door only');
+      expect(find.text(r'$95.00'), findsNWidgets(2), reason: '9.5% of the door only (its line, and Taxes, fees & discounts)');
       expect(find.text(r'$1,595.00'), findsWidgets);
     });
 
     testWidgets('a set\'s own-rate lines keep saying so after another tax is added (found in real Chrome)', (t) async {
       await _pump(t, _editor([_door.copyWith(taxable: true), _opener.copyWith(taxable: true)], taxRate: 10));
-      expect(find.text('Taxable 10%'), findsNWidgets(2));
+      expect(find.text('Taxable'), findsNWidgets(2));
       await _openPanel(t);
       await _search(t, 'rogers');
       await t.tap(find.byKey(const ValueKey('charge-choice-AR-04-02')));
       await t.pumpAndSettle();
       await t.tap(find.byKey(const ValueKey('add-tax')));
       await t.pumpAndSettle();
-      expect(find.text('Taxable 10%'), findsNWidgets(2), reason: 'they were labelled "Rogers 9.5%"');
-      expect(find.text('Rogers 9.5%'), findsNothing);
-      expect(find.text(r'$150.00'), findsOneWidget, reason: 'still 10% of \$1,500');
+      expect(find.text('Taxable'), findsNWidgets(2), reason: 'they were labelled "Rogers 9.5%"');
+      expect(find.text('Rogers'), findsNothing);
+      expect(find.text(r'$150.00'), findsNWidgets(2), reason: 'still 10% of \$1,500 (its line, and Taxes, fees & discounts)');
       // Their menu ticks the set's rate and offers Rogers beside it.
-      await t.tap(find.text('Taxable 10%').first);
+      await t.tap(find.text('Taxable').first);
       await t.pumpAndSettle();
       expect(find.text('Rogers'), findsWidgets);
       expect(find.byIcon(Icons.check_rounded), findsWidgets);
@@ -363,7 +365,7 @@ void main() {
           taxOptions: const [SalesTax('Sales Tax (State, County, & Local Use Tax, Rogers)', 9.5, onRecord: true)],
         ),
       );
-      expect(find.text(r'$95.00'), findsOneWidget);
+      expect(find.text(r'$95.00'), findsNWidgets(2), reason: 'its line, and Taxes, fees & discounts');
       await _openPanel(t);
       await t.tap(find.byKey(const ValueKey('charge-choice-rt:Sales Tax (State, County, & Local Use Tax, Rogers)')));
       await t.pumpAndSettle();
@@ -374,7 +376,7 @@ void main() {
       expect(find.textContaining('1 line now No tax'), findsOneWidget);
       await t.tap(find.text('Undo'));
       await t.pumpAndSettle();
-      expect(find.text(r'$95.00'), findsOneWidget, reason: 'the tax and its line are back');
+      expect(find.text(r'$95.00'), findsNWidgets(2), reason: 'the tax and its line are back');
     });
 
     testWidgets('a percentage discount and a card fee: added, changed, removed; the box never moves when % and \$ swap', (t) async {
@@ -406,7 +408,7 @@ void main() {
       await t.tap(find.byKey(const ValueKey('save-charge')));
       await t.pumpAndSettle();
       expect(find.text(r'$36.00'), findsWidgets);
-      expect(find.text('Not taxed'), findsOneWidget);
+      expect(find.text('Not taxed'), findsNothing, reason: 'a fee\'s Tax column is empty (USER RULE 2026-11-24)');
       expect(find.text(r'$1,236.00'), findsWidgets);
       // Change it to 4% from the panel, then remove it.
       await _openPanel(t);
@@ -445,7 +447,7 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('Out-of-state sales tax (Missouri)').last);
       await t.pumpAndSettle();
-      expect(find.text(r'$82.25'), findsOneWidget, reason: '8.225% of \$1,000');
+      expect(find.text(r'$82.25'), findsNWidgets(2), reason: '8.225% of \$1,000 (its line, and Taxes, fees & discounts)');
     });
 
     testWidgets('keyboard: arrows move through the choices, Enter opens one, Esc goes back, then closes', (t) async {
@@ -455,7 +457,7 @@ void main() {
       await t.pumpAndSettle();
       await t.sendKeyEvent(LogicalKeyboardKey.enter);
       await t.pumpAndSettle();
-      expect(find.text('Arkansas state sales tax'), findsOneWidget, reason: 'the first choice is the state');
+      expect(find.byKey(const ValueKey('charge-value')), findsOneWidget, reason: 'the first choice is the first discount (discounts and fees lead the taxes)');
       await t.sendKeyEvent(LogicalKeyboardKey.escape);
       await t.pumpAndSettle();
       expect(find.byKey(const ValueKey('charges-search')), findsOneWidget, reason: 'back to the list');

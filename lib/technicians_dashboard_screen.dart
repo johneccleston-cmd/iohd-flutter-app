@@ -2853,7 +2853,7 @@ class _StreakCardState extends State<_StreakCard> with TickerProviderStateMixin 
                     gradient: LinearGradient(
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
-                      colors: [DashUi.ink, Color.lerp(DashUi.ink, lit ? DashUi.red : DashUi.slate, 0.3)!],
+                      colors: [DashUi.navy, Color.lerp(DashUi.navy, lit ? DashUi.red : DashUi.slate, 0.3)!],
                     ),
                     border: Border.all(
                       color: (lit ? DashUi.amber : DashUi.slate).withValues(alpha: hovering ? 0.75 : 0.4),

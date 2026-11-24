@@ -6,13 +6,13 @@ class AppTheme {
   static const Color bgColor = Color(0xFFE0E0E0);
   static const Color surfaceColor = Colors.white;
   static const Color primaryText = Color(0xFF1A1C1E);
-  static const Color secondaryText = Color(0xFF4B5563);
-  static const Color sectionLabel = Color(0xFF9CA3AF);
+  static const Color secondaryText = Color(0xFF505050);
+  static const Color sectionLabel = Color(0xFF9E9E9E);
   static const Color strokeBorder = Color(0xFFE5E5E5);
   static const Color dividerColor = Color(0xFFE5E5E5);
 
   // Quiet surfaces and readable muted text (about 4.8:1 on white, unlike sectionLabel) for dense schedule screens.
-  static const Color mutedText = Color(0xFF6B7280);
+  static const Color mutedText = Color(0xFF6B6B6B);
   static const Color subtleFill = Color(0xFFF3F3F3);
   static const Color subtleFillLight = Color(0xFFF9F9F9);
   static const Color todayTint = Color(0xFFE6EDF7);
@@ -27,9 +27,18 @@ class AppTheme {
   static const Color notesHeader = Color(0xFFB07D10);
   static const Color notesText = Color(0xFF7A5A10);
 
+  /// The app's one typeface, bundled in pubspec.yaml (assets/fonts). Set once on the theme; never per widget.
+  static const String fontFamily = 'IBM Plex Sans';
+
+  /// Where the few symbols Plex lacks come from on Windows (the ▲ ▼ trend arrows, ★). The web build ignores these
+  /// names and finds its own fallback font.
+  static const List<String> fontFamilyFallback = ['Segoe UI', 'Segoe UI Symbol'];
+
   static ThemeData get lightTheme {
     return ThemeData(
       useMaterial3: true,
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFamilyFallback,
       scaffoldBackgroundColor: bgColor,
       colorScheme: ColorScheme.fromSeed(
         seedColor: brandRed,
@@ -115,6 +124,7 @@ class AppTheme {
             borderRadius: BorderRadius.circular(14),
           ),
           textStyle: const TextStyle(
+            fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback,
             fontSize: 15,
             fontWeight: FontWeight.bold,
             letterSpacing: 1.0,
@@ -134,6 +144,7 @@ class AppTheme {
             borderRadius: BorderRadius.circular(14),
           ),
           textStyle: const TextStyle(
+            fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback,
             fontSize: 14,
             fontWeight: FontWeight.w600,
             letterSpacing: 0.8,

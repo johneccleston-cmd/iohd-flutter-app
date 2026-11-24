@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
+import 'package:iohd_desktop/theme/app_theme.dart';
 import 'package:iohd_desktop/widgets/dashboard_data.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -105,8 +106,12 @@ Future<void> _loadFont(String family, List<String> paths) async {
   await loader.load();
 }
 
-/// The Windows app's fonts, so text measures like the real thing (call from setUpAll).
+/// The app's fonts, so text measures like the real thing (call from setUpAll): the bundled IBM Plex Sans the app draws
+/// with (AppTheme.fontFamily), plus Segoe UI and Roboto for older tests that still name them.
 Future<void> loadDashFonts() async {
+  await _loadFont(AppTheme.fontFamily, [
+    for (final w in const ['Regular', 'Italic', 'Medium', 'SemiBold', 'Bold']) 'assets/fonts/IBMPlexSans-$w.ttf',
+  ]);
   await _loadFont('Segoe UI', ['C:/Windows/Fonts/segoeui.ttf', 'C:/Windows/Fonts/segoeuib.ttf', 'C:/Windows/Fonts/seguisb.ttf']);
   final root = Platform.environment['FLUTTER_ROOT'] ?? r'C:\src\flutter';
   await _loadFont('Roboto', [
@@ -131,7 +136,7 @@ class DashLayoutErrors {
   bool get overflowed => messages.any((m) => m.contains('overflowed'));
 }
 
-/// Pumps [screen] the way the app shows it (Segoe UI, light theme) at [size], with [api] answering requests, and
+/// Pumps [screen] the way the app shows it (the app's font, light theme) at [size], with [api] answering requests, and
 /// lets the entrance and count-up animations finish. Runs [body] afterwards inside the same fake-API zone, so taps
 /// that fetch more data are answered too. Layout errors are collected instead of failing the test immediately.
 Future<DashLayoutErrors> pumpDashboard(
@@ -173,7 +178,7 @@ Future<DashLayoutErrors> pumpDashboard(
             key: _shotKey,
             child: MaterialApp(
               debugShowCheckedModeBanner: false,
-              theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true),
+              theme: ThemeData(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, useMaterial3: true),
               home: Scaffold(body: screen),
             ),
           ),

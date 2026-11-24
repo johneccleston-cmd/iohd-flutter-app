@@ -38,7 +38,7 @@ void main() {
       // Since the Tax, discounts & fees redesign (2026-11-20) the set's own rate is changed in that panel, not in a
       // field in the totals: the same rule, the same keys.
       await _pump(t, _editor(const [LineDraft(name: 'Door', rate: 1000, quantity: 1, taxable: true)], taxRate: 10));
-      expect(find.text(r'$100.00'), findsOneWidget, reason: '10% of \$1,000');
+      expect(find.text(r'$100.00'), findsNWidgets(2), reason: '10% of \$1,000: its line in the table, and Taxes, fees & discounts');
       Future<void> openOwnRate() async {
         await t.tap(find.text('Tax, discounts & fees'));
         await t.pumpAndSettle();
@@ -56,7 +56,7 @@ void main() {
       await t.sendKeyEvent(LogicalKeyboardKey.escape); // closed
       await t.pumpAndSettle();
       expect(find.text(r'$1,050.00'), findsNothing, reason: 'a 105% tax was charged');
-      expect(find.text(r'$100.00'), findsOneWidget, reason: 'the last good rate stays in the totals');
+      expect(find.text(r'$100.00'), findsNWidgets(2), reason: 'the last good rate stays in the totals (its line, and Taxes, fees & discounts)');
 
       await openOwnRate();
       await t.enterText(find.byKey(const ValueKey('tax-rate')), '8.25');
@@ -64,7 +64,7 @@ void main() {
       expect(find.byKey(const ValueKey('tax-rate-invalid')), findsNothing);
       await t.tap(find.byKey(const ValueKey('save-own-rate')));
       await t.pumpAndSettle();
-      expect(find.text(r'$82.50'), findsOneWidget);
+      expect(find.text(r'$82.50'), findsNWidgets(2), reason: 'its line, and Taxes, fees & discounts');
 
       await openOwnRate();
       await t.enterText(find.byKey(const ValueKey('tax-rate')), '');
@@ -89,7 +89,7 @@ void main() {
       await t.enterText(find.byKey(const ValueKey('line-1-rate')), '-75');
       await t.pumpAndSettle();
       expect(find.text(r'$925.00'), findsWidgets);
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       await t.tap(find.text('Builder discount'));
       await t.pumpAndSettle();
@@ -136,8 +136,9 @@ void main() {
           LineDraft(name: 'Return: opener', rate: 389, quantity: -1),
         ], editable: false),
       );
-      expect(find.text('2 lines have no cost'), findsOneWidget);
-      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is Tooltip && w.message == '2 lines have no cost: this is the cost of the others.'), findsOneWidget);
+      // The gross profit is always filled in, on the known costs (USER RULE 2026-11-24; Phase 2 had left it a dash).
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
       await _pump(
         t,
         _editor(const [
@@ -145,8 +146,8 @@ void main() {
           LineDraft(name: 'Keyless Entry Pad', rate: 79, quantity: 1),
         ], editable: false),
       );
-      expect(find.text('1 line has no cost'), findsOneWidget, reason: 'a priced item with no cost counts');
-      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+      expect(find.byWidgetPredicate((w) => w is Tooltip && w.message == '1 line has no cost: this is the cost of the others.'), findsOneWidget, reason: 'a priced item with no cost counts');
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
       await _pump(
         t,
         _editor(const [
@@ -245,7 +246,7 @@ void main() {
 
     testWidgets('keyboard: the arrows move, Enter picks, Esc closes, and focus comes back to the select', (t) async {
       await _pump(t, _editor(lines, taxRate: 10));
-      await t.tap(find.text('Taxable 10%').first);
+      await t.tap(find.text('Taxable').first);
       await t.pumpAndSettle();
       expect(find.text('No tax'), findsOneWidget, reason: 'the menu is open');
       await t.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -261,13 +262,13 @@ void main() {
       await t.sendKeyEvent(LogicalKeyboardKey.enter);
       await t.pumpAndSettle();
       expect(find.text('No tax'), findsOneWidget, reason: 'the door is now No tax');
-      expect(find.text(r'$60.00'), findsOneWidget, reason: 'tax on the opener alone');
+      expect(find.text(r'$60.00'), findsNWidgets(2), reason: 'tax on the opener alone (its line, and Taxes, fees & discounts)');
       expect(_focused, select);
     });
 
     testWidgets('a double click opens one menu, and a click outside closes it', (t) async {
       await _pump(t, _editor(lines, taxRate: 10));
-      final cell = find.text('Taxable 10%').first;
+      final cell = find.text('Taxable').first;
       await t.tap(cell);
       await t.pump(const Duration(milliseconds: 40));
       await t.tap(cell, warnIfMissed: false); // lands on the menu's barrier: closes it, never opens a second
@@ -286,7 +287,7 @@ void main() {
       // Ten lines in a short window, the last one's select scrolled to the window's bottom edge.
       final many = [for (var i = 0; i < 10; i++) LineDraft(name: 'Part $i', rate: 10.0 + i, quantity: 1, taxable: true)];
       await _pump(t, _editor(many, taxRate: 10), size: const Size(1500, 420));
-      final cell = find.text('Taxable 10%').last;
+      final cell = find.text('Taxable').last;
       await Scrollable.ensureVisible(t.element(cell), alignment: 1);
       await t.pumpAndSettle();
       final trigger = t.getRect(cell);
@@ -299,9 +300,9 @@ void main() {
       expect(t.getRect(find.text('Taxable').last).top, greaterThanOrEqualTo(8));
     });
 
-    testWidgets('the motion: quick in (part-way at 48 ms, there by ${kPsMenuOpen.inMilliseconds} ms), quicker out', (t) async {
+    testWidgets('the motion: quick in (part-way at 48 ms, there by ${kPsMenuOpen.inMilliseconds} ms), quicker out, gone in ${kPsMenuClose.inMilliseconds} ms', (t) async {
       await _pump(t, _editor(lines, taxRate: 10));
-      await t.tap(find.text('Taxable 10%').first);
+      await t.tap(find.text('Taxable').first);
       await t.pump(); // the first frame
       FadeTransition fade() => t.widget<FadeTransition>(find.ancestor(of: find.text('No tax'), matching: find.byType(FadeTransition)).first);
       await t.pump(const Duration(milliseconds: 48));
@@ -313,7 +314,8 @@ void main() {
       await t.sendKeyEvent(LogicalKeyboardKey.escape);
       await t.pump();
       await t.pump(const Duration(milliseconds: 40));
-      expect(fade().opacity.value, lessThan(0.75), reason: 'the fade leads the close');
+      // It rolls back nearly solid and fades over the second half (smoother out, user 2026-11-23).
+      expect(fade().opacity.value, inExclusiveRange(0.5, 1), reason: 'on its way out, neither vanished nor stuck');
       await t.pump(kPsMenuClose - const Duration(milliseconds: 40));
       await t.pump(const Duration(milliseconds: 16)); // (a ticker's first frame is its start)
       expect(find.text('No tax'), findsNothing, reason: 'closed within ${kPsMenuClose.inMilliseconds} ms and a frame');
@@ -321,7 +323,7 @@ void main() {
 
     testWidgets('a close that starts while the menu is still opening reverses from where it is, without a jump', (t) async {
       await _pump(t, _editor(lines, taxRate: 10));
-      await t.tap(find.text('Taxable 10%').first);
+      await t.tap(find.text('Taxable').first);
       await t.pump();
       await t.pump(const Duration(milliseconds: 40));
       Matrix4 transform() => t.widget<Transform>(find.ancestor(of: find.text('No tax'), matching: find.byType(Transform)).last).transform;
@@ -336,7 +338,7 @@ void main() {
 
     testWidgets('reduce motion: the menu is there on the first frame', (t) async {
       await _pump(t, _editor(lines, taxRate: 10), still: true);
-      await t.tap(find.text('Taxable 10%').first);
+      await t.tap(find.text('Taxable').first);
       await t.pump();
       await t.pump();
       expect(find.text('No tax'), findsOneWidget);

@@ -51,6 +51,7 @@ Map<String, dynamic> _service({String status = 'settled', double? rate = 285, do
 };
 
 void main() {
+  productsMain();
   group('fromJson', () {
     test('reads every Phase 2 field', () {
       final e = CatalogEntry.fromJson(
@@ -314,5 +315,70 @@ void main() {
     expect(fromServer.toLine().rate, 1200);
     expect(fromServer.toLine().taxable, isTrue);
     expect(fromServer.priceStatus, isNull);
+  });
+}
+
+// ---- Products used by a package (2026-11-24): read from the server in order with their live catalog entry; a package's
+// price includes them at their qty; on a job they follow the rates under the package's heading; one that is not in the
+// catalog any more is left off.
+Map<String, dynamic> _productEntry(String key, String name, double rate, double cost) =>
+    {'key': key, 'name': name, 'kind': 'product', 'rate': rate, 'cost': cost, 'taxable': true, 'sku': 'SKU-$key', 'inventoryItemId': 7};
+
+Map<String, dynamic> _packageWithProducts({bool rates = true}) => {
+  'key': 'sf:residential service',
+  'name': 'Residential Service',
+  'kind': 'service',
+  'category': 'Service Packages',
+  'taxable': false,
+  'rates': [
+    if (rates) {'name': 'Visit', 'description': '', 'qty': 1, 'rate': 100, 'cost': 30},
+  ],
+  'products': [
+    {'key': 'inv:7', 'name': 'Torsion Spring', 'qty': 2, 'available': true, 'entry': _productEntry('inv:7', 'Torsion Spring', 40, 10)},
+    {'key': 'inv:9', 'name': 'Old Remote', 'qty': 1, 'available': false, 'entry': null},
+  ],
+};
+
+void productsMain() {
+  test('a package reads its products in order, with their catalog entry; one gone from the catalog is unavailable', () {
+    final e = CatalogEntry.fromJson(_packageWithProducts());
+    expect(e.products.map((p) => p.key), ['inv:7', 'inv:9']);
+    expect(e.products.map((p) => p.name), ['Torsion Spring', 'Old Remote']);
+    expect(e.products.first.available, isTrue);
+    expect(e.products.first.price, 40);
+    expect(e.products.first.total, 80);
+    expect(e.products.last.available, isFalse);
+    expect(e.products.last.price, isNull);
+  });
+
+  test('a package price and cost include its available products at their qty', () {
+    final e = CatalogEntry.fromJson(_packageWithProducts());
+    expect(e.rate, 180, reason: r'1 x $100 + 2 x $40');
+    expect(e.cost, 50, reason: r'$30 + 2 x $10');
+  });
+
+  test('on a job: the rates, then the available products, all under the package; the gone one is left off', () {
+    final lines = CatalogEntry.fromJson(_packageWithProducts()).toPackageLines('p1');
+    expect(lines.map((l) => l.name), ['Visit', 'Torsion Spring']);
+    final spring = lines.last;
+    expect(spring.service, isFalse);
+    expect(spring.quantity, 2);
+    expect(spring.rate, 40);
+    expect(spring.cost, 10);
+    expect(spring.inventoryItemId, 7);
+    expect(spring.packageId, 'p1');
+    expect(spring.packageName, 'Residential Service');
+  });
+
+  test('a service with products and no rates is still a package', () {
+    final e = CatalogEntry.fromJson(_packageWithProducts(rates: false));
+    expect(e.isPackage, isTrue);
+    expect(e.toPackageLines('p2').map((l) => l.name), ['Torsion Spring']);
+  });
+
+  test('a product line sends only which product, its name and its qty', () {
+    final p = CatalogEntry.fromJson(_packageWithProducts()).products.first;
+    expect(p.toJson(), {'key': 'inv:7', 'name': 'Torsion Spring', 'qty': 2.0});
+    expect(p.copyWith(qty: 3).toJson()['qty'], 3.0);
   });
 }

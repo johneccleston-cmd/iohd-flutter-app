@@ -154,6 +154,7 @@ class _ProjectEditorState extends State<_ProjectEditor> {
   Widget _deadlineField() {
     final note = _deadline == null ? null : _deadlineNote(_Project.fromJson({'status': _status, 'deadline': _isoDate(_deadline!)}));
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: _busy ? null : _pickDeadline,
       borderRadius: BorderRadius.circular(10),
       child: InputDecorator(
@@ -446,6 +447,7 @@ class _PersonFieldState extends State<_PersonField> {
               children: [
                 for (final o in options)
                   InkWell(
+                    mouseCursor: WidgetStateMouseCursor.clickable,
                     onTap: () => onSelected(o),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),

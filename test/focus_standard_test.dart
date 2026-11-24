@@ -79,7 +79,7 @@ void main() {
     await dashSignIn();
   });
 
-  testWidgets('the status tabs, pick boxes and column headers show the ring on Tab, and a click leaves none', (t) async {
+  testWidgets('the sidebar status rows, pick boxes and column headers show the ring on Tab, and a click leaves none', (t) async {
     await _pump(t, _list());
     await t.tap(find.byType(TextField).first);
     await t.pumpAndSettle();
@@ -94,6 +94,16 @@ void main() {
       if (k == 'pick-page') {
         expect(_ring(t, find.byKey(const ValueKey('pick-page'))), isTrue, reason: 'the select-all box shows no focus');
         seen.add('pick');
+      }
+    }
+    expect(seen, contains('pick'));
+    // The status rows moved into the filter sidebar (2026-11-23): Tab gets there after the table, and they show the ring.
+    for (var i = 0; i < 150 && !seen.contains('tab'); i++) {
+      await _tab(t);
+      final k = _focusKey() ?? '';
+      if (k.startsWith('status:')) {
+        expect(_ring(t, find.byKey(ValueKey(k))), isTrue, reason: '$k shows no focus');
+        seen.add('tab');
       }
     }
     expect(seen, containsAll(['tab', 'pick']));
@@ -186,14 +196,14 @@ void main() {
     expect(_focusKey(), 'field:rate$n.name');
 
     // Remove the focused line from its remove button: the keyboard lands on Add rate, not the page.
-    // The row's menu by keyboard: Enter opens it, End then Enter on Remove rate removes the line.
+    // The row's menu by keyboard: Enter opens it, End then Enter on Delete removes the line.
     final menuButton = find.byKey(ValueKey('rate-menu:${kServiceWithRates.rates.length}'));
     await t.ensureVisible(menuButton);
     Focus.of(t.element(find.descendant(of: menuButton, matching: find.byType(Icon)).first)).requestFocus();
     await t.pumpAndSettle();
     await t.sendKeyEvent(LogicalKeyboardKey.enter);
     await t.pumpAndSettle();
-    // Remove rate is the menu's last row (after Duplicate, Move up, Move down): End goes straight to it.
+    // Delete is the menu's last row (after Copy): End goes straight to it.
     await t.sendKeyEvent(LogicalKeyboardKey.end);
     await t.pumpAndSettle();
     await t.sendKeyEvent(LogicalKeyboardKey.enter);

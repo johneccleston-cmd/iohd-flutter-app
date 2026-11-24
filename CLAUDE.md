@@ -56,8 +56,8 @@ analyze or tests passed.
   only the pages allowed in `lib/config/access.dart`, enforced by the router redirect and the nav bar. Don't weaken either check.
 - Never write to Service Fusion: the sync is read-only and edits are saved to our own database only.
 - UI conventions the user set: dashboards and KPI pages fit the window with no scrolling; other screens are flat full pages (cards only on
-  dashboards/KPIs) whose body under the ribbon sits in `PageSheet` (`flat_page.dart`: an 8 px edge on the sides only, none on
-  top or bottom; block pages like Job detail pad by `PageSheet.padding`); selected tab text is `DashUi.ink`, never blue, and panel tabs sit flush right; every chart leads with a plain-English
+  dashboards/KPIs) whose body under the ribbon sits in `PageSheet` (`flat_page.dart`: edge to edge, no outer margin,
+  lined up with the ribbon's edges; content spacing lives inside the page; Job detail keeps 8 px `PageSheet.edge` gutters between its blocks); selected tab text is `DashUi.ink`, never blue, and panel tabs sit flush right; every chart leads with a plain-English
   headline and callout; scorecards get a label plus a caption; motion is welcome but gated on reduced motion. Render UI changes and look
   at them before reporting.
 

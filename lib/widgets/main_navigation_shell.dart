@@ -1464,9 +1464,9 @@ class _AskButton extends StatelessWidget {
   const _AskButton({super.key, required this.showLabel, required this.onTap});
 
   // a little light at the top edge, as if lit from above; more of it under the pointer
-  static final _top = Color.lerp(DashUi.ink, Colors.white, 0.12)!;
-  static final _topHover = Color.lerp(DashUi.ink, Colors.white, 0.2)!;
-  static final _bottomHover = Color.lerp(DashUi.ink, Colors.white, 0.07)!;
+  static final _top = Color.lerp(DashUi.navy, Colors.white, 0.12)!;
+  static final _topHover = Color.lerp(DashUi.navy, Colors.white, 0.2)!;
+  static final _bottomHover = Color.lerp(DashUi.navy, Colors.white, 0.07)!;
 
   @override
   Widget build(BuildContext context) {
@@ -1490,11 +1490,11 @@ class _AskButton extends StatelessWidget {
             gradient: LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: hover ? [_topHover, _bottomHover] : [_top, DashUi.ink],
+              colors: hover ? [_topHover, _bottomHover] : [_top, DashUi.navy],
             ),
             boxShadow: [
               BoxShadow(
-                color: DashUi.ink.withValues(alpha: hover ? 0.3 : 0.16),
+                color: DashUi.navy.withValues(alpha: hover ? 0.3 : 0.16),
                 blurRadius: hover ? 14 : 5,
                 offset: Offset(0, hover ? 5 : 2),
               ),

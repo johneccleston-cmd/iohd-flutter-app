@@ -12,13 +12,15 @@ import 'dashboard_kit.dart';
 // The look: a white panel with a hairline and a soft two-layer shadow, items on an inset highlight (radius 6) that
 // follows the pointer and the arrow keys, a check for the current choice of a select.
 //
-// The motion (round 2, user 2026-11-13: "quicker, scale-and-fade, natural movement from the trigger"): the panel grows
-// out of the corner nearest its trigger, from 95% and 6 px back toward the trigger, while it fades in. Opening takes
-// 160 ms on a fast-out curve, so it is visibly there within the first few frames and then settles; the fade is done by
-// about 100 ms. Closing takes 120 ms: the fade leads (it is half gone in the first third), the panel eases back toward
-// the trigger behind it, so it never just vanishes and never lingers. A close that starts while the panel is still
-// opening reverses from where it is, on the same curve, so a quick click-click never jumps. With reduce motion it opens
-// and closes at once.
+// The motion (round 2, user 2026-11-13: "quicker, scale-and-fade, natural movement from the trigger"; smoother in and
+// out, user 2026-11-23, when the 160 ms version read as a plain pop): [PsPopMotion]. The panel unrolls out of its
+// trigger: it is uncovered from the trigger's side (from 45% of its height), grows from 94% out of the corner nearest
+// the trigger and slides 8 px away from it, while it fades in over the first half. Opening takes 200 ms (the Tax,
+// discounts & fees panel, much bigger, 240 ms) on an ease-out-cubic, so the movement is spread across the frames
+// instead of spent in the first two. Closing takes 150 ms (the panel 170 ms): it rolls back up into the trigger, quick
+// at first, and fades over the second half, gone just before it is, so it never just vanishes and never lingers. A close that starts
+// while the panel is still opening reverses from where it is, so a quick click-click never jumps. With reduce motion it
+// opens and closes at once.
 //
 // Where it opens: under its trigger, lined up with the trigger's start (or end, for the menus at a row's right edge);
 // over the trigger when there is more room there, as near the window's bottom edge; kept 8 px inside the window. A list
@@ -60,8 +62,104 @@ class PsMenuDivider<T> extends PsMenuEntry<T> {
 }
 
 /// The motion's timing (see the top of this file).
-const kPsMenuOpen = Duration(milliseconds: 160);
-const kPsMenuClose = Duration(milliseconds: 120);
+const kPsMenuOpen = Duration(milliseconds: 200);
+const kPsMenuClose = Duration(milliseconds: 150);
+
+/// The Tax, discounts & fees panel's timing: a bigger panel travels further, so it gets a little longer.
+const kPsPanelOpen = Duration(milliseconds: 240);
+const kPsPanelClose = Duration(milliseconds: 170);
+
+/// A P&S popup's entrance and exit (see the top of the file), driven by its route's [animation]. [down]: it opens under
+/// its trigger (it unrolls downward); [origin] is the corner nearest the trigger.
+class PsPopMotion extends StatefulWidget {
+  final Animation<double> animation;
+  final bool down;
+  final Alignment origin;
+  final Widget child;
+  const PsPopMotion({super.key, required this.animation, required this.down, required this.origin, required this.child});
+
+  @override
+  State<PsPopMotion> createState() => _PsPopMotionState();
+}
+
+class _PsPopMotionState extends State<PsPopMotion> {
+  late CurvedAnimation _fade;
+  late CurvedAnimation _move;
+
+  void _curves() {
+    _fade = CurvedAnimation(
+      parent: widget.animation,
+      curve: const Interval(0, 0.5, curve: Curves.easeOut),
+      // Closing: it stays nearly solid while it rolls back and fades over the second half, gone just before the end.
+      reverseCurve: const Interval(0.2, 1, curve: Curves.easeOut),
+    );
+    _move = CurvedAnimation(parent: widget.animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _curves();
+  }
+
+  @override
+  void didUpdateWidget(PsPopMotion old) {
+    super.didUpdateWidget(old);
+    if (old.animation != widget.animation) {
+      _fade.dispose();
+      _move.dispose();
+      _curves();
+    }
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    _move.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => FadeTransition(
+    opacity: _fade,
+    child: AnimatedBuilder(
+      animation: _move,
+      builder: (context, child) {
+        final m = _move.value;
+        if (m >= 1) return child!;
+        return ClipRect(
+          clipper: _Unroll(0.45 + 0.55 * m, down: widget.down),
+          child: Transform.translate(
+            offset: Offset(0, (widget.down ? -8 : 8) * (1 - m)),
+            child: Transform.scale(scale: 0.94 + 0.06 * m, alignment: widget.origin, child: child),
+          ),
+        );
+      },
+      child: widget.child,
+    ),
+  );
+}
+
+/// How much of a popup is uncovered: [shown] of its height from the trigger's side. The sides and the far edge keep
+/// room for the panel's shadow, so only the moving edge cuts.
+class _Unroll extends CustomClipper<Rect> {
+  final double shown;
+  final bool down;
+  const _Unroll(this.shown, {required this.down});
+
+  static const _shadow = 32.0;
+
+  @override
+  Rect getClip(Size size) {
+    final reach = (size.height + 2 * _shadow) * shown;
+    return down
+        ? Rect.fromLTRB(-_shadow, -_shadow, size.width + _shadow, -_shadow + reach)
+        : Rect.fromLTRB(-_shadow, size.height + _shadow - reach, size.width + _shadow, size.height + _shadow);
+  }
+
+  @override
+  bool shouldReclip(_Unroll old) => old.shown != shown || old.down != down;
+}
 
 /// Opens a menu under (or over) the widget whose [context] is given, and gives back what was picked, or null.
 ///
@@ -206,8 +304,6 @@ class _PsMenuPage<T> extends StatefulWidget {
 }
 
 class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
-  late final CurvedAnimation _fade;
-  late final CurvedAnimation _move;
   final _focus = FocusNode(debugLabel: 'menu');
   final _scroll = ScrollController();
 
@@ -219,22 +315,7 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
   _PsMenuRoute<T> get _r => widget.route;
 
   @override
-  void initState() {
-    super.initState();
-    final a = _r.animation!;
-    // Open: in by ~100 ms, then the scale and slide settle. Close: the fade leads (see the top of the file).
-    _fade = CurvedAnimation(
-      parent: a,
-      curve: const Interval(0, 0.62, curve: Curves.easeOut),
-      reverseCurve: Curves.easeIn,
-    );
-    _move = CurvedAnimation(parent: a, curve: const Cubic(0.16, 1, 0.3, 1), reverseCurve: Curves.easeOut);
-  }
-
-  @override
   void dispose() {
-    _fade.dispose();
-    _move.dispose();
     _focus.dispose();
     _scroll.dispose();
     super.dispose();
@@ -323,20 +404,7 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
               top: top,
               width: w,
               height: h,
-              child: FadeTransition(
-                opacity: _fade,
-                child: AnimatedBuilder(
-                  animation: _move,
-                  builder: (context, child) {
-                    final m = _move.value;
-                    return Transform.translate(
-                      offset: Offset(0, (down ? -6 : 6) * (1 - m)),
-                      child: Transform.scale(scale: 0.95 + 0.05 * m, alignment: origin, child: child),
-                    );
-                  },
-                  child: _panel(natural > h + 0.5),
-                ),
-              ),
+              child: PsPopMotion(animation: _r.animation!, down: down, origin: origin, child: _panel(natural > h + 0.5)),
             ),
           ],
         );
@@ -406,22 +474,17 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
           child: Focus(
             focusNode: _focus,
             autofocus: true,
-            child: MouseRegion(
-              onExit: (_) => setState(() => _hi = null),
-              child: Material(
-                type: MaterialType.transparency,
-                child: Container(
-                  decoration: psMenuPanelDecoration(),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(9),
-                    child: scrolls
-                        ? Scrollbar(
-                            controller: _scroll,
-                            child: SingleChildScrollView(controller: _scroll, padding: const EdgeInsets.all(_pad), child: items),
-                          )
-                        : Padding(padding: const EdgeInsets.all(_pad), child: items),
-                  ),
-                ),
+            // A click anywhere in the panel that isn't a choice (a greyed-out one, a heading, a rule, the panel's edge)
+            // does nothing, and must not reach the page's text selection above the navigator ([AppSelection]): it
+            // took the keyboard on the press, so Esc and the arrows no longer reached the menu (P&S final polish,
+            // 2026-11-23). The tap is claimed here; a press that still lets focus go (a drag) gives it back.
+            child: Listener(
+              onPointerUp: (_) => _keepFocus(),
+              onPointerCancel: (_) => _keepFocus(),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {},
+                child: SelectionContainer.disabled(child: _surface(scrolls, items)),
               ),
             ),
           ),
@@ -429,6 +492,33 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
       ),
     );
   }
+
+  /// After a press inside the panel: the menu keeps the keyboard unless that press picked (and so closed) it.
+  void _keepFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_done && !_focus.hasFocus) _focus.requestFocus();
+    });
+  }
+
+  /// The panel itself: white, its hairline and shadow, the choices (scrolling when they don't fit).
+  Widget _surface(bool scrolls, Widget items) => MouseRegion(
+    onExit: (_) => setState(() => _hi = null),
+    child: Material(
+      type: MaterialType.transparency,
+      child: Container(
+        decoration: psMenuPanelDecoration(),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(9),
+          child: scrolls
+              ? Scrollbar(
+                  controller: _scroll,
+                  child: SingleChildScrollView(controller: _scroll, padding: const EdgeInsets.all(_pad), child: items),
+                )
+              : Padding(padding: const EdgeInsets.all(_pad), child: items),
+        ),
+      ),
+    ),
+  );
 }
 
 class _Step extends Intent {
@@ -544,9 +634,9 @@ class _PsMenuEntranceState extends State<PsMenuEntrance> with SingleTickerProvid
   late final _c = AnimationController(vsync: this, duration: kPsMenuOpen);
   late final _fade = CurvedAnimation(
     parent: _c,
-    curve: const Interval(0, 0.62, curve: Curves.easeOut),
+    curve: const Interval(0, 0.5, curve: Curves.easeOut),
   );
-  late final _move = CurvedAnimation(parent: _c, curve: const Cubic(0.16, 1, 0.3, 1));
+  late final _move = CurvedAnimation(parent: _c, curve: Curves.easeOutCubic);
 
   @override
   void didChangeDependencies() {
@@ -574,8 +664,8 @@ class _PsMenuEntranceState extends State<PsMenuEntrance> with SingleTickerProvid
     child: AnimatedBuilder(
       animation: _move,
       builder: (context, child) => Transform.translate(
-        offset: Offset(0, (widget.up ? 6 : -6) * (1 - _move.value)),
-        child: Transform.scale(scale: 0.97 + 0.03 * _move.value, alignment: widget.up ? Alignment.bottomLeft : Alignment.topLeft, child: child),
+        offset: Offset(0, (widget.up ? 8 : -8) * (1 - _move.value)),
+        child: Transform.scale(scale: 0.94 + 0.06 * _move.value, alignment: widget.up ? Alignment.bottomLeft : Alignment.topLeft, child: child),
       ),
       child: widget.child,
     ),

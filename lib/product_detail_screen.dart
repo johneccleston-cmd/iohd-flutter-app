@@ -484,10 +484,73 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       _toList();
     } on LineItemsException catch (e) {
       if (!mounted) return;
+      // Still in use (saved lines, a stock row, billed history): the server keeps it, and the safe way out is Inactive
+      // (P&S round 2 finalization B6, 2026-11-23). Nothing changes unless the person says so.
+      if (e.code == 'IN_USE') {
+        await _offerInactive(p, e.message);
+        return;
+      }
       setState(() => _saveError = e.message);
     } catch (_) {
       if (!mounted) return;
       setState(() => _saveError = 'Could not delete the product. Try again.');
+    }
+  }
+
+  /// A product the server would not delete because it is still in use ([why] is its reason, in words): say so, and
+  /// offer to make it inactive instead (out of every picker, history kept). An inactive one only hears why.
+  Future<void> _offerInactive(ProductRecord p, String why) async {
+    final canDeactivate = p.isActive;
+    final go = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'This product is still in use',
+        subtitle: p.name,
+        icon: Icons.inventory_2_outlined,
+        width: 500,
+        body: Text(
+          canDeactivate ? why : '$why It is inactive already.',
+          style: const TextStyle(fontSize: 14, height: 1.4, color: DashUi.slate),
+        ),
+        actions: [
+          if (canDeactivate) ...[
+            AppButton.ghost('Keep it', () => Navigator.pop(ctx, false)),
+            AppButton.ink('Make inactive', () => Navigator.pop(ctx, true), autofocus: true),
+          ] else
+            AppButton.ink('OK', () => Navigator.pop(ctx, false), autofocus: true),
+        ],
+      ),
+    );
+    if (go != true || !mounted) return;
+    final id = widget.productId;
+    try {
+      final saver = widget.saver ??
+          (int? id, Map<String, dynamic> f, String? at, {bool confirmDuplicate = false}) =>
+              LineItemsApi.updateProduct(id!, f, expectedUpdatedAt: at, confirmDuplicate: confirmDuplicate);
+      final saved = await saver(id, const {'isActive': false}, _page?.product.updatedAt);
+      if (!mounted) return;
+      productCatalogChanged.value++;
+      setState(() {
+        _page = (product: saved, stock: _page?.stock, canSeeCost: _canSeeCost, canEdit: _canEdit, inventoryConflict: _page?.inventoryConflict);
+        _fill(saved);
+      });
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('${p.name} is inactive now: it is no longer offered on new estimates and jobs, and keeps its history.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+    } on LineItemsException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saveError = e.message;
+        _conflict = e.status == 409;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saveError = 'Could not make the product inactive. Try again.');
     }
   }
 
@@ -721,7 +784,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
               },
               style: TextButton.styleFrom(
                 foregroundColor: DashUi.ink,
-                textStyle: const TextStyle(fontWeight: FontWeight.w700),
+                textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontWeight: FontWeight.w700),
               ),
               child: const Text('Reload product'),
             ),
@@ -969,7 +1032,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _value('Price', perJob ? 'Priced per job' : _viewMoney('unitPrice', ''), big: true, quiet: perJob),
+              _value('Price', perJob ? 'No price' : _viewMoney('unitPrice', ''), big: true, quiet: perJob),
               const SizedBox(height: 16),
               _grid([
                 _value('Member price', _viewMoney('memberPrice', 'Not set'), quiet: (_numberIn('memberPrice') ?? 0) == 0),
@@ -1204,7 +1267,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               // Empty (0 in the price list) reads as the list says it: per job / not set / not entered, never $0.00.
-              _field('unitPrice', 'Price', money: true, empty: 'Priced per job'),
+              _field('unitPrice', 'Price', money: true, empty: 'No price'),
               const SizedBox(height: 16),
               _grid([
                 _field('memberPrice', 'Member price', money: true, empty: 'Not set'),
@@ -1319,6 +1382,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
           label: 'Category: ${value.isEmpty ? 'none' : value}${isNew ? ', a new category' : ''}. Pick a category',
           excludeSemantics: true,
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             key: const ValueKey('field:category'),
             focusNode: _categoryFocus,
             onTap: _saving ? null : _pickCategory,
@@ -1351,6 +1415,7 @@ class _ProductDetailScreenState extends State<ProductDetailScreen> {
       toggled: value,
       label: label,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         borderRadius: BorderRadius.circular(10),
         onTap: _saving ? null : () => onChanged(!value),
         child: Padding(

@@ -180,14 +180,14 @@ void main() {
     expect(find.textContaining('Renamed line of Scope of Work'), findsNothing, reason: 'it says what it replaced instead');
     await t.tap(find.text('Commercial Service Dispatch & Evaluation').last);
     await t.pumpAndSettle();
-    expect(find.text('Not priced'), findsNothing);
+    expect(find.text('No price'), findsNothing);
     expect(find.text(r'$109.00'), findsWidgets, reason: 'its own settled price, filled in');
   });
 
   testWidgets('a recent price change: nothing filled in, the median and the newest prices shown apart, no one-tap price', (t) async {
     await _pump(t);
     await _add(t, 'service call', 'Service Call');
-    expect(find.text('Not priced'), findsOneWidget, reason: 'the line starts unpriced, never at \$0');
+    expect(find.text('No price'), findsOneWidget, reason: 'the line starts unpriced, never at \$0');
     expect(find.byKey(const ValueKey('zero-chip')), findsNothing);
     final hint = find.byKey(const ValueKey('hint-recent-change'));
     expect(hint, findsOneWidget);
@@ -198,11 +198,11 @@ void main() {
   testWidgets('billed once: "Use last billed" is the person\'s pick, and the hint goes once the line is priced', (t) async {
     await _pump(t);
     await _add(t, 'weather', 'Weather Seal Labor');
-    expect(find.text('Not priced'), findsOneWidget);
+    expect(find.text('No price'), findsOneWidget);
     expect(find.byKey(const ValueKey('hint-not-priced')), findsOneWidget);
     await t.tap(find.text(r'Use last billed $289.00'));
     await t.pumpAndSettle();
-    expect(find.text('Not priced'), findsNothing);
+    expect(find.text('No price'), findsNothing);
     expect(find.byKey(const ValueKey('hint-not-priced')), findsNothing);
     expect(find.text(r'$289.00'), findsWidgets, reason: 'the rate and the amount');
   });

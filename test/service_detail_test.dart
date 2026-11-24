@@ -136,20 +136,25 @@ void main() {
       await _open(t, _withRates, size: size);
       await _shot(t, 'service_detail_${size.width.toInt()}');
       expect(t.takeException(), isNull, reason: '$size');
-      // The product page's layout (redesign 2026-11-20): description on the left, price and tax in the rail, status and
-      // category under the name in the header.
-      expect(find.text('DESCRIPTION'), findsOneWidget);
-      expect(find.text('PRICE'), findsOneWidget);
+      // The product page's layout (redesign 2026-11-20; read compacted 2026-11-24): description on the left, price and tax
+      // as a strip of figures beside it, status and category under the name in the header.
+      expect(find.text('DETAILS'), findsOneWidget);
+      expect(find.text('STARTS AT'), findsOneWidget);
       expect(find.text('SALES TAX'), findsOneWidget);
       expect(find.text('Service name'), findsNothing, reason: 'the name is the title once, not repeated in a field');
       expect(find.text('Active'), findsOneWidget, reason: 'status once, in the header');
       expect(find.text('Service Packages'), findsWidgets);
       expect(find.textContaining('Service Fusion', findRichText: true), findsNothing);
       expect(find.text('Edited'), findsNothing, reason: 'no Edited pill');
-      expect(find.text('RATES'), findsOneWidget);
+      expect(find.text('SERVICE RATES'), findsOneWidget);
       expect(find.text('After hours'), findsOneWidget);
       expect(find.text('\$240.00'), findsOneWidget, reason: 'total = 2 x 120');
-      expect(find.text('\$60.00'), findsOneWidget, reason: 'total cost = 2 x 30');
+      // One COST column, the rate's own cost (user 2026-11-24: no INTERNAL COST + TOTAL COST pair).
+      expect(find.text('\$30.00'), findsWidgets, reason: 'the rate\'s cost');
+      expect(find.text('\$60.00'), findsNothing, reason: 'no total cost column');
+      expect(find.text('COST'), findsWidgets);
+      expect(find.text('TOTAL COST'), findsNothing);
+      expect(find.text('INTERNAL COST'), findsNothing);
       // Each rate's own commission, what kind, and what it pays on its line (PAYS, worked out like TOTAL).
       expect(find.text('20%'), findsOneWidget);
       expect(find.text(r'$15.00'), findsWidgets, reason: r'20% of $75.00');
@@ -198,7 +203,7 @@ void main() {
     await t.enterText(_field('rate1.cost'), '30');
     await t.pump();
     expect(find.text('\$240.00'), findsOneWidget, reason: 'the total follows what is typed');
-    expect(find.text('\$60.00'), findsOneWidget);
+    expect(find.text('\$60.00'), findsNothing, reason: 'no total cost column: the cost is typed once, in COST');
     // Its own commission (USER RULE 2026-11-20: the % / $ toggle and the amount): an empty box is none.
     expect(_field('rate1.commissionType'), findsOneWidget);
     expect(t.widget<TextField>(_field('rate1.commission')).controller!.text, '', reason: 'a new rate pays none');
@@ -223,7 +228,7 @@ void main() {
   testWidgets('a package has no main rate: added rates start at 0, and its price is what its lines start at', (t) async {
     await _open(t, _withRates);
     expect(find.text('Main'), findsNothing);
-    expect(find.text('Starts at'), findsOneWidget);
+    expect(find.text('STARTS AT'), findsOneWidget);
     expect(find.text(r'$315.00'), findsOneWidget, reason: r'1 x $75 + 2 x $120 at their starting quantities');
     expect(find.textContaining('first one', findRichText: true), findsNothing, reason: 'no rate sets the price');
     await _edit(t);
@@ -250,7 +255,7 @@ void main() {
       },
     );
     await _edit(t);
-    // The row's menu (the Products & Services table's ⋮), then Remove rate.
+    // The row's menu (the Products & Services table's ⋮), then Delete.
     await t.ensureVisible(find.byKey(const ValueKey('rate-menu:1')));
     await t.tap(find.byKey(const ValueKey('rate-menu:1')));
     await t.pumpAndSettle();
@@ -333,7 +338,7 @@ void main() {
     await _save(t);
     expect(find.text('The name cannot be empty.'), findsOneWidget);
     expect(find.text('Give the rate a name.'), findsOneWidget);
-    expect(find.text('Regular rate: Enter an amount.'), findsOneWidget);
+    expect(find.text('Rate: Enter an amount.'), findsOneWidget);
     expect(find.text('Commission: A percentage is 100 at most.'), findsOneWidget);
     expect(_pays(t, 0), 'Over 100%', reason: 'said where the pay would be, too');
     expect(called, isFalse);
@@ -426,7 +431,7 @@ void main() {
     await t.tap(find.textContaining('Residential Overhead Door Service', findRichText: true).first);
     await t.pumpAndSettle();
     expect(find.text('All services'), findsOneWidget);
-    expect(find.text('DESCRIPTION'), findsOneWidget);
+    expect(find.text('DETAILS'), findsOneWidget);
     expect(t.takeException(), isNull);
   });
 
@@ -539,11 +544,11 @@ void main() {
   testWidgets('Esc leaves editing: at once with nothing changed; with changes it asks first', (t) async {
     await _open(t, _withRates);
     await _edit(t);
-    expect(find.textContaining('Editing ', findRichText: true), findsOneWidget, reason: 'the header says it is being edited');
+    expect(find.byKey(const ValueKey('editing')), findsOneWidget, reason: 'the header says it is being edited');
     await t.sendKeyEvent(LogicalKeyboardKey.escape);
     await t.pumpAndSettle();
     expect(find.text('Edit'), findsOneWidget, reason: 'back to reading');
-    expect(find.textContaining('Editing ', findRichText: true), findsNothing);
+    expect(find.byKey(const ValueKey('editing')), findsNothing);
     await _edit(t);
     await t.enterText(_field('rate0.rate'), '80');
     await t.pump();
@@ -689,7 +694,7 @@ void main() {
     expect(find.textContaining('Click Edit'), findsNothing, reason: 'no hint about a button they do not have');
     await t.sendKeyEvent(LogicalKeyboardKey.escape);
     await t.pump();
-    expect(find.text('DESCRIPTION'), findsOneWidget);
+    expect(find.text('DETAILS'), findsOneWidget);
   });
 }
 
@@ -725,8 +730,9 @@ void _noRateTooltipsTests() {
     await _edit(t);
     expect(find.text('Main'), findsNothing);
     final semantics = t.ensureSemantics();
-    await hover(t, mouse, find.byIcon(Icons.keyboard_arrow_up_rounded));
-    await hover(t, mouse, find.byIcon(Icons.keyboard_arrow_down_rounded));
+    // The arrows are drawn (StepChevronPainter), not icons: found by what a screen reader hears.
+    await hover(t, mouse, find.bySemanticsLabel('One more'));
+    await hover(t, mouse, find.bySemanticsLabel('One less'));
     await hover(t, mouse, find.byKey(const ValueKey('field:rate0.commissionType:percent')));
     await hover(t, mouse, find.byKey(const ValueKey('field:rate0.commissionType:fixed')));
     await hover(t, mouse, find.byKey(const ValueKey('rate-menu:0')));

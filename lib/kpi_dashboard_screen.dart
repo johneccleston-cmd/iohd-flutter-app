@@ -50,9 +50,9 @@ class KPIDashboardContent extends StatefulWidget {
 // HELPERS
 // =============================================================================
 
-const _ink = Color(0xFF0F172A);
-const _slate = Color(0xFF64748B);
-const _muted = Color(0xFF94A3B8);
+const _ink = DashUi.ink;
+const _slate = DashUi.subtle;
+const _muted = DashUi.muted;
 const _line = Color(0xFFE5E5E5);
 const _faint = Color(0xFFF2F2F2);
 const _gold = Color(0xFFF59E0B);
@@ -1414,7 +1414,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
-                        color: isFirst ? const Color(0xFFD97706) : const Color(0xFF475569),
+                        color: isFirst ? const Color(0xFFD97706) : DashUi.slate,
                       ),
                     ),
                   ),
@@ -1508,7 +1508,7 @@ class _EmployeeFullHeightCardState extends State<_EmployeeFullHeightCard> with S
                       if (!compact) const SizedBox(height: 2),
                       Text(
                         _fmtTenure(widget.user.yearsWorked),
-                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF1E293B)),
+                        style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: DashUi.ink),
                       ),
                     ],
                   ),

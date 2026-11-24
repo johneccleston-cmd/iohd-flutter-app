@@ -88,7 +88,7 @@ Future<void> _hover(WidgetTester t, Finder target) async {
 
 /// The block's title at the top of the window, as someone who scrolled down to it sees it.
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -364,7 +364,7 @@ void main() {
       _seedEstimate(s);
       await _shoot(t, s, 'ps_menu_tax_1366', size: const Size(1366, 900), then: () async {
         await edit(t);
-        await t.tap(_inTable('Taxable 10.5%').first);
+        await t.tap(_inTable('Taxable').first);
         await settle(t, frames: 4);
       });
     });
@@ -373,7 +373,7 @@ void main() {
       _seedEstimate(s);
       await _shoot(t, s, 'ps_motion_tax_rest', size: const Size(1366, 900), then: () async {
         await edit(t);
-        await t.tap(_inTable('Taxable 10.5%').first);
+        await t.tap(_inTable('Taxable').first);
         var at = 0;
         for (final ms in [16, 48, 80, 120, 180]) {
           await t.pump(Duration(milliseconds: ms - at));
@@ -797,7 +797,7 @@ void main() {
         await t.tap(find.byKey(const ValueKey('option-tab-sf')));
         await settle(t, frames: 4);
         await edit(t);
-        await t.tap(_inTable('Springdale 10.5%').first);
+        await t.tap(_inTable('Springdale').first);
         await settle(t, frames: 4);
       });
       await _shoot(t, s, 'ps_r4_narrow_760', size: const Size(760, 1400));

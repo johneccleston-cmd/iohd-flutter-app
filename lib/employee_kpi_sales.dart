@@ -1412,7 +1412,11 @@ class _PipelinePanelState extends State<_PipelinePanel> {
                           final rowH = math.max(_PipelinePanel._rowShort(g), math.min(64.0, (c.maxHeight - divider) / n));
                           final tall = rowH >= _PipelinePanel._rowTall(g);
                           final scale = MediaQuery.textScalerOf(context);
-                          final nameWidth = math.min(scale.scale(156), c.maxWidth * 0.36);
+                          // Wide enough for the longest name at its hover weight (swatch 12 + gap 8), at most 38% of
+                          // the panel; measured, so a wider font doesn't cut "Sent, awaiting a reply" short.
+                          final nameStyle = DefaultTextStyle.of(context).style.merge(DashText.name.copyWith(fontSize: 13.5, fontWeight: FontWeight.w800));
+                          final widestName = rows.fold<double>(0, (m, r) => math.max(m, (TextPainter(text: TextSpan(text: r.name, style: nameStyle), textDirection: TextDirection.ltr, textScaler: scale, maxLines: 1)..layout()).width));
+                          final nameWidth = math.min(math.max(scale.scale(156), widestName.ceilToDouble() + 22), c.maxWidth * 0.38);
                           final subWidth = scale.scale(80);
                           Widget row(int i) => SizedBox(
                                 height: rowH,
@@ -1607,6 +1611,8 @@ class _PipelineRow extends StatelessWidget {
               Expanded(child: bar),
               const SizedBox(width: 10),
               FittedBox(fit: BoxFit.scaleDown, child: figure),
+              // A gap of its own: a count as wide as its column ("222 estimates") would otherwise touch the figure.
+              const SizedBox(width: 6),
               SizedBox(width: subWidth, child: Align(alignment: Alignment.centerRight, child: FittedBox(fit: BoxFit.scaleDown, child: sub))),
               if (note != null) ...[const SizedBox(width: 6), note],
               chevron,

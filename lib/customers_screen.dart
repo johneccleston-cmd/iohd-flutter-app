@@ -13,6 +13,7 @@ import 'config/auth_session.dart';
 import 'widgets/app_ribbon.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/page_selection.dart';
 
 /// Initials tints, so the list is easier to scan. A name always gets the same one.
 const _avatarTones = [DashUi.blue, DashUi.indigo, DashUi.sky, DashUi.amber, DashUi.emeraldDeep, DashUi.red];
@@ -436,7 +437,7 @@ class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAli
               ),
             ),
         ],
-        child: Container(
+        child: ClickCursor(child: Container(
           height: 42,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
@@ -454,7 +455,7 @@ class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAli
               Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: DashUi.slate),
             ],
           ),
-        ),
+        )),
       ),
     );
   }
@@ -612,6 +613,7 @@ class _CustomersScreenState extends State<CustomersScreen> with AutomaticKeepAli
     final jobs = _toInt(c['total_jobs']);
     final address = [_clean(c['service_location']), _cityState(c)].whereType<String>().join(' · ');
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: () => _open(c),
       hoverColor: DashUi.rowHover,
       child: Container(
@@ -708,7 +710,7 @@ class _ContactLine extends StatelessWidget {
     return Tooltip(
       message: 'Copy $label: $text',
       waitDuration: const Duration(milliseconds: 400),
-      child: InkWell(onTap: onCopy, borderRadius: BorderRadius.circular(4), child: row),
+      child: InkWell(mouseCursor: WidgetStateMouseCursor.clickable, onTap: onCopy, borderRadius: BorderRadius.circular(4), child: row),
     );
   }
 }

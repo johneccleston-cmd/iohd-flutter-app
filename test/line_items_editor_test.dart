@@ -154,7 +154,7 @@ void main() {
       await t.pump();
       expect(t.widget<TextField>(field).controller!.text, '3.50');
       // Closed again, the box shows it the same way.
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text('3.50'), findsOneWidget);
     });
@@ -210,7 +210,7 @@ void main() {
       await t.pumpAndSettle();
       await t.enterText(field(1, 'qty'), '2..5');
       await t.pump();
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       // Audit round 2 (2026-11-20): nothing half-typed is ever charged, so the closed line has nothing bad left on it.
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'the line kept its good figure');
@@ -247,7 +247,7 @@ void main() {
       expect(t.widget<TextField>(field(0, 'qty')).controller!.text, '-2');
       expect(find.text(r'$200.00'), findsNothing, reason: 'not read as 2');
       expect(find.text(r'-$200.00'), findsWidgets, reason: 'read as minus two');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text('-2.00'), findsOneWidget, reason: 'closed, it reads as every quantity does');
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'not marked as a bad number');
@@ -257,7 +257,7 @@ void main() {
       await _pump(t, const _Host([LineDraft(name: 'Seal', rate: 100, quantity: 1, taxable: true)], taxRate: 10));
       await t.tap(find.text('Seal'));
       await t.pumpAndSettle();
-      await t.tap(find.text('Taxable 10%'));
+      await t.tap(find.text('Taxable'));
       await t.pumpAndSettle();
       await t.tap(find.text('No tax').last);
       await t.pumpAndSettle();
@@ -279,7 +279,7 @@ void main() {
       await t.enterText(field(0, 'qty'), '35125.3');
       await t.pump();
       expect(find.text(r'-$3,512.53'), findsWidgets, reason: '35,125.3 x -\$0.10');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text('35,125.30'), findsOneWidget);
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
@@ -314,7 +314,7 @@ void main() {
       await t.enterText(field(0, 'qty'), '-1000000');
       await t.pump();
       expect(find.text(r'-$1,000,000.00'), findsNothing);
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'closed, the line kept its good figure');
       expect(find.textContaining("that wasn't a number, so it keeps its quantity 1.00"), findsOneWidget);
@@ -521,7 +521,7 @@ void main() {
     // Before tax: 1,000 - 50 + 40 = 990. Cost 600. Profit 390 = 39.4%.
     expect(find.text(r'$600.00'), findsOneWidget, reason: 'job cost');
     expect(find.text(r'$390.00'), findsOneWidget, reason: 'gross profit');
-    expect(find.text('39.4%'), findsOneWidget);
+    expect(find.text('(39.4%)'), findsOneWidget);
     expect(find.text(r'$1,085.00'), findsOneWidget, reason: 'the source\'s own total, unchanged');
     expect(find.text('Job total'), findsOneWidget);
   });
@@ -542,7 +542,7 @@ void main() {
         taxOptions: [SalesTax(_rogers, 10, onRecord: true)],
       ),
     );
-    expect(find.text('Rogers 10%'), findsNWidgets(2), reason: 'a line saying "Sales Tax", and one with no name, on a record with one tax');
+    expect(find.text('Rogers'), findsNWidgets(2), reason: 'a line saying "Sales Tax", and one with no name, on a record with one tax');
     expect(find.text('No tax'), findsOneWidget);
     // No margin per line (user 2026-11-13): not the door's 40.0%, not the touch-up's -58.3%. The summary keeps the gross
     // profit and its %.
@@ -550,11 +550,12 @@ void main() {
     expect(find.text('-58.3%'), findsNothing);
     expect(find.text('MARGIN'), findsNothing);
     expect(find.text('Gross profit'), findsOneWidget);
-    expect(find.text('—'), findsWidgets, reason: 'the keypad has no cost');
-    expect(find.text('Discount'), findsOneWidget, reason: 'the discount line is marked');
-    // Services Catalog Phase 2 (2026-11-18): a line with no cost leaves the gross profit unknown, and the profit panel says
-    // how many lines have none (it used to work the profit out as if they cost \$0, with a warning that it was overstated).
-    expect(find.text('1 line has no cost'), findsOneWidget);
-    expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+    // The keypad has no cost: the gross profit is still filled in, on the known costs (USER RULE 2026-11-24).
+    expect(find.text('—'), findsNothing);
+    expect(find.text('Discount'), findsNothing, reason: 'view mode: no Discount / Fee / Tax marks (user 2026-11-24)');
+    // A line with no cost: nothing says how many have none, and the gross profit is still filled in, on the
+    // known costs (USER RULE 2026-11-24; Services Catalog Phase 2 had left it a dash).
+    expect(find.textContaining('no cost'), findsNothing); // USER RULE 2026-11-24: no note
+    expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
   });
 }

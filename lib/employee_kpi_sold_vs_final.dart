@@ -484,7 +484,7 @@ class _SoldVsFinalDialog extends StatelessWidget {
                               Wrap(
                                 crossAxisAlignment: WrapCrossAlignment.center,
                                 children: [
-                                  FlatLink('Job #${r.jobId}', tip: 'Open job ${r.jobId}', onTap: () {
+                                  FlatLink('Job #${r.jobId}', onTap: () {
                                     final router = GoRouter.of(context);
                                     Navigator.of(context).pop();
                                     router.go('/jobs/${Uri.encodeComponent(r.jobId)}');

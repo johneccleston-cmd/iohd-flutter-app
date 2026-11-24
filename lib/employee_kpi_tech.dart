@@ -947,7 +947,7 @@ class _HeaderBadges extends StatelessWidget {
 }
 
 const _headerValue = TextStyle(fontSize: 15, fontWeight: FontWeight.w800, height: 1.15, color: Colors.white, fontFeatures: DashText.tabular);
-const _headerLabel = TextStyle(fontSize: 11, fontWeight: FontWeight.w600, height: 1.2, color: Color(0xFF94A3B8));
+const _headerLabel = TextStyle(fontSize: 11, fontWeight: FontWeight.w600, height: 1.2, color: DashUi.muted);
 
 /// Peer rating (stars that fill as the page opens; technician and warehouse pages only) and morale (the heartbeat
 /// trace) in the title bar, beside the integrity score. Tapping morale previews sample scores while nothing records them.
@@ -1047,7 +1047,7 @@ class _HeaderMoraleState extends State<_HeaderMorale> with SingleTickerProviderS
     } else if (!_sweep.isAnimating) {
       _sweep.repeat();
     }
-    final color = r == null ? const Color(0xFF94A3B8) : _tone(r.avg);
+    final color = r == null ? DashUi.muted : _tone(r.avg);
     final body = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1366,7 +1366,7 @@ class _KpiTileState extends State<_KpiTile> with SingleTickerProviderStateMixin 
         .width;
 
     final value = v == null
-        ? Text('—', maxLines: 1, style: _valueStyle.copyWith(color: s.featured ? const Color(0xFF94A3B8) : DashUi.muted))
+        ? Text('—', maxLines: 1, style: _valueStyle.copyWith(color: s.featured ? DashUi.muted : DashUi.muted))
         : TweenAnimationBuilder<double>(
             tween: Tween(begin: 0, end: v),
             duration: _still ? Duration.zero : const Duration(milliseconds: _countMs),

@@ -15,6 +15,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
+import 'package:iohd_desktop/theme/app_theme.dart';
 import 'package:iohd_desktop/config/auth_session.dart';
 import 'package:iohd_desktop/kpi_dashboard_screen.dart';
 import 'package:iohd_desktop/widgets/dashboard_kit.dart';
@@ -533,7 +534,7 @@ void main() {
       ],
     );
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true)));
+      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: AppTheme.fontFamily, useMaterial3: true)));
       await settleDashboard(t);
       await t.tap(find.text('Nick Smith'));
       await settleDashboard(t);
@@ -560,7 +561,7 @@ void main() {
       ],
     );
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true)));
+      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: AppTheme.fontFamily, useMaterial3: true)));
       await settleDashboard(t);
       await t.tap(dashYearArrow('Previous year'));
       await settleDashboard(t);
@@ -633,7 +634,7 @@ void main() {
       ],
     );
     await http.runWithClient(() async {
-      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: 'Segoe UI', useMaterial3: true)));
+      await t.pumpWidget(MaterialApp.router(routerConfig: router, theme: ThemeData(fontFamily: AppTheme.fontFamily, useMaterial3: true)));
       await settleDashboard(t);
       // The list reads its scroll extent for "1–4 of 9"; while the KPI page covers it there is none (it was a null check).
       expect(t.takeException(), isNull);

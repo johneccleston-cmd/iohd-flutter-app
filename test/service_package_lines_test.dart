@@ -44,10 +44,50 @@ final Map<String, dynamic> _package = {
   ],
 };
 
-FakeJobServer _server() => FakeJobServer()..extraCatalog = [_package];
+/// A product the packages use (Products Used, 2026-11-24): its live catalog entry rides in the package.
+final Map<String, dynamic> _spring = {
+  'key': 'inv:spring',
+  'name': 'Torsion Spring 250',
+  'sku': 'TS-250',
+  'category': 'Springs',
+  'kind': 'product',
+  'rate': 60.0,
+  'cost': 22.0,
+  'taxable': true,
+  'inventoryItemId': 4401,
+};
+
+/// The package with two products: the spring (qty 2) and one no longer in the catalog.
+final Map<String, dynamic> _packageWithProducts = {
+  ..._package,
+  'products': [
+    {'key': 'inv:spring', 'name': 'Torsion Spring 250', 'qty': 2, 'available': true, 'entry': _spring},
+    {'key': 'inv:gone', 'name': 'Discontinued Remote', 'qty': 1, 'available': false, 'entry': null},
+  ],
+};
+
+/// A package with products and no rates of its own.
+final Map<String, dynamic> _partsOnly = {
+  'key': 'sf:spring kit',
+  'name': 'Spring Kit Package',
+  'sku': '',
+  'category': 'Service Packages',
+  'group': 'Service Packages',
+  'kind': 'service',
+  'rate': 120.0,
+  'taxable': false,
+  'priceStatus': 'settled',
+  'description': '',
+  'rates': <Map<String, dynamic>>[],
+  'products': [
+    {'key': 'inv:spring', 'name': 'Torsion Spring 250', 'qty': 2, 'available': true, 'entry': _spring},
+  ],
+};
+
+FakeJobServer _server({Map<String, dynamic>? package}) => FakeJobServer()..extraCatalog = [package ?? _package, _partsOnly];
 
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -165,4 +205,52 @@ void main() {
       });
     });
   }
+
+  testWidgets('a package with products: its rates, then its products as I lines under the heading; one gone is left off', (t) async {
+    final s = _server(package: _packageWithProducts);
+    final errors = await pumpJobPage(t, s, size: const Size(1500, 2600), body: () async {
+      await _toBlock(t);
+      await _edit(t);
+      final items = _marks('item');
+      await _pick(t, 'residential service', 'Residential Service');
+      expect(find.text('Service package · 9 lines'), findsOneWidget, reason: '8 rates + the spring');
+      expect(_marks('item') - items, 1, reason: 'the spring is an inventory item: I');
+      expect(find.textContaining('Torsion Spring 250', findRichText: true), findsWidgets);
+      expect(find.textContaining('Discontinued Remote', findRichText: true), findsNothing, reason: 'not in the catalog: left off');
+      // The spring comes after the last rate.
+      final lastRate = t.getRect(find.textContaining('Travel Charge', findRichText: true).last);
+      final spring = t.getRect(find.textContaining('Torsion Spring 250', findRichText: true).last);
+      expect(spring.top, greaterThan(lastRate.top));
+      Finder qty(String text) => find.descendant(of: find.byKey(const ValueKey('col-qty')), matching: find.text(text));
+      expect(qty('2.00'), findsWidgets, reason: "the package's qty for the spring");
+      await saveJobShot(t, 'package_products_1500');
+    });
+    expect(errors.messages, isEmpty, reason: errors.messages.join('\n'));
+  });
+
+  testWidgets('Remove package takes its products too', (t) async {
+    final s = _server(package: _packageWithProducts);
+    await pumpJobPage(t, s, size: const Size(1500, 2600), body: () async {
+      await _toBlock(t);
+      await _edit(t);
+      await _pick(t, 'residential service', 'Residential Service');
+      final actions = find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.endsWith('-actions') && (w.key! as ValueKey<String>).value.startsWith('package-'));
+      await t.tap(actions.first);
+      await settle(t, frames: 6);
+      await t.tap(find.text('Remove package').last);
+      await settle(t, frames: 10);
+      expect(find.textContaining('Torsion Spring 250', findRichText: true), findsNothing);
+    });
+  });
+
+  testWidgets('a package with products and no rates still comes in as a package', (t) async {
+    final s = _server();
+    await pumpJobPage(t, s, size: const Size(1500, 2600), body: () async {
+      await _toBlock(t);
+      await _edit(t);
+      await _pick(t, 'spring kit', 'Spring Kit Package');
+      expect(find.text('Service package · 1 line'), findsOneWidget);
+      expect(find.textContaining('Torsion Spring 250', findRichText: true), findsWidgets);
+    });
+  });
 }

@@ -87,7 +87,7 @@ void main() {
       await t.pumpAndSettle(); // the totals count to their figure
       expect(find.text(r'$12.00'), findsNothing, reason: 'the last keystroke that read as a number is not charged');
       expect(find.text(r'$689.00'), findsWidgets, reason: 'the line is as it was before this edit');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text('689.00'), findsOneWidget);
       expect(find.byIcon(Icons.error_outline_rounded), findsNothing);

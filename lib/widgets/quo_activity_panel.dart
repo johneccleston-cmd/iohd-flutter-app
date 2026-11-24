@@ -435,6 +435,7 @@ class _QuoActivityPanelState extends State<QuoActivityPanel> {
     const titleStyle = TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: DashUi.ink);
     final lastIsCall = last['kind'] == 'call';
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: () => _open(key),
       borderRadius: BorderRadius.circular(10),
       hoverColor: DashUi.faint,
@@ -902,6 +903,7 @@ class _ThreadDialogState extends State<_ThreadDialog> {
             color: dark ? Colors.white.withValues(alpha: 0.12) : DashUi.faint,
             shape: StadiumBorder(side: BorderSide(color: dark ? Colors.white.withValues(alpha: 0.18) : DashUi.line)),
             child: InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
               onTap: _canLink ? () => _pickJob(a) : null,
               customBorder: const StadiumBorder(),
               child: Padding(
@@ -980,7 +982,7 @@ class _ThreadDialogState extends State<_ThreadDialog> {
       padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
       decoration: BoxDecoration(
         gradient: out
-            ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.ink, Color.lerp(DashUi.ink, DashUi.blue, 0.38)!])
+            ? LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.navy, Color.lerp(DashUi.navy, DashUi.blue, 0.38)!])
             : null,
         color: out ? null : Colors.white,
         borderRadius: radius,
@@ -1141,6 +1143,7 @@ class _LinkRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Padding(
@@ -1230,6 +1233,7 @@ class _TranscriptToggleState extends State<_TranscriptToggle> {
           color: _open ? DashUi.faint : Colors.white,
           shape: const StadiumBorder(side: BorderSide(color: DashUi.line)),
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: _toggle,
             customBorder: const StadiumBorder(),
             child: Padding(

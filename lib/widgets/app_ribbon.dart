@@ -22,13 +22,13 @@ import 'dashboard_kit.dart';
 
 /// The ribbon's colours, all derived from the app tokens.
 abstract final class RibbonColors {
-  static const base = DashUi.ink;
+  static const base = DashUi.navy;
 
   /// The left end, behind the title: the navy turned toward blue.
-  static final glow = Color.lerp(DashUi.ink, DashUi.blue, 0.24)!;
+  static final glow = Color.lerp(DashUi.navy, DashUi.blue, 0.24)!;
 
   /// The right end, under the controls: a touch of indigo.
-  static final end = Color.lerp(DashUi.ink, DashUi.indigo, 0.1)!;
+  static final end = Color.lerp(DashUi.navy, DashUi.indigo, 0.1)!;
 
   /// Text that sits second on the ribbon (the "kind", subtitles, "Updated 3 min ago").
   static const quiet = DashUi.muted;
@@ -180,7 +180,7 @@ class _RibbonSurfaceState extends State<RibbonSurface> with TickerProviderStateM
             colors: [RibbonColors.glow, RibbonColors.base, RibbonColors.base, RibbonColors.end],
             stops: const [0, 0.5, 0.78, 1],
           ),
-          boxShadow: [BoxShadow(color: DashUi.ink.withValues(alpha: 0.22), blurRadius: 10, offset: const Offset(0, 2))],
+          boxShadow: [BoxShadow(color: DashUi.navy.withValues(alpha: 0.22), blurRadius: 10, offset: const Offset(0, 2))],
         ),
         child: Stack(
           clipBehavior: Clip.none,

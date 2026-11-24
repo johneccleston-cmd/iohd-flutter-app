@@ -191,6 +191,36 @@ class CatalogPriceChange {
   }
 }
 
+
+/// A product a service package uses (Products Used, 2026-11-24): which product, its qty, in the package's order. The
+/// price and cost are never the package's: [entry] is the product's catalog entry as it reads now (null when it is
+/// inactive or gone, so the page says "Not in the catalog" and a job leaves it off).
+class ServiceProduct {
+  final String key;
+  final String name;
+  final double qty;
+  final CatalogEntry? entry;
+
+  const ServiceProduct({required this.key, required this.name, this.qty = 1, this.entry});
+
+  bool get available => entry != null;
+  double? get price => entry?.rate;
+  double? get cost => entry?.cost;
+  double? get total => price == null ? null : ((qty * price!) * 100).round() / 100;
+  double? get totalCost => cost == null ? null : ((qty * cost!) * 100).round() / 100;
+
+  factory ServiceProduct.fromJson(Map<String, dynamic> j) => ServiceProduct(
+    key: (j['key'] ?? '').toString(),
+    name: (j['name'] ?? '').toString(),
+    qty: (j['qty'] as num?)?.toDouble() ?? 1,
+    entry: j['available'] != false && j['entry'] is Map ? CatalogEntry.fromJson(Map<String, dynamic>.from(j['entry'] as Map)) : null,
+  );
+
+  /// What is sent to save it: which product, its name (kept so a product gone from the catalog still reads) and qty.
+  Map<String, dynamic> toJson() => {'key': key, 'name': name, 'qty': qty};
+
+  ServiceProduct copyWith({double? qty}) => ServiceProduct(key: key, name: name, qty: qty ?? this.qty, entry: entry);
+}
 /// One rate line of a service (2026-11-19, backend service_rates): like Service Fusion's rate editor, a name, an optional
 /// description, a quantity, the regular rate and (with Line Items & Costs > View) the internal cost and the commission it
 /// pays: a fixed amount or a percentage. Totals are quantity times rate or cost.
@@ -263,6 +293,13 @@ class CatalogEntry {
   final String key;
   final String name;
   final String sku;
+
+  /// Every code the product goes by: its part number ([sku], shown) and its own SKU when that differs (the server's
+  /// `skus`, P&S round 2 2026-11-23: 42 products have both, and the SKU was not searchable). Empty: just [sku].
+  final List<String> skus;
+
+  /// [sku] and [skus], each once: what a search matches against.
+  List<String> get codes => {if (sku.isNotEmpty) sku, ...skus}.toList();
   final String category;
   final String kind; // product | service
   final int? inventoryItemId;
@@ -359,6 +396,9 @@ class CatalogEntry {
   /// A service's own rate lines, in order (empty: none saved). The first sets the [rate] and [cost] shown.
   final List<ServiceRate> rates;
 
+  /// The products a service package uses, in order (Products Used, 2026-11-24). Empty: none.
+  final List<ServiceProduct> products;
+
   /// A service's commission, for the service as a whole (USER RULE 2026-11-19: not per rate): a percentage of its price
   /// or a fixed amount each time it is sold. Null: none (Service Fusion's lines carry none). Only for people who may see
   /// costs.
@@ -373,6 +413,7 @@ class CatalogEntry {
     required this.key,
     required this.name,
     this.sku = '',
+    this.skus = const [],
     this.category = '',
     this.kind = 'product',
     this.inventoryItemId,
@@ -417,6 +458,7 @@ class CatalogEntry {
     this.editedAt,
     this.computed,
     this.rates = const [],
+    this.products = const [],
     this.commission,
   });
 
@@ -434,6 +476,7 @@ class CatalogEntry {
     key: key,
     name: name,
     sku: sku,
+    skus: skus,
     category: category ?? this.category,
     kind: kind,
     inventoryItemId: inventoryItemId,
@@ -478,6 +521,7 @@ class CatalogEntry {
     editedAt: editedAt,
     computed: computed,
     rates: rates,
+    products: products,
     commission: commission,
   );
 
@@ -529,12 +573,12 @@ class CatalogEntry {
     );
   }
 
-  /// Whether picking this adds a service package: a service with rates of its own.
-  bool get isPackage => isService && rates.isNotEmpty;
+  /// Whether picking this adds a service package: a service with rates or products of its own.
+  bool get isPackage => isService && (rates.isNotEmpty || products.isNotEmpty);
 
   /// A service package's lines (USER RULE 2026-11-20): one per rate, in the package's order, each at its own starting
   /// quantity (usually 0, raised when the job needs it), price and cost, taxed as the service is, all carrying
-  /// [packageId] and the package's name for the heading over them. None of them is a "main" line.
+  /// [packageId] and the package's name for the heading over them. None of them is a "main" line. Its products follow.
   List<LineDraft> toPackageLines(String packageId) => [
     for (final r in rates)
       LineDraft(
@@ -552,6 +596,10 @@ class CatalogEntry {
         packageName: name,
         service: true,
       ),
+    // Then its products (Products Used, 2026-11-24), in the package's order: each is the line picking that product
+    // gives (the catalog's price, cost and tax today) at the package's qty. One not in the catalog any more is left off.
+    for (final p in products)
+      if (p.entry case final e?) e.toLine().copyWith(quantity: p.qty, packageId: packageId, packageName: name),
   ];
 
   static List<CatalogPrice> _prices(Object? v) => [
@@ -575,16 +623,26 @@ class CatalogEntry {
     // A service package has no main rate (USER RULE 2026-11-20): the list, its sort and filters, the CSV and the picker
     // show what its page shows, the sum at its starting quantities. The server set its price from its FIRST rate, so a
     // package whose first line starts at 0 showed that line's price on the list and another on its page (audit round 2).
-    final package = (j['kind'] ?? 'product') == 'service' && rates.isNotEmpty;
-    final rate = package ? startsAt(rates) : (j['rate'] as num?)?.toDouble();
-    final cost = package ? startsAt(rates, cost: true) : (j['cost'] as num?)?.toDouble();
-    return CatalogEntry._fromJson(j, rates, rate, cost);
+    final products = [for (final x in (j['products'] as List? ?? const []).whereType<Map>()) ServiceProduct.fromJson(Map<String, dynamic>.from(x))];
+    // Its products count too, at their qty and the catalog's price and cost (Products Used, 2026-11-24).
+    final package = (j['kind'] ?? 'product') == 'service' && (rates.isNotEmpty || products.isNotEmpty);
+    final lines = [...rates, ...productsAsRates(products)];
+    final rate = package ? startsAt(lines) : (j['rate'] as num?)?.toDouble();
+    final cost = package ? startsAt(lines, cost: true) : (j['cost'] as num?)?.toDouble();
+    return CatalogEntry._fromJson(j, rates, rate, cost, products);
   }
 
-  factory CatalogEntry._fromJson(Map<String, dynamic> j, List<ServiceRate> rates, double? rate, double? cost) => CatalogEntry(
+  /// A package's available products as lines to add up ([startsAt]): their qty at the catalog's price and cost.
+  static List<ServiceRate> productsAsRates(List<ServiceProduct> products) => [
+    for (final p in products)
+      if (p.available) ServiceRate(name: p.name, qty: p.qty, rate: p.price, cost: p.cost),
+  ];
+
+  factory CatalogEntry._fromJson(Map<String, dynamic> j, List<ServiceRate> rates, double? rate, double? cost, List<ServiceProduct> products) => CatalogEntry(
     key: j['key'].toString(),
     name: (j['name'] ?? '').toString(),
     sku: (j['sku'] ?? '').toString(),
+    skus: j['skus'] is List ? [for (final v in j['skus'] as List) if ('$v'.trim().isNotEmpty) '$v'.trim()] : const [],
     category: (j['category'] ?? '').toString(),
     kind: (j['kind'] ?? 'product').toString(),
     inventoryItemId: (j['inventoryItemId'] as num?)?.toInt(),
@@ -641,6 +699,7 @@ class CatalogEntry {
     editedAt: j['editedAt']?.toString(),
     computed: j['computed'] is Map ? Map<String, dynamic>.from(j['computed'] as Map) : null,
     rates: rates,
+    products: products,
     commission: ServiceCommission.fromJson(j['commission']),
   );
 }
@@ -1062,8 +1121,9 @@ class LineItemsApi {
     );
   }
 
-  static Future<List<CatalogEntry>> searchCatalog(String q, {int limit = 25}) async {
-    final d = await _call('GET', Uri.parse('$kApiBaseUrl/api/catalog/search').replace(queryParameters: {'q': q, 'limit': '$limit'}));
+  /// [kind] 'product' (or 'service') asks for that kind only (a package's Products Used search, 2026-11-24).
+  static Future<List<CatalogEntry>> searchCatalog(String q, {int limit = 25, String? kind}) async {
+    final d = await _call('GET', Uri.parse('$kApiBaseUrl/api/catalog/search').replace(queryParameters: {'q': q, 'limit': '$limit', 'kind': ?kind}));
     return [for (final e in (d['results'] as List? ?? const []).whereType<Map>()) CatalogEntry.fromJson(Map<String, dynamic>.from(e))];
   }
 
@@ -1097,6 +1157,20 @@ class LineItemsApi {
       body: {
         'key': key,
         'rates': [for (final r in rates) r.toJson(withCost: withCost)],
+      },
+    );
+    return CatalogEntry.fromJson(Map<String, dynamic>.from(d['service'] as Map));
+  }
+
+  /// Saves the products a service package uses as a whole set, in order (an empty list removes them). Returns the
+  /// service as it now reads (backend PUT /api/catalog/services/products, 2026-11-24).
+  static Future<CatalogEntry> saveServiceProducts(String key, List<ServiceProduct> products) async {
+    final d = await _call(
+      'PUT',
+      Uri.parse('$kApiBaseUrl/api/catalog/services/products'),
+      body: {
+        'key': key,
+        'products': [for (final p in products) p.toJson()],
       },
     );
     return CatalogEntry.fromJson(Map<String, dynamic>.from(d['service'] as Map));

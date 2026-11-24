@@ -11,6 +11,7 @@ import 'config/api_config.dart';
 import 'config/auth_session.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'theme/app_theme.dart';
 
 /// Browse and search the signed-in person's Google Drive (Shared Drives included).
 ///
@@ -302,7 +303,7 @@ class _DocumentsScreenState extends State<DocumentsScreen> {
                     style: TextButton.styleFrom(
                       foregroundColor: DashUi.slate,
                       disabledForegroundColor: DashUi.ink,
-                      textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+                      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 14, fontWeight: FontWeight.w700),
                     ),
                     child: Text(_path[i].name),
                   ),

@@ -810,6 +810,7 @@ class _CommissionCorrectionsScreenState extends State<CommissionCorrectionsScree
     child: Material(
       color: selected ? _faint : Colors.white,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onTap,
         child: Container(
           padding: const EdgeInsets.fromLTRB(13, 10, 16, 11),
@@ -2290,6 +2291,7 @@ class _FixDayDialogState extends State<_FixDayDialog> {
       excludeSemantics: true,
       onTap: _saving ? null : () => _pickReason(label),
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         borderRadius: BorderRadius.circular(8),
         onTap: _saving ? null : () => _pickReason(label),
         child: Padding(

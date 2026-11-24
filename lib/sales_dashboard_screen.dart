@@ -643,15 +643,22 @@ class _TeamPanel extends StatelessWidget {
                   ],
                 ),
                 const SizedBox(height: 2),
-                Wrap(
-                  spacing: 4,
-                  children: [
-                    if (share != null) _chip(context, p, _Drill.won, share),
-                    _chip(context, p, _Drill.sent, '${_whole.format(p.sentCount)} sent'),
-                    _chip(context, p, _Drill.largest, '${_money(p.largestDeal)} largest'),
-                    _chip(context, p, _Drill.lost, '${_whole.format(p.lostCount)} lost'),
-                    _chip(context, p, _Drill.closed, closed == 0 ? 'no closed' : '$winRate win · ${p.wonCount} of $closed'),
-                  ],
+                // One line always (the row has no room for a second): when the chips are a little too wide (large
+                // text, a long figure) they shrink to fit rather than wrap under the row.
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    spacing: 4,
+                    children: [
+                      if (share != null) _chip(context, p, _Drill.won, share),
+                      _chip(context, p, _Drill.sent, '${_whole.format(p.sentCount)} sent'),
+                      _chip(context, p, _Drill.largest, '${_money(p.largestDeal)} largest'),
+                      _chip(context, p, _Drill.lost, '${_whole.format(p.lostCount)} lost'),
+                      _chip(context, p, _Drill.closed, closed == 0 ? 'no closed' : '$winRate win · ${p.wonCount} of $closed'),
+                    ],
+                  ),
                 ),
               ],
             ),

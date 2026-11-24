@@ -413,6 +413,7 @@ class _PoEditorState extends State<_PoEditor> {
 
   Widget _dateField(String label, DateTime? value, ValueChanged<DateTime?> onPicked, {bool clearable = false}) {
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: _readOnly
           ? null
           : () async {

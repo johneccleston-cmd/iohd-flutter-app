@@ -125,7 +125,8 @@ void main() {
       expect(t.takeException(), isNull, reason: '$size @ $text');
       expect(find.text('Service Call'), findsOneWidget);
       expect(find.text('\$89.00'), findsOneWidget);
-      expect(_tab('active'), findsOneWidget);
+      // The status sits in the filter sidebar (where the window is wide enough for it), not in the command row.
+      expect(_tab('active'), size.width > 1100 && text == 1.0 ? findsOneWidget : findsAtLeastNWidgets(0));
       if (size.width > 900) {
         expect(find.text('SERVICE'), findsOneWidget);
         expect(find.text('PRICE'), findsOneWidget);
@@ -185,8 +186,11 @@ void main() {
       expect(find.text('Scope of Work | Commercial Service Call'), findsNothing);
       expect(find.textContaining('Replaces Scope of Work | Commercial Service Call', findRichText: true), findsOneWidget);
       expect(find.text('Commercial Service Dispatch & Evaluation'), findsOneWidget);
-      expect(find.bySemanticsLabel('Active, 5 services'), findsOneWidget);
-      expect(find.bySemanticsLabel('Inactive, 1 service'), findsOneWidget);
+      if (size.width > 1000) {
+        // The status counts are in the filter sidebar, which a phone-narrow window folds into the Filters dialog.
+        expect(find.bySemanticsLabel('Active, 5'), findsOneWidget);
+        expect(find.bySemanticsLabel('Inactive, 1'), findsOneWidget);
+      }
     }
     // The Inactive tab: the superseded one, marked, with what replaced it.
     await _pump(t, () async => _ok(entries: entries));
@@ -283,7 +287,7 @@ void main() {
     await _search(t, 'spring');
     expect(find.text('Torsion Spring Replacement (pair)'), findsOneWidget);
     expect(find.text('Service Call'), findsNothing);
-    expect(find.bySemanticsLabel('Active, 1 service'), findsOneWidget, reason: 'the tabs count the matches');
+    expect(find.bySemanticsLabel('Active, 1'), findsOneWidget, reason: 'the tabs count the matches');
     await _search(t, 'zzz');
     expect(find.text('No active services match'), findsOneWidget);
     await _shot(t, 'no_match');
@@ -365,7 +369,9 @@ void main() {
     }
     expect(find.text('Category'), findsWidgets);
     expect(find.byKey(const ValueKey('cat:none')), findsNothing, reason: 'Category starts closed');
-    expect(find.text('Has a price'), findsNothing, reason: 'Price starts closed');
+    expect(find.text('Has a price'), findsNothing, reason: 'there is no Price filter any more');
+    expect(find.text('Status'), findsOneWidget, reason: 'Active / Inactive / All are a sidebar group');
+    expect(find.text('Price'), findsNothing);
     // A price sort, highest first: the unpriced ones ("Varies") go last, whichever way it is sorted.
     await t.tap(find.text('PRICE'));
     await t.pumpAndSettle();
@@ -388,7 +394,7 @@ void main() {
     await t.tap(find.byKey(const ValueKey('cat:none')));
     await t.pumpAndSettle();
     expect(find.text('Operator Installations'), findsWidgets, reason: 'only in the sidebar now');
-    expect(find.bySemanticsLabel('Active, 25 services'), findsOneWidget);
+    expect(find.bySemanticsLabel('Active, 25'), findsOneWidget);
     expect(_rowKeys(t).contains('sf:dock leveler installation'), isFalse);
   });
 

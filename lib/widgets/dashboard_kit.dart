@@ -15,9 +15,15 @@ import 'dash_hover_card.dart';
 import 'dashboard_data.dart';
 
 class DashUi {
-  static const ink = Color(0xFF0F172A);
-  static const slate = Color(0xFF475569);
-  static const muted = Color(0xFF94A3B8);
+  // Text tones: black and neutral greys, no blue cast (user 2026-11-23: "there should be no dark blue font on the app,
+  // should be black"). They were Tailwind's slate family (ink #0F172A, a navy). Each keeps its old contrast or better:
+  // slate 8.1:1 and subtle 5.3:1 on white; muted is for marks, dots and disabled icons, not small text.
+  static const ink = Color(0xFF111111);
+  static const slate = Color(0xFF505050);
+  static const muted = Color(0xFF9E9E9E);
+
+  /// The app's dark chrome, never text: the ribbon, the dark nav bar, the Ask Jarvis button, the dark hover tips.
+  static const navy = Color(0xFF0F172A);
   static const line = Color(0xFFE4E4E4);
   static const faint = Color(0xFFF2F2F2);
 
@@ -43,7 +49,7 @@ class DashUi {
   // `emeraldDeep` and `amber` fail as small text, so use these for readable
   // secondary text, money and warnings under 18px; keep the brighter ones for
   // dots, bars, tints and big figures.
-  static const subtle = Color(0xFF64748B);
+  static const subtle = Color(0xFF6B6B6B);
   static const emeraldText = Color(0xFF047857);
   static const amberText = Color(0xFFB45309);
   static const redText = Color(0xFFB91C1C);

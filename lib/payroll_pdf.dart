@@ -11,10 +11,10 @@ part of 'payroll_screen.dart';
 // total due. Each week's ledger adds down the same way. The figures are the server's; this file only lays them out.
 // ---------------------------------------------------------------------------
 
-final PdfColor _pInk = PdfColor.fromInt(0xFF0F172A);
-final PdfColor _pSlate = PdfColor.fromInt(0xFF475569);
-final PdfColor _pSubtle = PdfColor.fromInt(0xFF64748B); // DashUi.subtle: secondary text that still prints clearly
-final PdfColor _pMuted = PdfColor.fromInt(0xFF94A3B8); // only for zeros, which are meant to recede
+final PdfColor _pInk = PdfColor.fromInt(0xFF111111);
+final PdfColor _pSlate = PdfColor.fromInt(0xFF505050);
+final PdfColor _pSubtle = PdfColor.fromInt(0xFF6B6B6B); // DashUi.subtle: secondary text that still prints clearly
+final PdfColor _pMuted = PdfColor.fromInt(0xFF9E9E9E); // only for zeros, which are meant to recede
 final PdfColor _pLine = PdfColor.fromInt(0xFFE4E4E4);
 final PdfColor _pRule = PdfColor.fromInt(0xFFD4D4D4); // the rule above a subtotal: a step darker than the row lines
 final PdfColor _pFaint = PdfColor.fromInt(0xFFF2F2F2);
@@ -313,10 +313,7 @@ List<pw.Widget> _pdfCover(_Report r, String range, _PdfMeta meta) {
   bool has(String head) => cols.any((c) => c.head == head);
 
   final notes = <String>[
-    _registerFooting(cols),
     if (has('Retainage Held')) 'Retainage held counts toward the hurdle but is not paid until it is released.',
-    if (has('Rounding'))
-      'Rounding is the cent or two lost when each job is rounded to the cent; the weekly gross is worked out first.',
     if (has('Other')) 'Other is pay the commission engine counted in the gross that is not one of the columns before it.',
     'A payroll run pays the cash pay less any owed recovered'
         '${has('Retainage Released') ? '; retainage released is listed here but is not part of the run' : ''}. '
@@ -487,10 +484,7 @@ List<pw.Widget> _pdfWeek(_Week w, _Report r, _PdfMeta meta) {
     if (w.advancesPaid != 0) ['Advances paid', _fmt(w.advancesPaid)],
     if (w.callbackPay != 0) ['Callback pay', _fmt(w.callbackPay)],
     if (w.repPay != 0) ['Sales commission (closed jobs)', _fmt(w.repPay)],
-    if (rest.abs() >= 0.05)
-      ['Other adjustments', _fmt(rest)]
-    else if (rest.abs() >= 0.005)
-      ['Rounding (each job is rounded to the cent)', _fmt(rest)],
+    if (rest.abs() >= 0.05) ['Other adjustments', _fmt(rest)],
   ];
   final grossRow = ledger.length;
   ledger.add(['Weekly gross', _fmt(w.weeklyGross)]);

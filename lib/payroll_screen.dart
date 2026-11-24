@@ -23,6 +23,8 @@ import 'payroll_pending_panel.dart';
 import 'payroll_run_dialog.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart' show PageSheet;
+import 'widgets/pay_week_range_dialog.dart';
+import 'theme/app_theme.dart';
 
 part 'payroll_pdf.dart';
 
@@ -238,8 +240,10 @@ class _Week {
   final double cashPay;
   final double advanceShortfall;
   final double advanceRecovered; // shortfall taken out of this week's other pay
-  final double carryIn; // advance shortfall still owed from earlier weeks (finalized runs)
-  final double carryRecovered; // what this week's run takes (or would take) toward it
+  final double
+  carryIn; // advance shortfall still owed from earlier weeks (finalized runs)
+  final double
+  carryRecovered; // what this week's run takes (or would take) toward it
   final bool carryProjected; // true until the week has a finalized run
   final List<_Job> jobs;
   final List<_DayItem> advances;
@@ -264,7 +268,7 @@ class _Week {
       carryIn = _d(j['carryIn']),
       carryRecovered = _d(j['carryRecovered']),
       carryProjected = j['carryProjected'] == true,
-      jobs =((j['jobs'] as List?) ?? const [])
+      jobs = ((j['jobs'] as List?) ?? const [])
           .map((e) => _Job(Map<String, dynamic>.from(e as Map)))
           .toList(),
       advances = ((j['advances'] as List?) ?? const [])
@@ -281,8 +285,9 @@ class _Week {
   /// "other adjustments"; below that the server drops it, but it is still there: each job's net is rounded to the
   /// cent while the engine rounds the week's gross once, so the pieces can miss the gross by a cent or two. Showing
   /// it lets the ledger and the register foot to the cent instead of being quietly off.
-  double get unexplained =>
-      _cents(weeklyGross - jobNet - advancesPaid - callbackPay - repPay - hurdleCredit);
+  double get unexplained => _cents(
+    weeklyGross - jobNet - advancesPaid - callbackPay - repPay - hurdleCredit,
+  );
 }
 
 class _Release {
@@ -360,16 +365,20 @@ class _Tech {
   double get held => weeks.fold<double>(0, (s, w) => s + w.hurdleCredit);
 
   /// Other adjustments and rounding cents (see [_Week.unexplained]).
-  double get unexplained => _cents(weeks.fold<double>(0, (s, w) => s + w.unexplained));
+  double get unexplained =>
+      _cents(weeks.fold<double>(0, (s, w) => s + w.unexplained));
 
   /// Advance shortfall settled in a week and taken back out of that same week's pay.
-  double get advanceRecovered => weeks.fold<double>(0, (s, w) => s + w.advanceRecovered);
+  double get advanceRecovered =>
+      weeks.fold<double>(0, (s, w) => s + w.advanceRecovered);
 
   /// Advance shortfall owed from earlier weeks that these weeks' runs take back (projected until a week is run).
-  double get carryRecovered => weeks.fold<double>(0, (s, w) => s + w.carryRecovered);
+  double get carryRecovered =>
+      weeks.fold<double>(0, (s, w) => s + w.carryRecovered);
 
   /// Advance shortfall these weeks couldn't cover, carried to a later run.
-  double get shortfallCarried => weeks.fold<double>(0, (s, w) => s + w.advanceShortfall);
+  double get shortfallCarried =>
+      weeks.fold<double>(0, (s, w) => s + w.advanceShortfall);
 
   String get kindLabel {
     // A rep who also gets callback pay is still a rep; check sales before callback-only.
@@ -423,7 +432,7 @@ class _Opt {
   const _Opt(this.key, this.label);
 }
 
-/// How a register column reads: a count, a piece of pay, a neutral adjustment (other / rounding, either sign), a
+/// How a register column reads: a count, a piece of pay, a neutral adjustment (other, either sign), a
 /// subtotal, an amount taken off, or the bottom line.
 enum _ColKind { count, part, adjust, subtotal, deduct, total }
 
@@ -439,40 +448,76 @@ class _RegCol {
   bool get count => kind == _ColKind.count;
 
   /// The PDF's sentence-case heading ("Closed-Job Net" -> "Closed-job net").
-  String get pdfHead => head.isEmpty ? head : head[0] + head.substring(1).toLowerCase();
+  String get pdfHead =>
+      head.isEmpty ? head : head[0] + head.substring(1).toLowerCase();
 }
 
 /// The register's columns, left to right. Every row adds across:
 ///
-///   closed-job net + advances + callbacks + sales + retainage held + other/rounding = gross
+///   closed-job net + advances + callbacks + sales + retainage held + other = gross
 ///   gross - hurdle - advances recovered = cash pay
 ///   cash pay + retainage released - owed recovered = total due
 ///
 /// A column that is zero for everyone is left out, except the core ones; Hurdle shows whenever anyone is on it. The
-/// figures are the server's; only "Other"/"Rounding" is worked out here, as what the gross holds that the pieces don't.
+/// figures are the server's; only "Other" is worked out here, as what the gross holds that the pieces don't. A week
+/// whose gap is only cents of per-job rounding has no Other, so its pieces can miss the gross by a cent or two.
 List<_RegCol> _registerColumns(List<_Tech> techs, {bool jobs = true}) {
   bool any(double Function(_Tech) f) => techs.any((t) => f(t).abs() >= 0.005);
-  // Under 5 cents a week the server reports no "other adjustment", so what's left is rounding; say so.
-  final onlyCents = techs.every((t) => t.weeks.every((w) => w.unexplained.abs() < 0.05));
-  final onHurdle = techs.any((t) => t.weeks.any((w) => w.hurdleRule > 0)) || any((t) => t.totals.hurdleApplied);
+  // Under 5 cents a week the server reports no "other adjustment"; what's left is per-job rounding, not shown.
+  final hasOther = techs.any(
+    (t) => t.weeks.any((w) => w.unexplained.abs() >= 0.05),
+  );
+  final onHurdle =
+      techs.any((t) => t.weeks.any((w) => w.hurdleRule > 0)) ||
+      any((t) => t.totals.hurdleApplied);
   return [
-    if (jobs) _RegCol('Jobs', 'Closed jobs settled in these pay weeks', (t) => t.jobCount.toDouble(), kind: _ColKind.count),
-    _RegCol('Closed-Job Net', 'Commission from closed jobs, after retainage held and advances repaid', (t) => t.jobNet),
-    _RegCol('Advances', 'Flat advance days paid on jobs that run past a pay week', (t) => t.totals.advancesPaid),
-    _RegCol('Callbacks', 'Flat pay for verified callback visits', (t) => t.totals.callbackPay),
-    if (any((t) => t.repPay)) _RegCol('Sales Commission', 'Percent of labor on won estimates', (t) => t.repPay),
-    if (any((t) => t.held))
-      _RegCol('Retainage Held', 'Commercial retainage held this week: counts toward the hurdle, paid when released', (t) => t.held),
-    if (any((t) => t.unexplained))
+    if (jobs)
       _RegCol(
-        onlyCents ? 'Rounding' : 'Other',
-        onlyCents
-            ? 'Cents lost to rounding each job to the cent; the gross is worked out before rounding'
-            : 'Counted in the gross but not one of the pieces before it (includes any cents of rounding)',
+        'Jobs',
+        'Closed jobs settled in these pay weeks',
+        (t) => t.jobCount.toDouble(),
+        kind: _ColKind.count,
+      ),
+    _RegCol(
+      'Closed-Job Net',
+      'Commission from closed jobs, after retainage held and advances repaid',
+      (t) => t.jobNet,
+    ),
+    _RegCol(
+      'Advances',
+      'Flat advance days paid on jobs that run past a pay week',
+      (t) => t.totals.advancesPaid,
+    ),
+    _RegCol(
+      'Callbacks',
+      'Flat pay for verified callback visits',
+      (t) => t.totals.callbackPay,
+    ),
+    if (any((t) => t.repPay))
+      _RegCol(
+        'Sales Commission',
+        'Percent of labor on won estimates',
+        (t) => t.repPay,
+      ),
+    if (any((t) => t.held))
+      _RegCol(
+        'Retainage Held',
+        'Commercial retainage held this week: counts toward the hurdle, paid when released',
+        (t) => t.held,
+      ),
+    if (hasOther)
+      _RegCol(
+        'Other',
+        'Counted in the gross but not one of the pieces before it',
         (t) => t.unexplained,
         kind: _ColKind.adjust,
       ),
-    _RegCol('Gross', 'Everything above: what the weekly hurdle is measured against', (t) => t.totals.weeklyGross, kind: _ColKind.subtotal),
+    _RegCol(
+      'Gross',
+      'Everything above: what the weekly hurdle is measured against',
+      (t) => t.totals.weeklyGross,
+      kind: _ColKind.subtotal,
+    ),
     if (onHurdle)
       _RegCol(
         'Hurdle',
@@ -487,11 +532,20 @@ List<_RegCol> _registerColumns(List<_Tech> techs, {bool jobs = true}) {
         (t) => -t.advanceRecovered,
         kind: _ColKind.deduct,
       ),
-    _RegCol('Cash Pay', 'Gross less the hurdle and any advances recovered', (t) => t.totals.cashPay, kind: _ColKind.subtotal),
+    _RegCol(
+      'Cash Pay',
+      'Gross less the hurdle and any advances recovered',
+      (t) => t.totals.cashPay,
+      kind: _ColKind.subtotal,
+    ),
     // Releases are rare, so like the other optional columns this one shows only when someone has one; its room
     // goes to the columns after Cash Pay, which explain any gap between Cash Pay and Total Due.
     if (any((t) => t.totals.retainageReleased))
-      _RegCol('Retainage Released', 'Commercial retainage paid out in these dates, net of callback charges', (t) => t.totals.retainageReleased),
+      _RegCol(
+        'Retainage Released',
+        'Commercial retainage paid out in these dates, net of callback charges',
+        (t) => t.totals.retainageReleased,
+      ),
     if (any((t) => t.carryRecovered))
       _RegCol(
         'Owed Recovered',
@@ -499,26 +553,25 @@ List<_RegCol> _registerColumns(List<_Tech> techs, {bool jobs = true}) {
         (t) => -t.carryRecovered,
         kind: _ColKind.deduct,
       ),
-    _RegCol('Total Due', 'Cash pay plus retainage released, less any owed recovered', (t) => t.totals.totalDue, kind: _ColKind.total),
+    _RegCol(
+      'Total Due',
+      'Cash pay plus retainage released, less any owed recovered',
+      (t) => t.totals.totalDue,
+      kind: _ColKind.total,
+    ),
   ];
-}
-
-/// One plain sentence saying how the register's columns add up, naming only the columns it has.
-String _registerFooting(List<_RegCol> cols) {
-  bool has(String h) => cols.any((c) => c.head == h);
-  final take = [if (has('Hurdle')) 'the hurdle', if (has('Advances Recovered')) 'advances recovered'];
-  final released = has('Retainage Released'), owed = has('Owed Recovered');
-  return 'Each row adds across: the pieces make the gross'
-      '${take.isEmpty ? ', which is the cash pay' : '; the gross less ${take.join(' and ')} is the cash pay'}'
-      '; the cash pay${released ? ' plus retainage released' : ''}${owed ? ', less owed recovered,' : ''} is the total due.';
 }
 
 /// The register's figures as plain data (heads, one row per person, the total row), for tests that reconcile the
 /// register and compare it with the PDF.
 @visibleForTesting
-({List<String> heads, List<List<double>> rows, List<double> total, List<String> names}) payrollRegisterForTest(
-  Map<String, dynamic> report,
-) {
+({
+  List<String> heads,
+  List<List<double>> rows,
+  List<double> total,
+  List<String> names,
+})
+payrollRegisterForTest(Map<String, dynamic> report) {
   final r = _Report(report);
   final cols = _registerColumns(r.techs);
   final rows = [
@@ -527,7 +580,10 @@ String _registerFooting(List<_RegCol> cols) {
   return (
     heads: [for (final c in cols) c.head],
     rows: rows,
-    total: [for (var i = 0; i < cols.length; i++) rows.fold<double>(0, (s, row) => s + row[i])],
+    total: [
+      for (var i = 0; i < cols.length; i++)
+        rows.fold<double>(0, (s, row) => s + row[i]),
+    ],
     names: [for (final t in r.techs) t.name],
   );
 }
@@ -711,8 +767,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
   DateTimeRange _initialRange() {
     final a = _parseDay(widget.initialStart);
     final b = _parseDay(widget.initialEnd);
-    if (a != null && b != null && !b.isBefore(a))
+    if (a != null && b != null && !b.isBefore(a)) {
       return DateTimeRange(start: a, end: b);
+    }
     return _rangeFor('lastWeek');
   }
 
@@ -731,8 +788,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
         if (_selectedId != null) 'tech': '$_selectedId',
       },
     );
-    if (router.routeInformationProvider.value.uri.toString() != uri.toString())
+    if (router.routeInformationProvider.value.uri.toString() !=
+        uri.toString()) {
       router.replace(uri.toString());
+    }
   }
 
   DateTimeRange get _shownRange {
@@ -783,24 +842,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
   Future<void> _pickCustom() async {
     // The arrows can step past today + 30 days; the picker asserts if the current range is outside its bounds.
     final limit = _addDays(_today(), 30);
-    final picked = await showDateRangePicker(
-      context: context,
-      initialDateRange: _range,
+    final picked = await showPayWeekRangePicker(
+      context,
+      initial: _range,
       firstDate: _range.start.isBefore(DateTime(2020))
           ? _range.start
           : DateTime(2020),
       lastDate: _range.end.isAfter(limit) ? _range.end : limit,
-      builder: (context, child) => Theme(
-        data: ThemeData.light().copyWith(
-          colorScheme: const ColorScheme.light(
-            primary: DashUi.ink,
-            onPrimary: Colors.white,
-            surface: Colors.white,
-            onSurface: DashUi.ink,
-          ),
-        ),
-        child: child!,
-      ),
     );
     if (picked == null || !mounted) return;
     setState(() {
@@ -898,8 +946,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final known = _runsKnownFrom;
     if (known != null && w.weekStart.compareTo(known) < 0) return null;
     final end = _parseDay(w.weekEnd);
-    if (end != null && end.isBefore(_today()))
+    if (end != null && end.isBefore(_today())) {
       return (label: 'Not run yet', color: DashUi.amberText);
+    }
     return null;
   }
 
@@ -914,8 +963,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
     _slowTimer?.cancel();
     if (_report == null) {
       _slowTimer = Timer(const Duration(seconds: 8), () {
-        if (mounted && _loading && _report == null)
+        if (mounted && _loading && _report == null) {
           setState(() => _slow = true);
+        }
       });
     }
     setState(() {
@@ -960,8 +1010,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
         String message = 'The server returned status ${response.statusCode}.';
         try {
           final body = json.decode(response.body);
-          if (body is Map && body['error'] != null)
+          if (body is Map && body['error'] != null) {
             message = body['error'].toString();
+          }
         } catch (_) {}
         if (response.statusCode == 401) {
           AuthSession.instance
@@ -1044,7 +1095,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       // to lay out. On desktop the layout runs on a background isolate so the window stays responsive; the web has
       // no isolates, so there it runs here, after the spinner is up.
       await WidgetsBinding.instance.endOfFrame;
-      final bytes = kIsWeb ? await _buildPayrollPdf(r, meta) : await compute(_buildPayrollPdfJob, (r, meta));
+      final bytes = kIsWeb
+          ? await _buildPayrollPdf(r, meta)
+          : await compute(_buildPayrollPdfJob, (r, meta));
       if (!mounted) return;
       // Saved straight to a file: the browser's print dialog ignores the name we give it and suggests the app's.
       final fileName = payrollPdfFileName(r.start, r.end);
@@ -1056,9 +1109,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
         allowedExtensions: const ['pdf'],
       );
       if (!mounted || (saved == null && !kIsWeb)) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Saved $fileName')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Saved $fileName')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1104,7 +1156,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
                                 // mistaken for the dates in the toolbar.
                                 AnimatedOpacity(
                                   duration: const Duration(milliseconds: 160),
-                                  opacity: _loading && _report != null ? 0.45 : 1,
+                                  opacity: _loading && _report != null
+                                      ? 0.45
+                                      : 1,
                                   child: IgnorePointer(
                                     ignoring: _loading && _report != null,
                                     child: _results(wide: w - pad * 2 >= 1000),
@@ -1140,17 +1194,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final differs =
         r != null &&
         (r.start != _ymd(_range.start) || r.end != _ymd(_range.end));
-    final String? note = _showPending || !differs || _loading
+    final String? note = _showPending || !differs || _loading || _error == null
         ? null
-        : (_error != null
-              ? 'Still showing the previous report, ${_day(r.start)} to ${_day(r.end, year: true)}.'
-              : 'Showing whole pay weeks, ${_day(r.start)} to ${_day(r.end, year: true)}.');
+        : 'Still showing the previous report, ${_day(r.start)} to ${_day(r.end, year: true)}.';
 
     // The standard ribbon's icon tile and heading (the toolbar under them is Payroll's own).
     Widget title(bool roomy) => Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (roomy) ...[RibbonIcon(accessIcon('hr_payroll')), const SizedBox(width: 12)],
+        if (roomy) ...[
+          RibbonIcon(accessIcon('hr_payroll')),
+          const SizedBox(width: 12),
+        ],
         const RibbonTitle('PAYROLL'),
       ],
     );
@@ -1178,10 +1233,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
               const SizedBox(width: 28),
               Expanded(child: _toolbarControls(label)),
               const SizedBox(width: 12),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: _toolbarActions(),
-              ),
+              Row(mainAxisSize: MainAxisSize.min, children: _toolbarActions()),
             ],
           );
         } else {
@@ -1250,33 +1302,41 @@ class _PayrollScreenState extends State<PayrollScreen> {
     final hasData = _report != null && _report!.techs.isNotEmpty;
     // From the theme's label style, so the buttons keep the app's font (a bare TextStyle replaces the button's whole
     // text style, family included).
-    final text = Theme.of(context).textTheme.labelLarge!.copyWith(fontSize: 12.5, fontWeight: FontWeight.w700);
+    final text = Theme.of(context).textTheme.labelLarge!
+        .copyWith(fontSize: 12.5, fontWeight: FontWeight.w700);
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
     );
     final fixCommissions = AuthSession.instance.canView('hr_corrections');
 
-    PopupMenuItem<String> item(String value, String label, String caption, {bool enabled = true}) =>
-        PopupMenuItem<String>(
-          value: value,
-          enabled: enabled,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                  color: enabled ? DashUi.ink : DashUi.slate,
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(caption, style: const TextStyle(fontSize: 11.5, color: DashUi.slate)),
-            ],
+    PopupMenuItem<String> item(
+      String value,
+      String label,
+      String caption, {
+      bool enabled = true,
+    }) => PopupMenuItem<String>(
+      value: value,
+      enabled: enabled,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: enabled ? DashUi.ink : DashUi.slate,
+            ),
           ),
-        );
+          const SizedBox(height: 2),
+          Text(
+            caption,
+            style: const TextStyle(fontSize: 11.5, color: DashUi.slate),
+          ),
+        ],
+      ),
+    );
 
     return [
       FilledButton(
@@ -1291,14 +1351,16 @@ class _PayrollScreenState extends State<PayrollScreen> {
         ),
         // Open on the last week of the range, which is the week most likely being paid, not the first.
         // Team screen: Payroll > Create.
-        onPressed: !AuthSession.instance.can('hr_payroll', AccessAction.create) ? null : () => showPayrollRunDialog(
-          context,
-          initialDate: _range.end,
-          onChanged: () {
-            _load(fresh: true);
-            if (mounted) setState(() => _pendingRefresh++);
-          },
-        ),
+        onPressed: !AuthSession.instance.can('hr_payroll', AccessAction.create)
+            ? null
+            : () => showPayrollRunDialog(
+                context,
+                initialDate: _range.end,
+                onChanged: () {
+                  _load(fresh: true);
+                  if (mounted) setState(() => _pendingRefresh++);
+                },
+              ),
         child: const Text('Run payroll'),
       ),
       const SizedBox(width: 8),
@@ -1322,10 +1384,19 @@ class _PayrollScreenState extends State<PayrollScreen> {
           }
         },
         itemBuilder: (_) => [
-          item('export', 'Export PDF', 'Every technician for these dates', enabled: hasData && !_exporting),
+          item(
+            'export',
+            'Export PDF',
+            'Every technician for these dates',
+            enabled: hasData && !_exporting,
+          ),
           item('history', 'Payroll history', 'Every payroll run so far'),
           if (fixCommissions)
-            item('fix', 'Fix commissions', 'A wrong day, callback or closed job'),
+            item(
+              'fix',
+              'Fix commissions',
+              'A wrong day, callback or closed job',
+            ),
         ],
         child: Container(
           height: 40,
@@ -1341,13 +1412,23 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 const SizedBox(
                   width: 14,
                   height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 ),
                 const SizedBox(width: 8),
               ],
-              Text(_exporting ? 'Exporting' : 'More', style: text.copyWith(color: Colors.white)),
+              Text(
+                _exporting ? 'Exporting' : 'More',
+                style: text.copyWith(color: Colors.white),
+              ),
               const SizedBox(width: 2),
-              const Icon(Icons.arrow_drop_down_rounded, size: 20, color: Colors.white),
+              const Icon(
+                Icons.arrow_drop_down_rounded,
+                size: 20,
+                color: Colors.white,
+              ),
             ],
           ),
         ),
@@ -1765,7 +1846,10 @@ class _PayrollScreenState extends State<PayrollScreen> {
                             Container(
                               width: w,
                               // The real cards' height (title, figure, caption), so nothing jumps when they arrive.
-                              height: dashTileHeight(context, verticalPadding: 9),
+                              height: dashTileHeight(
+                                context,
+                                verticalPadding: 9,
+                              ),
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 18,
                                 vertical: 16,
@@ -2528,6 +2612,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
             style: TextButton.styleFrom(
               foregroundColor: DashUi.blue,
               textStyle: const TextStyle(
+                fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -2756,7 +2841,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   ),
                 )
               // The figures need about 110 px at normal text size; leave the bar at least 50.
-              else if (c.maxWidth >= 160 * MediaQuery.textScalerOf(context).scale(1))
+              else if (c.maxWidth >=
+                  160 * MediaQuery.textScalerOf(context).scale(1))
                 Text(
                   '${_fmt(w.weeklyGross)} / ${_fmt(w.hurdleRule)}',
                   style: const TextStyle(
@@ -2786,7 +2872,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
     if (_sortByDue) {
       techs.sort((a, b) {
         final c = b.totals.totalDue.compareTo(a.totals.totalDue);
-        return c != 0 ? c : a.name.toLowerCase().compareTo(b.name.toLowerCase());
+        return c != 0
+            ? c
+            : a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
     }
 
@@ -2822,7 +2910,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
       Color? color,
     }) {
       final zero = v.abs() < 0.005;
-      final weight = kind == _ColKind.subtotal ? FontWeight.w700 : style.fontWeight;
+      final weight = kind == _ColKind.subtotal
+          ? FontWeight.w700
+          : style.fontWeight;
       return Text(
         zero ? '—' : (kind == _ColKind.count ? '${v.round()}' : _fmt(v)),
         textAlign: TextAlign.right,
@@ -2839,11 +2929,12 @@ class _PayrollScreenState extends State<PayrollScreen> {
       );
     }
 
-    Widget headText(_RegCol col, {TextAlign align = TextAlign.right}) => Tooltip(
-      message: col.tip,
-      waitDuration: const Duration(milliseconds: 400),
-      child: Text(col.head, textAlign: align, maxLines: 2, style: head),
-    );
+    Widget headText(_RegCol col, {TextAlign align = TextAlign.right}) =>
+        Tooltip(
+          message: col.tip,
+          waitDuration: const Duration(milliseconds: 400),
+          child: Text(col.head, textAlign: align, maxLines: 2, style: head),
+        );
 
     return Container(
       decoration: _flat,
@@ -2911,7 +3002,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
               final fits = c.maxWidth >= nameMin + midNeed + dueW;
               // Short of that, drop the photo (names wrap to two lines) before making the figures scroll: at
               // 1366 px a real week then shows every column, Owed Recovered included.
-              final fitsWithoutPhoto = !fits && c.maxWidth >= 16 + 180 * k + midNeed + dueW;
+              final fitsWithoutPhoto =
+                  !fits && c.maxWidth >= 16 + 180 * k + midNeed + dueW;
 
               // Spare room goes first to the name (up to a point), then evenly to the figures.
               var nameW = nameMin;
@@ -2925,7 +3017,8 @@ class _PayrollScreenState extends State<PayrollScreen> {
               } else if (fitsWithoutPhoto) {
                 // Under the photo's 230 px (see nameCell), so the name gets all of it.
                 nameW = math.min(c.maxWidth - midNeed - dueW, 229.0);
-                colBonus = (c.maxWidth - midNeed - dueW - nameW) / (cols.length + 1);
+                colBonus =
+                    (c.maxWidth - midNeed - dueW - nameW) / (cols.length + 1);
                 dueW += colBonus;
               } else {
                 nameW = (c.maxWidth * 0.36).clamp(150.0, nameMin);
@@ -3270,19 +3363,6 @@ class _PayrollScreenState extends State<PayrollScreen> {
                 ],
               );
             },
-          ),
-          // How the columns add up, so anyone checking the register by hand knows which way each figure goes.
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
-            child: Text(
-              _registerFooting(all),
-              style: const TextStyle(
-                fontSize: 12.5,
-                color: DashUi.subtle,
-                fontWeight: FontWeight.w500,
-                height: 1.4,
-              ),
-            ),
           ),
         ],
       ),
@@ -3810,30 +3890,18 @@ class _PayrollScreenState extends State<PayrollScreen> {
               dot: DashUi.indigo,
               plus: true,
             ),
-          // Whatever the gross holds that the lines above don't: an adjustment, or the cent or two lost to rounding
-          // each job to the cent. Shown so the lines add up to the weekly gross exactly.
-          if (w.unexplained.abs() >= 0.005)
-            w.unexplained.abs() >= 0.05
-                ? _ledgerRow(
-                    'Other adjustments',
-                    w.unexplained,
-                    color: DashUi.subtle,
-                    note: 'Counted in the weekly total but not one of the lines above',
-                  )
-                : _ledgerRow(
-                    'Rounding',
-                    w.unexplained,
-                    color: DashUi.subtle,
-                    note: 'Each job is rounded to the cent; the weekly gross is worked out before rounding',
-                  ),
+          // Whatever the gross holds that the lines above don't. Under 5 cents it is only per-job rounding: not shown.
+          if (w.unexplained.abs() >= 0.05)
+            _ledgerRow(
+              'Other adjustments',
+              w.unexplained,
+              color: DashUi.subtle,
+              note: 'Counted in the weekly total but not one of the lines above',
+            ),
           const Divider(height: 14, color: DashUi.line),
           _ledgerRow('Weekly gross', w.weeklyGross, bold: true),
           if (w.hurdleRule > 0)
-            _ledgerRow(
-              'Weekly hurdle',
-              -w.hurdleApplied,
-              color: DashUi.slate,
-            ),
+            _ledgerRow('Weekly hurdle', -w.hurdleApplied, color: DashUi.slate),
           if (w.advanceRecovered > 0)
             _ledgerRow(
               'Advances recovered',
@@ -3850,10 +3918,13 @@ class _PayrollScreenState extends State<PayrollScreen> {
           ),
           if (w.carryRecovered > 0) ...[
             _ledgerRow(
-              w.carryProjected ? 'Owed from earlier weeks, recovered by this run' : 'Owed from earlier weeks, recovered in this run',
+              w.carryProjected
+                  ? 'Owed from earlier weeks, recovered by this run'
+                  : 'Owed from earlier weeks, recovered in this run',
               -w.carryRecovered,
               color: DashUi.slate,
-              note: 'Advance shortfall still owed from an earlier pay week (${_fmt(w.carryIn)} coming in)'
+              note:
+                  'Advance shortfall still owed from an earlier pay week (${_fmt(w.carryIn)} coming in)'
                   '${w.carryProjected ? '. Projected until the week is finalized.' : '.'}',
             ),
             const Divider(height: 14, color: DashUi.line),
@@ -3981,6 +4052,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
                   style: TextButton.styleFrom(
                     foregroundColor: DashUi.slate,
                     textStyle: const TextStyle(
+                      fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback,
                       fontSize: 12.5,
                       fontWeight: FontWeight.w700,
                     ),
@@ -4206,9 +4278,7 @@ class _PayrollScreenState extends State<PayrollScreen> {
         decoration: hairline,
         children: [
           cell(
-            l.isPool
-                ? l.poolLabel(report.companyPoolRate)
-                : l.name,
+            l.isPool ? l.poolLabel(report.companyPoolRate) : l.name,
             style: base,
           ),
           cell(
@@ -4326,8 +4396,9 @@ class _PayrollScreenState extends State<PayrollScreen> {
 
     // Nothing comes off the share (no retainage, no advances to repay): Net to Tech equals Net Pool Share and is
     // already in the job header, so the equation would only repeat one number.
-    if (j.retainage == 0 && j.advancesRepaid == 0)
+    if (j.retainage == 0 && j.advancesRepaid == 0) {
       return const SizedBox.shrink();
+    }
 
     return Container(
       color: DashUi.faint,
@@ -4834,12 +4905,13 @@ class _PressableState extends State<_Pressable> {
     );
     final tip = widget.tooltip;
     // Inside the button node, so a screen reader hears the tooltip as this button's hint.
-    if (tip != null)
+    if (tip != null) {
       tile = Tooltip(
         message: tip,
         waitDuration: const Duration(milliseconds: 500),
         child: tile,
       );
+    }
     return Semantics(
       container: true,
       button: true,

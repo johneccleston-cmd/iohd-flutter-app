@@ -41,11 +41,11 @@ final Color _tint = Color.alphaBlend(AppTheme.brandRed.withValues(alpha: 0.08), 
 const Color _fill = DashUi.faint;
 const Color _fillStrong = DashUi.line; // selected row in the sidebar, which is already _fill
 
-const Color _good = Color(0xFF16A34A);
-const Color _warn = Color(0xFFD97706);
-const Color _bad = Color(0xFFDC2626);
-const Color _info = Color(0xFF4F46E5);
-const Color _teal = Color(0xFF0891B2);
+const Color _good = DashUi.emeraldDeep;
+const Color _warn = DashUi.amber;
+const Color _bad = DashUi.red;
+const Color _info = DashUi.indigo;
+const Color _teal = DashUi.sky;
 
 // The backend accepts at most 20 messages of 4000 characters each, but only the last 8 are sent: every
 // message sent is billed as input tokens on every question, so the cap keeps an old tab cheap.
@@ -108,6 +108,16 @@ const Map<String, String> _toolLabels = {
   'compare_periods': 'Period comparison',
   'upcoming_materials': 'Materials for upcoming jobs',
   'what_changed': 'What changed',
+  'door_counts': 'Doors on open jobs',
+  'communications': 'Calls and texts',
+  'tech_performance': 'Technician performance',
+  'sales_performance': 'Sales performance',
+  'estimate_conversion': 'Estimate conversion',
+  'sold_vs_final': 'Sold vs final',
+  'invoices_summary': 'Invoices',
+  'job_statuses': 'Status list',
+  'site_checks': 'Site checks',
+  'catalog_lookup': 'Products & Services',
 };
 
 const List<String> _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -165,6 +175,13 @@ String _callParams(String tool, String inputJson) {
       'year' => text,
       'query' => 'matching “$text”',
       'customer' => 'for $text',
+      'min_jobs' => '$text+ jobs each',
+      'missing' => 'missing ${text.replaceAll('_', ' ')}',
+      'vendor' => 'from $text',
+      'kind' || 'status' || 'notice' || 'state' || 'scope' => text.replaceAll('_', ' '),
+      'include_inactive' => 'including inactive',
+      // the other day filters ("start_from", "started_before"...): the key in words and the day as a date
+      _ when day(v) != null => '${e.key.replaceAll('_', ' ')} ${fmt(day(v)!, year: true)}',
       _ when v == true => e.key.replaceAll('_', ' '),
       _ => '${e.key.replaceAll('_', ' ')} $text',
     });
@@ -220,6 +237,13 @@ class AssistantMessage {
   /// back with this answer in later questions, so a follow-up ("show the full list", "add the date", "why do these two
   /// differ") can re-run or adjust the same lookup instead of starting over. Never shown.
   List<Map<String, String>> replay = const [];
+
+  /// The answer's row in the server's question log (`logId` in its reply), so a thumbs up / down and its note land on it.
+  String? logId;
+
+  /// 'up' or 'down' once the person has rated this answer: kept with the chat, so it still shows after the panel reopens
+  /// and the answer cannot be rated twice.
+  String? rating;
 
   AssistantMessage(this.role, this.text, [this.sources = const [], this.calls = const [], this.links = const []]);
 }
@@ -314,14 +338,25 @@ class AssistantChat extends ChangeNotifier {
   String pageContext = '';
   String pagePath = '';
 
-  /// Thumbs up / down on an answer. Fire and forget: the server only logs it, so a failure is not worth showing.
-  Future<void> sendFeedback(String rating, String? question, String answer) async {
+  /// Thumbs up / down on an answer, with what was wrong when the person says. The rating is kept on the message (and saved
+  /// with the chat); the server puts it and the note on the answer's row in its question log. Fire and forget: a failure
+  /// is not worth showing.
+  Future<void> sendFeedback(AssistantMessage answer, String rating, String? question, {String? note}) async {
+    answer.rating = rating;
+    _save();
+    notifyListeners();
     try {
       await http
           .post(
             Uri.parse('$kApiBaseUrl/api/assistant/feedback'),
             headers: AuthSession.instance.headers(),
-            body: json.encode({'rating': rating, 'question': question, 'answer': answer}),
+            body: json.encode({
+              'rating': rating,
+              'question': question,
+              'answer': answer.text,
+              'logId': ?answer.logId,
+              if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+            }),
           )
           .timeout(const Duration(seconds: 15));
     } catch (_) {}
@@ -549,6 +584,8 @@ class AssistantChat extends ChangeNotifier {
                   if (l is Map) AssistantLookup.fromJson(l),
               ]
               ..replay = _replayFrom(m['replay'])
+              ..logId = m['logId'] is String ? m['logId'] as String : null
+              ..rating = m['rating'] == 'up' || m['rating'] == 'down' ? m['rating'] as String : null
               ..at = DateTime.tryParse('${m['at'] ?? ''}'),
           );
         }
@@ -594,9 +631,18 @@ class AssistantChat extends ChangeNotifier {
         await prefs.remove(_storeKey);
         return;
       }
-      await prefs.setString(
-        _storeKey,
-        json.encode({
+      // Browser storage holds a few MB. A run of big exports can fill it, and a save that throws used to stop every later
+      // save without a word; so a save that does not fit is tried again keeping fewer, shorter messages.
+      for (final (keep, maxText) in const [(_keepMessages, 1 << 30), (16, 12000), (6, 4000)]) {
+        try {
+          await prefs.setString(_storeKey, _encodeChats(keep, maxText));
+          return;
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  String _encodeChats(int keep, int maxText) => json.encode({
           'user': AuthSession.instance.name,
           'active': active,
           'tabs': [
@@ -605,24 +651,23 @@ class AssistantChat extends ChangeNotifier {
                 'title': c.title,
                 'messages': [
                   for (final m
-                      in (c.messages.length > _keepMessages ? c.messages.sublist(c.messages.length - _keepMessages) : c.messages))
+                      in (c.messages.length > keep ? c.messages.sublist(c.messages.length - keep) : c.messages))
                     {
                       'role': m.role.name,
-                      'text': m.text,
+                      'text': m.text.length > maxText ? m.text.substring(0, maxText) : m.text,
                       'sources': m.sources,
                       'calls': m.calls,
                       'links': m.links,
                       if (m.lookups.isNotEmpty) 'lookups': [for (final l in m.lookups) l.toJson()],
                       if (m.replay.isNotEmpty) 'replay': m.replay,
+                      'logId': ?m.logId,
+                      'rating': ?m.rating,
                       if (m.at != null) 'at': m.at!.toIso8601String(),
                     },
                 ],
               },
           ],
-        }),
-      );
-    } catch (_) {}
-  }
+        });
 
   /// Replaces an earlier question with new wording and asks again. Everything after it is dropped, since
   /// those answers were to the old question.
@@ -723,6 +768,13 @@ class AssistantChat extends ChangeNotifier {
         (x) => x.id == id,
         orElse: () => AssistantLookup(tool: name, id: id),
       );
+      if (e['skip'] == true) {
+        // Asked for wrongly (bad arguments, a record that is not there): Jarvis asks again or says so. Not a lookup behind
+        // the answer, and not a gap in it, so it leaves the checklist.
+        live.remove(l);
+        notifyListeners();
+        return;
+      }
       if (!live.contains(l)) live.add(l);
       l
         ..running = false
@@ -824,9 +876,11 @@ class AssistantChat extends ChangeNotifier {
   /// lookups), else what the reply's `calls` say (a server that does not stream, or an older one without timings).
   List<AssistantLookup> _finishedLookups(Map<String, dynamic> body) {
     if (live.isNotEmpty) {
+      // A read that failed and then worked when Jarvis asked again is not a gap in the answer: only the call that worked stays.
+      bool retried(int i) => !live[i].ok && live.skip(i + 1).any((x) => x.tool == live[i].tool && x.ok);
       return [
-        for (final l in live)
-          if (l.tool != 'describe_data') l..running = false,
+        for (var i = 0; i < live.length; i++)
+          if (live[i].tool != 'describe_data' && !retried(i)) live[i]..running = false,
       ];
     }
     return [
@@ -897,6 +951,7 @@ class AssistantChat extends ChangeNotifier {
               ..fresh = !lastAnswerStreamed
               ..lookups = _finishedLookups(body)
               ..replay = _replayFrom(body['lookups'])
+              ..logId = body['logId']?.toString()
               ..at = now(),
           );
           _save();
@@ -1120,7 +1175,23 @@ String _pageLabel(Uri uri) {
     '/hr/kpis': 'Employee KPIs',
     '/hr/team': 'Team admin',
     '/hr/corrections': 'Commission corrections',
+    '/inventory/catalog': 'Product Catalog',
+    '/inventory/services': 'Services Catalog',
+    '/inventory/tax-discounts-fees': 'Tax, discounts & fees page',
+    '/inventory/purchase-orders': 'Purchase orders',
+    '/inventory/vendors': 'Vendors',
+    '/payments': 'Payments list',
+    '/invoices': 'Invoices list',
+    '/site-checks': 'Site checks',
+    '/projects': 'Projects',
+    '/statuses': 'Statuses page',
   };
+  // A product's or a service's own page: Jarvis looks it up by name with catalog_lookup.
+  if (seg.length >= 3 && seg[0] == 'inventory' && seg[1] == 'catalog' && seg[2] != 'new') return 'Product ${seg[2]} page (Product Catalog)';
+  if (seg.length >= 3 && seg[0] == 'inventory' && seg[1] == 'services' && seg[2] == 'item') {
+    final key = uri.queryParameters['key'] ?? '';
+    return key.isEmpty ? 'A service page (Services Catalog)' : 'Service page (Services Catalog), service key $key';
+  }
   return names[uri.path] ?? (seg.isEmpty ? '' : '${seg.join(' / ')} page');
 }
 
@@ -1987,8 +2058,8 @@ class _AssistantPanelState extends State<_AssistantPanel> {
           colorScheme: base.colorScheme.copyWith(primary: _brandRed),
           textSelectionTheme: TextSelectionThemeData(
             cursorColor: _brandRed,
-            selectionHandleColor: const Color(0xFF1A73E8),
-            selectionColor: const Color(0x663390FF),
+            selectionHandleColor: DashUi.blue,
+            selectionColor: DashUi.blue.withValues(alpha: 0.3),
           ),
         ),
         child: _GrowOut(
@@ -2114,6 +2185,7 @@ class _AssistantPanelState extends State<_AssistantPanel> {
                           shadowColor: Colors.black.withValues(alpha: 0.12),
                           shape: const StadiumBorder(side: BorderSide(color: _stroke)),
                           child: InkWell(
+                            mouseCursor: WidgetStateMouseCursor.clickable,
                             customBorder: const StadiumBorder(),
                             onTap: _jumpToLatest,
                             child: const Padding(
@@ -2548,6 +2620,7 @@ class _ChatRowState extends State<_ChatRow> {
           color: sel ? _fillStrong : (_hover ? _fillStrong.withValues(alpha: 0.5) : Colors.transparent),
           borderRadius: BorderRadius.circular(8),
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             borderRadius: BorderRadius.circular(8),
             onTap: widget.enabled ? widget.onTap : null,
             child: Padding(
@@ -2619,6 +2692,7 @@ class _SideRowState extends State<_SideRow> {
         color: _hover && on ? _fillStrong.withValues(alpha: 0.6) : Colors.transparent,
         borderRadius: BorderRadius.circular(10),
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           borderRadius: BorderRadius.circular(10),
           onTap: widget.onTap,
           onHover: (v) => setState(() => _hover = v),
@@ -2882,7 +2956,7 @@ class _AnswerView extends StatefulWidget {
   final GlobalKey? anchorKey; // marks the top of the newest answer, so the thread can scroll to it
   final bool streaming; // still being written: no buttons yet
   final String? question; // what was asked, sent along with a thumbs up / down
-  final Future<void> Function(String rating, String? question, String answer) onRate;
+  final Future<void> Function(AssistantMessage answer, String rating, String? question, {String? note}) onRate;
   const _AnswerView({
     super.key,
     required this.message,
@@ -2904,13 +2978,92 @@ class _AnswerViewState extends State<_AnswerView> {
   late bool _animate = widget.message.fresh;
   bool _copied = false;
   Timer? _copiedTimer;
-  String? _rating; // 'up' | 'down' once the person has voted on this answer
   bool _showCalls = false;
+
+  /// A thumbs-down first asks what was wrong (optional, one line), so the question log says what to fix.
+  bool _askWhy = false;
+  final TextEditingController _why = TextEditingController();
+  final FocusNode _whyFocus = FocusNode();
+
+  /// 'up' | 'down' once the person has voted on this answer (kept on the message, so it survives the panel closing).
+  String? get _rating => widget.message.rating ?? (_askWhy ? 'down' : null);
 
   void _rate(String r) {
     if (_rating != null) return;
-    setState(() => _rating = r);
-    widget.onRate(r, widget.question, widget.message.text);
+    if (r == 'down') {
+      setState(() => _askWhy = true);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _whyFocus.requestFocus();
+      });
+      return;
+    }
+    widget.onRate(widget.message, r, widget.question);
+    setState(() {});
+  }
+
+  void _sendWhy({bool withNote = true}) {
+    if (!_askWhy) return;
+    widget.onRate(widget.message, 'down', widget.question, note: withNote ? _why.text : null);
+    setState(() => _askWhy = false);
+  }
+
+  /// "What was wrong?" under a thumbs-down: Enter sends, Esc sends the rating without a note.
+  Widget _whyBox() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
+        decoration: BoxDecoration(
+          color: _fill,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: CallbackShortcuts(
+          bindings: {const SingleActivator(LogicalKeyboardKey.escape): () => _sendWhy(withNote: false)},
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _why,
+                  focusNode: _whyFocus,
+                  maxLength: 1000,
+                  textInputAction: TextInputAction.send,
+                  onSubmitted: (_) => _sendWhy(),
+                  style: const TextStyle(fontSize: 13.5, color: _ink),
+                  decoration: InputDecoration(
+                    isDense: true,
+                    counterText: '',
+                    hintText: 'What was wrong? (optional)',
+                    hintStyle: const TextStyle(fontSize: 13.5, color: _muted),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _stroke)),
+                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: _navy)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TextButton(
+                onPressed: () => _sendWhy(withNote: false),
+                style: TextButton.styleFrom(foregroundColor: _slate),
+                child: const Text('Skip'),
+              ),
+              const SizedBox(width: 4),
+              FilledButton(
+                onPressed: _sendWhy,
+                style: FilledButton.styleFrom(
+                  backgroundColor: _navy,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(0, 34),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+                child: const Text('Send'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -2933,6 +3086,13 @@ class _AnswerViewState extends State<_AnswerView> {
   @override
   void dispose() {
     _copiedTimer?.cancel();
+    if (_askWhy) {
+      // Closed before saying why: the rating still counts. Sent after this frame, never while the tree is being torn down.
+      final (rate, message, question) = (widget.onRate, widget.message, widget.question);
+      Future(() => rate(message, 'down', question));
+    }
+    _why.dispose();
+    _whyFocus.dispose();
     super.dispose();
   }
 
@@ -3097,7 +3257,7 @@ class _AnswerViewState extends State<_AnswerView> {
       padding: const EdgeInsets.only(top: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [_actionRow(m.sources, detail), if (_showCalls && detail) _callsBox(m)],
+        children: [_actionRow(m.sources, detail), if (_askWhy) _whyBox(), if (_showCalls && detail) _callsBox(m)],
       ),
     );
   }
@@ -3178,6 +3338,7 @@ class _AnswerViewState extends State<_AnswerView> {
                   side: BorderSide(color: gaps > 0 ? DashUi.amber.withValues(alpha: 0.45) : _stroke),
                 ),
                 child: InkWell(
+                  mouseCursor: WidgetStateMouseCursor.clickable,
                   borderRadius: BorderRadius.circular(8),
                   onTap: detail ? () => setState(() => _showCalls = !_showCalls) : null,
                   hoverColor: _fill,
@@ -3296,6 +3457,7 @@ class _FollowUpChipState extends State<_FollowUpChip> {
           side: BorderSide(color: _lit ? _navy.withValues(alpha: 0.28) : _stroke),
         ),
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: widget.onTap,
           onHover: (v) => setState(() => _lit = v),
           onFocusChange: (v) => setState(() => _lit = v),
@@ -3342,7 +3504,7 @@ bool _isNegativeFigure(String s) {
 
 // A link target may hold spaces only for the app's own records ("customer:Riverside Logistics"); a web address may not.
 final RegExp _inlineRe = RegExp(
-  r'\*\*(.+?)\*\*|`([^`]+)`|(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])|\[([^\]]+)\]\(((?:job|estimate|customer|page):[^)\n]+|[^)\s]+)\)',
+  r'\*\*(.+?)\*\*|`([^`]+)`|(?<![*\w])\*([^*\s][^*]*?)\*(?![*\w])|\[([^\]]+)\]\(((?:job|estimate|customer|page|product|service):[^)\n]+|[^)\s]+)\)',
 );
 
 /// **bold**, *italic*, `code` and [links](url) (shown as their text) inside a line of text. [links] holds the keys
@@ -4297,7 +4459,12 @@ class _ChatTableState extends State<_ChatTable> {
 
   /// Saves the table as a CSV that opens in Excel (with a byte-order mark so accents and symbols survive).
   Future<void> _saveCsv() async {
-    String cell(String v) => v.contains(RegExp(r'[",\n]')) ? '"${v.replaceAll('"', '""')}"' : v;
+    String cell(String raw) {
+      // Text that starts like a formula (a customer name or note typed as "=HYPERLINK(...)") would run in Excel: an
+      // apostrophe makes it plain text. Amounts like -$500 are numbers, not formulas, and are left alone.
+      final v = RegExp(r'^[=+\-@\t\r]').hasMatch(raw) && !_numericRe.hasMatch(raw.trim()) ? "'$raw" : raw;
+      return v.contains(RegExp(r'[",\n]')) ? '"${v.replaceAll('"', '""')}"' : v;
+    }
     final csv = [_header, ..._sorted(), ..._totals].map((r) => r.map(cell).join(',')).join('\r\n');
     try {
       await FilePicker.saveFile(
@@ -4342,6 +4509,7 @@ class _ChatTableState extends State<_ChatTable> {
 
     // The sorted column says so in ink with an arrow, not in red: red is kept for what needs attention.
     Widget headCell(int c) => InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: () => _sortBy(c),
       hoverColor: _navy.withValues(alpha: 0.04),
       child: Padding(
@@ -4507,7 +4675,7 @@ class _ChatTableState extends State<_ChatTable> {
                     ),
                   ),
                 const Spacer(),
-                _MiniAction(icon: Icons.download_rounded, label: 'CSV', onTap: _saveCsv),
+                _MiniAction(icon: Icons.download_rounded, label: 'Save CSV', onTap: _saveCsv),
                 _MiniAction(
                   icon: _copied ? Icons.check_rounded : Icons.table_rows_outlined,
                   label: _copied ? 'Copied' : 'Copy table',

@@ -84,6 +84,7 @@ class AppNavBar extends StatelessWidget {
       child: Material(
         color: Colors.transparent,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: () {
             if (!isActive) {
               context.go(route);

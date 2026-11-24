@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 
 import '../theme/app_theme.dart';
 import 'app_menu.dart';
@@ -221,17 +222,20 @@ class CatalogLabel extends StatelessWidget {
   final String text;
   final String? note;
   final Widget? trailing;
-  const CatalogLabel(this.text, {super.key, this.note, this.trailing});
+
+  /// The label's and note's colour instead of the quiet grey (the service page draws them black).
+  final Color? color;
+  const CatalogLabel(this.text, {super.key, this.note, this.trailing, this.color});
 
   @override
   Widget build(BuildContext context) {
     final label = Row(
       children: [
-        Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.head)),
+        Flexible(child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.head.copyWith(color: color))),
         if (note != null) ...[
           const SizedBox(width: 8),
           Flexible(
-            child: Text(note!, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.meta),
+            child: Text(note!, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.meta.copyWith(color: color)),
           ),
         ],
       ],
@@ -453,6 +457,7 @@ class CatalogCheckRow extends StatelessWidget {
       excludeSemantics: true,
       child: FocusRing(
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         hoverColor: selected ? CatalogUi.pickedHover : DashUi.faint,
@@ -547,6 +552,7 @@ class _CatalogFilterGroupState extends State<CatalogFilterGroup> {
             expanded: _open,
             child: FocusRing(
               child: InkWell(
+                mouseCursor: WidgetStateMouseCursor.clickable,
               borderRadius: BorderRadius.circular(8),
               focusColor: Colors.transparent,
               onTap: () => setState(() => _open = !_open),
@@ -768,6 +774,7 @@ class _CatalogRowState extends State<CatalogRow> {
       // Not selectable text: the app-wide selection's I-beam would replace the click cursor.
       child: SelectionContainer.disabled(
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: widget.onTap,
           onHover: (v) => setState(() => _hover = v),
           onFocusChange: (v) => setState(() => _focus = v),
@@ -986,6 +993,7 @@ class _SizePill extends StatelessWidget {
       excludeSemantics: true,
       child: FocusRing(
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: selected ? null : onTap,
         borderRadius: BorderRadius.circular(8),
         focusColor: Colors.transparent,
@@ -1024,6 +1032,7 @@ class _PageButton extends StatelessWidget {
       excludeSemantics: true,
       child: FocusRing(
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         focusColor: Colors.transparent,
@@ -1077,7 +1086,7 @@ class RibbonGhostButton extends StatelessWidget {
         overlayColor: WidgetStatePropertyAll(Colors.white.withValues(alpha: 0.06)),
         side: WidgetStateProperty.resolveWith((s) => BorderSide(color: s.contains(WidgetState.focused) ? Colors.white : RibbonColors.glassEdge)),
         shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-        textStyle: const WidgetStatePropertyAll(TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+        textStyle: const WidgetStatePropertyAll(TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 12.5, fontWeight: FontWeight.w700)),
       ),
     );
   }
@@ -1145,6 +1154,7 @@ class CatalogSelectBox extends StatelessWidget {
           borderRadius: BorderRadius.circular(6),
           outset: const EdgeInsets.symmetric(horizontal: -5, vertical: -2),
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
           borderRadius: BorderRadius.circular(7),
           onTap: () => onChanged(value != true),
           hoverColor: DashUi.ink.withValues(alpha: 0.06),
@@ -1192,7 +1202,7 @@ class CatalogOutlineButton extends StatelessWidget {
       backgroundColor: Colors.white,
       side: const BorderSide(color: DashUi.line),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-      textStyle: TextStyle(fontSize: dense ? 12.5 : 13, fontWeight: FontWeight.w700),
+      textStyle: TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: dense ? 12.5 : 13, fontWeight: FontWeight.w700),
     );
     return icon == null
         ? OutlinedButton(onPressed: onPressed, style: style, child: Text(label))
@@ -1251,6 +1261,7 @@ class _CatalogIssueRowState extends State<CatalogIssueRow> {
       label: '${widget.label}, ${none ? 'none' : n}. ${widget.detail ?? widget.caption}',
       excludeSemantics: true,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: widget.onTap,
         onHover: (v) => setState(() => _hover = v),
         borderRadius: BorderRadius.circular(10),
@@ -1373,6 +1384,8 @@ class CatalogChipStrip extends StatelessWidget {
   static double _width(BuildContext context, String group, String value) {
     final p = TextPainter(
       text: TextSpan(
+        // Measured in the app's font, as the chips are drawn (a bare style measured in the platform default).
+        style: DefaultTextStyle.of(context).style,
         children: [
           TextSpan(
             text: '$group  ',
@@ -1459,7 +1472,7 @@ class CatalogChipStrip extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                         side: const BorderSide(color: DashUi.line),
                       ),
-                      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
                     ),
                     child: Text('+${hidden.length} more'),
                   ),
@@ -1469,6 +1482,157 @@ class CatalogChipStrip extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+
+/// Active / Inactive / All, each with how many it holds with the search and filters as they are (the status tabs are
+/// not filters: they are always one of three). Plain tabs whose ink underline sits on the command row's hairline
+/// ([height] is the row's), selected label in ink. The Services list's tabs, shared with the Product Catalog since
+/// decision A6 (2026-11-23), so both lists filter status one way. [noun] is what is counted ("service", "product").
+class CatalogStatusTabs extends StatelessWidget {
+  /// 'active', 'inactive' or 'all'.
+  final String value;
+  final ({int active, int inactive, int all}) counts;
+  final ValueChanged<String> onChanged;
+  final String noun;
+
+  /// A phone-narrow pane: the three share its width, a label giving way before its count.
+  final bool stretch;
+  final double height;
+  const CatalogStatusTabs({
+    super.key,
+    required this.value,
+    required this.counts,
+    required this.onChanged,
+    required this.noun,
+    this.stretch = false,
+    this.height = CatalogUi.commandHeight - 1,
+  });
+
+  static final _count = NumberFormat.decimalPattern();
+
+  @override
+  Widget build(BuildContext context) {
+    final motion = CatalogUi.motion(context, 160);
+    Widget tab(String v, String label, int count) {
+      final on = value == v;
+      final text = Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(fontSize: 13.5, fontWeight: on ? FontWeight.w700 : FontWeight.w600, color: on ? DashUi.ink : DashUi.slate),
+      );
+      final body = SizedBox(
+        height: height,
+        child: Stack(
+          children: [
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: stretch ? 6 : 10),
+              child: Center(
+                widthFactor: 1,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (stretch) Flexible(child: text) else text,
+                    const SizedBox(width: 6),
+                    Text(
+                      _count.format(count),
+                      maxLines: 1,
+                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: on ? DashUi.slate : DashUi.subtle, fontFeatures: CatalogUi.figures),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              left: 4,
+              right: 4,
+              bottom: 0,
+              child: AnimatedContainer(
+                duration: motion,
+                curve: Curves.easeOutCubic,
+                height: 2,
+                decoration: BoxDecoration(
+                  color: on ? DashUi.ink : DashUi.ink.withValues(alpha: 0),
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(2)),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+      final t = Semantics(
+        container: true,
+        button: true,
+        inMutuallyExclusiveGroup: true,
+        selected: on,
+        label: '$label, ${_count.format(count)} ${count == 1 ? noun : '${noun}s'}',
+        excludeSemantics: true,
+        // The shared keyboard ring, round the label and not the whole row height.
+        child: FocusRing(
+          borderRadius: BorderRadius.circular(6),
+          outset: EdgeInsets.symmetric(vertical: -(height - 32) / 2),
+          child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
+            key: ValueKey('status:$v'),
+            onTap: () => onChanged(v),
+            splashFactory: NoSplash.splashFactory,
+            hoverColor: Colors.transparent,
+            focusColor: Colors.transparent,
+            child: body,
+          ),
+        ),
+      );
+      return stretch ? Expanded(child: t) : t;
+    }
+
+    return SelectionContainer.disabled(
+      child: Row(
+        mainAxisSize: stretch ? MainAxisSize.max : MainAxisSize.min,
+        children: [tab('active', 'Active', counts.active), tab('inactive', 'Inactive', counts.inactive), tab('all', 'All', counts.all)],
+      ),
+    );
+  }
+}
+
+/// A list row that is not a [CatalogRow] (a narrow window's stacked row): its surface with the same looks as
+/// [CatalogRow]'s, drawn by the row itself. The hover used to be InkWell ink painted UNDER the row's stripe or picked
+/// colour, so on every other row (and every picked one) it never showed (decision A3, 2026-11-23): at rest white or the
+/// stripe, picked a light ink wash, under the pointer `hover` (`pickedHover` when picked).
+class CatalogRowSurface extends StatefulWidget {
+  final int index;
+  final bool selected;
+  final VoidCallback onTap;
+  final EdgeInsetsGeometry padding;
+  final Widget child;
+  const CatalogRowSurface({super.key, required this.index, required this.selected, required this.onTap, required this.padding, required this.child});
+
+  @override
+  State<CatalogRowSurface> createState() => _CatalogRowSurfaceState();
+}
+
+class _CatalogRowSurfaceState extends State<CatalogRowSurface> {
+  bool _hover = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final base = widget.selected ? CatalogUi.picked : (widget.index.isOdd ? CatalogUi.stripe : Colors.white);
+    return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
+      onTap: widget.onTap,
+      onHover: (v) => setState(() => _hover = v),
+      hoverColor: Colors.transparent,
+      splashColor: DashUi.ink.withValues(alpha: 0.04),
+      highlightColor: DashUi.ink.withValues(alpha: 0.03),
+      child: AnimatedContainer(
+        key: const ValueKey('row-surface'),
+        duration: CatalogUi.motion(context, 110),
+        padding: widget.padding,
+        decoration: BoxDecoration(color: _hover ? (widget.selected ? CatalogUi.pickedHover : CatalogUi.hover) : base),
+        child: widget.child,
+      ),
     );
   }
 }

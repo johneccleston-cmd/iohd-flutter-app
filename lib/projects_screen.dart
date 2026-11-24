@@ -24,6 +24,7 @@ import 'widgets/app_dialog.dart';
 import 'widgets/app_ribbon.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/page_selection.dart';
 
 part 'projects_list.dart';
 part 'projects_detail.dart';
@@ -1790,7 +1791,7 @@ class _PeopleFilter extends StatelessWidget {
         const PopupMenuDivider(),
         for (final c in crew) _item(c.$1, c.$1, c.$2, value == c.$1, person: true),
       ],
-      child: Container(
+      child: ClickCursor(child: Container(
         height: 40,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         decoration: BoxDecoration(color: active ? DashUi.ink : DashUi.faint, borderRadius: BorderRadius.circular(10)),
@@ -1812,7 +1813,7 @@ class _PeopleFilter extends StatelessWidget {
             Icon(Icons.expand_more_rounded, size: 18, color: active ? Colors.white : DashUi.slate),
           ],
         ),
-      ),
+      )),
     );
   }
 

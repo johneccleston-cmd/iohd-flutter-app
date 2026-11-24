@@ -71,6 +71,25 @@ flutter:
   # To add assets to your application, add an assets section, like this:
   assets:
     - assets/images/iohd_logo.png
+    - assets/fonts/IBMPlexSans-OFL.txt
+
+  # The app's one typeface (AppTheme.fontFamily), bundled so the web and Windows builds draw the same text and the web
+  # build never fetches a font at start-up. Plex stops at Bold: w800/w900 draw as Bold. The files are IBM's originals,
+  # unmodified, as the OFL's reserved font name requires; the licence is registered in main().
+  fonts:
+    - family: IBM Plex Sans
+      fonts:
+        - asset: assets/fonts/IBMPlexSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSans-Italic.ttf
+          weight: 400
+          style: italic
+        - asset: assets/fonts/IBMPlexSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/IBMPlexSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/IBMPlexSans-Bold.ttf
+          weight: 700
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

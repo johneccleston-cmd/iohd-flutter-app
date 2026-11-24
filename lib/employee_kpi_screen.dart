@@ -3227,6 +3227,7 @@ class _MentionsCardState extends State<_MentionsCard> with SingleTickerProviderS
     final size = fit ?? _sizes.last;
     final lines = cut ? ((c.maxHeight - link) / (scaler.scale(size) * 1.35)).floor().clamp(1, 40) : null;
     return InkWell(
+      mouseCursor: WidgetStateMouseCursor.clickable,
       onTap: cut ? () => _openFull(m) : null,
       borderRadius: BorderRadius.circular(6),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3528,7 +3529,7 @@ class _MoraleCardState extends State<_MoraleCard> with SingleTickerProviderState
     Widget tapToCycle(Widget child) => widget.isSample
         ? Tooltip(
             message: 'Tap to try another sample score',
-            child: InkWell(borderRadius: BorderRadius.circular(8), onTap: widget.onCycle, child: Padding(padding: const EdgeInsets.all(4), child: child)),
+            child: InkWell(mouseCursor: WidgetStateMouseCursor.clickable, borderRadius: BorderRadius.circular(8), onTap: widget.onCycle, child: Padding(padding: const EdgeInsets.all(4), child: child)),
           )
         : child;
 

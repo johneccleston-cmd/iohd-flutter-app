@@ -116,13 +116,13 @@ void main() {
       // Its cost is not what was confirmed.
       await open();
       await _type(t, 'cost', '25');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text('No charge · confirmed by Test Admin'), findsOneWidget);
 
       await open();
       await _type(t, 'qty', '2');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text(_confirm), findsOneWidget, reason: 'quantity changed');
 
@@ -130,14 +130,14 @@ void main() {
       await open();
       await _type(t, 'rate', '5');
       await _type(t, 'rate', '0');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text(_confirm), findsOneWidget, reason: 'price changed (and back)');
 
       await _confirmFirst(t);
       await open();
       await _type(t, 'name', 'Haul away both doors');
-      await t.sendKeyEvent(LogicalKeyboardKey.escape);
+      await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
       await t.pumpAndSettle();
       expect(find.text(_confirm), findsOneWidget, reason: 'name changed');
       expect(find.textContaining('confirmed by'), findsNothing);
@@ -168,7 +168,10 @@ void main() {
   });
 
   group('unknown cost', () {
-    testWidgets('profit is "—" with how many lines have no cost, and never 100.0%', (t) async {
+    // USER RULE 2026-11-24 ("Gross profit needs to be filled in too"): the summary's profit and margin are worked out on
+    // the known costs while a line has none (Services Catalog Phase 2 had made it a dash); Job cost's tooltip says how
+    // many lines have no cost. The option tabs still show no margin then (next test).
+    testWidgets('profit is filled in on the known costs, with how many lines have no cost', (t) async {
       for (final editable in [false, true]) {
         await _pump(
           t,
@@ -180,19 +183,20 @@ void main() {
             onPreviewSave: editable ? () {} : null,
           ),
         );
-        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget, reason: 'editable: $editable');
-        expect(find.text('1 line has no cost'), findsOneWidget);
-        expect(find.textContaining(RegExp(r'\d%')), findsNothing, reason: 'no margin');
+        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing, reason: 'editable: $editable');
+        expect(find.textContaining('no cost'), findsNothing); // USER RULE 2026-11-24: no note
+        // $1,000 less the door's $400: $600, 60.0%.
+        expect(find.text('(60.0%)'), findsOneWidget, reason: 'editable: $editable');
       }
-      // Nothing costed at all: still no profit, and certainly not 100%.
+      // Nothing costed at all: the whole price is profit on what is known (the tooltip says no line has a cost).
       await _pump(t, const LineItemsEditor(lines: [LineDraft(name: 'Install', quantity: 1, rate: 300), LineDraft(name: 'Haul away', quantity: 2, rate: 50)], taxRate: null, editable: false, showCost: true));
-      expect(find.text('2 lines have no cost'), findsOneWidget);
-      expect(find.text('100.0%'), findsNothing);
-      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
+      expect(find.textContaining('no cost'), findsNothing); // USER RULE 2026-11-24: no note
+      expect(find.text('(100.0%)'), findsOneWidget);
+      expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
       // Every cost known: the profit and its margin are back.
       await _pump(t, const LineItemsEditor(lines: [LineDraft(name: 'Install', quantity: 1, rate: 300, cost: 0), LineDraft(name: 'Door', quantity: 1, rate: 700, cost: 400)], taxRate: null, editable: false, showCost: true));
       expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
-      expect(find.text('60.0%'), findsOneWidget);
+      expect(find.text('(60.0%)'), findsOneWidget);
       expect(find.textContaining('no cost'), findsNothing);
     });
 
@@ -270,9 +274,10 @@ void main() {
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
         final tab = find.byKey(const ValueKey('option-tab-sf'));
         expect(find.descendant(of: tab, matching: find.textContaining('margin')), findsNothing);
-        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsOneWidget);
-        expect(find.text('1 line has no cost'), findsOneWidget);
-        expect(find.text('100.0%'), findsNothing);
+        // The summary's gross profit is filled in all the same, on the known costs (USER RULE 2026-11-24).
+        expect(find.byKey(const ValueKey('gross-profit-unknown')), findsNothing);
+        expect(find.textContaining('no cost'), findsNothing); // USER RULE 2026-11-24: no note
+        expect(find.text('(100.0%)'), findsNothing);
       });
     });
   });

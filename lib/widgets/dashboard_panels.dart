@@ -40,10 +40,30 @@ abstract final class DashText {
     letterSpacing: -0.1,
     color: DashUi.ink,
   );
-  static const panelNote = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, height: 1.3, color: DashUi.subtle);
-  static const label = TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.ink);
-  static const name = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.ink);
-  static const meta = TextStyle(fontSize: 12, fontWeight: FontWeight.w500, height: 1.3, color: DashUi.subtle);
+  static const panelNote = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w500,
+    height: 1.3,
+    color: DashUi.subtle,
+  );
+  static const label = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+    height: 1.3,
+    color: DashUi.ink,
+  );
+  static const name = TextStyle(
+    fontSize: 13.5,
+    fontWeight: FontWeight.w600,
+    height: 1.3,
+    color: DashUi.ink,
+  );
+  static const meta = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w500,
+    height: 1.3,
+    color: DashUi.subtle,
+  );
   static const money = TextStyle(
     fontSize: 13.5,
     fontWeight: FontWeight.w700,
@@ -58,12 +78,32 @@ abstract final class DashText {
     color: DashUi.ink,
     fontFeatures: tabular,
   );
-  static const link = TextStyle(fontSize: 13, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.blue);
-  static const legend = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.slate);
-  static const empty = TextStyle(fontSize: 14, fontWeight: FontWeight.w500, height: 1.3, color: DashUi.slate);
+  static const link = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.w600,
+    height: 1.3,
+    color: DashUi.blue,
+  );
+  static const legend = TextStyle(
+    fontSize: 12.5,
+    fontWeight: FontWeight.w600,
+    height: 1.3,
+    color: DashUi.slate,
+  );
+  static const empty = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w500,
+    height: 1.3,
+    color: DashUi.slate,
+  );
 
   /// A column heading over a table of rows.
-  static const column = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: DashUi.subtle);
+  static const column = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+    height: 1.3,
+    color: DashUi.subtle,
+  );
 }
 
 /// Heights of the fixed pieces at the current text size, so a page can tell which arrangement fits the window and
@@ -74,7 +114,9 @@ class DashGeo {
   /// A scorecard row (title, value and caption).
   final double tile;
 
-  DashGeo.of(BuildContext context) : s = MediaQuery.textScalerOf(context), tile = dashTileHeight(context);
+  DashGeo.of(BuildContext context)
+    : s = MediaQuery.textScalerOf(context),
+      tile = dashTileHeight(context);
 
   double line(double size, [double height = 1.3]) => s.scale(size) * height;
 
@@ -111,7 +153,12 @@ class DashGeo {
 }
 
 /// The inner width a scorecard needs so its title, value and caption all show whole (AnimatedMetricCard's styles).
-double dashTileTextWidth(BuildContext context, {required String title, required String value, String caption = ''}) {
+double dashTileTextWidth(
+  BuildContext context, {
+  required String title,
+  required String value,
+  String caption = '',
+}) {
   final s = MediaQuery.textScalerOf(context);
   // Text inherits the page's style (its font and letter spacing), so measure with it.
   final base = DefaultTextStyle.of(context).style;
@@ -133,8 +180,14 @@ double dashTileTextWidth(BuildContext context, {required String title, required 
 }
 
 /// A scorecard's `sparkMinWidth`: its trend line (84 px and a 12 px gap) only shows when the words still fit beside it.
-double dashSparkRoom(BuildContext context, {required String title, required String value, String caption = ''}) =>
-    dashTileTextWidth(context, title: title, value: value, caption: caption) + 96;
+double dashSparkRoom(
+  BuildContext context, {
+  required String title,
+  required String value,
+  String caption = '',
+}) =>
+    dashTileTextWidth(context, title: title, value: value, caption: caption) +
+    96;
 
 /// The width of a whole scorecard whose words need [inner] (18 px padding each side and the 1 px border).
 double dashTileWidth(double inner) => inner + 38;
@@ -148,7 +201,12 @@ class DashPanel extends StatelessWidget {
   final Widget header;
   final Widget child;
   final bool fill;
-  const DashPanel({super.key, required this.header, required this.child, this.fill = false});
+  const DashPanel({
+    super.key,
+    required this.header,
+    required this.child,
+    this.fill = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -177,7 +235,14 @@ class DashPanelHeader extends StatelessWidget {
 
   /// Read with the title on hover: what the panel counts, in full.
   final String? tooltip;
-  const DashPanelHeader({super.key, required this.g, required this.title, this.note, this.trailing, this.tooltip});
+  const DashPanelHeader({
+    super.key,
+    required this.g,
+    required this.title,
+    this.note,
+    this.trailing,
+    this.tooltip,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -185,14 +250,20 @@ class DashPanelHeader extends StatelessWidget {
       TextSpan(
         children: [
           TextSpan(text: title, style: DashText.panelTitle),
-          if (note != null) TextSpan(text: ' · $note', style: DashText.panelNote),
+          if (note != null)
+            TextSpan(text: ' · $note', style: DashText.panelNote),
         ],
       ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
-    if (tooltip != null)
-      text = Tooltip(message: tooltip!, waitDuration: const Duration(milliseconds: 500), child: text);
+    if (tooltip != null) {
+      text = Tooltip(
+        message: tooltip!,
+        waitDuration: const Duration(milliseconds: 500),
+        child: text,
+      );
+    }
     return SizedBox(
       height: g.panelHeader,
       child: Row(
@@ -218,7 +289,12 @@ class DashCallout extends StatelessWidget {
   final DashGeo g;
   final String text;
   final Color color;
-  const DashCallout({super.key, required this.g, required this.text, this.color = DashUi.emeraldText});
+  const DashCallout({
+    super.key,
+    required this.g,
+    required this.text,
+    this.color = DashUi.emeraldText,
+  });
 
   @override
   Widget build(BuildContext context) => SizedBox(
@@ -229,7 +305,10 @@ class DashCallout extends StatelessWidget {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: color),
+        style: DashText.meta.copyWith(
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
       ),
     ),
   );
@@ -250,7 +329,10 @@ class DashEmptyNote extends StatelessWidget {
 /// everything inside from scratch (replaying a scorecard's entrance or a bar's growth).
 BoxDecoration dashFocusRing(bool focused, BorderRadius radius) => BoxDecoration(
   borderRadius: radius,
-  border: Border.all(color: focused ? DashUi.blue : Colors.transparent, width: 2),
+  border: Border.all(
+    color: focused ? DashUi.blue : Colors.transparent,
+    width: 2,
+  ),
 );
 
 // =============================================================================
@@ -343,7 +425,12 @@ class DashLink extends StatelessWidget {
   final String text;
   final String label;
   final VoidCallback? onTap;
-  const DashLink({super.key, required this.text, required this.label, required this.onTap});
+  const DashLink({
+    super.key,
+    required this.text,
+    required this.label,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -356,8 +443,17 @@ class DashLink extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(text, style: DashText.link.copyWith(decoration: hover ? TextDecoration.underline : null)),
-            const Icon(Icons.chevron_right_rounded, size: 18, color: DashUi.blue),
+            Text(
+              text,
+              style: DashText.link.copyWith(
+                decoration: hover ? TextDecoration.underline : null,
+              ),
+            ),
+            const Icon(
+              Icons.chevron_right_rounded,
+              size: 18,
+              color: DashUi.blue,
+            ),
           ],
         ),
       ),
@@ -373,7 +469,13 @@ class DashDrillCard extends StatelessWidget {
   final int count;
   final String noun;
   final VoidCallback onOpen;
-  const DashDrillCard({super.key, required this.card, required this.count, this.noun = 'job', required this.onOpen});
+  const DashDrillCard({
+    super.key,
+    required this.card,
+    required this.count,
+    this.noun = 'job',
+    required this.onOpen,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -382,7 +484,8 @@ class DashDrillCard extends StatelessWidget {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     return DashPressable(
       onTap: open ? onOpen : null,
-      label: '${c.title}: ${c.value == null ? 'no figure yet' : c.format(c.value!)}. ${c.definition ?? c.caption}',
+      label:
+          '${c.title}: ${c.value == null ? 'no figure yet' : c.format(c.value!)}. ${c.definition ?? c.caption}',
       hint: open ? 'Opens the list of ${dashCount(count, noun)}' : null,
       radius: BorderRadius.circular(12),
       builder: (hover) => Stack(
@@ -396,10 +499,17 @@ class DashDrillCard extends StatelessWidget {
               // Fades in with the card's own entrance.
               child: TweenAnimationBuilder<double>(
                 tween: Tween(begin: 0, end: 1),
-                duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 900),
+                duration: reduceMotion
+                    ? Duration.zero
+                    : const Duration(milliseconds: 900),
                 curve: const Interval(0.4, 1),
-                builder: (context, t, child) => Opacity(opacity: t, child: child),
-                child: Icon(Icons.chevron_right_rounded, size: 20, color: hover ? c.valueColor : DashUi.subtle),
+                builder: (context, t, child) =>
+                    Opacity(opacity: t, child: child),
+                child: Icon(
+                  Icons.chevron_right_rounded,
+                  size: 20,
+                  color: hover ? c.valueColor : DashUi.subtle,
+                ),
               ),
             ),
         ],
@@ -410,7 +520,10 @@ class DashDrillCard extends StatelessWidget {
 
 /// "1 job", "209 jobs", "1 category".
 String dashCount(int n, String noun) {
-  final s = n.abs().toString().replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]},');
+  final s = n.abs().toString().replaceAllMapped(
+    RegExp(r'(\d)(?=(\d{3})+$)'),
+    (m) => '${m[1]},',
+  );
   final consonantY = RegExp(r'[^aeiou]y$').hasMatch(noun);
   final plural = consonantY
       ? '${noun.substring(0, noun.length - 1)}ies'
@@ -427,7 +540,12 @@ class DashBar extends StatelessWidget {
   final double fraction;
   final Color color;
   final double height;
-  const DashBar({super.key, required this.fraction, required this.color, this.height = 8});
+  const DashBar({
+    super.key,
+    required this.fraction,
+    required this.color,
+    this.height = 8,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -436,10 +554,15 @@ class DashBar extends StatelessWidget {
       builder: (context, c) => Container(
         height: height,
         alignment: Alignment.centerLeft,
-        decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(height / 2)),
+        decoration: BoxDecoration(
+          color: DashUi.faint,
+          borderRadius: BorderRadius.circular(height / 2),
+        ),
         child: TweenAnimationBuilder<double>(
           tween: Tween(begin: 0, end: fraction.clamp(0.0, 1.0)),
-          duration: reduceMotion ? Duration.zero : const Duration(milliseconds: 700),
+          duration: reduceMotion
+              ? Duration.zero
+              : const Duration(milliseconds: 700),
           curve: Curves.easeOutCubic,
           builder: (context, t, _) => _BarFx(
             width: math.max(fraction > 0 ? height : 0.0, c.maxWidth * t),
@@ -462,7 +585,9 @@ class DashStackBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = parts.fold<double>(0, (s, p) => s + math.max(0, p.$1));
-    final biggest = parts.isEmpty ? DashUi.slate : parts.reduce((a, b) => b.$1 > a.$1 ? b : a).$2;
+    final biggest = parts.isEmpty
+        ? DashUi.slate
+        : parts.reduce((a, b) => b.$1 > a.$1 ? b : a).$2;
     return _BarFx(
       height: height,
       glow: biggest,
@@ -491,7 +616,8 @@ class _BarHover extends InheritedWidget {
   final bool hover;
   const _BarHover({required this.hover, required super.child});
 
-  static bool of(BuildContext context) => context.dependOnInheritedWidgetOfExactType<_BarHover>()?.hover ?? false;
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_BarHover>()?.hover ?? false;
 
   @override
   bool updateShouldNotify(_BarHover old) => hover != old.hover;
@@ -504,14 +630,22 @@ class _BarFx extends StatefulWidget {
   final double height;
   final Color glow;
   final Widget child;
-  const _BarFx({this.width, required this.height, required this.glow, required this.child});
+  const _BarFx({
+    this.width,
+    required this.height,
+    required this.glow,
+    required this.child,
+  });
 
   @override
   State<_BarFx> createState() => _BarFxState();
 }
 
 class _BarFxState extends State<_BarFx> with SingleTickerProviderStateMixin {
-  late final AnimationController _sweep = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+  late final AnimationController _sweep = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
   bool _wasHover = false;
 
   @override
@@ -561,7 +695,8 @@ class _BarFxState extends State<_BarFx> with SingleTickerProviderStateMixin {
                       child: AnimatedBuilder(
                         animation: _sweep,
                         builder: (context, _) {
-                          final x = -2 + 4 * Curves.easeInOut.transform(_sweep.value);
+                          final x =
+                              -2 + 4 * Curves.easeInOut.transform(_sweep.value);
                           return DecoratedBox(
                             decoration: BoxDecoration(
                               gradient: LinearGradient(
@@ -616,16 +751,26 @@ class DashRows extends StatelessWidget {
   final double base;
   final double give;
   final Widget Function(int i) row;
-  const DashRows({super.key, required this.count, required this.base, required this.give, required this.row});
+  const DashRows({
+    super.key,
+    required this.count,
+    required this.base,
+    required this.give,
+    required this.row,
+  });
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, c) {
-        final h = c.maxHeight.isFinite && count > 0 ? (c.maxHeight / count).clamp(base, base + give).toDouble() : base;
+        final h = c.maxHeight.isFinite && count > 0
+            ? (c.maxHeight / count).clamp(base, base + give).toDouble()
+            : base;
         return Column(
           mainAxisSize: MainAxisSize.min,
-          children: [for (var i = 0; i < count; i++) SizedBox(height: h, child: row(i))],
+          children: [
+            for (var i = 0; i < count; i++) SizedBox(height: h, child: row(i)),
+          ],
         );
       },
     );
@@ -691,10 +836,25 @@ class DashBarRow extends StatelessWidget {
     );
     final detailText = detail == null
         ? null
-        : Text(detail!, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.meta);
-    Widget labelText = Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.label);
+        : Text(
+            detail!,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: DashText.meta,
+          );
+    Widget labelText = Text(
+      label,
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: DashText.label,
+    );
     if (tooltip != null) {
-      labelText = Tooltip(message: tooltip!, waitDuration: const Duration(milliseconds: 500), child: labelText);
+      labelText = Tooltip(
+        message: tooltip!,
+        waitDuration: const Duration(milliseconds: 500),
+        child: labelText,
+      );
     }
     final barWidget = bar ?? DashBar(fraction: fraction, color: color);
 
@@ -712,7 +872,9 @@ class DashBarRow extends StatelessWidget {
               duration: const Duration(milliseconds: 120),
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                color: hover ? color.withValues(alpha: 0.08) : color.withValues(alpha: 0),
+                color: hover
+                    ? color.withValues(alpha: 0.08)
+                    : color.withValues(alpha: 0),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Row(
@@ -734,7 +896,10 @@ class DashBarRow extends StatelessWidget {
                               Row(
                                 children: [
                                   Expanded(child: barWidget),
-                                  if (detailText != null) ...[const SizedBox(width: 10), detailText],
+                                  if (detailText != null) ...[
+                                    const SizedBox(width: 10),
+                                    detailText,
+                                  ],
                                 ],
                               ),
                             ],
@@ -745,15 +910,26 @@ class DashBarRow extends StatelessWidget {
                               const SizedBox(width: 8),
                               Expanded(child: barWidget),
                               const SizedBox(width: 12),
-                              SizedBox(width: amountWidth * k, child: amountText),
-                              if (detailText != null) SizedBox(width: detailWidth * k, child: detailText),
+                              SizedBox(
+                                width: amountWidth * k,
+                                child: amountText,
+                              ),
+                              if (detailText != null)
+                                SizedBox(
+                                  width: detailWidth * k,
+                                  child: detailText,
+                                ),
                             ],
                           ),
                   ),
                   SizedBox(
                     width: open ? 22 : 0,
                     child: open
-                        ? Icon(Icons.chevron_right_rounded, size: 18, color: hover ? DashUi.ink : DashUi.subtle)
+                        ? Icon(
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                            color: hover ? DashUi.ink : DashUi.subtle,
+                          )
                         : null,
                   ),
                 ],
@@ -791,7 +967,9 @@ class DashRankBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: bg,
         shape: BoxShape.circle,
-        border: Border.all(color: rank <= 3 ? fg.withValues(alpha: 0.45) : DashUi.line),
+        border: Border.all(
+          color: rank <= 3 ? fg.withValues(alpha: 0.45) : DashUi.line,
+        ),
       ),
       child: Text(
         '$rank',
@@ -847,7 +1025,9 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
     if (!mounted) return;
     final i = widget.options.indexWhere((o) => o.$1 == widget.value);
     final stack = _stack.currentContext?.findRenderObject() as RenderBox?;
-    final box = i < 0 || i >= _keys.length ? null : _keys[i].currentContext?.findRenderObject() as RenderBox?;
+    final box = i < 0 || i >= _keys.length
+        ? null
+        : _keys[i].currentContext?.findRenderObject() as RenderBox?;
     if (stack == null || box == null || !stack.hasSize || !box.hasSize) return;
     final r = box.localToGlobal(Offset.zero, ancestor: stack) & box.size;
     if (r != _thumb) setState(() => _thumb = r);
@@ -863,13 +1043,18 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
     final thumb = _thumb;
     return Container(
       padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(color: DashUi.faint, borderRadius: BorderRadius.circular(8)),
+      decoration: BoxDecoration(
+        color: DashUi.faint,
+        borderRadius: BorderRadius.circular(8),
+      ),
       child: Stack(
         key: _stack,
         children: [
           if (thumb != null)
             AnimatedPositioned(
-              duration: still ? Duration.zero : const Duration(milliseconds: 280),
+              duration: still
+                  ? Duration.zero
+                  : const Duration(milliseconds: 280),
               curve: Curves.easeOutCubic,
               left: thumb.left,
               top: thumb.top,
@@ -882,7 +1067,11 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
                     borderRadius: _pill,
                     border: Border.all(color: DashUi.line),
                     boxShadow: [
-                      BoxShadow(color: DashUi.ink.withValues(alpha: 0.06), blurRadius: 4, offset: const Offset(0, 1)),
+                      BoxShadow(
+                        color: DashUi.ink.withValues(alpha: 0.06),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1),
+                      ),
                     ],
                   ),
                 ),
@@ -895,7 +1084,9 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
                 KeyedSubtree(
                   key: _keys[i],
                   child: DashPressable(
-                    onTap: widget.options[i].$1 == widget.value ? () {} : () => widget.onChanged(widget.options[i].$1),
+                    onTap: widget.options[i].$1 == widget.value
+                        ? () {}
+                        : () => widget.onChanged(widget.options[i].$1),
                     label: '${widget.label}: ${widget.options[i].$2}',
                     selected: widget.options[i].$1 == widget.value,
                     radius: _pill,
@@ -904,8 +1095,13 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
                       // The sliding pill draws the selection once it is measured; before that the option does.
                       final own = on && thumb == null;
                       return AnimatedContainer(
-                        duration: still ? Duration.zero : const Duration(milliseconds: 150),
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                        duration: still
+                            ? Duration.zero
+                            : const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: own
                               ? Colors.white
@@ -913,16 +1109,24 @@ class _DashSegmentedState<T> extends State<DashSegmented<T>> {
                                     ? Colors.white.withValues(alpha: 0.6)
                                     : Colors.white.withValues(alpha: 0)),
                           borderRadius: _pill,
-                          border: Border.all(color: own ? DashUi.line : DashUi.line.withValues(alpha: 0)),
+                          border: Border.all(
+                            color: own
+                                ? DashUi.line
+                                : DashUi.line.withValues(alpha: 0),
+                          ),
                         ),
                         child: AnimatedDefaultTextStyle(
-                          duration: still ? Duration.zero : const Duration(milliseconds: 200),
+                          duration: still
+                              ? Duration.zero
+                              : const Duration(milliseconds: 200),
                           // Merged, so the labels keep the app's font (this replaces the ambient style).
                           style: DefaultTextStyle.of(context).style.merge(
                             TextStyle(
                               fontSize: 12.5,
                               height: 1.3,
-                              fontWeight: on ? FontWeight.w700 : FontWeight.w600,
+                              fontWeight: on
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
                               color: on ? DashUi.ink : DashUi.slate,
                             ),
                           ),
@@ -958,7 +1162,12 @@ class DashChangeChip extends StatelessWidget {
   });
 
   /// The month-over-month chip: the last two finished months (dashMonthChange), "↓ 14% Sep vs Aug".
-  static Widget? monthOverMonth(List<double> monthly, int year, {required String what, bool upIsGood = true}) {
+  static Widget? monthOverMonth(
+    List<double> monthly,
+    int year, {
+    required String what,
+    bool upIsGood = true,
+  }) {
     final c = dashMonthChange(monthly, year);
     if (c == null) return null;
     final parts = c.label.split(' vs ');
@@ -969,7 +1178,8 @@ class DashChangeChip extends StatelessWidget {
       tooltip:
           '$what in ${parts.first} against ${parts.last}, the last two finished months. '
           'The month in progress is never compared.',
-      semanticsLabel: '${c.pct >= 0 ? 'Up' : 'Down'} $pct% in ${parts.first} against ${parts.last}',
+      semanticsLabel:
+          '${c.pct >= 0 ? 'Up' : 'Down'} $pct% in ${parts.first} against ${parts.last}',
       upIsGood: upIsGood,
     );
   }
@@ -986,15 +1196,29 @@ class DashChangeChip extends StatelessWidget {
         child: ExcludeSemantics(
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(color: color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(20),
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(up ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 13, color: color),
+                Icon(
+                  up
+                      ? Icons.arrow_upward_rounded
+                      : Icons.arrow_downward_rounded,
+                  size: 13,
+                  color: color,
+                ),
                 const SizedBox(width: 3),
                 Text(
                   text,
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, height: 1.3, color: color),
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.3,
+                    color: color,
+                  ),
                 ),
               ],
             ),
@@ -1054,7 +1278,12 @@ class DashLegendSwatch extends StatelessWidget {
         swatch,
         const SizedBox(width: 6),
         Flexible(
-          child: Text(text, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.legend),
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: DashText.legend,
+          ),
         ),
       ],
     );
@@ -1125,12 +1354,14 @@ class DashSplitPanel extends StatelessWidget {
       TextSpan(
         children: [
           TextSpan(text: title, style: DashText.panelTitle),
-          if (note != null) TextSpan(text: ' · $note', style: DashText.panelNote),
+          if (note != null)
+            TextSpan(text: ' · $note', style: DashText.panelNote),
         ],
       ),
       maxLines: 1,
     );
-    if (tooltip != null) titleText = Tooltip(message: tooltip!, child: titleText);
+    if (tooltip != null)
+      titleText = Tooltip(message: tooltip!, child: titleText);
     return DashPanel(
       header: SizedBox(
         height: g.panelHeader,
@@ -1149,12 +1380,18 @@ class DashSplitPanel extends StatelessWidget {
                   '· ${finding ?? _biggest(total)}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: DashText.meta.copyWith(fontWeight: FontWeight.w700, color: DashUi.slate),
+                  style: DashText.meta.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: DashUi.slate,
+                  ),
                 ),
               ),
             ],
             const SizedBox(width: 16),
-            Expanded(flex: 2, child: total <= 0 ? const SizedBox.shrink() : _splitBar(total)),
+            Expanded(
+              flex: 2,
+              child: total <= 0 ? const SizedBox.shrink() : _splitBar(total),
+            ),
           ],
         ),
       ),
@@ -1219,7 +1456,10 @@ class DashSplitPanel extends StatelessWidget {
               Container(
                 width: 10,
                 height: 10,
-                decoration: BoxDecoration(color: m.color, borderRadius: BorderRadius.circular(3)),
+                decoration: BoxDecoration(
+                  color: m.color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
               ),
               const SizedBox(width: 6),
               Flexible(
@@ -1227,7 +1467,9 @@ class DashSplitPanel extends StatelessWidget {
                   m.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: DashText.label.copyWith(decoration: hover ? TextDecoration.underline : null),
+                  style: DashText.label.copyWith(
+                    decoration: hover ? TextDecoration.underline : null,
+                  ),
                 ),
               ),
               const SizedBox(width: 6),
@@ -1235,7 +1477,12 @@ class DashSplitPanel extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 3),
-          Text(m.value, maxLines: 1, overflow: TextOverflow.ellipsis, style: DashText.bigMoney),
+          Text(
+            m.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: DashText.bigMoney,
+          ),
         ],
       ),
     );
@@ -1247,7 +1494,11 @@ class DashSplitPanel extends StatelessWidget {
       builder: body,
     );
     if (m.tooltip != null) {
-      item = Tooltip(message: m.tooltip!, waitDuration: const Duration(milliseconds: 400), child: item);
+      item = Tooltip(
+        message: m.tooltip!,
+        waitDuration: const Duration(milliseconds: 400),
+        child: item,
+      );
     }
     return item;
   }
@@ -1284,7 +1535,12 @@ class DashSkeletonPanel extends StatelessWidget {
   final bool fill;
   final int rows;
   final double rowH;
-  const DashSkeletonPanel({super.key, this.fill = false, this.rows = 0, this.rowH = 34});
+  const DashSkeletonPanel({
+    super.key,
+    this.fill = false,
+    this.rows = 0,
+    this.rowH = 34,
+  });
 
   @override
   Widget build(BuildContext context) => Container(
@@ -1302,7 +1558,10 @@ class DashSkeletonPanel extends StatelessWidget {
           for (var i = 0; i < rows; i++)
             SizedBox(
               height: rowH,
-              child: const Align(alignment: Alignment.centerLeft, child: SkeletonBox(h: 12)),
+              child: const Align(
+                alignment: Alignment.centerLeft,
+                child: SkeletonBox(h: 12),
+              ),
             ),
       ],
     ),
@@ -1429,7 +1688,8 @@ class DashChartView {
     for (final s in series)
       if (s.kind == DashSeriesKind.bar) s,
   ];
-  DashSeries? get line => series.where((s) => s.kind == DashSeriesKind.line).firstOrNull;
+  DashSeries? get line =>
+      series.where((s) => s.kind == DashSeriesKind.line).firstOrNull;
 }
 
 class _MonthIntent extends Intent {
@@ -1464,8 +1724,12 @@ class DashMonthChart extends StatefulWidget {
   State<DashMonthChart> createState() => _DashMonthChartState();
 }
 
-class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStateMixin {
-  late final AnimationController _intro = AnimationController(vsync: this, duration: const Duration(milliseconds: 900));
+class _DashMonthChartState extends State<DashMonthChart>
+    with TickerProviderStateMixin {
+  late final AnimationController _intro = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  );
 
   /// The latest point's pulse on a [DashChartView.liveLine] view; still on every other view.
   late final AnimationController _pulse = AnimationController(
@@ -1501,8 +1765,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
           _focused ||
           _reduceMotion ||
           widget.views.length < 2 ||
-          !TickerMode.getValuesNotifier(context).value.enabled)
+          !TickerMode.getValuesNotifier(context).value.enabled) {
         return;
+      }
       _show((_view + 1) % widget.views.length);
     });
   }
@@ -1520,7 +1785,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
 
   /// The pulse runs only while a [DashChartView.liveLine] view shows and motion is on.
   void _syncPulse() {
-    final live = widget.views.isNotEmpty && widget.views[_view.clamp(0, widget.views.length - 1)].liveLine;
+    final live =
+        widget.views.isNotEmpty &&
+        widget.views[_view.clamp(0, widget.views.length - 1)].liveLine;
     if (live && !_reduceMotion) {
       if (!_pulse.isAnimating) _pulse.repeat();
     } else {
@@ -1589,7 +1856,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
 
   void _step(int delta) {
     final start = _index ?? math.max(0, _lastMonth);
-    setState(() => _index = (start + (_index == null ? 0 : delta)).clamp(0, 11));
+    setState(
+      () => _index = (start + (_index == null ? 0 : delta)).clamp(0, 11),
+    );
   }
 
   String _monthTitle(int i) {
@@ -1604,12 +1873,15 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
 
   String _describe(DashChartView v, int i) {
     final rows = _future(i) ? const <DashTipRow>[] : v.tip(i);
-    final head = _future(i) ? '${_monthTitle(i)}: not here yet' : _monthTitle(i);
+    final head = _future(i)
+        ? '${_monthTitle(i)}: not here yet'
+        : _monthTitle(i);
     final prior = v.prior;
     return [
       head,
       for (final r in rows) '${r.label}: ${r.value}',
-      if (_future(i) && prior != null && prior[i] > 0) '${v.priorLabel}: ${v.axis(prior[i])}',
+      if (_future(i) && prior != null && prior[i] > 0)
+        '${v.priorLabel}: ${v.axis(prior[i])}',
     ].join('. ');
   }
 
@@ -1633,22 +1905,37 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
     final bars = v.bars;
 
     final legend = <Widget>[
-      for (var i = 0; i < bars.length; i++) DashLegendSwatch(color: bars[i].color, text: bars[i].label),
+      for (var i = 0; i < bars.length; i++)
+        DashLegendSwatch(color: bars[i].color, text: bars[i].label),
       for (final b in bars)
-        if (b.below != null && b.values.any((x) => x < 0)) DashLegendSwatch(color: b.below!, text: b.belowLabel),
-      if (inProgress != null && inProgress >= 0 && bars.isNotEmpty && bars.first.values[inProgress] != 0)
-        DashLegendSwatch(color: bars.first.color, text: '${dashMonthNames[inProgress]} so far', outlined: true),
+        if (b.below != null && b.values.any((x) => x < 0))
+          DashLegendSwatch(color: b.below!, text: b.belowLabel),
+      if (inProgress != null &&
+          inProgress >= 0 &&
+          bars.isNotEmpty &&
+          bars.first.values[inProgress] != 0)
+        DashLegendSwatch(
+          color: bars.first.color,
+          text: '${dashMonthNames[inProgress]} so far',
+          outlined: true,
+        ),
       if (v.prior != null && v.prior!.any((p) => p != 0))
         DashLegendSwatch(color: DashUi.slate, text: v.priorLabel, tick: true),
-      if (v.line != null) DashLegendSwatch(color: v.line!.color, text: v.line!.label, tick: true),
+      if (v.line != null)
+        DashLegendSwatch(color: v.line!.color, text: v.line!.label, tick: true),
       if (v.average != null && v.averageLabel != null)
-        DashLegendSwatch(color: DashUi.subtle, text: v.averageLabel!, dashed: true),
+        DashLegendSwatch(
+          color: DashUi.subtle,
+          text: v.averageLabel!,
+          dashed: true,
+        ),
     ];
 
     final titleSpan = TextSpan(
       children: [
         TextSpan(text: v.title, style: DashText.panelTitle),
-        if (v.note != null) TextSpan(text: ' · ${v.note}', style: DashText.panelNote),
+        if (v.note != null)
+          TextSpan(text: ' · ${v.note}', style: DashText.panelNote),
       ],
     );
     Widget titleRow(bool badge) => Row(
@@ -1657,7 +1944,13 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
           child: Semantics(
             header: true,
             label: v.note == null ? v.title : '${v.title}, ${v.note}',
-            child: ExcludeSemantics(child: Text.rich(titleSpan, maxLines: 1, overflow: TextOverflow.ellipsis)),
+            child: ExcludeSemantics(
+              child: Text.rich(
+                titleSpan,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ),
         ),
         if (badge) ...[const SizedBox(width: 10), v.badge!],
@@ -1668,10 +1961,15 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
         : DashSegmented<int>(
             value: _view,
             label: 'Chart view',
-            options: [for (var i = 0; i < widget.views.length; i++) (i, widget.views[i].tab)],
+            options: [
+              for (var i = 0; i < widget.views.length; i++)
+                (i, widget.views[i].tab),
+            ],
             onChanged: _setView,
           );
-    final legendWrap = ExcludeSemantics(child: Wrap(spacing: 14, runSpacing: 4, children: legend));
+    final legendWrap = ExcludeSemantics(
+      child: Wrap(spacing: 14, runSpacing: 4, children: legend),
+    );
     final legendEntries = [for (final l in legend) l as DashLegendSwatch];
     final story = !empty && v.callout != null;
     // A story puts the key under the chart, so the title row carries only the title and the toggle.
@@ -1682,7 +1980,11 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
     final header = LayoutBuilder(
       builder: (context, c) {
         bool fits(bool badge) =>
-            toggle == null || _titleWidth(context, titleSpan, badge) + 12 + _toggleWidth(context) <= c.maxWidth;
+            toggle == null ||
+            _titleWidth(context, titleSpan, badge) +
+                    12 +
+                    _toggleWidth(context) <=
+                c.maxWidth;
         // With a story the headline already says how the year is going, so a change chip that would push the toggle
         // onto a row of its own (and take that height from the chart) is left out.
         final badge = v.badge != null && !empty && (!story || fits(true));
@@ -1694,17 +1996,29 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
             Row(
               children: [
                 Expanded(child: titleRow(badge)),
-                if (inline && toggle != null) ...[const SizedBox(width: 12), toggle],
+                if (inline && toggle != null) ...[
+                  const SizedBox(width: 12),
+                  toggle,
+                ],
               ],
             ),
-            if (inline && showLegend) ...[const SizedBox(height: 6), legendWrap],
+            if (inline && showLegend) ...[
+              const SizedBox(height: 6),
+              legendWrap,
+            ],
             if (!inline &&
-                (!showLegend || _legendWidth(context, legendEntries) + 12 + _toggleWidth(context) <= c.maxWidth)) ...[
+                (!showLegend ||
+                    _legendWidth(context, legendEntries) +
+                            12 +
+                            _toggleWidth(context) <=
+                        c.maxWidth)) ...[
               const SizedBox(height: 6),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  Expanded(child: showLegend ? legendWrap : const SizedBox.shrink()),
+                  Expanded(
+                    child: showLegend ? legendWrap : const SizedBox.shrink(),
+                  ),
                   const SizedBox(width: 12),
                   ?toggle,
                 ],
@@ -1726,7 +2040,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
         : Semantics(
             container: true,
             label: v.semanticsLabel,
-            value: _index == null ? v.summary(_lastMonth) : _describe(v, _index!),
+            value: _index == null
+                ? v.summary(_lastMonth)
+                : _describe(v, _index!),
             hint: 'Left and right arrow keys move between months',
             child: FocusableActionDetector(
               shortcuts: const {
@@ -1765,9 +2081,15 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
                     },
                     child: GestureDetector(
                       behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) => setState(() => _index = _indexFor(d.localPosition.dx, c.maxWidth)),
+                      onTapDown: (d) => setState(
+                        () =>
+                            _index = _indexFor(d.localPosition.dx, c.maxWidth),
+                      ),
                       child: Container(
-                        foregroundDecoration: dashFocusRing(_focused, BorderRadius.circular(8)),
+                        foregroundDecoration: dashFocusRing(
+                          _focused,
+                          BorderRadius.circular(8),
+                        ),
                         child: Stack(
                           children: [
                             RepaintBoundary(
@@ -1779,7 +2101,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
                                     view: v,
                                     hover: _index,
                                     inProgress: inProgress,
-                                    intro: Curves.easeOutCubic.transform(_intro.value),
+                                    intro: Curves.easeOutCubic.transform(
+                                      _intro.value,
+                                    ),
                                     pulse: v.liveLine ? _pulse.value : 0,
                                     fontFamily: font,
                                   ),
@@ -1807,7 +2131,8 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
                 crossAxisAlignment: CrossAxisAlignment.baseline,
                 textBaseline: TextBaseline.alphabetic,
                 children: [
-                  for (final (k, stat) in (v.headline ?? const <Widget>[]).indexed) ...[
+                  for (final (k, stat)
+                      in (v.headline ?? const <Widget>[]).indexed) ...[
                     if (k > 0) const SizedBox(width: 22),
                     stat,
                   ],
@@ -1816,12 +2141,18 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
               callout: v.callout!,
               calloutColor: v.calloutColor,
               chart: chart,
-              legend: legend.isEmpty ? null : Wrap(spacing: 14, runSpacing: 4, children: legend),
+              legend: legend.isEmpty
+                  ? null
+                  : Wrap(spacing: 14, runSpacing: 4, children: legend),
             ),
     );
     if (widget.autoCycle == null) return panel;
     // The auto-cycle holds while the pointer is anywhere on the panel (reading a month, reaching for the toggle).
-    return MouseRegion(onEnter: (_) => _pointerIn = true, onExit: (_) => _pointerIn = false, child: panel);
+    return MouseRegion(
+      onEnter: (_) => _pointerIn = true,
+      onExit: (_) => _pointerIn = false,
+      child: panel,
+    );
   }
 
   double _measure(BuildContext context, InlineSpan span) => (TextPainter(
@@ -1833,7 +2164,10 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
 
   /// The title and note on one line, plus room for a change chip.
   double _titleWidth(BuildContext context, InlineSpan span, bool badge) {
-    final w = _measure(context, TextSpan(style: DefaultTextStyle.of(context).style, children: [span]));
+    final w = _measure(
+      context,
+      TextSpan(style: DefaultTextStyle.of(context).style, children: [span]),
+    );
     return w + (badge ? 10 + MediaQuery.textScalerOf(context).scale(132) : 0);
   }
 
@@ -1858,7 +2192,9 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
             context,
             TextSpan(
               text: view.tab,
-              style: base.merge(const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700)),
+              style: base.merge(
+                const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+              ),
             ),
           ) +
           22;
@@ -1873,12 +2209,19 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
     const tipW = 204.0;
     // Beside the month rather than over it, so the bar and its label stay visible.
     final rightSide = cx + slot / 2 + 8 + tipW <= c.maxWidth;
-    final left = rightSide ? cx + slot / 2 + 4 : math.max(0.0, cx - slot / 2 - 4 - tipW);
+    final left = rightSide
+        ? cx + slot / 2 + 4
+        : math.max(0.0, cx - slot / 2 - 4 - tipW);
     final future = _future(i);
     final rows = future ? const <DashTipRow>[] : v.tip(i);
     final prior = v.prior;
 
-    const dim = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, height: 1.3, color: Color(0xFFD4D4D4));
+    const dim = TextStyle(
+      fontSize: 12,
+      fontWeight: FontWeight.w600,
+      height: 1.3,
+      color: Color(0xFFD4D4D4),
+    );
     const strong = TextStyle(
       fontSize: 13,
       fontWeight: FontWeight.w700,
@@ -1910,12 +2253,20 @@ class _DashMonthChartState extends State<DashMonthChart> with TickerProviderStat
                         Container(
                           width: 8,
                           height: 8,
-                          decoration: BoxDecoration(color: r.color, borderRadius: BorderRadius.circular(2)),
+                          decoration: BoxDecoration(
+                            color: r.color,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
                         ),
                         const SizedBox(width: 6),
                       ],
                       Expanded(
-                        child: Text(r.label, maxLines: 1, overflow: TextOverflow.ellipsis, style: dim),
+                        child: Text(
+                          r.label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: dim,
+                        ),
                       ),
                       const SizedBox(width: 8),
                       Text(r.value, style: strong),
@@ -1988,7 +2339,14 @@ class _DashChartPainter extends CustomPainter {
     required this.fontFamily,
   });
 
-  void _text(Canvas canvas, String s, Offset at, TextStyle style, {TextAlign align = TextAlign.left, Color? backing}) {
+  void _text(
+    Canvas canvas,
+    String s,
+    Offset at,
+    TextStyle style, {
+    TextAlign align = TextAlign.left,
+    Color? backing,
+  }) {
     final tp = TextPainter(
       text: TextSpan(
         text: s,
@@ -1996,11 +2354,16 @@ class _DashChartPainter extends CustomPainter {
       ),
       textDirection: TextDirection.ltr,
     )..layout();
-    final dx = align == TextAlign.right ? at.dx - tp.width : (align == TextAlign.center ? at.dx - tp.width / 2 : at.dx);
+    final dx = align == TextAlign.right
+        ? at.dx - tp.width
+        : (align == TextAlign.center ? at.dx - tp.width / 2 : at.dx);
     final top = Offset(dx, at.dy - tp.height / 2);
     if (backing != null) {
       canvas.drawRRect(
-        RRect.fromRectAndRadius((top & tp.size).inflate(2), const Radius.circular(3)),
+        RRect.fromRectAndRadius(
+          (top & tp.size).inflate(2),
+          const Radius.circular(3),
+        ),
         Paint()..color = backing,
       );
     }
@@ -2012,7 +2375,12 @@ class _DashChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final v = view;
-    final plot = Rect.fromLTRB(left, top, size.width - right, size.height - bottom);
+    final plot = Rect.fromLTRB(
+      left,
+      top,
+      size.width - right,
+      size.height - bottom,
+    );
     if (plot.width <= 0 || plot.height <= 0) return;
     const axisStyle = TextStyle(
       fontSize: 11.5,
@@ -2051,11 +2419,14 @@ class _DashChartPainter extends CustomPainter {
     }
     if (v.average != null) hi = math.max(hi, v.average!);
     final scale = DashScale.nice(lo, hi);
-    double y(double value) => plot.bottom - plot.height * ((value - scale.min) / scale.span);
+    double y(double value) =>
+        plot.bottom - plot.height * ((value - scale.min) / scale.span);
     final zero = y(0);
 
     // On a short plot the axis labels would touch: every other gridline is labelled (zero always is).
-    final labelEvery = scale.ticks > 0 && plot.height / scale.ticks < 22 ? 2 : 1;
+    final labelEvery = scale.ticks > 0 && plot.height / scale.ticks < 22
+        ? 2
+        : 1;
     for (var t = 0; t <= scale.ticks; t++) {
       final value = scale.min + t * scale.step;
       final gy = y(value);
@@ -2068,12 +2439,20 @@ class _DashChartPainter extends CustomPainter {
       );
       final zeroTick = (value / scale.step).round();
       if (value == 0 || zeroTick % labelEvery == 0) {
-        _text(canvas, v.axis(value), Offset(plot.left - 10, gy), axisStyle, align: TextAlign.right);
+        _text(
+          canvas,
+          v.axis(value),
+          Offset(plot.left - 10, gy),
+          axisStyle,
+          align: TextAlign.right,
+        );
       }
     }
     final slot = plot.width / 12;
     final grouped = bars.length > 1 && !v.stacked;
-    final barW = grouped ? math.min(slot * 0.36, 22.0) : math.min(slot * 0.54, 42.0);
+    final barW = grouped
+        ? math.min(slot * 0.36, 22.0)
+        : math.min(slot * 0.54, 42.0);
     // Value labels only with one bar series and when each month has room for "$396k" without touching its neighbours.
     final labels = v.barLabel != null && bars.length == 1 && slot >= 34;
     final labelAlpha = ((intro - 0.6) / 0.4).clamp(0.0, 1.0);
@@ -2101,11 +2480,23 @@ class _DashChartPainter extends CustomPainter {
       final partial = i == inProgress;
       final alpha = partial ? 0.4 : 1.0;
 
-      void drawBar(double x, double w, double from, double to, Color color, {bool roundTop = true}) {
+      void drawBar(
+        double x,
+        double w,
+        double from,
+        double to,
+        Color color, {
+        bool roundTop = true,
+      }) {
         if (to == from) return;
         final y0 = y(from);
         final y1 = y0 + (y(to) - y0) * intro;
-        final rect = Rect.fromLTRB(x, math.min(y0, y1), x + w, math.max(y0, y1));
+        final rect = Rect.fromLTRB(
+          x,
+          math.min(y0, y1),
+          x + w,
+          math.max(y0, y1),
+        );
         final up = to >= from;
         final rr = RRect.fromRectAndCorners(
           rect,
@@ -2114,7 +2505,10 @@ class _DashChartPainter extends CustomPainter {
           bottomLeft: roundTop && !up ? const Radius.circular(5) : Radius.zero,
           bottomRight: roundTop && !up ? const Radius.circular(5) : Radius.zero,
         );
-        canvas.drawRRect(rr, Paint()..color = color.withValues(alpha: dim ? alpha * 0.35 : alpha));
+        canvas.drawRRect(
+          rr,
+          Paint()..color = color.withValues(alpha: dim ? alpha * 0.35 : alpha),
+        );
         // The month in progress is lighter with an outline: a part month, not a collapse.
         if (partial) {
           canvas.drawRRect(
@@ -2134,18 +2528,37 @@ class _DashChartPainter extends CustomPainter {
           for (var b = 0; b < bars.length; b++) {
             final value = bars[b].values[i];
             if (value <= 0) continue;
-            drawBar(cx - barW / 2, barW, base, base + value, bars[b].color, roundTop: b == bars.length - 1);
+            drawBar(
+              cx - barW / 2,
+              barW,
+              base,
+              base + value,
+              bars[b].color,
+              roundTop: b == bars.length - 1,
+            );
             base += value;
           }
           barTop = y(base);
         } else if (grouped) {
           for (var b = 0; b < bars.length; b++) {
             final x = cx - barW - 1 + b * (barW + 2);
-            drawBar(x, barW, 0, bars[b].values[i], bars[b].colorFor(bars[b].values[i]));
+            drawBar(
+              x,
+              barW,
+              0,
+              bars[b].values[i],
+              bars[b].colorFor(bars[b].values[i]),
+            );
           }
           barTop = y(bars.fold<double>(0, (m, b) => math.max(m, b.values[i])));
         } else {
-          drawBar(cx - barW / 2, barW, 0, bars.first.values[i], bars.first.colorFor(bars.first.values[i]));
+          drawBar(
+            cx - barW / 2,
+            barW,
+            0,
+            bars.first.values[i],
+            bars.first.colorFor(bars.first.values[i]),
+          );
           barTop = y(math.max(0, bars.first.values[i]));
         }
       }
@@ -2173,7 +2586,9 @@ class _DashChartPainter extends CustomPainter {
           TextStyle(
             fontSize: 11.5,
             fontWeight: focus ? FontWeight.w800 : FontWeight.w600,
-            color: (focus ? DashUi.ink : DashUi.slate).withValues(alpha: labelAlpha * (dim ? 0.45 : 1)),
+            color: (focus ? DashUi.ink : DashUi.slate).withValues(
+              alpha: labelAlpha * (dim ? 0.45 : 1),
+            ),
             fontFeatures: DashText.tabular,
           ),
         );
@@ -2194,11 +2609,22 @@ class _DashChartPainter extends CustomPainter {
         ..color = DashUi.subtle.withValues(alpha: 0.8)
         ..strokeWidth = 1.3;
       for (var x = plot.left; x < plot.right; x += 8) {
-        canvas.drawLine(Offset(x, ay), Offset(math.min(x + 4, plot.right), ay), dash);
+        canvas.drawLine(
+          Offset(x, ay),
+          Offset(math.min(x + 4, plot.right), ay),
+          dash,
+        );
       }
     }
     for (final (text, at, style) in onLine) {
-      _text(canvas, text, at, style, align: TextAlign.center, backing: Colors.white);
+      _text(
+        canvas,
+        text,
+        at,
+        style,
+        align: TextAlign.center,
+        backing: Colors.white,
+      );
     }
 
     if (line != null && v.liveLine) {
@@ -2207,7 +2633,8 @@ class _DashChartPainter extends CustomPainter {
       // Each point keeps its month, so a gap (a month with no figure) breaks the line and the hover still matches.
       final pts = <(int, Offset)>[
         for (var i = 0; i < 12; i++)
-          if (!_future(i) && !line.gaps.contains(i)) (i, Offset(plot.left + slot * i + slot / 2, y(line.values[i]))),
+          if (!_future(i) && !line.gaps.contains(i))
+            (i, Offset(plot.left + slot * i + slot / 2, y(line.values[i]))),
       ];
       final path = Path();
       for (var k = 0; k < pts.length; k++) {
@@ -2251,14 +2678,25 @@ class _DashChartPainter extends CustomPainter {
   /// [DashChartView.liveLine]: a smooth curve that draws itself in left to right, the gap to the target ([average])
   /// shaded green above it and red below it, each finished month's point ringed green or red against the target, the
   /// month in progress joined by a dashed stretch, and the latest point pulsing with its figure in a pill over it.
-  void _liveLine(Canvas canvas, Rect plot, double slot, double Function(double) y, DashSeries line) {
+  void _liveLine(
+    Canvas canvas,
+    Rect plot,
+    double slot,
+    double Function(double) y,
+    DashSeries line,
+  ) {
     final idx = [
       for (var i = 0; i < 12; i++)
         if (!_future(i)) i,
     ];
     if (idx.isEmpty) return;
-    final pts = [for (final i in idx) Offset(plot.left + slot * i + slot / 2, y(line.values[i]))];
-    final target = view.average != null && view.average! > 0 ? view.average : null;
+    final pts = [
+      for (final i in idx)
+        Offset(plot.left + slot * i + slot / 2, y(line.values[i])),
+    ];
+    final target = view.average != null && view.average! > 0
+        ? view.average
+        : null;
     final partial = pts.length >= 2 && idx.last == inProgress;
 
     // Level tangents at every point: smooth, and it never swings past a month's own figure.
@@ -2274,7 +2712,9 @@ class _DashChartPainter extends CustomPainter {
     final full = curve(pts);
     final reveal = pts.first.dx + (pts.last.dx - pts.first.dx) * intro;
     canvas.save();
-    canvas.clipRect(Rect.fromLTRB(plot.left, plot.top - top, reveal + 8, plot.bottom + 1));
+    canvas.clipRect(
+      Rect.fromLTRB(plot.left, plot.top - top, reveal + 8, plot.bottom + 1),
+    );
 
     if (pts.length >= 2) {
       if (target != null) {
@@ -2284,7 +2724,10 @@ class _DashChartPainter extends CustomPainter {
           ..lineTo(pts.last.dx, ty)
           ..lineTo(pts.first.dx, ty)
           ..close();
-        for (final (over, color) in [(true, DashUi.emerald), (false, DashUi.red)]) {
+        for (final (over, color) in [
+          (true, DashUi.emerald),
+          (false, DashUi.red),
+        ]) {
           final zone = over
               ? Rect.fromLTRB(plot.left, plot.top - top, plot.right, ty)
               : Rect.fromLTRB(plot.left, ty, plot.right, plot.bottom);
@@ -2296,7 +2739,10 @@ class _DashChartPainter extends CustomPainter {
               ..shader = LinearGradient(
                 begin: over ? Alignment.bottomCenter : Alignment.topCenter,
                 end: over ? Alignment.topCenter : Alignment.bottomCenter,
-                colors: [color.withValues(alpha: 0.04), color.withValues(alpha: 0.16)],
+                colors: [
+                  color.withValues(alpha: 0.04),
+                  color.withValues(alpha: 0.16),
+                ],
               ).createShader(zone),
           );
           canvas.restore();
@@ -2312,7 +2758,10 @@ class _DashChartPainter extends CustomPainter {
             ..shader = LinearGradient(
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
-              colors: [line.color.withValues(alpha: 0.2), line.color.withValues(alpha: 0)],
+              colors: [
+                line.color.withValues(alpha: 0.2),
+                line.color.withValues(alpha: 0),
+              ],
             ).createShader(plot),
         );
       }
@@ -2326,7 +2775,10 @@ class _DashChartPainter extends CustomPainter {
         ..strokeCap = StrokeCap.round;
       canvas.drawPath(full, stroke(line.color.withValues(alpha: 0.14), 8));
       if (!partial || pts.length > 2) {
-        canvas.drawPath(partial ? curve(pts.sublist(0, pts.length - 1)) : full, stroke(line.color, 2.6));
+        canvas.drawPath(
+          partial ? curve(pts.sublist(0, pts.length - 1)) : full,
+          stroke(line.color, 2.6),
+        );
       }
       if (partial) {
         final a = pts[pts.length - 2], b = pts.last, mid = (a.dx + b.dx) / 2;
@@ -2335,7 +2787,10 @@ class _DashChartPainter extends CustomPainter {
           ..cubicTo(mid, a.dy, mid, b.dy, b.dx, b.dy);
         for (final m in tail.computeMetrics()) {
           for (var d = 0.0; d < m.length; d += 9) {
-            canvas.drawPath(m.extractPath(d, math.min(d + 5, m.length)), stroke(line.color, 2.6));
+            canvas.drawPath(
+              m.extractPath(d, math.min(d + 5, m.length)),
+              stroke(line.color, 2.6),
+            );
           }
         }
       }
@@ -2346,7 +2801,9 @@ class _DashChartPainter extends CustomPainter {
       final i = idx[k];
       final focus = hover == i;
       final value = line.values[i];
-      final ring = target == null ? line.color : (value >= target ? DashUi.emerald : DashUi.red);
+      final ring = target == null
+          ? line.color
+          : (value >= target ? DashUi.emerald : DashUi.red);
       final r = focus ? 5.0 : 3.6;
       canvas.drawCircle(pts[k], r, Paint()..color = Colors.white);
       canvas.drawCircle(
@@ -2369,7 +2826,8 @@ class _DashChartPainter extends CustomPainter {
       canvas.drawCircle(
         p,
         5 + 13 * Curves.easeOut.transform(phase),
-        Paint()..color = line.color.withValues(alpha: 0.3 * (1 - phase) * arrive),
+        Paint()
+          ..color = line.color.withValues(alpha: 0.3 * (1 - phase) * arrive),
       );
     }
     canvas.drawCircle(p, 6.5 * arrive, Paint()..color = Colors.white);
@@ -2377,7 +2835,8 @@ class _DashChartPainter extends CustomPainter {
 
     final tp = TextPainter(
       text: TextSpan(
-        text: '${(view.barLabel ?? view.axis)(value)}${partial ? ' so far' : ''}',
+        text:
+            '${(view.barLabel ?? view.axis)(value)}${partial ? ' so far' : ''}',
         style: TextStyle(
           fontSize: 11.5,
           fontWeight: FontWeight.w800,

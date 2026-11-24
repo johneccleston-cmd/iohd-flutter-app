@@ -72,7 +72,7 @@ void _seed(FakeJobServer s, {int extra = 0}) {
 }
 
 Future<void> _toBlock(WidgetTester t) async {
-  await t.ensureVisible(find.text('Products & Services'));
+  await t.ensureVisible(find.text('PRODUCTS & SERVICES'));
   await settle(t, frames: 6);
 }
 
@@ -322,15 +322,15 @@ void main() {
       });
     });
 
-    testWidgets('5. a long tax name in two lines, never cut short; the full name for screen readers; the box keeps the rate', (t) async {
+    testWidgets('5. a long tax name is never cut short; the full name for screen readers; the box and cells show the place only', (t) async {
       final s = FakeJobServer();
       _sfEstimate(s);
       await pumpJobPage(t, s, id: kEstimateId, size: const Size(1366, 1600), body: () async {
         await _toBlock(t);
-        expect(_inTable(find.text('Springdale, Washington 10.5%')), findsNothing, reason: 'too long for one line of its column');
-        expect(_inTable(find.text('Springdale')), findsWidgets);
-        expect(_inTable(find.text('Washington · 10.5%')), findsWidgets);
-        for (final text in ['Springdale', 'Washington · 10.5%']) {
+        expect(_inTable(find.text('Springdale, Washington 10.5%')), findsNothing, reason: 'the rate is not repeated on every line');
+        expect(_inTable(find.text('Springdale, Washington')), findsWidgets);
+        // The place is drawn whole, on one line.
+        for (final text in ['Springdale, Washington']) {
           for (final e in _inTable(find.text(text)).evaluate()) {
             final para = t.renderObject<RenderParagraph>(find.descendant(of: find.byWidget(e.widget), matching: find.byType(RichText)).first);
             expect(para.didExceedMaxLines, isFalse, reason: '"$text" drawn whole');
@@ -344,12 +344,12 @@ void main() {
         );
         final hs = [for (final n in ['SMH Installation | Gallery Steel | 16x7 | Sandtone', "Stop Mold | 16' Sandtone"]) t.getRect(row(n).first).height];
         expect(hs[0], moreOrLessEquals(hs[1], epsilon: 0.5));
-        // Editing: the select's box keeps the place and the rate; its menu has the place in full.
+        // Editing: the select's box has the place only; its menu has the place in full.
         await _edit(t);
-        expect(_inTable(find.text('Springdale 10.5%')), findsWidgets);
-        await t.tap(_inTable(find.text('Springdale 10.5%')).first);
+        expect(_inTable(find.textContaining('Springdale')), findsWidgets);
+        await t.tap(_inTable(find.textContaining('Springdale')).first);
         await settle(t, frames: 4);
-        expect(find.text('Springdale, Washington'), findsOneWidget, reason: 'the menu');
+        expect(find.text('Springdale, Washington'), findsWidgets, reason: 'the menu');
         await t.sendKeyEvent(LogicalKeyboardKey.escape);
         await settle(t, frames: 4);
       });
@@ -390,7 +390,7 @@ void main() {
         await settle(t, frames: 3);
         await t.enterText(find.byKey(const ValueKey('line-0-qty')), '-2.5');
         await settle(t, frames: 3);
-        await t.sendKeyEvent(LogicalKeyboardKey.escape);
+        await t.testTextInput.receiveAction(TextInputAction.done); // Enter keeps; Esc cancels since decision A1 (2026-11-23)
         await settle(t, frames: 4);
         expect(_inTable(find.text('-2.50')), findsOneWidget);
         expect(_inTable(find.text(r'-$3,722.50')), findsOneWidget);

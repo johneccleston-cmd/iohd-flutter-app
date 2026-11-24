@@ -133,6 +133,7 @@ class _ListHeader extends StatelessWidget {
           message: active ? 'Sorted by ${tip ?? text.toLowerCase()}. Click to reverse.' : 'Sort by ${tip ?? text.toLowerCase()}',
           waitDuration: const Duration(milliseconds: 500),
           child: InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: () => onSort(key),
             borderRadius: BorderRadius.circular(6),
             child: Padding(
@@ -185,6 +186,7 @@ class _ListHeader extends StatelessWidget {
                       label: 'Sort by priority',
                       excludeSemantics: true,
                       child: InkWell(
+                        mouseCursor: WidgetStateMouseCursor.clickable,
                         onTap: () => onSort(_Sort.priority),
                         borderRadius: BorderRadius.circular(6),
                         child: Padding(
@@ -272,6 +274,7 @@ class _GroupHeader extends StatelessWidget {
         label: '${item.label}, ${item.count} ${item.count == 1 ? 'project' : 'projects'}',
         excludeSemantics: true,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           onTap: onTap,
           hoverColor: DashUi.faint,
           child: Container(

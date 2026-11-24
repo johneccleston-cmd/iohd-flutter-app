@@ -93,7 +93,7 @@ void main() {
         ),
       ),
     );
-    await t.tap(find.text('Inactive')); // Status: Active + Inactive, so the retired remote is exported too
+    await t.tap(find.byKey(const ValueKey('status:all'))); // the All tab (decision A6, 2026-11-23), so the retired remote is exported too
     await t.pumpAndSettle();
     await t.tap(find.text('Export'));
     await t.pumpAndSettle();

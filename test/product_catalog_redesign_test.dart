@@ -75,25 +75,27 @@ void main() {
     expect(find.text('No category matches'), findsOneWidget);
   });
 
-  testWidgets('Needs attention: stock link to review, cost at or above price, no cost, per-job price, shared part #', (t) async {
+  testWidgets('Needs attention: stock link to review, cost at or above price, no cost, no price, shared part #', (t) async {
     await _pump(t);
     await t.ensureVisible(find.text('Needs attention'));
     await t.tap(find.text('Needs attention')); // starts closed
     await t.pumpAndSettle();
     Future<void> only(String label, String count) async {
-      await t.ensureVisible(find.text(label)); // the sidebar scrolls as one
+      // The sidebar's check row (a priceless product's cell says "No price" too since 2026-11-23).
+      final row = find.widgetWithText(CatalogCheckRow, label);
+      await t.ensureVisible(row); // the sidebar scrolls as one
       await t.pumpAndSettle();
-      await t.tap(find.text(label));
+      await t.tap(row);
       await t.pumpAndSettle();
       expect(find.text(count), findsOneWidget, reason: label);
-      await t.tap(find.text(label));
+      await t.tap(row);
       await t.pumpAndSettle();
     }
 
     await only('Stock link to review', '1 matching'); // the bracket (the Stock group is gone; this check moved here)
     await only('Cost at or above price', '1 matching'); // the tensioner: cost equals price
     await only('No cost entered', '2 matching'); // the screws and the bracket
-    await only('Per-job price', '1 matching'); // the door
+    await only('No price', '1 matching'); // the door
     // Phase 3 split "Same name or part #" into the data-quality checks: the door and the screws share GD5S.
     await only('Same part #', '2 matching');
     expect(find.text('Same name'), findsNothing, reason: 'a check that finds nothing takes no room in the sidebar');
@@ -107,7 +109,7 @@ void main() {
     expect(find.text('Cost at or above price'), findsNothing);
     expect(find.text('No cost entered'), findsNothing);
     expect(find.text('MARGIN'), findsNothing);
-    expect(find.text('Per-job price'), findsOneWidget);
+    expect(find.widgetWithText(CatalogCheckRow, 'No price'), findsOneWidget);
   });
 
   testWidgets('the list has no Margin or In stock column, and a product with no cost of its own reads a dash', (t) async {

@@ -37,6 +37,10 @@ extension _JobItems on _JobDetailScreenState {
   /// The job's own set of items edited here, if it has one.
   LineOption? get _jobSet => _isEstimate ? null : _lines?.options.firstOrNull;
 
+  /// What the job's summary shows as Payments/Deposits, in cents: the money on the Payment tab (Service Fusion's
+  /// payments and refunds, and Stripe money it has no entry for). Null on an estimate, which takes no payments.
+  int? get _paidCents => _isEstimate ? null : ((_paid + _stripeExtra) * 100).round();
+
   List<Map<String, dynamic>> get _sfItems {
     final raw = _job?['raw_items'];
     final list = raw is List ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : <Map<String, dynamic>>[];
@@ -74,7 +78,29 @@ extension _JobItems on _JobDetailScreenState {
           service: it.containsKey('service'),
         );
       }(),
+    // Service Fusion's discounts and fees (its other charges that aren't a sales tax) are discount and fee lines, as one
+    // added here is: under the rule, editable in the preview and in Tax, discounts & fees (user 2026-11-24: they were
+    // fixed figures, so a synced job's could not be changed). Its taxes stay figures, worked out per line.
+    for (final c in _sfFeeCharges)
+      LineDraft(
+        kind: c['is_discount'] == true ? LineKind.discount : LineKind.fee,
+        name: _sfChargeName(c),
+        quantity: 1,
+        percent: _sfChargePercent(c),
+        rate: _sfChargePercent(c) != null ? null : (_JobDetailScreenState._n(c['total']).abs() * 100).round() / 100,
+        taxable: false,
+        source: 'service_fusion',
+      ),
   ];
+
+  /// Service Fusion's discounts and fees: its other charges that aren't a sales tax, in its order.
+  List<Map<String, dynamic>> get _sfFeeCharges => [for (final c in _sfCharges) if (!_isTaxCharge(c)) c];
+
+  String _sfChargeName(Map<String, dynamic> c) => (c['name'] ?? c['other_charge'] ?? 'Charge').toString().trim();
+
+  /// A percentage charge's percent ("3" for 3%), or null for a dollar one.
+  double? _sfChargePercent(Map<String, dynamic> c) =>
+      c['is_percentage'] == true && c['rate'] != null ? _JobDetailScreenState._n(c['rate']).abs() : null;
 
   /// The names of this record's Service Fusion service lines, folded, so a saved copy of one (an estimate option, the
   /// job's own set, seeded from them with only a name key) is still marked "S" in the table.
@@ -84,7 +110,11 @@ extension _JobItems on _JobDetailScreenState {
   };
 
   /// Each Service Fusion line's own total, in cents, lined up with [_sfLines].
-  List<int> get _sfAmounts => [for (final it in _sfItems) (_JobDetailScreenState._n(it['total']) * 100).round()];
+  List<int> get _sfAmounts => [
+    for (final it in _sfItems) (_JobDetailScreenState._n(it['total']) * 100).round(),
+    // A discount's amount is negative, a fee's positive, as the editor's own are.
+    for (final c in _sfFeeCharges) (c['is_discount'] == true ? -1 : 1) * (_JobDetailScreenState._n(c['total']).abs() * 100).round(),
+  ];
 
   /// For a record Service Fusion sent without its charges (estimates come that way), the sales tax its total implies:
   /// what the total holds beyond the items, as a rate on the taxed lines. It is kept only when that rate gives back
@@ -128,7 +158,7 @@ extension _JobItems on _JobDetailScreenState {
     // The implied tax on Service Fusion's own lines: exactly what its total holds beyond the items (see _impliedTax).
     final impliedWas = implied == null ? 0 : mulDivRound(wasTaxable, (implied.rate * 10000).round(), 1000000);
     const impliedTip = 'Worked out from Service Fusion\'s total: it doesn\'t send the tax line for estimates.';
-    var items = wasItems, discounts = 0, fees = 0, taxable = wasTaxable;
+    var items = wasItems, discounts = 0, fees = 0, cardFees = 0, taxable = wasTaxable;
     final preview = lines != null && figures != null;
     if (preview) {
       items = discounts = taxable = 0;
@@ -138,6 +168,7 @@ extension _JobItems on _JobDetailScreenState {
           discounts -= amount; // a discount's amount is negative
         } else if (lines[i].isFee) {
           fees += amount;
+          if (isCardProcessingFee(lines[i].name)) cardFees += amount;
           continue; // never taxed
         } else {
           items += amount;
@@ -146,14 +177,29 @@ extension _JobItems on _JobDetailScreenState {
         if (lines[i].taxable && !lines[i].isDiscount) taxable += amount;
       }
       if (taxable < 0) taxable = 0;
+    } else {
+      // Service Fusion's discounts and fees are lines of the table too ([_sfLines]), at its own amounts.
+      for (final c in _sfFeeCharges) {
+        final amount = cents(c['total']).abs();
+        if (c['is_discount'] == true) {
+          discounts += amount;
+        } else {
+          fees += amount;
+          if (isCardProcessingFee(_sfChargeName(c))) cardFees += amount;
+        }
+      }
     }
     final net = items - discounts + fees;
     int scaled(int was, int base, int wasBase) => wasBase <= 0 || base == wasBase ? was : (was * base / wasBase).round();
 
+    // The items and the preview's own discounts and fees are lines in the table already (fromLines): the table lists
+    // only the figures that aren't (taxes, Service Fusion's charges, what it doesn't itemize).
     final rows = <LineSummaryRow>[
-      LineSummaryRow('Items', items, kind: SummaryKind.items),
-      if (discounts != 0) LineSummaryRow('Discounts', -discounts, kind: SummaryKind.discount),
-      if (fees != 0) LineSummaryRow('Fees', fees, kind: SummaryKind.charge),
+      LineSummaryRow('Items', items, kind: SummaryKind.items, fromLines: true),
+      if (discounts != 0) LineSummaryRow('Discounts', -discounts, kind: SummaryKind.discount, fromLines: true),
+      if (fees - cardFees != 0) LineSummaryRow('Fees', fees - cardFees, kind: SummaryKind.charge, fromLines: true),
+      // Charged like any fee, but it goes to the card processor: not profit (decision 8, 2026-11-23).
+      if (cardFees != 0) LineSummaryRow('Card processing fees', cardFees, kind: SummaryKind.processingFee, fromLines: true),
     ];
     var wasCharges = 0, charges = 0;
     if (preview) {
@@ -199,27 +245,25 @@ extension _JobItems on _JobDetailScreenState {
       final discount = c['is_discount'] == true;
       final was = discount ? -amount : amount;
       wasCharges += was;
-      final name = (c['name'] ?? c['other_charge'] ?? 'Charge').toString().trim();
+      final name = _sfChargeName(c);
       // A percentage, not a quantity: "10%", "9.75%" (quantities always show two decimals; rates don't).
       final pct = c['is_percentage'] == true && c['rate'] != null ? ' ${SalesTax.rateText(_JobDetailScreenState._n(c['rate']))}%' : '';
-      // Service Fusion names its tax charges in full ("Sales Tax (State, County, & Local Use Tax, Prairie Grove)").
+      // A tax by what the record's lines say, not only by the word "tax" (sfChargeIsTax). Its discounts and fees are
+      // lines ([_sfLines]), counted with the items above.
       final isTax = _isTaxCharge(c);
-      if (isTax && preview) continue; // worked out above, per tax
-      // A percentage charge of Service Fusion's (its builder discount, its card fee) follows the ITEMS in the proportion
-      // Service Fusion had. It followed the net, which counts the preview's own fees and discounts, so adding a $50 fee
-      // grew a 10% discount by $5 and a 5% discount shrank it (audit round 2, 2026-11-20).
-      final now = isTax
-          ? (wasTaxable > 0 ? scaled(was, taxable, wasTaxable) : scaled(was, items, wasItems))
-          : (c['is_percentage'] == true ? scaled(was, items, wasItems) : was);
+      if (!isTax) continue;
+      if (preview) continue; // worked out above, per tax
+      final now = wasTaxable > 0 ? scaled(was, taxable, wasTaxable) : scaled(was, items, wasItems);
       charges += now;
-      rows.add(
-        LineSummaryRow(
-          isTax ? 'Sales tax$pct' : '$name$pct',
-          now,
-          kind: isTax ? SummaryKind.tax : (discount ? SummaryKind.discount : SummaryKind.charge),
-          tip: isTax ? name : null,
-        ),
-      );
+      // A tax by its place, as the lines' Tax column names it ("Sales tax Springdale, Washington 10.5%"; user
+      // 2026-11-24: it read only "Sales tax 10.5%").
+      // "Sales Tax (Fayetteville)" is Fayetteville: a name that isn't one of the DFA's (shortName) loses its "Sales Tax".
+      final taxName = sfChargeTaxName(c, _sfItems).isNotEmpty ? sfChargeTaxName(c, _sfItems) : name;
+      var place = SalesTax.shortName(taxName);
+      final inParens = RegExp(r'^sales tax\s*\((.+)\)$', caseSensitive: false).firstMatch(place);
+      place = (inParens?.group(1) ?? place.replaceFirst(RegExp(r'^sales tax\b\s*[-:]?\s*', caseSensitive: false), '')).trim();
+      final taxLabel = place.isEmpty ? 'Sales tax$pct' : 'Sales tax $place$pct';
+      rows.add(LineSummaryRow(taxLabel, now, kind: SummaryKind.tax, tip: name));
     }
     if (_job?['total_revenue'] != null) {
       final left = cents(_job!['total_revenue']) - wasItems - wasCharges - impliedWas;
@@ -238,16 +282,18 @@ extension _JobItems on _JobDetailScreenState {
     return rows;
   }
 
-  /// A Service Fusion charge that is a sales tax (it names its tax charges in full: "Sales Tax (State, County, ...)").
-  static bool _isTaxCharge(Map<String, dynamic> c) =>
-      c['is_discount'] != true && (c['name'] ?? c['other_charge'] ?? '').toString().toLowerCase().contains('tax');
+  /// A Service Fusion charge that is a sales tax: by the tax codes on this record's own lines first, then by its words
+  /// (sfChargeIsTax; two prod records name theirs "AR-Carroll-Eureka Springs" and " - Warranty", 2026-11-23).
+  bool _isTaxCharge(Map<String, dynamic> c) => sfChargeIsTax(c, _sfItems);
+
 
   /// The sales taxes a line can be given: the tax charge(s) on this record (its Rogers tax line, say), so each line is
   /// either taxed at that tax or not taxed at all. A record sent without its charges offers the tax its total implies.
   List<SalesTax> get _taxChoices {
     final mine = <String, SalesTax>{};
     for (final c in _sfCharges.where(_isTaxCharge)) {
-      final name = (c['name'] ?? c['other_charge'] ?? '').toString().trim();
+      // Named as its lines name it, so they find it (a renamed charge keeps its charge type's name there).
+      final name = sfChargeTaxName(c, _sfItems);
       if (name.isNotEmpty) mine[name] = SalesTax(name, _JobDetailScreenState._n(c['rate']), onRecord: true);
     }
     if (mine.isEmpty) {
@@ -258,8 +304,9 @@ extension _JobItems on _JobDetailScreenState {
   }
 
   /// The estimate's own option (Service Fusion's lines) as a rail tab: its total as Service Fusion has it, its lines,
-  /// and its margin on the money before tax (as the editor's profit panel works it out). No margin while a line's cost
-  /// is unknown (a Service Fusion cost of 0 is, see [_sfLines]): it would read as if that line cost nothing.
+  /// and its margin on the money before tax (as the editor's profit panel works it out). No margin on the tab while a
+  /// line's cost is unknown (a Service Fusion cost of 0 is, see [_sfLines]); the summary's Gross profit is filled in
+  /// all the same (USER RULE 2026-11-24).
   _TabFacts get _sfTab {
     final rows = _sfSummaryRows();
     final total = rows.where((r) => r.kind == SummaryKind.total).firstOrNull?.cents ?? rows.fold<int>(0, (s, r) => s + r.cents);
@@ -269,7 +316,7 @@ extension _JobItems on _JobDetailScreenState {
     return _TabFacts(
       name: kEstimateOptionName,
       totalCents: total,
-      lines: _sfLines.where((l) => !l.isDiscount).length,
+      lines: _sfLines.where((l) => !l.isCharge).length,
       marginPct: net > 0 && figures.missingCostLines == 0 ? ((net - cost) / net * 1000).round() / 10 : null,
       current: _lines?.accepted == null,
     );
@@ -279,6 +326,7 @@ extension _JobItems on _JobDetailScreenState {
   LineItemsEditor _sfEditor({Key key = const ValueKey('sf-items'), required String emptyTitle, required String emptyMessage, Widget? banner}) =>
       LineItemsEditor(
         key: key,
+        tableKey: _tableKeyFor('$key'),
         serviceNames: _sfServiceNames,
         lines: _editSfLines ?? _sfLines,
         taxRate: null,
@@ -290,6 +338,7 @@ extension _JobItems on _JobDetailScreenState {
         taxOptions: _taxChoices,
         taxSettings: _taxSettings,
         totalLabel: _isEstimate ? 'Estimate total' : 'Job total',
+        paidCents: _paidCents,
         onPreviewSave: _previewSave,
         // The estimate's own option's tab follows a changed draft's figures (see _OptionTabs).
         onFigures: _isEstimate ? (total, margin) => _set(() => _liveFigures['sf'] = (total, margin)) : null,
@@ -414,12 +463,14 @@ extension _JobItems on _JobDetailScreenState {
               enabled: !_showSfItems,
               child: LineItemsEditor(
                 key: ValueKey('job-set-${set.id}'),
+                tableKey: _tableKeyFor('job-set-${set.id}'),
                 serviceNames: _sfServiceNames,
                 lines: set.items,
                 taxRate: set.taxRate,
                 editable: _editing && _canEditLines,
                 showCost: _canSeeCost,
                 totalLabel: 'Job total',
+                paidCents: _paidCents,
                 taxSettings: _taxSettings,
                 // No taxOptions: this set starts with its own tax rate (its tax line); Tax, discounts & fees adds more.
                 onPreviewSave: _previewSave,
@@ -441,15 +492,20 @@ extension _JobItems on _JobDetailScreenState {
     return _itemsPanel(actions: _linesError != null ? const [] : actions, body: body);
   }
 
-  /// The Products & Services block (Service Fusion's own name for these lines), a square white block headed exactly
-  /// like Details and Job Info above it (the page's standard block heading, see _tabbedBlock): the title alone (no
-  /// helper line under it, user 2026-11-12) with the record's controls flush right (under it on a narrow block), and a
-  /// hairline under the heading; the preview strip while editing; then the body.
+  /// The Products & Services block (Service Fusion's own name for these lines), a square white block headed by a grey
+  /// band, the one the Services Catalog's service page heads its sections with (user 2026-11-24: "the same gray ribbon
+  /// as on the service catalog"): the title in capitals with the record's controls flush right in the band (under it
+  /// on a narrow block); the preview strip while editing; then the body. One hairline outlines the band and everything
+  /// under it (user 2026-11-24: "put the table outline back in but have it outline the products and services header
+  /// too"), 8 px in from the block's edges, the band as its top strip.
   Widget _itemsPanel({List<Widget> actions = const [], required Widget body}) {
     final still = MediaQuery.disableAnimationsOf(context);
+    // The catalog's capitals, bigger (user 2026-11-24: "make the products and services header bigger"): 15 px, not 12.
     const title = Text(
-      'Products & Services',
-      style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.2),
+      'PRODUCTS & SERVICES',
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.9, height: 1.2),
     );
     final buttons = actions.isEmpty ? null : Wrap(spacing: 10, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: actions);
     // No hover helper text anywhere on the block (user 2026-11-13): every tooltip under it stays hidden.
@@ -459,30 +515,54 @@ extension _JobItems on _JobDetailScreenState {
         key: _itemsKey,
         decoration: _JobDetailScreenState._blockFill, // a square full-width block, like the rest of the page
         clipBehavior: Clip.hardEdge,
-        child: Column(
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          // The outline runs from the band's top down to the bottom of the table showing, not round the summary under
+          // it (user 2026-11-24: "end the outline before the summary blocks"); round the whole block when no table shows.
+          child: CustomPaint(
+          foregroundPainter: _TableOutlinePainter(panel: _itemsOutlineKey, tables: _tableKeys.values),
+          child: Column(
+          key: _itemsOutlineKey,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             LayoutBuilder(
               builder: (context, c) {
                 final inline = c.maxWidth >= 640 || buttons == null;
-                return Padding(
-                  padding: EdgeInsets.fromLTRB(20, 14, inline ? 14 : 20, 14),
-                  child: inline
-                      ? ConstrainedBox(
-                          // As tall as the Details block's heading with its tabs, so the blocks' titles match.
-                          constraints: const BoxConstraints(minHeight: 34),
-                          child: Row(
-                            children: [
-                              const Expanded(child: title),
-                              if (buttons != null) ...[const SizedBox(width: 16), buttons],
-                            ],
-                          ),
-                        )
-                      : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [title, const SizedBox(height: 10), buttons]),
+                // The service page's section band (32 px at least, 12 px in) in the grey of this page's own strips, Site
+                // Visits, Notes and Task List (user 2026-11-24): DashUi.faint. The outline's top strip, a hairline under it;
+                // the outline rounds its corners.
+                Widget band(Widget child, {double vertical = 7}) => ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(_outlineRadius)),
+                  child: Container(
+                    constraints: const BoxConstraints(minHeight: 48),
+                    alignment: Alignment.centerLeft,
+                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: vertical),
+                    decoration: const BoxDecoration(
+                      color: DashUi.faint,
+                      border: Border(bottom: BorderSide(color: DashUi.line)),
+                    ),
+                    child: child,
+                  ),
                 );
+                return inline
+                    ? band(
+                        Row(
+                          children: [
+                            const Expanded(child: title),
+                            if (buttons != null) ...[const SizedBox(width: 16), buttons],
+                          ],
+                        ),
+                        vertical: buttons == null ? 7 : 4,
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          band(title),
+                          Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0), child: Align(alignment: Alignment.centerLeft, child: buttons)),
+                        ],
+                      );
               },
             ),
-            const Divider(height: 1, color: DashUi.line),
             // The preview strip opens and closes with the editing state.
             AnimatedSize(
               duration: still ? Duration.zero : const Duration(milliseconds: 240),
@@ -494,6 +574,8 @@ extension _JobItems on _JobDetailScreenState {
             ),
             Padding(padding: const EdgeInsets.only(bottom: 16), child: body),
           ],
+          ),
+          ),
         ),
       ),
     );
@@ -541,6 +623,7 @@ extension _JobItems on _JobDetailScreenState {
                 enabled: o.id == selected,
                 child: LineItemsEditor(
                   key: ValueKey('option-${o.id}'),
+                  tableKey: _tableKeyFor('option-${o.id}'),
                   serviceNames: _sfServiceNames,
                   lines: o.items,
                   taxRate: o.taxRate,
@@ -742,8 +825,6 @@ const _tabRise = 3.0;
 /// A tab behind the rule: the faint fill. Under the pointer it goes a step DARKER, with a firmer edge (final polish
 /// 2026-11-13: it used to go lighter, toward the open tab's white, so in Chrome a hovered tab read as the open one).
 const _tabFill = DashUi.faint;
-final Color _tabHover = Color.lerp(DashUi.faint, DashUi.line, 0.75)!;
-final Color _tabHoverEdge = Color.lerp(_tabRule, DashUi.fieldEdge, 0.8)!;
 const _tabRadius = 7.0;
 
 /// The open tab's ink cap along its top edge: what marks it as the open one at a glance, with or without others
@@ -916,8 +997,9 @@ class _TabSurface extends StatelessWidget {
         padding: EdgeInsets.only(top: _tabRise * (1 - v), bottom: 1 - v),
         child: CustomPaint(
           painter: _TabPainter(
-            fill: Color.lerp(hover ? _tabHover : _tabFill, Colors.white, v)!,
-            edge: Color.lerp(hover ? _tabHoverEdge : _tabRule, _tabRule, v)!,
+            // No hover shading (USER RULE 2026-11-24): a tab's label darkens under the pointer, its fill doesn't.
+            fill: Color.lerp(_tabFill, Colors.white, v)!,
+            edge: _tabRule,
             cap: v,
           ),
           child: Padding(padding: EdgeInsets.only(top: _tabRise * v), child: child),
@@ -1472,7 +1554,7 @@ class _OptionMenu extends StatelessWidget {
           icon: const Icon(Icons.more_horiz_rounded, size: 20),
           style: IconButton.styleFrom(
             foregroundColor: DashUi.ink,
-            hoverColor: DashUi.faint,
+            hoverColor: Colors.transparent,
             backgroundColor: open ? DashUi.faint : null,
             minimumSize: const Size(34, 34),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
@@ -1918,4 +2000,51 @@ class _SendToJobDialogState extends State<_SendToJobDialog> {
       ],
     );
   }
+}
+
+
+/// The corners of the Products & Services outline (and its band's top).
+const _outlineRadius = 6.0;
+
+/// The hairline round the Products & Services block's band and table, down to the bottom of the table that is showing
+/// (an estimate's other options are mounted offstage), so the summary under it sits outside. In the rule under each
+/// line's shade ([LineItemsEditor.outlineColor], user 2026-11-24: "outline and line item lines should be the same
+/// shade"). Painted after layout from where the table ended up, so it follows the table as lines open, close or move.
+class _TableOutlinePainter extends CustomPainter {
+  final GlobalKey panel;
+  final Iterable<GlobalKey> tables;
+  _TableOutlinePainter({required this.panel, required this.tables});
+
+  static bool _onstage(RenderObject r) {
+    for (RenderObject? p = r.parent; p != null; p = p.parent) {
+      if (p is RenderOffstage && p.offstage) return false;
+    }
+    return true;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Element.renderObject, not findRenderObject: a table being removed (an option deleted) is still registered for
+    // this frame, inactive, and findRenderObject asserts on that.
+    final panelBox = (panel.currentContext as Element?)?.renderObject;
+    var bottom = size.height;
+    if (panelBox is RenderBox && panelBox.attached) {
+      double? end;
+      for (final k in tables) {
+        final r = (k.currentContext as Element?)?.renderObject;
+        if (r is! RenderBox || !r.attached || !r.hasSize || !_onstage(r)) continue;
+        final y = r.localToGlobal(Offset(0, r.size.height), ancestor: panelBox).dy;
+        if (y > 0 && y <= size.height + 0.5 && (end == null || y > end)) end = y;
+      }
+      if (end != null) bottom = end;
+    }
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = LineItemsEditor.outlineColor;
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTRB(0.5, 0.5, size.width - 0.5, bottom - 0.5), const Radius.circular(_outlineRadius)), paint);
+  }
+
+  @override
+  bool shouldRepaint(_TableOutlinePainter old) => true;
 }

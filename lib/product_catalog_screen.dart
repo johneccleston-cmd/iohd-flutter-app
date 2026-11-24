@@ -22,6 +22,8 @@ import 'widgets/app_ribbon.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/page_selection.dart';
+import 'theme/app_theme.dart';
 
 /// The office's product price list (backend /api/catalog/list?kind=product, from catalog_products): every product
 /// with its part number, category, warehouse stock, cost, margin and price. Read-only; cost columns follow the Team
@@ -113,7 +115,9 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   // The filters. An empty group does not filter; picking every option in a group filters nothing either.
   final Set<String> _cats = {};
-  final Set<String> _act = {'active'}; // 'active' | 'inactive': what the page showed before it had a filter
+  /// 'active' (the page's starting view), 'inactive' or 'all': the status tabs beside the search, as on the Services list
+  /// (decision A6, 2026-11-23; it was a Status group in the sidebar). The tabs are not filters.
+  String _status = 'active';
   final Set<String> _attn = {}; // 'costabove' | 'nocost' | 'perjob' | 'dupe'
   String _partFilter = '';
   String _catQuery = '';
@@ -243,11 +247,9 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     return [for (final n in names) (n, counts[n]!)];
   }
 
-  /// Both options of a two-way filter picked is the same as neither.
-  bool _narrows(Set<String> group) => group.length == 1;
 
   /// The list's "Needs attention" filters: every data-quality check (lib/utils/catalog_quality.dart) except the stock
-  /// link one (that is the Stock group's "Stock needs review"), plus "Per-job price".
+  /// link one (that is the Stock group's "Stock needs review"), plus "No price".
   bool _attention(String what, CatalogEntry e) {
     if (what == 'perjob') return e.rate == null;
     final check = CatalogCheck.byKey(what);
@@ -260,19 +262,49 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
   /// Categories, bulk changes and reviews need a Phase 3 server: it answers the categories call and dates every product.
   bool get _manageLive => _categories != null && _all.any((e) => e.updatedAt != null);
 
-  List<CatalogEntry> get _shown {
-    final words = _query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  bool _statusPasses(CatalogEntry e) => switch (_status) {
+    'inactive' => !e.active,
+    'all' => true,
+    _ => e.active,
+  };
+
+  /// Whether [e] passes the search and every filter, and (unless [status] is false) the status tab.
+  bool _passes(CatalogEntry e, {bool status = true}) {
+    if (status && !_statusPasses(e)) return false;
+    if (_cats.isNotEmpty && !_cats.contains(e.category)) return false;
+    if (_attn.isNotEmpty && !_attn.any((a) => _attention(a, e))) return false;
+    // A product's part number and its own SKU are both its codes (B5, 2026-11-23: the SKU of the 42 products that have
+    // both was not searchable).
     final part = _partFilter.toLowerCase().replaceAll(RegExp(r'\s+'), '');
-    final list = _all.where((e) {
-      if (_cats.isNotEmpty && !_cats.contains(e.category)) return false;
-      if (_narrows(_act) && e.active != _act.contains('active')) return false;
-      if (_attn.isNotEmpty && !_attn.any((a) => _attention(a, e))) return false;
-      if (part.isNotEmpty && !e.sku.toLowerCase().replaceAll(RegExp(r'\s+'), '').contains(part)) return false;
-      if (words.isEmpty) return true;
-      // Name, part number, category and model only: a word in a long description or a vendor's name is not the product.
-      final hay = '${e.name} ${e.sku} ${e.category} ${e.model}'.toLowerCase();
-      return words.every(hay.contains);
-    }).toList();
+    if (part.isNotEmpty && !e.codes.any((c) => c.toLowerCase().replaceAll(RegExp(r'\s+'), '').contains(part))) return false;
+    final words = _query.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+    if (words.isEmpty) return true;
+    // Name, codes, category and model only: a word in a long description or a vendor's name is not the product.
+    final hay = '${e.name} ${e.codes.join(' ')} ${e.category} ${e.model}'.toLowerCase();
+    return words.every(hay.contains);
+  }
+
+  /// Each tab's count with the search and filters as they are, so the numbers on the tabs are what each one would show.
+  ({int active, int inactive, int all}) _statusCounts() {
+    var active = 0, all = 0;
+    for (final e in _all) {
+      if (!_passes(e, status: false)) continue;
+      all++;
+      if (e.active) active++;
+    }
+    return (active: active, inactive: all - active, all: all);
+  }
+
+  void _setStatus(String s) {
+    if (s == _status) return;
+    _newView(() {
+      _status = s;
+      _page = 1;
+    });
+  }
+
+  List<CatalogEntry> get _shown {
+    final list = _all.where(_passes).toList();
     int cmp(CatalogEntry a, CatalogEntry b) => switch (_sortKey) {
       'sku' => a.sku.toLowerCase().compareTo(b.sku.toLowerCase()),
       'category' => a.category.toLowerCase().compareTo(b.category.toLowerCase()),
@@ -296,12 +328,8 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     return list;
   }
 
-  /// How many filters are set to something other than the page's starting view (Active only, nothing else).
-  int get _filterCount =>
-      (_cats.isEmpty ? 0 : 1) +
-      (_act.length == 1 && _act.contains('active') ? 0 : 1) +
-      (_attn.isEmpty ? 0 : 1) +
-      (_partFilter.isEmpty ? 0 : 1);
+  /// How many filters are set (the status tabs are not filters: they are always one of three).
+  int get _filterCount => (_cats.isEmpty ? 0 : 1) + (_attn.isEmpty ? 0 : 1) + (_partFilter.isEmpty ? 0 : 1);
 
   /// A new list (another sort, search, filter or page): read from its top, rows settling in.
   void _newView(VoidCallback change) {
@@ -331,13 +359,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _page = 1;
   });
 
-  void _resetStatus() => _newView(() {
-    _act
-      ..clear()
-      ..add('active');
-    _page = 1;
-  });
-
   void _clearPart() {
     _partField.clear();
     _newView(() {
@@ -352,9 +373,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _newView(() {
       _cats.clear();
       _attn.clear();
-      _act
-        ..clear()
-        ..add('active');
+      _status = 'active';
       _partFilter = '';
       _page = 1;
     });
@@ -468,7 +487,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     _resetFilters();
     _newView(() {
       _cats.add(category);
-      _act.add('inactive');
+      _status = 'all';
     });
     _switchView(CatalogView.products);
   }
@@ -583,7 +602,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     final white = TextButton.styleFrom(
       foregroundColor: Colors.white,
       disabledForegroundColor: Colors.white.withValues(alpha: 0.4),
-      textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+      textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
       padding: const EdgeInsets.symmetric(horizontal: 10),
       minimumSize: const Size(0, 36),
     );
@@ -717,7 +736,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     Text(e.sku.isEmpty ? '—' : e.sku, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cellQuiet),
     Text(e.category.isEmpty ? '—' : e.category, maxLines: 1, overflow: TextOverflow.ellipsis, style: CatalogUi.cell),
     if (_canSeeCost) _money(e.cost),
-    _money(e.rate, none: 'Per job', strong: true),
+    _money(e.rate, none: 'No price', strong: true),
   ];
 
   /// A row too narrow for the columns: the product and its price first, then part number, category and cost.
@@ -727,13 +746,13 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
       button: true,
       label: 'Product ${e.name}',
       child: SelectionContainer.disabled(
-        child: InkWell(
+        // The shared surface: hover shows on striped and picked rows too (decision A3, 2026-11-23).
+        child: CatalogRowSurface(
+          index: index,
+          selected: _selected.contains(e.key),
           onTap: () => _openEntry(e),
-          hoverColor: CatalogUi.hover,
-          child: Container(
-            padding: EdgeInsets.fromLTRB(_selectable ? 8 : 16, 10, 16, 10),
-            color: _selected.contains(e.key) ? CatalogUi.picked : (index.isOdd ? CatalogUi.stripe : null),
-            child: Column(
+          padding: EdgeInsets.fromLTRB(_selectable ? 8 : 16, 10, 16, 10),
+          child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
@@ -742,7 +761,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
                     if (_selectable) ...[Transform.translate(offset: const Offset(0, -3), child: _pickBox(e, position)), const SizedBox(width: 4)],
                     Expanded(child: _nameCell(e)),
                     const SizedBox(width: 12),
-                    _money(e.rate, none: 'Per job', strong: true),
+                    _money(e.rate, none: 'No price', strong: true),
                   ],
                 ),
                 const SizedBox(height: 4),
@@ -756,7 +775,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
                   ],
                 ),
               ],
-            ),
           ),
         ),
       ),
@@ -795,7 +813,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              row('Price', e.rate == null ? 'Priced per job' : dashMoney(e.rate!)),
+              row('Price', e.rate == null ? 'No price' : dashMoney(e.rate!)),
               if (e.memberPrice != null && e.memberPrice! > 0) row('Member price', dashMoney(e.memberPrice!)),
               if (_canSeeCost) row('Unit cost', e.cost == null ? 'Not entered' : dashMoney(e.cost!)),
               if (!e.active) row('Status', 'Inactive'),
@@ -894,7 +912,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               label: Text(_allCats ? 'Show fewer' : 'Show all ${cats.length}'),
               style: TextButton.styleFrom(
                 foregroundColor: DashUi.ink,
-                textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
                 padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: const Size(0, 32),
               ),
@@ -904,7 +922,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     );
   }
 
-  static String _attnLabel(String key) => key == 'perjob' ? 'Per-job price' : (CatalogCheck.byKey(key)?.label ?? key);
+  static String _attnLabel(String key) => key == 'perjob' ? 'No price' : (CatalogCheck.byKey(key)?.label ?? key);
   static Color _attnDot(String key) => switch (CatalogCheck.byKey(key)) {
     CatalogCheck.costAbove || CatalogCheck.highMarkup => DashUi.red,
     CatalogCheck.dupeName || CatalogCheck.dupePart || CatalogCheck.similarName => DashUi.indigo,
@@ -915,7 +933,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
 
   /// All the filters. The sidebar scrolls them as one; the narrow window's dialog shows the same.
   Widget _filterGroups() {
-    final inactive = _all.where((e) => !e.active).length;
     // The checks that found something (or are on), so a clean check takes no room.
     final attn = [
       for (final c in _quality.checks)
@@ -940,16 +957,6 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
                 _page = 1;
               });
             }),
-          ),
-        ),
-        CatalogFilterGroup(
-          title: 'Status',
-          picked: _act.length == 1 && _act.contains('active') ? 0 : 1,
-          child: Column(
-            children: [
-              CatalogCheckRow(label: 'Active', count: _all.length - inactive, selected: _act.contains('active'), onTap: () => _toggle(_act, 'active')),
-              CatalogCheckRow(label: 'Inactive', count: inactive, selected: _act.contains('inactive'), onTap: () => _toggle(_act, 'inactive')),
-            ],
           ),
         ),
         CatalogFilterGroup(
@@ -1090,14 +1097,12 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     backgroundColor: Colors.white,
     side: const BorderSide(color: DashUi.line),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+    textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13.5, fontWeight: FontWeight.w700),
   );
 
   /// The filters that are on, each one a chip that takes it off.
   List<({String group, String value, VoidCallback remove})> get _chips => [
     for (final c in _cats.toList()..sort()) (group: 'Category', value: c, remove: () => _toggle(_cats, c)),
-    if (_act.length == 1 && _act.contains('inactive')) (group: 'Status', value: 'Inactive only', remove: _resetStatus),
-    if (_act.length != 1) (group: 'Status', value: 'Active and inactive', remove: _resetStatus),
     for (final v in _attn) (group: 'Attention', value: _attnLabel(v), remove: () => _toggle(_attn, v)),
     if (_partFilter.isNotEmpty) (group: 'Part #', value: '"$_partFilter"', remove: _clearPart),
   ];
@@ -1115,7 +1120,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               children: [
                 Text('${_count.format(shown)} matching', style: strong),
                 Text(
-                  ' of ${_count.format(_all.length)}',
+                  ' of ${_count.format(_all.where(_statusPasses).length)}',
                   style: const TextStyle(fontSize: 13.5, color: DashUi.slate, fontFeatures: CatalogUi.figures),
                 ),
               ],
@@ -1151,17 +1156,30 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
     );
   }
 
-  /// The command row: search, the filters that are on, the count. One 52 px line; on a phone-narrow pane the chips go under it.
+  /// Active / Inactive / All with their counts (the Services list's tabs, catalog_kit.dart; decision A6 2026-11-23).
+  Widget _statusTabs({bool stretch = false, double height = CatalogUi.commandHeight - 1}) =>
+      CatalogStatusTabs(value: _status, counts: _statusCounts(), onChanged: _setStatus, noun: 'product', stretch: stretch, height: height);
+
+  /// The command row: search, the filters that are on, the count, and the status tabs flush right. One 52 px line when it
+  /// all fits; otherwise the tabs take a line of their own under the search (their underline on its hairline), and on a
+  /// phone-narrow pane the count and chips go under that.
   Widget _commandRow({required bool filterButton, required bool compact, required int shown, required double width, bool reopensSidebar = false}) {
     final chips = _chips;
     final small = width < 640;
     final searchWidth = (width * 0.34).clamp(260.0, 440.0);
+    final scale = MediaQuery.textScalerOf(context);
+    // Beside the search only while the filter chips keep real room (the tabs are about 260 px, the count about 140):
+    // squeezed, the chip strip folds the chips that are on into "+N more". Decided by width alone, so turning a filter
+    // on or off never moves the row.
+    final chipRoom = width - searchWidth - (filterButton ? 110 : 0) - (compact ? 50 : 0) - 2 * CatalogUi.side - 28 - scale.scale(140 + 21 + 260);
+    final tabsInline = !small && chipRoom >= scale.scale(360);
     final line = Row(
       children: [
         if (small) Expanded(child: _searchBox()) else SizedBox(width: searchWidth, child: _searchBox()),
         if (filterButton) ...[const SizedBox(width: 10), _filterButton(reopensSidebar: reopensSidebar)],
         if (compact) ...[const SizedBox(width: 8), _sortMenu()],
         if (!small) ...[const SizedBox(width: 14), Expanded(child: CatalogChipStrip(chips: chips)), const SizedBox(width: 14), _countLabel(shown)],
+        if (tabsInline) ...[Container(width: 1, height: 20, margin: const EdgeInsets.symmetric(horizontal: 10), color: DashUi.line), _statusTabs()],
       ],
     );
     return Container(
@@ -1174,6 +1192,10 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(height: CatalogUi.commandHeight, child: line),
+          if (!tabsInline)
+            Row(
+              children: [if (small) Expanded(child: _statusTabs(stretch: true, height: 39)) else ...[_statusTabs(height: 39), const Spacer()]],
+            ),
           if (small)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -1234,7 +1256,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               ),
             ),
         ],
-        child: Container(
+        child: ClickCursor(child: Container(
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(
@@ -1255,7 +1277,7 @@ class _ProductCatalogScreenState extends State<ProductCatalogScreen> with Automa
               Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: DashUi.slate),
             ],
           ),
-        ),
+        )),
       ),
     );
   }

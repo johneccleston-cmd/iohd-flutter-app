@@ -176,7 +176,7 @@ void main() {
       expect(find.text('Zac Clemens'), findsWidgets); // sales owner (Details and Sales Data)
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/estimate_page.png'));
 
-      // The banner's "Became job #..." button opens the job, which links back with "Matching estimate #...".
+      // The Summary's "Became job" link opens the job, whose "Matching estimate" link leads back.
       await t.tap(find.textContaining('#$_jobId'));
       await t.pumpAndSettle();
       expect(_where(router), '/jobs/$_jobId');

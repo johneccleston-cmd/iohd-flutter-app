@@ -21,6 +21,7 @@ CatalogEntry _svc(
   String description = '',
   List<String> edited = const [],
   List<ServiceRate> rates = const [],
+  List<ServiceProduct> products = const [],
   ServiceCommission? commission,
 }) {
   final key = 'sf:${name.toLowerCase().replaceAll(RegExp(r'\s+'), ' ')}';
@@ -46,6 +47,7 @@ CatalogEntry _svc(
         ? null
         : {'name': name, 'category': 'Service', 'description': description, 'rate': rate, 'cost': cost, 'taxable': false, 'active': true},
     rates: rates,
+    products: products,
     commission: commission,
   );
 }
@@ -106,6 +108,21 @@ final CatalogEntry kServiceWithRates = _svc(
     ServiceRate(name: 'Standard install', description: 'Door up to 8 ft, power within 6 ft', rate: 395, cost: 140, paysCommission: true, commissionType: 'percent', commissionValue: 5),
     ServiceRate(name: 'Extra remote', qty: 2, rate: 45, cost: 18, paysCommission: true, commissionType: 'fixed', commissionValue: 5),
     ServiceRate(name: 'Haul away old opener', rate: 35, cost: 0),
+  ],
+  // Products Used (2026-11-24): two in the catalog and one gone from it.
+  products: const [
+    ServiceProduct(
+      key: 'inv:6690',
+      name: "LiftMaster 6690L Wall-Mount Operator",
+      entry: CatalogEntry(key: 'inv:6690', name: "LiftMaster 6690L Wall-Mount Operator", kind: 'product', rate: 489, cost: 312, taxable: true),
+    ),
+    ServiceProduct(
+      key: 'inv:877',
+      name: 'LiftMaster 877MAX Keypad',
+      qty: 1,
+      entry: CatalogEntry(key: 'inv:877', name: 'LiftMaster 877MAX Keypad', kind: 'product', rate: 59, cost: 28, taxable: true),
+    ),
+    ServiceProduct(key: 'inv:41a', name: 'Safety Sensor Kit (old)', qty: 1),
   ],
 );
 

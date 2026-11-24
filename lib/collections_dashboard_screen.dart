@@ -11,6 +11,7 @@ import 'widgets/dash_story.dart';
 import 'widgets/dashboard_layout.dart';
 import 'widgets/dashboard_panels.dart' show DashChangeChip, dashSparkRoom;
 import 'widgets/estimate_list_dialog.dart';
+import 'widgets/flat_page.dart' show OverflowTooltip;
 
 // The Collections dashboard. Two kinds of figure share the page:
 //   left   the selected year: cash collected, write-offs, the monthly chart, how customers paid (changes with the year)
@@ -1418,9 +1419,8 @@ class _OwingPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // A long name is cut short in a narrow column; the full one is a hover away.
-                  Tooltip(
+                  OverflowTooltip(
                     message: r.customer,
-                    waitDuration: const Duration(milliseconds: 600),
                     child: Text(r.customer, maxLines: 1, overflow: TextOverflow.ellipsis, style: _T.name),
                   ),
                   Text(

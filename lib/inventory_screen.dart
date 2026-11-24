@@ -15,6 +15,8 @@ import 'widgets/app_ribbon.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
+import 'widgets/page_selection.dart';
+import 'theme/app_theme.dart';
 
 /// Stock Levels: what is on the warehouse shelves right now, read live from the Inventory Google Sheet (backend
 /// GET /get_full_inventory), which phone checkouts, scan checkouts and cycle counts update. Read-only.
@@ -544,7 +546,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
     backgroundColor: Colors.white,
     side: const BorderSide(color: DashUi.line),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-    textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+    textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13.5, fontWeight: FontWeight.w700),
   );
 
   /// The Filters button: on a window too narrow for the sidebar it opens the filters in a dialog; where the sidebar
@@ -703,7 +705,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
               ),
             ),
         ],
-        child: Container(
+        child: ClickCursor(child: Container(
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: DashUi.line)),
@@ -717,7 +719,7 @@ class _InventoryScreenState extends State<InventoryScreen> with AutomaticKeepAli
               Icon(_ascending ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded, size: 14, color: DashUi.slate),
             ],
           ),
-        ),
+        )),
       ),
     );
   }

@@ -31,7 +31,7 @@ Color dashReadableOnDark(Color color) {
 
 /// The scorecard hover card's look, shared by every other hover pop-up (the app's plain tooltips, the chart tips) so
 /// they all read as one family: navy gradient, soft white edge, 12px corners, a deep shadow.
-const dashTipGradient = LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.ink, Color(0xFF1E293B)]);
+const dashTipGradient = LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [DashUi.navy, Color(0xFF1E293B)]);
 const dashTipShadow = [BoxShadow(color: Color(0x400F172A), blurRadius: 24, offset: Offset(0, 10))];
 const dashTipEdge = Color(0x1FFFFFFF);
 const dashTipBodyStyle = TextStyle(fontSize: 13, fontWeight: FontWeight.w500, height: 1.45, color: Color(0xFFD4D4D4));

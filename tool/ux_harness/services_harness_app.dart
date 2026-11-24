@@ -62,6 +62,7 @@ CatalogEntry _with(CatalogEntry e, {Map<String, dynamic> f = const {}, List<Serv
     commission: f.containsKey('commission') ? f['commission'] as ServiceCommission? : e.commission,
     supersededBy: e.supersededBy,
     replaces: e.replaces,
+    products: e.products,
   );
 }
 
@@ -76,6 +77,43 @@ Future<CatalogEntry> _saveRates(String key, List<ServiceRate> rates) async {
 }
 
 Future<bool> _export(String name, Uint8List bytes) async => true;
+
+/// A product catalog for PRODUCTS USED's search (2026-11-24): enough matches for "lift" to fill the results list.
+final List<CatalogEntry> _products = [
+  for (final (i, name) in const [
+    'LiftMaster 6690L Wall-Mount Operator',
+    'LiftMaster 877MAX Keypad',
+    'LiftMaster 893MAX Remote',
+    'LiftMaster 8500W Jackshaft Operator',
+    'LiftMaster 87504 Belt Drive Operator',
+    'LiftMaster Safety Sensor Kit',
+    'LiftMaster 41A5034 Safety Sensors',
+    'LiftMaster Battery Backup 485LM',
+    'LiftMaster Wireless Keypad 878MAX',
+    'LiftMaster Smart Video Keypad',
+    'Torsion Spring 250 x 2 x 32',
+    'Lift Cable 1/8 x 8 ft',
+  ].indexed)
+    CatalogEntry(key: 'inv:h$i', name: name, kind: 'product', sku: 'H-${100 + i}', rate: 25.0 + i * 37, cost: 10.0 + i * 15, stock: 3 + i),
+];
+
+Future<List<CatalogEntry>> _productSearch(String q) async {
+  await Future<void>.delayed(const Duration(milliseconds: 200));
+  final words = q.toLowerCase().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+  return [for (final e in _products) if (words.every((w) => e.name.toLowerCase().contains(w) || e.sku.toLowerCase().contains(w))) e];
+}
+
+Future<CatalogEntry> _saveProducts(String key, List<ServiceProduct> products) async {
+  await Future<void>.delayed(const Duration(milliseconds: 300));
+  final e = _db[key]!;
+  final withEntries = [for (final p in products) ServiceProduct(key: p.key, name: p.name, qty: p.qty, entry: _products.where((x) => x.key == p.key).firstOrNull ?? p.entry)];
+  return _db[key] = CatalogEntry(
+    key: e.key, name: e.name, kind: e.kind, category: e.category, group: e.group, rate: e.rate, cost: e.cost, uses: e.uses,
+    rateUses: e.rateUses, lastUsed: e.lastUsed, taxable: e.taxable, active: e.active, description: e.description,
+    editedFields: {...e.editedFields, 'products'}.toList(), editedBy: 'Harness Admin', editedAt: DateTime.now().toUtc().toIso8601String(),
+    computed: e.computed, rates: e.rates, products: withEntries, commission: e.commission,
+  );
+}
 
 final harnessRouter = GoRouter(
   initialLocation: '/inventory/services',
@@ -96,6 +134,8 @@ final harnessRouter = GoRouter(
               loader: _load,
               saver: _save,
               ratesSaver: _saveRates,
+              productsSaver: _saveProducts,
+              productSearch: _productSearch,
             );
           },
         ),

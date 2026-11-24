@@ -168,6 +168,31 @@ void main() {
     await t.pumpAndSettle();
     await _shot(t, 'detail_edit_narrow_900x900');
   });
+  // The whole page, PRODUCTS USED included: wide, and narrow enough for the rates and products to stack.
+  for (final (size, edit) in const [(Size(1366, 1300), true), (Size(900, 1500), false), (Size(900, 1900), true)]) {
+    final name = 'detail_${edit ? 'edit' : 'view'}_tall_${_tag(size)}';
+    shotTest(name, (t) async {
+      await _pump(t, detail(kServiceWithRates), size: size);
+      if (edit) {
+        await t.tap(find.text('Edit'));
+        await t.pumpAndSettle();
+      }
+      await _shot(t, name);
+    });
+  }
+  // After a Save that found problems: the notice, the red boxes and each row's message under it.
+  shotTest('detail_edit_errors_1366x1000', (t) async {
+    await _pump(t, detail(kServiceWithRates), size: const Size(1366, 1000));
+    await t.tap(find.text('Edit'));
+    await t.pumpAndSettle();
+    await t.enterText(find.byKey(const ValueKey('field:rate1.name')), '');
+    await t.enterText(find.byKey(const ValueKey('field:rate2.commission')), '150');
+    await t.enterText(find.byKey(const ValueKey('field:product0.qty')), '');
+    await t.pump();
+    await t.tap(find.text('Save'));
+    await t.pumpAndSettle();
+    await _shot(t, 'detail_edit_errors_1366x1000');
+  });
   for (final edit in const [false, true]) {
     final name = 'detail_norates_${edit ? 'edit' : 'view'}_1366x768';
     shotTest(name, (t) async {

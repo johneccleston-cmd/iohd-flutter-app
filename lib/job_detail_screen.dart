@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderOffstage;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData, FilteringTextInputFormatter, LogicalKeyboardKey;
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
@@ -21,11 +22,11 @@ import 'utils/charge_presets.dart';
 import 'utils/line_item_math.dart';
 import 'utils/status_colors.dart';
 import 'widgets/app_dialog.dart';
-import 'widgets/app_ribbon.dart' show AppRibbon;
 import 'widgets/quo_activity_panel.dart';
 import 'widgets/stripe_mark.dart';
 import 'widgets/dashboard_data.dart' show DashClock;
 import 'widgets/dashboard_kit.dart';
+import 'widgets/catalog_search_field.dart' show CatalogSearchRoom;
 import 'widgets/dashboard_panels.dart' show DashPressable, DashSegmented;
 import 'widgets/file_viewer.dart';
 import 'widgets/flat_page.dart' show BannerMenuItem, PageBanner, PageSheet;
@@ -112,6 +113,11 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   List<LineDraft>? _editSfLines; // Service Fusion's lines as they were when editing started, so the draft holds still
   List<int>? _editSfAmounts;
   final _itemsKey = GlobalKey(debugLabel: 'line items');
+
+  /// The Products & Services block's inside, and each of its tables, for its outline ([_TableOutlinePainter]).
+  final _itemsOutlineKey = GlobalKey(debugLabel: 'line items outline');
+  final _tableKeys = <String, GlobalKey>{};
+  GlobalKey _tableKeyFor(String id) => _tableKeys.putIfAbsent(id, () => GlobalKey(debugLabel: 'table $id'));
   String? _busy; // an option action in flight
   LineItemsApi get _api => LineItemsApi(widget.jobId);
 
@@ -373,9 +379,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _banner(),
-          // The loading bar floats over the top of the body, so the blocks start right under the ribbon.
+          // The loading bar floats over the top of the body, so the blocks start right under the ribbon. Nothing on the
+          // page shades under the pointer (USER RULE 2026-11-24, as on the Details screens): see [_noHoverShading].
           Expanded(
-            child: Stack(
+            child: Theme(
+              data: _noHoverShading(Theme.of(context)),
+              child: Stack(
               children: [
                 Positioned.fill(child: job == null ? _bodyWithoutJob() : _content(job)),
                 if (_loading)
@@ -387,9 +396,30 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                   ),
               ],
             ),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  /// The app's theme with nothing shading under the pointer (USER RULE 2026-11-24: "there should be no hover shading on
+  /// the job or estimate screens ... it's pointless to shade here"): ink wells, and the text, filled, outlined and icon
+  /// buttons, keep their press and keyboard-focus feedback but no hover tint. The pointer cursor says what can be clicked.
+  static ThemeData _noHoverShading(ThemeData t) {
+    final overlay = WidgetStateProperty.resolveWith<Color?>((s) {
+      if (s.contains(WidgetState.pressed)) return DashUi.ink.withValues(alpha: 0.08);
+      if (s.contains(WidgetState.focused)) return DashUi.ink.withValues(alpha: 0.08);
+      return Colors.transparent;
+    });
+    ButtonStyle quiet(ButtonStyle? s) => (s ?? const ButtonStyle()).copyWith(overlayColor: overlay);
+    return t.copyWith(
+      hoverColor: Colors.transparent,
+      textButtonTheme: TextButtonThemeData(style: quiet(t.textButtonTheme.style)),
+      filledButtonTheme: FilledButtonThemeData(style: quiet(t.filledButtonTheme.style)),
+      outlinedButtonTheme: OutlinedButtonThemeData(style: quiet(t.outlinedButtonTheme.style)),
+      elevatedButtonTheme: ElevatedButtonThemeData(style: quiet(t.elevatedButtonTheme.style)),
+      iconButtonTheme: IconButtonThemeData(style: quiet(t.iconButtonTheme.style)),
     );
   }
 
@@ -400,26 +430,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return router != null && router.routerDelegate.currentConfiguration.uri.path.startsWith('/estimates/');
   }
 
-  /// The standard ribbon: "JOB # 123" with the Jobs (or Estimates) menu icon, the matching record, and Refresh.
+  /// The standard ribbon: "JOB # 123" with the Jobs (or Estimates) menu icon and Refresh. The matching record is a
+  /// link in the Summary block, right above PO # (user 2026-11-24).
   Widget _banner() {
     final estimate = _estimatePage;
-    // The match's label shortens on narrower windows so the title keeps its room.
-    final w = MediaQuery.sizeOf(context).width;
-    final matchLabel = w < AppRibbon.compactWidth
-        ? '#$_matchId'
-        : w < 1100
-        ? '${estimate ? 'Job' : 'Estimate'} #$_matchId'
-        : (estimate ? 'Became job #$_matchId' : 'Matching estimate #$_matchId');
     return PageBanner(
       title: '${estimate ? 'Estimate' : 'Job'} # ${widget.jobId}',
       icon: accessIcon(estimate ? 'estimates' : 'jobs'),
       actions: [
-        if (_matchId != null)
-          PageBanner.button(
-            icon: estimate ? Icons.build_rounded : Icons.request_quote_rounded,
-            label: matchLabel,
-            onPressed: () => _openRecord(_matchId!, estimate: !estimate),
-          ),
         // Opens the line items for a preview edit (job_detail_items.dart). Same switch as before: Jobs/Estimates Update.
         if (_job != null && _canEditLines)
           PageBanner.button(
@@ -517,6 +535,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _isEstimate ? 'Description' : 'Job description',
         _s('description').isEmpty ? null : _factText(_s('description')),
       ),
+      // Only when there is one: an estimate's job, or a job's estimate. Opens it like the other blue links.
+      if (_matchId != null)
+        _factRow(
+          _isEstimate ? Icons.build_rounded : Icons.request_quote_rounded,
+          _isEstimate ? 'Became job' : 'Matching estimate',
+          _factLink('#$_matchId', () => _openRecord(_matchId!, estimate: !_isEstimate), tip: _isEstimate ? 'Open the job' : 'Open the estimate'),
+        ),
       _factRow(
         Icons.edit_note_rounded,
         'PO #',
@@ -654,8 +679,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         return ListView(
-          // The page edge on the sides only: no padding above the first block or below the last (user, 2026-11-13).
-          padding: const EdgeInsets.symmetric(horizontal: PageSheet.edge),
+          // No outer margin at all: the blocks, and their grey title ribbons, run to the same left and right edges as the
+          // navy job ribbon above them (user 2026-11-24: "make the gray section ribbon extend edge-to-edge"). The space
+          // for the content is inside each block (its 20 px side padding).
+          padding: EdgeInsets.zero,
           children: [
             if (_error != null)
               Container(
@@ -693,6 +720,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                               children: [detailsPanel, const SizedBox(height: _gap), notesCard],
                             ),
                           ),
+                          // The gutter between the sections stays (user 2026-11-24): only the outer margin went.
                           const SizedBox(width: _gap),
                           Expanded(child: infoPanel),
                         ],
@@ -706,6 +734,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                     ],
                     const SizedBox(height: _gap),
                     _isEstimate ? _proposalPanel() : _jobItemsPanel(),
+                    // While "Add a line" has the keyboard there is page under it, so its results open in full (they
+                    // were cut to about three rows when it sat at the window's bottom: audit 2026-11-24). Nothing
+                    // while it doesn't.
+                    const CatalogSearchRoom(),
                   ],
                 );
               },
@@ -1048,23 +1080,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     // The same edge-to-edge blocks as the page itself.
     return LayoutBuilder(
       builder: (context, c) => SkeletonPulse(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: PageSheet.edge),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              c.maxWidth - PageSheet.edge * 2 >= 900
-                  ? Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: card(rows: 8)),
-                        const SizedBox(width: _gap),
-                        Expanded(child: card(rows: 8)),
-                      ],
-                    )
-                  : card(),
-            ],
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            c.maxWidth >= 900
+                ? Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(child: card(rows: 8)),
+                      const SizedBox(width: _gap),
+                      Expanded(child: card(rows: 8)),
+                    ],
+                  )
+                : card(),
+          ],
         ),
       ),
     );
@@ -1100,9 +1129,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final still = MediaQuery.disableAnimationsOf(context);
     Widget tabBar({bool compact = false}) =>
         _DetailTabs(tabs: tabs, selected: selected, compact: compact, label: '$heading view', onSelect: onSelect);
+    // The same grey band as Products & Services (user 2026-11-24: "make the job info and details banners the same gray
+    // ribbon too"): the title in 15 px capitals on DashUi.faint, tabs flush right.
     final title = Text(
-      heading,
-      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.2),
+      heading.toUpperCase(),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.9, height: 1.2),
     );
     return Container(
       decoration: _blockFill,
@@ -1113,8 +1146,16 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           LayoutBuilder(
             builder: (context, c) {
               final inline = c.maxWidth >= 640;
-              return Padding(
-                padding: EdgeInsets.fromLTRB(20, 14, inline ? 14 : 20, 14),
+              // Edge to edge across the block (user 2026-11-24: "make the header extend the full block"), square, with a
+              // hairline under it.
+              return Container(
+                constraints: const BoxConstraints(minHeight: 48),
+                alignment: Alignment.centerLeft,
+                padding: EdgeInsets.symmetric(horizontal: 20, vertical: inline ? 4 : 10),
+                decoration: const BoxDecoration(
+                  color: DashUi.faint,
+                  border: Border(bottom: BorderSide(color: DashUi.line)),
+                ),
                 child: inline
                     ? Row(
                         children: [
@@ -1139,7 +1180,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               );
             },
           ),
-          const Divider(height: 1, color: DashUi.line),
           AnimatedSwitcher(
             duration: still ? Duration.zero : const Duration(milliseconds: 220),
             switchInCurve: Curves.easeOutCubic,
@@ -1967,7 +2007,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final total = rows.length;
     final done = _ourTasks.where((t) => t['isCompleted'] == true).length + sfTasks.where((t) => t['is_completed'] == true).length;
     final all = total > 0 && done == total;
-    final still = MediaQuery.disableAnimationsOf(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1987,21 +2026,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             ),
           )
         else ...[
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 14, 20, 4),
-            child: TweenAnimationBuilder<double>(
-              tween: Tween(end: done / total),
-              duration: still ? Duration.zero : const Duration(milliseconds: 520),
-              curve: Curves.easeOutCubic,
-              builder: (context, v, _) => Semantics(
-                label: '$done of $total tasks done',
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(4),
-                  child: LinearProgressIndicator(value: v, minHeight: 6, color: DashUi.emerald, backgroundColor: DashUi.faint),
-                ),
-              ),
-            ),
-          ),
+          // No progress bar (user 2026-11-24: it read as an empty bar): the strip's "x of y done" says it.
+          const SizedBox(height: 4),
           for (var i = 0; i < rows.length; i++) ...[
             if (i > 0) const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
             _RiseIn(key: rows[i].key, index: i, child: rows[i]),
@@ -2070,6 +2096,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           if (collapsible) ...[
             const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
             InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
               onTap: () => setState(() => _notesExpanded = !_notesExpanded),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
@@ -2778,6 +2805,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             excludeSemantics: true,
             onTap: hasDetails ? () => setState(() => _invoiceOpen[key] = !open) : null,
             child: InkWell(
+              mouseCursor: WidgetStateMouseCursor.clickable,
               onTap: hasDetails ? () => setState(() => _invoiceOpen[key] = !open) : null,
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 9, 12, 9),
@@ -2973,6 +3001,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         ),
         if (collapsible)
           InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: () => setState(() => _visitsExpanded = !_visitsExpanded),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
@@ -3680,7 +3709,8 @@ class _TaskCheck extends StatelessWidget {
   }
 }
 
-/// A row that tints itself softly while the pointer is over it.
+/// A row that knows when the pointer is over it (its builder may darken a label or icon). No shading (USER RULE
+/// 2026-11-24: no hover shading on the job and estimate pages).
 class _HoverRow extends StatefulWidget {
   final Widget Function(bool hover) builder;
   const _HoverRow({super.key, required this.builder});
@@ -3698,7 +3728,7 @@ class _HoverRowState extends State<_HoverRow> {
     onExit: (_) => setState(() => _hover = false),
     child: AnimatedContainer(
       duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 150),
-      color: DashUi.faint.withValues(alpha: _hover ? 0.7 : 0),
+      color: Colors.transparent,
       child: widget.builder(_hover),
     ),
   );
@@ -3737,6 +3767,7 @@ class _DetailLinkState extends State<_DetailLink> {
       message: widget.tip ?? '',
       waitDuration: const Duration(milliseconds: 600),
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         onTap: widget.onTap,
         onHover: (v) => setState(() => _lit = v),
         onFocusChange: (v) => setState(() => _lit = v),
@@ -3856,13 +3887,10 @@ class _DetailTabsState extends State<_DetailTabs> {
       child: Semantics(
         container: true,
         label: widget.label,
+        // The track: one quiet step darker than the grey ribbon it sits on, with no outline (2026-11-24 polish).
         child: Container(
-          padding: const EdgeInsets.all(4),
-          decoration: BoxDecoration(
-            color: DashUi.faint,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: DashUi.line),
-          ),
+          padding: const EdgeInsets.all(3),
+          decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(10)),
           child: Stack(
             key: _stack,
             children: [
@@ -3874,14 +3902,16 @@ class _DetailTabsState extends State<_DetailTabs> {
                   top: pill.top,
                   width: pill.width,
                   height: pill.height,
+                  // The open tab: white, a hairline edge and a soft two-layer lift (a tight contact shadow plus a wide
+                  // faint one), corners concentric with the track's.
                   child: DecoratedBox(
                     decoration: BoxDecoration(
                       color: Colors.white,
-                      borderRadius: BorderRadius.circular(9),
-                      border: Border.all(color: DashUi.line),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: DashUi.ink.withValues(alpha: 0.06)),
                       boxShadow: [
-                        BoxShadow(color: DashUi.ink.withValues(alpha: 0.08), blurRadius: 8, offset: const Offset(0, 2)),
-                        BoxShadow(color: DashUi.ink.withValues(alpha: 0.04), blurRadius: 1, offset: const Offset(0, 1)),
+                        BoxShadow(color: DashUi.ink.withValues(alpha: 0.10), blurRadius: 2, offset: const Offset(0, 1)),
+                        BoxShadow(color: DashUi.ink.withValues(alpha: 0.06), blurRadius: 8, offset: const Offset(0, 2)),
                       ],
                     ),
                   ),
@@ -3921,15 +3951,17 @@ class _DetailTabsState extends State<_DetailTabs> {
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onTap: () => widget.onSelect(i),
+            // A fixed 32 px tab (a comfortable target that leaves the track even air in the 48 px ribbon). No hover
+            // wash: nothing on this page shades under the pointer (USER RULE 2026-11-24); the label and icon darken.
             child: AnimatedContainer(
               duration: d,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+              height: 32,
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                // Until the pill is measured (first frame) the open tab draws its own; a hovered one gets a faint wash.
-                color: on && drawPill
-                    ? Colors.white
-                    : (!on && _hover == i ? Colors.white.withValues(alpha: 0.55) : Colors.white.withValues(alpha: 0)),
-                borderRadius: BorderRadius.circular(9),
+                // Until the pill is measured (first frame) the open tab draws its own.
+                color: on && drawPill ? Colors.white : Colors.white.withValues(alpha: 0),
+                borderRadius: BorderRadius.circular(7),
                 border: Border.all(color: _focus == i ? DashUi.ink.withValues(alpha: 0.55) : Colors.transparent, width: 1.5),
               ),
               child: Row(
@@ -3941,32 +3973,49 @@ class _DetailTabsState extends State<_DetailTabs> {
                     duration: still ? Duration.zero : const Duration(milliseconds: 380),
                     curve: Curves.elasticOut,
                     builder: (context, k, child) => Transform.scale(scale: k, child: child),
-                    child: Icon(t.icon, size: 17, color: color),
+                    child: Icon(t.icon, size: 16, color: color),
                   ),
                   if (!widget.compact || on) ...[
-                    const SizedBox(width: 7),
+                    const SizedBox(width: 6),
                     AnimatedDefaultTextStyle(
                       duration: d,
-                      style: DefaultTextStyle.of(context).style
-                          .merge(TextStyle(fontSize: 13, fontWeight: on ? FontWeight.w700 : FontWeight.w600, color: color, letterSpacing: -0.1)),
+                      style: DefaultTextStyle.of(context).style.merge(
+                        TextStyle(
+                          fontSize: 13,
+                          fontWeight: on ? FontWeight.w700 : FontWeight.w600,
+                          color: color,
+                          letterSpacing: -0.1,
+                          height: 1.2,
+                          leadingDistribution: TextLeadingDistribution.even,
+                        ),
+                      ),
                       child: Text(t.label),
                     ),
                   ],
                   if (t.count > 0) ...[
-                    const SizedBox(width: 7),
+                    const SizedBox(width: 6),
+                    // The count: a small 18 px capsule, ink on the open tab, a soft grey a step darker than the track
+                    // on the others.
                     AnimatedContainer(
                       duration: d,
-                      constraints: const BoxConstraints(minWidth: 20),
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                      decoration: BoxDecoration(color: on ? DashUi.ink : DashUi.line, borderRadius: BorderRadius.circular(999)),
+                      height: 18,
+                      constraints: const BoxConstraints(minWidth: 18),
+                      padding: const EdgeInsets.symmetric(horizontal: 5),
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: on ? DashUi.ink : DashUi.ink.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
                       child: Text(
-                        '${t.count}',
+                        t.count > 999 ? '999+' : '${t.count}',
                         textAlign: TextAlign.center,
                         style: DefaultTextStyle.of(context).style.merge(
                           TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: on ? Colors.white : DashUi.slate,
+                            height: 1,
+                            leadingDistribution: TextLeadingDistribution.even,
                             fontFeatures: const [FontFeature.tabularFigures()],
                           ),
                         ),
@@ -4128,6 +4177,7 @@ class _PicTileState extends State<_PicTile> {
                             color: DashUi.ink.withValues(alpha: _hover ? 0.78 : 0.5),
                             shape: const CircleBorder(),
                             child: InkWell(
+                              mouseCursor: WidgetStateMouseCursor.clickable,
                               customBorder: const CircleBorder(),
                               onTap: widget.onRemove,
                               child: const Padding(
@@ -4217,11 +4267,12 @@ class _DocRowState extends State<_DocRow> {
         builder: (context, c) {
           final narrow = c.maxWidth < 560;
           return InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             onTap: widget.onOpen,
             hoverColor: Colors.transparent,
             child: AnimatedContainer(
               duration: d,
-              color: DashUi.faint.withValues(alpha: _hover ? 0.7 : 0),
+              color: Colors.transparent,
               padding: const EdgeInsets.fromLTRB(20, 12, 12, 12),
               child: Row(
                 children: [

@@ -166,7 +166,9 @@ void main() {
   testWidgets('the Job # column: every kind of link says how it was tied', (t) async {
     await _run(t, _mock(), () async {
       expect(find.text('Job #'), findsOneWidget);
-      expect(find.byTooltip('Open job 1099563432.'), findsOneWidget); // a payment records it: nothing to explain
+      // A payment records it: nothing to explain, so no hover text that would only repeat the job number.
+      expect(find.byTooltip('Open job 1099563432.'), findsNothing);
+      expect(find.text('1099563432'), findsWidgets);
       expect(find.byTooltip("Open job 1096000001. Matched on the customer and the invoice's total, not recorded in Service Fusion."), findsOneWidget);
       expect(find.byTooltip('Open job 1096000002. Matched on the customer and PO number, not recorded in Service Fusion.'), findsOneWidget);
       expect(find.byTooltip('No payment, total or PO number ties this invoice to one job.'), findsOneWidget);

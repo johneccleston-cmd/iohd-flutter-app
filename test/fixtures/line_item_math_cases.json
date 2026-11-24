@@ -113,6 +113,46 @@
         { "kind": "item", "quantity": 1, "rate": 50, "cost": 20, "taxable": false }
       ],
       "expect": { "itemsCents": 5000, "discountCents": 0, "taxableCents": 0, "taxCents": 0, "totalCents": 5000, "costCents": 4000, "profitCents": 1000, "marginPct": 20, "unpricedLines": 1, "missingCostLines": 0, "zeroUnconfirmedLines": 1 }
+    },
+    {
+      "name": "Rounding rule (2026-11-23): half away from zero. A return's fourth-decimal quantity: -0.0625 x $10 = -$0.63 (the server said -$0.62)",
+      "taxRate": null,
+      "items": [
+        { "kind": "item", "quantity": -0.0625, "rate": 10, "cost": null, "taxable": false }
+      ],
+      "expect": { "itemsCents": -63, "discountCents": 0, "taxableCents": 0, "taxCents": 0, "totalCents": -63, "costCents": 0, "profitCents": null, "marginPct": null, "unpricedLines": 0, "missingCostLines": 1, "zeroUnconfirmedLines": 0 }
+    },
+    {
+      "name": "Rounding rule: the same quantity positive, 0.0625 x $10 = $0.63",
+      "taxRate": null,
+      "items": [
+        { "kind": "item", "quantity": 0.0625, "rate": 10, "cost": null, "taxable": false }
+      ],
+      "expect": { "itemsCents": 63, "discountCents": 0, "taxableCents": 0, "taxCents": 0, "totalCents": 63, "costCents": 0, "profitCents": null, "marginPct": null, "unpricedLines": 0, "missingCostLines": 1, "zeroUnconfirmedLines": 0 }
+    },
+    {
+      "name": "Rounding rule: a half-cent credit rate and cost go away from zero (-$1.125 -> -$1.13, -$0.125 -> -$0.13); a negative taxed amount taxes nothing",
+      "taxRate": 10,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": -1.125, "cost": -0.125, "taxable": true }
+      ],
+      "expect": { "itemsCents": -113, "discountCents": 0, "taxableCents": 0, "taxCents": 0, "totalCents": -113, "costCents": -13, "profitCents": -100, "marginPct": null, "unpricedLines": 0, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
+    },
+    {
+      "name": "Rounding rule: the same half cents positive ($1.125 -> $1.13, $0.125 -> $0.13), and a half-cent tax rounds up ($1.13 x 10% = 11.3c -> 11c)",
+      "taxRate": 10,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 1.125, "cost": 0.125, "taxable": true }
+      ],
+      "expect": { "itemsCents": 113, "discountCents": 0, "taxableCents": 113, "taxCents": 11, "totalCents": 124, "costCents": 13, "profitCents": 100, "marginPct": 88.5, "unpricedLines": 0, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
+    },
+    {
+      "name": "Rounding rule: a tax of exactly half a cent goes up ($1.05 x 10% = 10.5c -> 11c)",
+      "taxRate": 10,
+      "items": [
+        { "kind": "item", "quantity": 1, "rate": 1.05, "cost": 0, "taxable": true }
+      ],
+      "expect": { "itemsCents": 105, "discountCents": 0, "taxableCents": 105, "taxCents": 11, "totalCents": 116, "costCents": 0, "profitCents": 105, "marginPct": 100, "unpricedLines": 0, "missingCostLines": 0, "zeroUnconfirmedLines": 0 }
     }
   ]
 }

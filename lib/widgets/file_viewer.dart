@@ -471,7 +471,7 @@ class _FileViewerState extends State<_FileViewer> with SingleTickerProviderState
             decoration: BoxDecoration(
               gradient: RadialGradient(
                 radius: 0.9,
-                colors: [Color.lerp(DashUi.ink, DashUi.slate, 0.35)!, DashUi.ink],
+                colors: [Color.lerp(DashUi.navy, DashUi.slate, 0.35)!, DashUi.navy],
               ),
             ),
             child: GestureDetector(

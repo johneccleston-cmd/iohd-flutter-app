@@ -9,6 +9,7 @@ import 'utils/catalog_quality.dart';
 import 'widgets/app_dialog.dart';
 import 'widgets/catalog_kit.dart';
 import 'widgets/dashboard_kit.dart';
+import 'theme/app_theme.dart';
 
 /// Managing the Product Catalog (Phase 3, 2026-11-16): the server calls the Categories, Cleanup and History views and
 /// the list's bulk actions make, and the dialogs that change several products at once.
@@ -233,6 +234,7 @@ class _BulkDialogState extends State<_BulkDialog> {
         label: isNew ? 'Create the category $name' : '$name, $count',
         excludeSemantics: true,
         child: InkWell(
+          mouseCursor: WidgetStateMouseCursor.clickable,
           key: ValueKey(isNew ? 'bulk-new-category' : 'bulk-category:$name'),
           borderRadius: BorderRadius.circular(8),
           onTap: () => setState(() {
@@ -412,6 +414,7 @@ class _BulkDialogState extends State<_BulkDialog> {
         if (big) ...[
           const SizedBox(height: 10),
           InkWell(
+            mouseCursor: WidgetStateMouseCursor.clickable,
             key: const ValueKey('bulk-tick'),
             borderRadius: BorderRadius.circular(8),
             onTap: _busy ? null : () => setState(() => _ticked = !_ticked),
@@ -637,7 +640,8 @@ class _FormDialogState extends State<_FormDialog> {
             TextField(
               key: const ValueKey('catalog-form-description'),
               controller: _desc,
-              maxLines: 3,
+              minLines: 3,
+              maxLines: null,
               maxLength: 600,
               style: const TextStyle(fontSize: 14.5, color: DashUi.ink),
               decoration: appFieldDecoration().copyWith(counterText: ''),
@@ -737,7 +741,7 @@ class CategoryLookalikeNotice extends StatelessWidget {
                   style: TextButton.styleFrom(
                     foregroundColor: DashUi.ink,
                     padding: const EdgeInsets.symmetric(horizontal: 10),
-                    textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                    textStyle: const TextStyle(fontFamily: AppTheme.fontFamily, fontFamilyFallback: AppTheme.fontFamilyFallback, fontSize: 13, fontWeight: FontWeight.w700),
                   ),
                   child: Text('Use "$a"${counts[a] == null ? '' : ' (${catalogPlural(counts[a]!, 'product')})'}'),
                 ),
@@ -835,6 +839,7 @@ class _CategoryPickerDialogState extends State<_CategoryPickerDialog> {
       label: isNew ? 'Create the category $name' : (count == null ? label : '$label, $count'),
       excludeSemantics: true,
       child: InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
         key: ValueKey(isNew ? 'pick-new-category' : (none ? 'pick-no-category' : 'pick-category:$name')),
         borderRadius: BorderRadius.circular(8),
         onTap: () => _pick(name, isNew: isNew),

@@ -397,7 +397,7 @@ void main() {
   testWidgets('a per-job price, no member price and no cost read as such, never as \$0.00, and no margin is made up', (t) async {
     const door = ProductRecord(id: 263, name: 'Clopay Architectural Series | Aluminum Full-View | 904 | Complete Door', unitPrice: 0, memberPrice: 0, avgUnitCost: 6841.79);
     await _pump(t, ProductDetailScreen(productId: 263, loader: (_) async => _page(product: door, stock: 0)));
-    expect(find.text('Priced per job'), findsOneWidget);
+    expect(find.text('No price'), findsOneWidget);
     expect(find.text('Not set'), findsOneWidget); // member price
     expect(find.text('\$0.00'), findsNothing);
     expect(find.text('Margin'), findsNothing);
@@ -414,8 +414,8 @@ void main() {
       sent = f;
       return door;
     }));
-    expect(find.widgetWithText(TextField, '0.00'), findsNothing); // the price box is empty, with "Priced per job" as its hint
-    expect(find.text('Priced per job'), findsOneWidget);
+    expect(find.widgetWithText(TextField, '0.00'), findsNothing); // the price box is empty, with "No price" as its hint
+    expect(find.text('No price'), findsOneWidget);
     await _pickCategory(t, 'Overhead Door');
     await t.tap(find.text('Save'));
     await t.pumpAndSettle();
@@ -614,5 +614,70 @@ void main() {
     await t.tap(find.text('Edit'));
     await t.pumpAndSettle();
     await shot('product_edit');
+  });
+
+  // P&S round 2 finalization B6 (2026-11-23): the server refuses to delete a product that is still in use; the page
+  // explains why and offers to make it inactive instead, which keeps its history.
+  testWidgets('deleting a product in use: the page says why and offers Make inactive, which saves it inactive', (t) async {
+    final sent = <Map<String, dynamic>>[];
+    var deletes = 0;
+    await _pump(
+      t,
+      ProductDetailScreen(
+        productId: 1,
+        loader: (_) async => _page(),
+        deleter: (id) async {
+          deletes++;
+          throw const LineItemsException(
+            "Bearing RC | Steel | 1\" can't be deleted: it is on 2 saved estimate or job lines and has a stock row. Deleting it would break that history. Make it inactive instead: it leaves the pickers and keeps its history.",
+            status: 409,
+            code: 'IN_USE',
+          );
+        },
+        saver: (id, f, at, {confirmDuplicate = false}) async {
+          sent.add(f);
+          return const ProductRecord(id: 1, name: 'Bearing RC | Steel | 1"', category: 'Bearing - RC', partNumber: '0140950', unitPrice: 2.66, isActive: false, updatedAt: '2026-11-23T15:00:00.000Z');
+        },
+      ),
+    );
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete product'));
+    await t.pumpAndSettle();
+    expect(deletes, 1);
+    expect(find.text('This product is still in use'), findsOneWidget);
+    expect(find.textContaining('on 2 saved estimate or job lines and has a stock row'), findsOneWidget);
+    await t.tap(find.text('Make inactive'));
+    await t.pumpAndSettle();
+    expect(sent.single, {'isActive': false}, reason: 'only the status changes');
+    expect(find.textContaining('is inactive now'), findsOneWidget);
+  });
+
+  testWidgets('deleting a product in use: Keep it changes nothing', (t) async {
+    final sent = <Map<String, dynamic>>[];
+    await _pump(
+      t,
+      ProductDetailScreen(
+        productId: 1,
+        loader: (_) async => _page(),
+        deleter: (id) async => throw const LineItemsException('In use.', status: 409, code: 'IN_USE'),
+        saver: (id, f, at, {confirmDuplicate = false}) async {
+          sent.add(f);
+          return _bearing;
+        },
+      ),
+    );
+    await t.tap(find.text('More'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Delete product'));
+    await t.pumpAndSettle();
+    await t.tap(find.text('Keep it'));
+    await t.pumpAndSettle();
+    expect(sent, isEmpty);
+    expect(find.text('This product is still in use'), findsNothing);
   });
 }

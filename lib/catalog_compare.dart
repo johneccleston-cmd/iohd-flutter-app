@@ -128,7 +128,7 @@ class _CompareDialogState extends State<_CompareDialog> {
       _Line('part', 'Part #', of((e) => e.sku.isEmpty ? 'None' : e.sku)),
       _Line('category', 'Category', of((e) => e.category.isEmpty ? 'No category' : e.category)),
       _Line('status', 'Status', of((e) => e.active ? 'Active' : 'Inactive')),
-      _Line('price', 'Price', of((e) => e.rate == null ? 'Per job' : dashMoney(e.rate!))),
+      _Line('price', 'Price', of((e) => e.rate == null ? 'No price' : dashMoney(e.rate!))),
       _Line('member', 'Member price', of((e) => _money(e.memberPrice))),
       if (widget.canSeeCost) ...[
         _Line('cost', 'Cost', of((e) => _money(e.cost))),

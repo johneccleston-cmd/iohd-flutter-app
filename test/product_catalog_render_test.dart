@@ -106,7 +106,7 @@ void main() {
     expect(find.text('UNIT COST'), findsOneWidget); // small-caps headers, as Products & Services has them
     expect(find.text('MARGIN'), findsNothing); // no margin column
     expect(find.text('IN STOCK'), findsNothing); // stock lives on the Stock Levels screen
-    expect(find.text('Per job'), findsOneWidget); // the GD5S door has no list price
+    expect(find.text('No price'), findsOneWidget); // the GD5S door has no list price
     await _shot(t, 'product_catalog_1366');
   });
 
@@ -169,17 +169,19 @@ void main() {
 
   testWidgets('sidebar filters stack: several categories, then status', (t) async {
     await _pump(t, _screen());
-    for (final g in ['Filters', 'Part number', 'Status', 'Needs attention']) {
+    for (final g in ['Filters', 'Part number', 'Needs attention']) {
       expect(find.text(g), findsOneWidget, reason: g);
     }
+    // Status is the Active / Inactive / All tabs by the search now (decision A6, 2026-11-23), not a sidebar group.
+    expect(find.text('Status'), findsNothing);
+    expect(find.byKey(const ValueKey('status:active')), findsOneWidget);
     for (final g in ['Inventory', 'Stock', 'Not in inventory', 'In stock']) {
       expect(find.text(g), findsNothing, reason: '$g: stock lives on the Stock Levels screen');
     }
     expect(find.text('Product name'), findsNothing); // the top search already covers names
-    // Part number sits above Status, and Category and Needs attention start closed.
-    expect(t.getTopLeft(find.text('Part number')).dy, lessThan(t.getTopLeft(find.text('Status')).dy));
+    // Category and Needs attention start closed.
     expect(find.text('Torsion Spring - RC'), findsWidgets); // the table's cells...
-    expect(find.text('Per-job price'), findsNothing);
+    expect(find.text('No price'), findsNothing);
     await t.tap(find.text('Category').first); // the group starts closed
     await t.pumpAndSettle();
     expect(find.text('Category'), findsWidgets); // the sidebar group and the table's column
@@ -191,11 +193,11 @@ void main() {
     await t.pumpAndSettle();
     expect(find.text('2 matching'), findsOneWidget); // two categories add up
     expect(find.text('Clopay Gallery Steel | GD5S | Complete Door'), findsOneWidget);
-    await t.tap(find.text('Inactive'));
+    await t.tap(find.byKey(const ValueKey('status:all'))); // the All tab: no status filter, the remote joins
     await t.pumpAndSettle();
-    expect(find.text('3 matching'), findsOneWidget); // Active and Inactive both on = no status filter: the remote joins
+    expect(find.text('3 matching'), findsOneWidget);
     expect(find.text('Old Opener Remote'), findsOneWidget);
-    expect(find.text('Inactive'), findsNWidgets(2)); // the filter row and the row's own tag
+    expect(find.text('Inactive'), findsNWidgets(2)); // the Inactive tab and the row's own tag
     await _shot(t, 'product_catalog_filters');
     await t.tap(find.text('Clear all'));
     await t.pumpAndSettle();
