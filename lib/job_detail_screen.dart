@@ -1216,9 +1216,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                 child: inline
                     ? Row(
                         children: [
-                          Flexible(child: title),
+                          // Expanded, not Flexible + Spacer: those two split the free space evenly, so on a wide
+                          // block the tabs sat about halfway across instead of flush right.
+                          Expanded(child: title),
                           const SizedBox(width: 16),
-                          const Spacer(),
                           tabBar(),
                         ],
                       )
