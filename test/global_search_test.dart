@@ -176,17 +176,18 @@ void main() {
     expect(router.state.uri.toString(), '/invoices?q=48213');
   });
 
-  _test('a purchase order opens its list narrowed to it, found by number or vendor', (t, api) async {
+  // Since 2026-11-25 a PO has a page of its own, so it opens there, like a job or customer.
+  _test('a purchase order opens its own page, found by number or vendor', (t, api) async {
     final router = await pumpNav(t, _wide);
     await _type(t, 'smith');
     expect(find.text('Purchase Orders'), findsOneWidget);
     expect(find.textContaining('PO-2026-1003'), findsNothing);
     await _pick(t, find.textContaining('PO-2026-1002'));
-    expect(router.state.uri.toString(), '/inventory/purchase-orders?q=PO-2026-1002');
+    expect(router.state.uri.toString(), '/inventory/purchase-orders/2');
 
     await _type(t, 'PO-2026-1003');
     await _enter(t);
-    expect(router.state.uri.toString(), '/inventory/purchase-orders?q=PO-2026-1003');
+    expect(router.state.uri.toString(), '/inventory/purchase-orders/3');
   });
 
   _test('a vendor is listed once, with its order count, and opens its orders', (t, api) async {

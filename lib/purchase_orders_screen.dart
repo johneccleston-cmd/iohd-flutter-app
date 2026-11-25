@@ -1,50 +1,22 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import 'config/access.dart';
-import 'config/api_config.dart';
 import 'config/auth_session.dart';
+import 'purchase_order_detail_screen.dart';
+import 'purchase_orders_api.dart';
+import 'widgets/app_ribbon.dart';
 import 'widgets/dashboard_kit.dart';
 import 'widgets/flat_page.dart';
 
-const _statuses = ['Open', 'Received', 'Canceled'];
-const _monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-
-String _isoDate(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-String _niceDate(DateTime? d) => d == null ? '' : '${_monthNames[d.month - 1]} ${d.day}, ${d.year}';
-
-class _PurchaseOrder {
-  final int id;
-  final String poNumber, vendor, status, notes;
-  final DateTime? orderDate, expectedDate, receivedDate;
-  final double total;
-
-  _PurchaseOrder(Map<String, dynamic> j)
-    : id = (j['id'] as num).toInt(),
-      poNumber = '${j['poNumber'] ?? ''}',
-      vendor = '${j['vendor'] ?? ''}',
-      status = '${j['status'] ?? ''}',
-      notes = '${j['notes'] ?? ''}',
-      orderDate = DateTime.tryParse('${j['orderDate'] ?? ''}'),
-      expectedDate = DateTime.tryParse('${j['expectedDate'] ?? ''}'),
-      receivedDate = DateTime.tryParse('${j['receivedDate'] ?? ''}'),
-      total = (j['total'] as num?)?.toDouble() ?? 0;
-
-  bool get isOpen => status == 'Open';
-
-  /// Still open and the expected date is before today.
-  bool get isPastDue {
-    final e = expectedDate;
-    if (!isOpen || e == null) return false;
-    final now = DateTime.now();
-    return e.isBefore(DateTime(now.year, now.month, now.day));
-  }
-}
-
+/// Every purchase order, built like Invoices and Payments: what is on order up top, then search, status filters and a
+/// sortable table. A row opens the PO's own page (`/inventory/purchase-orders/<id>`), where it is edited and received.
+/// The whole list comes in one request (POs are few), so search, filters, sorting and paging all happen here.
 class PurchaseOrdersScreen extends StatefulWidget {
-  /// A search to start with (the nav bar search sends `?q=` with a PO number or vendor).
+  /// A search to start with (the nav bar search sends `?q=` with a vendor's name).
   final String? initialQuery;
 
   const PurchaseOrdersScreen({super.key, this.initialQuery});
@@ -53,24 +25,48 @@ class PurchaseOrdersScreen extends StatefulWidget {
   State<PurchaseOrdersScreen> createState() => _PurchaseOrdersScreenState();
 }
 
-class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
-  List<_PurchaseOrder> _orders = [];
-  bool _loading = true;
-  String? _error;
+class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> with SingleTickerProviderStateMixin {
+  static const _filters = [
+    ('all', 'All'),
+    ('draft', 'Draft'),
+    ('open', 'Open'),
+    ('late', 'Past due'),
+    ('received', 'Received'),
+    ('canceled', 'Canceled'),
+  ];
+  static const _flex = [3, 4, 3, 2, 3, 4, 3, 3]; // the columns, also what the first-load skeleton is shaped like
+  static const _tableWidth = 1000.0; // below this the rows stack
+
+  final _searchController = TextEditingController();
+  final _scroll = ScrollController();
+  final _activity = RibbonActivity();
+  late final _rowsIn = AnimationController(vsync: this, duration: const Duration(milliseconds: 460), value: 1);
+  final _count = NumberFormat.decimalPattern();
+  Timer? _slowTimer;
   int _requestId = 0;
 
-  late final _searchController = TextEditingController(text: _query);
-  late String _query = (widget.initialQuery ?? '').trim();
-  String? _status; // null = all
+  List<PurchaseOrder> _orders = const [];
+  bool _loading = true;
+  bool _loaded = false; // a list has arrived at least once (an empty one too)
+  bool _slow = false;
+  String? _error; // nothing to show: takes the place of the table
+  String? _stale; // a reload failed: said above the rows it could not replace
+  bool _forbidden = false;
+
+  String _status = 'all';
+  String _sort = 'ordered';
+  bool _ascending = false;
+  int _page = 1;
+  int _pageSize = 50;
 
   final _session = AuthSession.instance;
   bool get _canCreate => _session.can('purchase_orders', AccessAction.create);
-  bool get _canUpdate => _session.can('purchase_orders', AccessAction.update);
-  bool get _canDelete => _session.can('purchase_orders', AccessAction.delete);
 
   @override
   void initState() {
     super.initState();
+    _searchController.text = (widget.initialQuery ?? '').trim();
+    PoApi.changes.addListener(_onChanged);
     _load();
   }
 
@@ -79,462 +75,566 @@ class _PurchaseOrdersScreenState extends State<PurchaseOrdersScreen> {
     super.didUpdateWidget(old);
     final q = (widget.initialQuery ?? '').trim();
     if (q.isEmpty || q == (old.initialQuery ?? '').trim()) return;
-    _query = q;
-    _searchController.text = q;
-    _status = null; // the order asked for may not be in the filter left on
+    setState(() {
+      _searchController.text = q;
+      _status = 'all'; // the order asked for may not be in the filter left on
+      _page = 1;
+    });
   }
 
   @override
   void dispose() {
+    PoApi.changes.removeListener(_onChanged);
+    _slowTimer?.cancel();
     _searchController.dispose();
+    _scroll.dispose();
+    _rowsIn.dispose();
+    _activity.dispose();
     super.dispose();
   }
 
-  /// One API call. Returns the decoded body; throws an Exception with a message fit to show the person.
-  Future<Map<String, dynamic>> _send(String method, String path, [Map<String, dynamic>? body]) async {
-    final req = http.Request(method, Uri.parse('$kApiBaseUrl/api$path'))..headers.addAll(_session.headers());
-    if (body != null) req.body = json.encode(body);
-    final res = await http.Response.fromStream(await req.send().timeout(const Duration(seconds: 30)));
-    if (res.statusCode == 401) {
-      _session.logout();
-      throw Exception('Your session expired. Sign in again.');
-    }
-    Map<String, dynamic> data = {};
-    try {
-      data = json.decode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>;
-    } catch (_) {}
-    if (res.statusCode >= 400) throw Exception(data['error'] ?? 'Server error (${res.statusCode})');
-    return data;
+  /// A PO was saved or deleted on its own page: this list, still open underneath, catches up.
+  void _onChanged() {
+    if (mounted) _load();
   }
 
   Future<void> _load() async {
     final id = ++_requestId;
+    _slowTimer?.cancel();
+    if (!_loaded) {
+      _slowTimer = Timer(const Duration(seconds: 8), () {
+        if (mounted && _loading) setState(() => _slow = true);
+      });
+    } else {
+      _activity.setRefreshing(true);
+    }
     setState(() {
       _loading = true;
-      _error = null;
+      _slow = false;
+      _forbidden = false;
     });
     try {
-      final data = await _send('GET', '/purchase-orders');
+      final result = await PoApi.list();
       if (!mounted || id != _requestId) return;
+      final first = !_loaded;
       setState(() {
-        _orders = [for (final j in (data['purchaseOrders'] as List? ?? const [])) _PurchaseOrder(j as Map<String, dynamic>)];
+        _orders = result.orders;
+        _loaded = true;
         _loading = false;
+        _error = null;
+        _stale = null;
       });
-    } catch (e) {
+      _slowTimer?.cancel();
+      _activity.setRefreshing(false);
+      if (!first) {
+        _activity.landed();
+        return;
+      }
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _rowsIn.value = 1;
+      } else {
+        _rowsIn.forward(from: 0);
+      }
+    } on PoApiError catch (e) {
       if (!mounted || id != _requestId) return;
+      _slowTimer?.cancel();
+      _activity.setRefreshing(false);
+      if (e.status == 401) return; // signed out: the router takes over
       setState(() {
-        _error = e.toString().replaceFirst('Exception: ', '');
         _loading = false;
+        _slow = false;
+        _forbidden = e.forbidden;
+        if (_loaded && _orders.isNotEmpty && !e.forbidden) {
+          _stale = e.message;
+        } else {
+          _error = e.message;
+        }
       });
     }
   }
 
-  List<_PurchaseOrder> get _shown {
-    final q = _query.trim().toLowerCase();
+  // ---- what is shown -------------------------------------------------------------------------------------------
+
+  DateTime get _today => poToday();
+
+  bool _inFilter(PurchaseOrder po, String filter) => switch (filter) {
+    'draft' => po.isDraft,
+    'open' => po.isOpen,
+    'late' => po.stage(_today) == PoStage.late,
+    'received' => po.isReceived,
+    'canceled' => po.isCanceled,
+    _ => true,
+  };
+
+  String get _query => _searchController.text.trim().toLowerCase();
+
+  List<PurchaseOrder> get _matching {
+    final q = _query;
+    final words = q.split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
     return [
       for (final po in _orders)
-        if ((_status == null || po.status == _status) && (q.isEmpty || '${po.poNumber} ${po.vendor}'.toLowerCase().contains(q))) po,
+        if (words.every(po.searchText.contains)) po,
     ];
   }
 
-  List<String> get _vendors => ({for (final po in _orders) po.vendor}..remove('')).toList()..sort();
-
-  Color _statusColor(String status) => switch (status) {
-    'Open' => DashUi.amber,
-    'Received' => DashUi.emeraldDeep,
-    _ => DashUi.muted,
-  };
-
-  Future<void> _edit(_PurchaseOrder? existing) async {
-    final message = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _PoEditor(
-        po: existing,
-        vendors: _vendors,
-        canSave: existing == null ? _canCreate : _canUpdate,
-        canDelete: existing != null && _canDelete,
-        onSave: (body) async {
-          try {
-            if (existing == null) {
-              await _send('POST', '/purchase-orders', body);
-            } else {
-              await _send('PUT', '/purchase-orders/${existing.id}', body);
-            }
-            return null;
-          } catch (e) {
-            return e.toString().replaceFirst('Exception: ', '');
-          }
-        },
-        onDelete: () async {
-          try {
-            await _send('DELETE', '/purchase-orders/${existing!.id}');
-            return null;
-          } catch (e) {
-            return e.toString().replaceFirst('Exception: ', '');
-          }
-        },
-      ),
-    );
-    if (message == null || !mounted) return;
-    await _load();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  List<PurchaseOrder> get _shown {
+    final list = [
+      for (final po in _matching)
+        if (_inFilter(po, _status)) po,
+    ];
+    int by(PurchaseOrder a, PurchaseOrder b) => switch (_sort) {
+      'po' => a.poNumber.toLowerCase().compareTo(b.poNumber.toLowerCase()),
+      'vendor' => a.vendor.toLowerCase().compareTo(b.vendor.toLowerCase()),
+      'expected' => _dateOrder(a.expectedDate, b.expectedDate),
+      'total' => a.total.compareTo(b.total),
+      _ => _dateOrder(a.orderDate, b.orderDate),
+    };
+    list.sort((a, b) {
+      final c = by(a, b);
+      // Ties keep the newest first, whichever way the column runs.
+      return c != 0 ? (_ascending ? c : -c) : b.id.compareTo(a.id);
+    });
+    // A PO with no expected date goes last however expected is sorted.
+    if (_sort == 'expected') list.sort((a, b) => (a.expectedDate == null ? 1 : 0) - (b.expectedDate == null ? 1 : 0));
+    return list;
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.white,
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          PageBanner(
-            title: 'Purchase Orders',
-            icon: accessIcon('purchase_orders'),
-            actions: [
-              if (_canCreate) PageBanner.button(icon: Icons.add_rounded, label: 'Create PO', onPressed: _loading ? null : () => _edit(null)),
-              PageBanner.refresh(onPressed: _loading ? null : _load),
-            ],
-          ),
-          Expanded(child: PageSheet(child: _body())),
-        ],
-      ),
-    );
+  static int _dateOrder(DateTime? a, DateTime? b) {
+    if (a == null && b == null) return 0;
+    if (a == null) return -1;
+    if (b == null) return 1;
+    return a.compareTo(b);
   }
 
-  Widget _body() {
-    if (_loading && _orders.isEmpty) return const Center(child: CircularProgressIndicator());
-    if (_error != null && _orders.isEmpty) {
-      return Center(child: DashErrorPanel(title: "Couldn't load purchase orders", message: _error!, onRetry: _load));
-    }
-    if (_orders.isEmpty) {
-      return const Center(
-        child: FlatEmpty(
-          icon: Icons.shopping_cart_checkout_rounded,
-          title: 'No purchase orders yet',
-          message: 'Create the first PO to start tracking what is on order from vendors.',
-        ),
-      );
-    }
-
-    final open = [for (final po in _orders) if (po.isOpen) po];
-    final openValue = open.fold<double>(0, (a, po) => a + po.total);
-    final pastDue = open.where((po) => po.isPastDue).length;
-    final cutoff = DateTime.now().subtract(const Duration(days: 30));
-    final receivedValue = _orders
-        .where((po) => po.status == 'Received' && (po.receivedDate ?? po.orderDate ?? DateTime(2000)).isAfter(cutoff))
-        .fold<double>(0, (a, po) => a + po.total);
-    final shown = _shown;
-
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          FlatStats(
-            stats: [
-              FlatStat('Open Orders', '${open.length}', tone: DashUi.amber),
-              FlatStat('Open Value', dashMoney(openValue)),
-              FlatStat('Past Due', '$pastDue', tone: pastDue == 0 ? DashUi.emeraldDeep : DashUi.red),
-              FlatStat('Received (30d)', dashMoney(receivedValue)),
-            ],
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-            child: Wrap(
-              spacing: 12,
-              runSpacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                SizedBox(
-                  width: 340,
-                  child: TextField(
-                    controller: _searchController,
-                    style: const TextStyle(fontSize: 14),
-                    decoration: flatSearchDecoration('Search PO number or vendor...'),
-                    onChanged: (v) => setState(() => _query = v),
-                  ),
-                ),
-                for (final s in [null, ..._statuses])
-                  ChoiceChip(label: Text(s ?? 'All'), selected: _status == s, onSelected: (_) => setState(() => _status = s)),
-              ],
-            ),
-          ),
-          if (shown.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 48),
-              child: FlatEmpty(icon: Icons.search_off_rounded, title: 'No purchase orders found', message: 'Try a different search or status filter.'),
-            )
-          else
-            FlatTable(
-              columns: const [
-                FlatCol('PO Number', flex: 3),
-                FlatCol('Vendor', flex: 4),
-                FlatCol('Ordered', flex: 3),
-                FlatCol('Expected', flex: 3),
-                FlatCol('Total', flex: 3, right: true),
-                FlatCol('Status', flex: 3),
-              ],
-              onRowTap: (i) => _edit(shown[i]),
-              rows: [
-                for (final po in shown)
-                  [
-                    Text(po.poNumber, style: flatCellBold),
-                    Text(po.vendor, style: flatCellStyle),
-                    Text(_niceDate(po.orderDate), style: flatCellMuted),
-                    Text(
-                      po.expectedDate == null ? '—' : _niceDate(po.expectedDate),
-                      style: po.isPastDue ? flatCellStyle.copyWith(color: DashUi.red, fontWeight: FontWeight.w700) : flatCellMuted,
-                    ),
-                    Text(dashMoney(po.total), style: flatCellStyle.copyWith(fontFeatures: flatFigures)),
-                    FlatStatus(po.isPastDue ? 'Past due' : po.status, po.isPastDue ? DashUi.red : _statusColor(po.status)),
-                  ],
-              ],
-            ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─── editor dialog ──────────────────────────────────────────────────────────
-
-class _PoEditor extends StatefulWidget {
-  final _PurchaseOrder? po; // null = new
-  final List<String> vendors;
-  final bool canSave;
-  final bool canDelete;
-
-  /// Each returns an error message, or null when it worked.
-  final Future<String?> Function(Map<String, dynamic> body) onSave;
-  final Future<String?> Function() onDelete;
-
-  const _PoEditor({required this.po, required this.vendors, required this.canSave, required this.canDelete, required this.onSave, required this.onDelete});
-
-  @override
-  State<_PoEditor> createState() => _PoEditorState();
-}
-
-class _PoEditorState extends State<_PoEditor> {
-  late final _number = TextEditingController(text: widget.po?.poNumber ?? '');
-  late final _vendor = TextEditingController(text: widget.po?.vendor ?? '');
-  late final _total = TextEditingController(text: widget.po == null ? '' : widget.po!.total.toStringAsFixed(2));
-  late final _notes = TextEditingController(text: widget.po?.notes ?? '');
-  late String _status = widget.po?.status.isNotEmpty == true ? widget.po!.status : 'Open';
-  late DateTime _ordered = widget.po?.orderDate ?? DateTime.now();
-  late DateTime? _expected = widget.po?.expectedDate;
-  late DateTime? _received = widget.po?.receivedDate;
-
-  bool _busy = false;
-  String? _error;
-
-  bool get _readOnly => !widget.canSave;
-
-  @override
-  void dispose() {
-    for (final c in [_number, _vendor, _total, _notes]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  Future<void> _save() async {
-    final total = double.tryParse(_total.text.replaceAll(RegExp(r'[\$,\s]'), ''));
-    if (_vendor.text.trim().isEmpty) {
-      setState(() => _error = 'Enter the vendor.');
-      return;
-    }
-    if (total == null || total < 0) {
-      setState(() => _error = 'Enter the PO total as a number, like 1250.00.');
-      return;
-    }
+  void _setStatus(String status) {
+    if (_status == status) return;
     setState(() {
-      _busy = true;
-      _error = null;
+      _status = status;
+      _page = 1;
     });
-    final err = await widget.onSave({
-      'poNumber': _number.text,
-      'vendor': _vendor.text,
-      'total': total,
-      'status': _status,
-      'orderDate': _isoDate(_ordered),
-      'expectedDate': _expected == null ? '' : _isoDate(_expected!),
-      'receivedDate': _status == 'Received' ? _isoDate(_received ?? DateTime.now()) : '',
-      'notes': _notes.text,
+    _replayRows();
+  }
+
+  void _setSort(String key) {
+    setState(() {
+      // Names read A to Z first; dates and money newest or biggest first, except expected, soonest first.
+      _ascending = _sort == key ? !_ascending : const {'po', 'vendor', 'expected'}.contains(key);
+      _sort = key;
+      _page = 1;
     });
-    if (!mounted) return;
-    if (err == null) {
-      Navigator.of(context).pop(widget.po == null ? 'PO created.' : 'PO saved.');
+  }
+
+  void _onSearch(String _) => setState(() => _page = 1);
+
+  void _clearSearch() {
+    _searchController.clear();
+    setState(() => _page = 1);
+  }
+
+  void _replayRows() {
+    if (_scroll.hasClients) _scroll.jumpTo(0);
+    if (!MediaQuery.disableAnimationsOf(context)) _rowsIn.forward(from: 0);
+  }
+
+  void _open(PurchaseOrder po) => _go('/inventory/purchase-orders/${po.id}', () => PurchaseOrderDetailScreen(orderId: po.id));
+
+  void _new() => _go('/inventory/purchase-orders/new', () => const PurchaseOrderDetailScreen());
+
+  /// In the app the router moves; on its own (a test) the page is pushed.
+  void _go(String location, Widget Function() page) {
+    final router = GoRouter.maybeOf(context);
+    if (router != null) {
+      router.go(location);
     } else {
-      setState(() {
-        _busy = false;
-        _error = err;
-      });
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page()));
     }
   }
 
-  Future<void> _delete() async {
-    final sure = await showDialog<bool>(
-      context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('Delete this PO?'),
-        content: Text('${widget.po!.poNumber} will be removed. This can\'t be undone.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(c).pop(false), child: const Text('Cancel')),
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: DashUi.red),
-            onPressed: () => Navigator.of(c).pop(true),
-            child: const Text('Delete'),
+  // ---- cells ---------------------------------------------------------------------------------------------------
+
+  Widget _dateCell(DateTime? d, {TextStyle style = flatCellMuted}) =>
+      d == null ? const Text('—', style: flatCellMuted) : Text(poDate.format(d), style: style, maxLines: 1, softWrap: false);
+
+  /// The expected date, and for an order still on its way how far off it is: "In 3 days", or red "5 days late".
+  Widget _expectedCell(PurchaseOrder po) {
+    final e = po.expectedDate;
+    if (e == null) return const Text('—', style: flatCellMuted);
+    if (!po.isOpen) return _dateCell(e);
+    final late = po.daysLate(_today)!;
+    final tone = late > 0 ? DashUi.redText : (late >= -2 ? DashUi.amberText : DashUi.slate);
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: poShortDate.format(e), style: flatCellStyle),
+          TextSpan(text: '  ·  ', style: flatCellMuted.copyWith(color: DashUi.muted)),
+          TextSpan(
+            text: poDueText(late),
+            style: flatCellStyle.copyWith(color: tone, fontWeight: late > 0 || late >= -2 ? FontWeight.w700 : FontWeight.w500),
           ),
         ],
       ),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
     );
-    if (sure != true || !mounted) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final err = await widget.onDelete();
-    if (!mounted) return;
-    if (err == null) {
-      Navigator.of(context).pop('PO deleted.');
-    } else {
-      setState(() {
-        _busy = false;
-        _error = err;
-      });
+  }
+
+  Widget _vendorCell(PurchaseOrder po) =>
+      OverflowTooltip(message: po.vendor, child: Text(po.vendor, style: flatCellStyle, maxLines: 1, overflow: TextOverflow.ellipsis));
+
+  Widget _jobCell(PurchaseOrder po) {
+    final job = po.jobNumber.trim();
+    if (job.isEmpty) return const Text('—', style: flatCellMuted);
+    return FlatLink(job, tip: 'Open job $job', onTap: () => context.go('/jobs/${Uri.encodeComponent(job)}'));
+  }
+
+  /// "3 items", and while they arrive "4 of 10 in".
+  Widget _itemsCell(PurchaseOrder po) {
+    if (po.lines.isEmpty) return const Text('—', style: flatCellMuted);
+    final n = po.lines.length;
+    final text = n == 1 ? '1 item' : '$n items';
+    if (!po.isOpen || !po.anyReceived) return Text(text, style: flatCellStyle, maxLines: 1, softWrap: false);
+    return Tooltip(
+      message: '${poQty(po.unitsReceived)} of ${poQty(po.unitsOrdered)} units received',
+      child: Text(text, style: flatCellStyle, maxLines: 1, softWrap: false),
+    );
+  }
+
+  Widget _totalCell(PurchaseOrder po) => FittedBox(
+    fit: BoxFit.scaleDown,
+    alignment: Alignment.centerRight,
+    child: Text(
+      dashMoney(po.total),
+      maxLines: 1,
+      softWrap: false,
+      style: (po.isCanceled ? flatCellMuted : flatCellBold).copyWith(
+        fontFeatures: flatFigures,
+        decoration: po.isCanceled ? TextDecoration.lineThrough : null,
+        decorationColor: DashUi.muted,
+      ),
+    ),
+  );
+
+  Widget _statusCell(PurchaseOrder po) {
+    final stage = po.stage(_today);
+    final status = FlatStatus(stage.label, stage.tone);
+    if (stage == PoStage.partial || (stage == PoStage.late && po.anyReceived)) {
+      return Tooltip(message: '${poQty(po.unitsReceived)} of ${poQty(po.unitsOrdered)} units received', child: status);
     }
+    return status;
   }
 
-  Future<DateTime?> _pick(DateTime initial) {
-    final now = DateTime.now();
-    return showDatePicker(context: context, initialDate: initial, firstDate: DateTime(now.year - 5), lastDate: DateTime(now.year + 5));
-  }
+  List<FlatCol> get _columns => [
+    FlatCol('PO #', flex: _flex[0], sortKey: 'po'),
+    FlatCol('Vendor', flex: _flex[1], sortKey: 'vendor'),
+    FlatCol('Job #', flex: _flex[2]),
+    FlatCol('Items', flex: _flex[3]),
+    FlatCol('Ordered', flex: _flex[4], sortKey: 'ordered'),
+    FlatCol('Expected', flex: _flex[5], sortKey: 'expected'),
+    FlatCol('Total', flex: _flex[6], right: true, sortKey: 'total'),
+    FlatCol('Status', flex: _flex[7]),
+  ];
 
-  Widget _dateField(String label, DateTime? value, ValueChanged<DateTime?> onPicked, {bool clearable = false}) {
+  List<Widget> _cells(PurchaseOrder po) => [
+    Text(po.poNumber, style: flatCellBold, maxLines: 1, overflow: TextOverflow.ellipsis),
+    _vendorCell(po),
+    _jobCell(po),
+    _itemsCell(po),
+    _dateCell(po.orderDate, style: flatCellStyle),
+    _expectedCell(po),
+    _totalCell(po),
+    FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft, child: _statusCell(po)),
+  ];
+
+  /// A row too narrow for the columns: who and how much first, then where it stands, then the rest.
+  Widget _compactRow(PurchaseOrder po, int index) {
+    final e = po.expectedDate;
     return InkWell(
       mouseCursor: WidgetStateMouseCursor.clickable,
-      onTap: _readOnly
-          ? null
-          : () async {
-              final d = await _pick(value ?? DateTime.now());
-              if (d != null) onPicked(d);
-            },
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          border: const OutlineInputBorder(),
-          isDense: true,
-          suffixIcon: clearable && value != null && !_readOnly
-              ? IconButton(tooltip: 'Clear', icon: const Icon(Icons.close_rounded, size: 18), onPressed: () => onPicked(null))
-              : const Icon(Icons.calendar_today_rounded, size: 18),
+      onTap: () => _open(po),
+      hoverColor: DashUi.rowHover,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+        decoration: BoxDecoration(
+          color: index.isOdd ? DashUi.rowStripe : null,
+          border: const Border(top: BorderSide(color: DashUi.rowRule)),
         ),
-        child: Text(value == null ? 'Not set' : _niceDate(value)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Text(po.vendor, style: flatCellBold, maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                const SizedBox(width: 12),
+                Expanded(flex: 2, child: Align(alignment: Alignment.centerRight, child: _totalCell(po))),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    [po.poNumber, if (po.orderDate != null) poDate.format(po.orderDate!)].join('  ·  '),
+                    style: flatCellMuted,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                _statusCell(po),
+              ],
+            ),
+            if (e != null || po.jobNumber.isNotEmpty || po.lines.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 16,
+                runSpacing: 2,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  if (e != null)
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('Expected ', style: flatCellMuted),
+                        Flexible(child: _expectedCell(po)),
+                      ],
+                    ),
+                  if (po.jobNumber.isNotEmpty) Row(mainAxisSize: MainAxisSize.min, children: [const Text('Job ', style: flatCellMuted), _jobCell(po)]),
+                  if (po.lines.isNotEmpty) _itemsCell(po),
+                ],
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    const gap = SizedBox(height: 14);
-    return AlertDialog(
-      title: Text(widget.po == null ? 'New purchase order' : (_readOnly ? 'Purchase order' : 'Edit purchase order')),
-      content: SizedBox(
-        width: 520,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+  // ---- the page ------------------------------------------------------------------------------------------------
+
+  Widget _statStrip(bool compact) {
+    if (!_loaded) {
+      return const FlatStats(
+        stats: [FlatStat('On order', '—'), FlatStat('Past due', '—'), FlatStat('Due this week', '—'), FlatStat('Received (30 days)', '—')],
+      );
+    }
+    final today = _today;
+    final open = [for (final po in _orders) if (po.isOpen) po];
+    final late = [for (final po in open) if ((po.daysLate(today) ?? 0) > 0) po];
+    final week = [
+      for (final po in open)
+        if (po.daysLate(today) case final d? when d <= 0 && d >= -7) po,
+    ];
+    // Calendar days, not 30 x 24 hours: across a daylight-saving change that lands an hour into the day and drops it.
+    final cutoff = DateTime(today.year, today.month, today.day - 30);
+    final received = [
+      for (final po in _orders)
+        if (po.isReceived && !(po.receivedDate ?? po.orderDate ?? DateTime(2000)).isBefore(cutoff)) po,
+    ];
+    double sum(List<PurchaseOrder> l) => l.fold(0, (s, po) => s + po.total);
+    String label(String what, int n) => '$what (${_count.format(n)})';
+    return FlatStats(
+      stats: [
+        FlatStat.counted(label('On order', open.length), sum(open), dashMoney),
+        FlatStat.counted(label('Past due', late.length), sum(late), dashMoney, tone: late.isEmpty ? null : DashUi.red),
+        FlatStat.counted(label(compact ? 'This week' : 'Due this week', week.length), sum(week), dashMoney),
+        // No count here: "Received (30 days) (2)" reads badly. Invoices' "Invoiced (30 days)" has none either.
+        FlatStat.counted(compact ? 'Received, 30 days' : 'Received (30 days)', sum(received), dashMoney),
+      ],
+    );
+  }
+
+  Widget _toolbar(List<PurchaseOrder> shown) {
+    final matching = _matching;
+    final narrowed = _query.isNotEmpty || _status != 'all';
+    final countLabel = narrowed
+        ? '${_count.format(shown.length)} matching'
+        : (shown.length == 1 ? '1 purchase order' : '${_count.format(shown.length)} purchase orders');
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
+      child: Wrap(
+        spacing: 16,
+        runSpacing: 12,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 340),
+            child: TextField(
+              controller: _searchController,
+              onChanged: _onSearch,
+              textInputAction: TextInputAction.search,
+              style: const TextStyle(fontSize: 14),
+              decoration: flatSearchDecoration(
+                'Search PO #, vendor, job # or part...',
+                onClear: _searchController.text.isEmpty ? null : _clearSearch,
+              ),
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
-              TextField(
-                controller: _number,
-                readOnly: _readOnly,
-                decoration: InputDecoration(
-                  labelText: 'PO number',
-                  helperText: widget.po == null ? 'Leave blank to number it automatically' : null,
-                  border: const OutlineInputBorder(),
-                  isDense: true,
+              for (final (value, label) in _filters)
+                FlatFilterChip(
+                  label: label,
+                  selected: _status == value,
+                  count: _loaded && value != 'all' ? matching.where((po) => _inFilter(po, value)).length : null,
+                  onSelected: () => _setStatus(value),
                 ),
-              ),
-              gap,
-              TextField(
-                controller: _vendor,
-                readOnly: _readOnly,
-                decoration: InputDecoration(
-                  labelText: 'Vendor',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                  suffixIcon: _readOnly || widget.vendors.isEmpty
-                      ? null
-                      : PopupMenuButton<String>(
-                          tooltip: 'Pick a past vendor',
-                          icon: const Icon(Icons.arrow_drop_down_rounded),
-                          onSelected: (v) => setState(() => _vendor.text = v),
-                          itemBuilder: (_) => [for (final v in widget.vendors) PopupMenuItem(value: v, child: Text(v))],
-                        ),
-                ),
-              ),
-              gap,
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _total,
-                      readOnly: _readOnly,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(labelText: 'Total', prefixText: '\$ ', border: OutlineInputBorder(), isDense: true),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _status,
-                      isExpanded: true,
-                      decoration: const InputDecoration(labelText: 'Status', border: OutlineInputBorder(), isDense: true),
-                      items: [for (final s in _statuses) DropdownMenuItem(value: s, child: Text(s))],
-                      onChanged: _readOnly ? null : (v) => setState(() => _status = v ?? 'Open'),
-                    ),
-                  ),
-                ],
-              ),
-              gap,
-              Row(
-                children: [
-                  Expanded(child: _dateField('Ordered', _ordered, (d) => setState(() => _ordered = d ?? _ordered))),
-                  const SizedBox(width: 12),
-                  Expanded(child: _dateField('Expected', _expected, (d) => setState(() => _expected = d), clearable: true)),
-                ],
-              ),
-              if (_status == 'Received') ...[
-                gap,
-                _dateField('Received', _received ?? DateTime.now(), (d) => setState(() => _received = d)),
-              ],
-              gap,
-              TextField(
-                controller: _notes,
-                readOnly: _readOnly,
-                minLines: 2,
-                maxLines: 4,
-                decoration: const InputDecoration(labelText: 'Notes', border: OutlineInputBorder(), isDense: true),
-              ),
-              if (_error != null) ...[
-                gap,
-                Text(_error!, style: const TextStyle(color: DashUi.red, fontSize: 13.5)),
-              ],
             ],
+          ),
+          if (_error == null && shown.isNotEmpty) Semantics(liveRegion: true, child: Text(countLabel, style: flatCellMuted)),
+        ],
+      ),
+    );
+  }
+
+  Widget _errorState() => FlatEmpty(
+    icon: _forbidden ? Icons.lock_outline_rounded : Icons.cloud_off_rounded,
+    title: _forbidden ? 'No access to purchase orders' : "Purchase orders didn't load",
+    message: _error!,
+    action: _forbidden
+        ? null
+        : FilledButton.icon(
+            onPressed: _loading ? null : _load,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Try again'),
+          ),
+  );
+
+  Widget _emptyState() {
+    if (_orders.isEmpty) {
+      return FlatEmpty(
+        icon: Icons.shopping_cart_checkout_rounded,
+        title: 'No purchase orders yet',
+        message: 'Create a PO when you order parts from a vendor, and receive it here when they arrive.',
+        action: _canCreate
+            ? FilledButton.icon(onPressed: _new, icon: const Icon(Icons.add_rounded, size: 18), label: const Text('New purchase order'))
+            : null,
+      );
+    }
+    if (_query.isNotEmpty) {
+      return FlatEmpty(
+        icon: Icons.search_off_rounded,
+        title: 'No matching purchase orders',
+        message: 'Nothing matches "${_searchController.text.trim()}". Try a PO number, vendor, job number or part.',
+        action: OutlinedButton(onPressed: _clearSearch, child: const Text('Clear search')),
+      );
+    }
+    final label = _filters.firstWhere((f) => f.$1 == _status).$2.toLowerCase();
+    return FlatEmpty(
+      icon: Icons.filter_alt_off_outlined,
+      title: _status == 'late' ? 'Nothing is past due' : 'No $label purchase orders',
+      message: _status == 'late' ? 'Every open order is still within its expected date.' : 'There are no purchase orders with this status right now.',
+      action: OutlinedButton(onPressed: () => _setStatus('all'), child: const Text('Show all purchase orders')),
+    );
+  }
+
+  List<Widget> _content(bool compact, List<PurchaseOrder> page) {
+    if (_error != null) return [SliverToBoxAdapter(child: _errorState())];
+    if (!_loaded) {
+      return [SliverToBoxAdapter(child: FlatLoading(label: 'Loading purchase orders', flex: _flex, compact: compact, slow: _slow))];
+    }
+    if (page.isEmpty) return [SliverToBoxAdapter(child: _emptyState())];
+    final columns = _columns;
+    return [
+      if (!compact)
+        PinnedHeaderSliver(
+          child: FlatTableHeader(columns: columns, striped: true, sortKey: _sort, ascending: _ascending, onSort: _setSort),
+        ),
+      SliverAnimatedOpacity(
+        opacity: _loading ? 0.55 : 1,
+        duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 160),
+        sliver: SliverList.builder(
+          itemCount: page.length,
+          itemBuilder: (_, i) => flatRowEntrance(
+            _rowsIn,
+            i,
+            compact
+                ? _compactRow(page[i], i)
+                : FlatTableRow(columns: columns, cells: _cells(page[i]), index: i, striped: true, onTap: () => _open(page[i])),
           ),
         ),
       ),
-      actions: [
-        if (widget.canDelete) TextButton(onPressed: _busy ? null : _delete, child: const Text('Delete', style: TextStyle(color: DashUi.red))),
-        const Spacer(),
-        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: Text(_readOnly ? 'Close' : 'Cancel')),
-        if (!_readOnly)
-          FilledButton(
-            onPressed: _busy ? null : _save,
-            child: _busy ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Save'),
-          ),
-      ],
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final shown = _shown;
+    final totalPages = shown.isEmpty ? 1 : (shown.length / _pageSize).ceil();
+    final page = _page.clamp(1, totalPages);
+    final first = (page - 1) * _pageSize;
+    final rows = shown.skip(first).take(_pageSize).toList();
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: LayoutBuilder(
+        builder: (context, c) {
+          final compact = c.maxWidth < MediaQuery.textScalerOf(context).scale(_tableWidth);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PageBanner(
+                title: 'Purchase Orders',
+                icon: accessIcon('purchase_orders'),
+                activity: _activity,
+                actions: [
+                  if (_canCreate) PageBanner.button(icon: Icons.add_rounded, label: compact ? 'New' : 'New PO', onPressed: _new),
+                  PageBanner.refresh(onPressed: _loading ? null : _load),
+                ],
+              ),
+              Expanded(
+                child: PageSheet(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(
+                        child: CustomScrollView(
+                          controller: _scroll,
+                          slivers: [
+                            SliverToBoxAdapter(child: _statStrip(compact)),
+                            SliverToBoxAdapter(child: _toolbar(shown)),
+                            if (_stale != null)
+                              SliverToBoxAdapter(
+                                child: FlatStaleNotice(
+                                  message: '$_stale Showing the last loaded purchase orders.',
+                                  busy: _loading,
+                                  onRetry: _load,
+                                ),
+                              ),
+                            ..._content(compact, rows),
+                          ],
+                        ),
+                      ),
+                      if (_error == null && rows.isNotEmpty)
+                        FlatPager(
+                          page: page,
+                          totalPages: totalPages,
+                          total: shown.length,
+                          firstRow: first + 1,
+                          rowsShown: rows.length,
+                          pageSize: _pageSize,
+                          busy: _loading,
+                          compact: compact,
+                          onPage: (p) {
+                            setState(() => _page = p);
+                            _replayRows();
+                          },
+                          onPageSize: (s) => setState(() {
+                            _pageSize = s;
+                            _page = 1;
+                          }),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 }

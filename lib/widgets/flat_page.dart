@@ -263,14 +263,35 @@ class FlatFilterChip extends StatelessWidget {
   final bool selected;
   final VoidCallback onSelected;
   final String? tooltip;
-  const FlatFilterChip({super.key, required this.label, required this.selected, required this.onSelected, this.tooltip});
+
+  /// How many rows the filter holds, drawn quieter after the label ("Open 3"). Null: no count.
+  final int? count;
+  const FlatFilterChip({super.key, required this.label, required this.selected, required this.onSelected, this.tooltip, this.count});
 
   @override
   Widget build(BuildContext context) {
+    final count = this.count;
     // Not selectable text: the app-wide selection's I-beam would replace the click cursor.
     return SelectionContainer.disabled(
       child: ChoiceChip(
-        label: Text(label),
+        label: count == null
+            ? Text(label)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label),
+                  const SizedBox(width: 6),
+                  Text(
+                    NumberFormat.decimalPattern().format(count),
+                    style: TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      color: selected ? Colors.white.withValues(alpha: 0.78) : DashUi.slate,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
         tooltip: tooltip,
         selected: selected,
         showCheckmark: false,

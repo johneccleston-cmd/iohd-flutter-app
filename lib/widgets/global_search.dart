@@ -13,10 +13,10 @@ import '../theme/app_theme.dart';
 import 'dashboard_kit.dart';
 
 // The search in the top bar: as you type, a dropdown lists the customers, jobs, estimates, invoices, purchase orders and
-// vendors that match, and picking one opens it. It reads the same endpoints those screens use. Customers, jobs and
-// estimates have pages of their own; invoices and purchase orders have none, so they open their list narrowed to that
+// vendors that match, and picking one opens it. It reads the same endpoints those screens use. Customers, jobs,
+// estimates and purchase orders have pages of their own; invoices have none, so they open their list narrowed to that
 // one. There is no vendor table yet (the Vendors screen is sample data), so vendors are the names on real purchase
-// orders, and open those orders.
+// orders, and open the purchase order list narrowed to them.
 
 const int _minLength = 2;
 const int _perSection = 4;
@@ -126,7 +126,10 @@ SearchRow _orderRow(Map<String, dynamic> r) {
     title: number,
     subtitle: [_text(r['vendor']), if (total != null) dashMoney(total)].where((s) => s.isNotEmpty).join(' · '),
     status: _text(r['status']),
-    route: '${SearchKind.purchaseOrder.route}?q=${Uri.encodeQueryComponent(number)}',
+    // Its own page since 2026-11-25; the list narrowed to it when the row has no id (it always does from our server).
+    route: r['id'] is num
+        ? '${SearchKind.purchaseOrder.route}/${(r['id'] as num).toInt()}'
+        : '${SearchKind.purchaseOrder.route}?q=${Uri.encodeQueryComponent(number)}',
   );
 }
 

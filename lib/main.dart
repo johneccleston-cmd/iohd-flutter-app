@@ -16,6 +16,7 @@ import 'product_detail_screen.dart';
 import 'service_detail_screen.dart';
 import 'services_catalog_screen.dart';
 import 'tax_settings_screen.dart';
+import 'purchase_order_detail_screen.dart';
 import 'purchase_orders_screen.dart';
 import 'vendors_screen.dart';
 import 'jobs_screen.dart';
@@ -216,12 +217,13 @@ final GoRouter _router = GoRouter(
                   path: 'tax-discounts-fees',
                   builder: (context, state) => const TaxSettingsScreen(),
                 ),
-                // 🔥 UPDATED: Live Purchase Orders Screen
+                // Purchase orders: the list, and each PO's own page (/inventory/purchase-orders/<id>) and /new.
                 GoRoute(
                   path: 'purchase-orders',
                   builder: (context, state) => PurchaseOrdersScreen(
                     initialQuery: state.uri.queryParameters['q'],
                   ),
+                  routes: purchaseOrderRoutes(),
                 ),
                 // 🔥 UPDATED: Live Vendors Screen
                 GoRoute(
