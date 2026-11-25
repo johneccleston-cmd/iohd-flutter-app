@@ -4,8 +4,9 @@ part of 'job_detail_screen.dart';
 //
 // A record shows Service Fusion's own items, or the set kept in our tables when it has one (an estimate's options, a
 // job's items sent from an accepted option). Service Fusion's copy stays one click away for reference. Estimate
-// options are alternatives for the same job: each has its own lines and totals, one can be
-// marked recommended, one accepted (which locks it), and the accepted one is sent to the job once.
+// options are alternatives for the same job: each has its own lines and totals, one may come marked recommended (set
+// on the server: this page shows the star but has no action to set it), one accepted (which locks it), and the
+// accepted one is sent to the job once.
 //
 // The block, top to bottom: its title with the record's controls at the right; while editing, the preview strip; for an
 // estimate with options, a row of tabs on white (one per option: name, total, lines and margin, its marks; the open one
@@ -15,8 +16,9 @@ part of 'job_detail_screen.dart';
 // The lines are read-only until the ribbon's Edit Job / Edit Estimate. That opens a preview: the lines on show can be
 // changed and the totals follow, but nothing is saved, to our database or to Service Fusion. So the strip has no Save
 // (it only ever said saving isn't available, user 2026-11-13): it says what the preview is, and Exit preview (or leaving
-// the page) puts back what was there. Ctrl+S, from habit, gets the same answer in the strip. The option actions (new,
-// rename, recommend, notes, accept, send to job, delete) still save to our own database, never to Service Fusion.
+// the page) puts back what was there; with changes in it, both ask first. Ctrl+S, from habit, gets the same answer in
+// the strip. The option actions (new option, copy, rename, accept, undo acceptance, send to job, delete) still save to
+// our own database, never to Service Fusion.
 
 const _figures = [FontFeature.tabularFigures()];
 
@@ -27,8 +29,31 @@ const kEstimateOptionName = 'Estimate Option';
 /// Behind a neutral banner: the app's lightest fill.
 const _tileTint = AppTheme.subtleFillLight;
 
-/// How a sales tax reads in the totals: "Sales tax Rogers 10%", or "Sales tax 10.5%" when its name says nothing more.
-String _taxRowLabel(SalesTax t) => t.short.trim().toLowerCase() == 'sales tax' ? 'Sales tax ${SalesTax.rateText(t.rate)}%' : 'Sales tax ${t.label}';
+/// How a sales tax reads in the totals, before and after a preview change alike (audit 2026-11-24, item 71: the
+/// preview's rows read "Sales tax Sales Tax (Fayetteville) 9.75%"): "Sales tax Rogers 10%", or "Sales tax 10.5%" when
+/// its name says nothing more. [short] is the tax's short name ([SalesTax.short], [SalesTax.shortName]); a name that
+/// isn't one of the DFA's loses its "Sales Tax" ("Sales Tax (Fayetteville)" is Fayetteville). [rate] null: no rate shown.
+String _taxRowLabel(String short, double? rate) {
+  var place = short.trim();
+  final inParens = RegExp(r'^sales tax\s*\((.+)\)$', caseSensitive: false).firstMatch(place);
+  place = (inParens?.group(1) ?? place.replaceFirst(RegExp(r'^sales tax\b\s*[-:]?\s*', caseSensitive: false), '')).trim();
+  final pct = rate == null ? '' : ' ${SalesTax.rateText(rate)}%';
+  return place.isEmpty ? 'Sales tax$pct' : 'Sales tax $place$pct';
+}
+
+/// A sentence as the banners show it: ends with a full stop (the server's messages mostly do already).
+String _asSentence(String s) {
+  final t = s.trim();
+  return t.isEmpty || RegExp(r'[.!?]$').hasMatch(t) ? t : '$t.';
+}
+
+/// The page's failed loads of the line items, kept so a Retry or a Refresh doesn't swap Service Fusion's items for
+/// the skeleton while it tries again (audit item 70): the record and what went wrong. The state's own fields live in
+/// job_detail_screen.dart.
+final _linesFailed = Expando<(String, String)>('line items load failed');
+
+/// A Retry of the line items is out (its button shows a spinner; the items on show stay).
+final _linesRetrying = Expando<bool>('line items retrying');
 
 extension _JobItems on _JobDetailScreenState {
   /// The discount and fee presets (and out-of-state start) for Tax, discounts & fees.
@@ -233,12 +258,12 @@ extension _JobItems on _JobDetailScreenState {
         final t = byName[f.name];
         if (t == null) continue;
         charges += f.taxCents;
-        rows.add(LineSummaryRow(_taxRowLabel(t), f.taxCents, kind: SummaryKind.tax, tip: t == implied ? impliedTip : null));
+        rows.add(LineSummaryRow(_taxRowLabel(t.short, t.rate), f.taxCents, kind: SummaryKind.tax, tip: t == implied ? impliedTip : null));
       }
       if (unknown) rows.add(const LineSummaryRow('Sales tax (rate not known)', 0, kind: SummaryKind.tax));
     } else if (implied != null) {
       charges += impliedWas;
-      rows.add(LineSummaryRow(_taxRowLabel(implied), impliedWas, kind: SummaryKind.tax, tip: impliedTip));
+      rows.add(LineSummaryRow(_taxRowLabel(implied.short, implied.rate), impliedWas, kind: SummaryKind.tax, tip: impliedTip));
     }
     for (final c in _sfCharges) {
       final amount = cents(c['total']).abs();
@@ -247,7 +272,7 @@ extension _JobItems on _JobDetailScreenState {
       wasCharges += was;
       final name = _sfChargeName(c);
       // A percentage, not a quantity: "10%", "9.75%" (quantities always show two decimals; rates don't).
-      final pct = c['is_percentage'] == true && c['rate'] != null ? ' ${SalesTax.rateText(_JobDetailScreenState._n(c['rate']))}%' : '';
+      final pct = c['is_percentage'] == true && c['rate'] != null ? _JobDetailScreenState._n(c['rate']) : null;
       // A tax by what the record's lines say, not only by the word "tax" (sfChargeIsTax). Its discounts and fees are
       // lines ([_sfLines]), counted with the items above.
       final isTax = _isTaxCharge(c);
@@ -257,13 +282,9 @@ extension _JobItems on _JobDetailScreenState {
       charges += now;
       // A tax by its place, as the lines' Tax column names it ("Sales tax Springdale, Washington 10.5%"; user
       // 2026-11-24: it read only "Sales tax 10.5%").
-      // "Sales Tax (Fayetteville)" is Fayetteville: a name that isn't one of the DFA's (shortName) loses its "Sales Tax".
+      // The same label the preview's rows get (_taxRowLabel).
       final taxName = sfChargeTaxName(c, _sfItems).isNotEmpty ? sfChargeTaxName(c, _sfItems) : name;
-      var place = SalesTax.shortName(taxName);
-      final inParens = RegExp(r'^sales tax\s*\((.+)\)$', caseSensitive: false).firstMatch(place);
-      place = (inParens?.group(1) ?? place.replaceFirst(RegExp(r'^sales tax\b\s*[-:]?\s*', caseSensitive: false), '')).trim();
-      final taxLabel = place.isEmpty ? 'Sales tax$pct' : 'Sales tax $place$pct';
-      rows.add(LineSummaryRow(taxLabel, now, kind: SummaryKind.tax, tip: name));
+      rows.add(LineSummaryRow(_taxRowLabel(SalesTax.shortName(taxName), pct), now, kind: SummaryKind.tax, tip: name));
     }
     if (_job?['total_revenue'] != null) {
       final left = cents(_job!['total_revenue']) - wasItems - wasCharges - impliedWas;
@@ -356,7 +377,8 @@ extension _JobItems on _JobDetailScreenState {
           }
         }),
         emptyTitle: emptyTitle,
-        emptyMessage: _editing ? 'Search the catalog below to try a line.' : emptyMessage,
+        // The catalog search shows only on an editable table (the fallback after a failed load isn't one).
+        emptyMessage: _editing && _canEditLines ? 'Search the catalog below to try a line.' : emptyMessage,
         banner: banner,
       );
 
@@ -399,6 +421,36 @@ extension _JobItems on _JobDetailScreenState {
     if (changed) _say('Preview closed. The original products and services are back; nothing was changed.');
   }
 
+  /// The strip's Exit preview. With changes in the preview it asks first, as leaving the page does ([_confirmLeave]):
+  /// keep editing, or drop the changes (they can't be saved yet). With none it closes at once.
+  Future<void> _exitPreview() async {
+    if (!_editing) return;
+    if (_dirty.isEmpty) {
+      _stopEditing();
+      return;
+    }
+    final what = _isEstimate ? 'estimate' : 'job';
+    final drop = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: 'Exit the preview?',
+        icon: Icons.edit_note_rounded,
+        iconColor: DashUi.amber,
+        body: Text(
+          "You have changes to this $what's products and services. Editing is a preview for now and can't be saved yet, "
+          'so exiting drops them and puts back what was there.',
+          style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
+        ),
+        actions: [
+          Focus(autofocus: true, skipTraversal: true, child: AppButton.ghost('Keep editing', () => Navigator.pop(ctx, false))),
+          AppButton.ink('Discard changes', () => Navigator.pop(ctx, true), danger: true),
+        ],
+      ),
+    );
+    if (drop != true || !mounted) return;
+    _stopEditing();
+  }
+
   /// Ctrl+S in the table: there is nothing to save to yet, and the strip says so.
   void _previewSave() => _set(() => _saveAsked = true);
 
@@ -406,8 +458,16 @@ extension _JobItems on _JobDetailScreenState {
 
   /// While our line items load, a spinner. If they can't be loaded (the server is down, or older than this app),
   /// Service Fusion's own items still show, read-only, with what went wrong and a Retry: the page never loses them.
+  ///
+  /// A Retry, or a Refresh of the page, while they're on show keeps them on show (audit item 70: the skeleton used to
+  /// replace them while it tried again): [_linesFailed] remembers the failure until the lines come back.
   Widget _linesLoadingOrError() {
-    if (_linesError != null) {
+    final error = _linesError;
+    if (error != null) _linesFailed[this] = (widget.jobId, error);
+    final failed = _linesFailed[this];
+    final shown = error ?? (failed != null && failed.$1 == widget.jobId ? failed.$2 : null);
+    if (shown != null) {
+      final trying = error == null || _linesRetrying[this] == true;
       return _sfEditor(
         key: const ValueKey('sf-items-fallback'),
         emptyTitle: 'No products or services',
@@ -417,14 +477,74 @@ extension _JobItems on _JobDetailScreenState {
           child: _ItemsBanner(
             icon: Icons.cloud_off_rounded,
             tone: DashUi.amberText,
-            text:
-                'Showing Service Fusion\'s items. The products and services kept in this app couldn\'t be loaded ($_linesError), so editing is unavailable for now.',
-            actions: [TextButton.icon(onPressed: _loadLines, icon: const Icon(Icons.refresh_rounded, size: 16), label: const Text('Retry'))],
+            // The human message first, what went wrong after it as its own sentence (audit item 86: it was wrapped in
+            // parentheses, "couldn't be loaded (Server error (404).)").
+            text: trying
+                ? 'Showing Service Fusion\'s items. Trying again to load the products and services kept in this app...'
+                : 'Showing Service Fusion\'s items. The products and services kept in this app couldn\'t be loaded, so '
+                      'editing is unavailable for now. ${_asSentence(shown)}',
+            actions: [_retryLinesButton(busy: trying)],
           ),
         ),
       );
     }
     return const _LinesSkeleton();
+  }
+
+  /// Retry for the line items: ink, never the theme's brand red (audit item 89), with a neutral spinner while it runs.
+  Widget _retryLinesButton({required bool busy}) => TextButton.icon(
+    key: const ValueKey('lines-retry'),
+    onPressed: busy ? null : _retryLines,
+    icon: busy
+        ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate))
+        : const Icon(Icons.refresh_rounded, size: 16),
+    label: const Text('Retry', style: TextStyle(fontWeight: FontWeight.w600)),
+    style: TextButton.styleFrom(foregroundColor: DashUi.ink, disabledForegroundColor: DashUi.slate, minimumSize: const Size(0, 34))
+        .copyWith(overlayColor: dashNoHoverOverlay),
+  );
+
+  /// Loads the line items again without clearing what went wrong first, so whatever is on show (Service Fusion's items,
+  /// or the lines from the last good load) stays on show while it tries ([_loadLines] in job_detail_screen.dart clears
+  /// the error first, which brought the skeleton back).
+  Future<void> _retryLines() async {
+    if (_linesRetrying[this] == true) return;
+    _set(() => _linesRetrying[this] = true);
+    try {
+      final s = await _api.load();
+      _set(() {
+        _lines = s;
+        _linesError = null;
+        _linesFailed[this] = null;
+        _keepOptionInView();
+      });
+    } on LineItemsException catch (e) {
+      _set(() => _linesError = e.message);
+    } finally {
+      _linesRetrying[this] = null;
+      _set(() {});
+    }
+  }
+
+  /// Over the lines when a reload failed after a good load (audit item 69): the lines on show are the last ones loaded,
+  /// and the option actions work from them, so it says so and offers a Retry instead of hiding things without a word.
+  Widget? _staleLinesBanner() {
+    final error = _linesError;
+    if (_lines == null || error == null) return null;
+    final busy = _linesRetrying[this] == true;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+      child: _ItemsBanner(
+        key: const ValueKey('lines-stale'),
+        icon: Icons.cloud_off_rounded,
+        tone: DashUi.amberText,
+        text: busy
+            ? 'Trying again to load the products and services...'
+            : 'Couldn\'t refresh the products and services, so these are as they were last loaded. '
+                  '${_isEstimate ? 'Retry before changing an option: a change made from an old copy may be refused. ' : ''}'
+                  '${_asSentence(error)}',
+        actions: [_retryLinesButton(busy: busy)],
+      ),
+    );
   }
 
   Widget _jobItemsPanel() {
@@ -439,11 +559,23 @@ extension _JobItems on _JobDetailScreenState {
           onTap: () => _openRecord(set.sourceEstimateId!, estimate: true),
         ),
       if (loaded && set != null)
-        DashSegmented<bool>(
-          value: _showSfItems,
-          options: const [(false, 'This job'), (true, 'Service Fusion')],
-          label: 'Products and services from',
-          onChanged: (v) => _set(() => _showSfItems = v),
+        // Framed in white: the toggle's own track is the band's grey, so on the band "Service Fusion" read as loose
+        // text (audit item 77).
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: DashUi.line),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(1),
+            child: DashSegmented<bool>(
+              value: _showSfItems,
+              options: const [(false, 'This job'), (true, 'Service Fusion')],
+              label: 'Products and services from',
+              onChanged: (v) => _set(() => _showSfItems = v),
+            ),
+          ),
         ),
     ];
     final Widget body;
@@ -476,6 +608,11 @@ extension _JobItems on _JobDetailScreenState {
                 onPreviewSave: _previewSave,
                 onDirtyChanged: (d) => _set(() => d ? _dirty.add(set.id) : _dirty.remove(set.id)),
                 onConfirmZero: _canEditLines && !set.locked ? (line) => _confirmZero(set, line) : null,
+                // Read-only, there is no catalog search to point to (audit item 99: it said "Search the catalog below").
+                emptyTitle: 'No products or services yet',
+                emptyMessage: _editing && _canEditLines
+                    ? 'Search the catalog below to try a line. Lines tried here are a preview and aren\'t kept.'
+                    : 'Nothing has been added to this job\'s own products and services.',
               ),
             ),
           ),
@@ -489,7 +626,8 @@ extension _JobItems on _JobDetailScreenState {
         ],
       );
     }
-    return _itemsPanel(actions: _linesError != null ? const [] : actions, body: body);
+    // The controls stay after a failed reload (audit item 69: they vanished without a word); the banner says what happened.
+    return _itemsPanel(actions: actions, body: body);
   }
 
   /// The Products & Services block (Service Fusion's own name for these lines), a square white block headed by a grey
@@ -497,7 +635,12 @@ extension _JobItems on _JobDetailScreenState {
   /// as on the service catalog"): the title in capitals with the record's controls flush right in the band (under it
   /// on a narrow block); the preview strip while editing; then the body. One hairline outlines the band and everything
   /// under it (user 2026-11-24: "put the table outline back in but have it outline the products and services header
-  /// too"), 8 px in from the block's edges, the band as its top strip.
+  /// too"), the band as its top strip.
+  ///
+  /// The band is built as the Details and Job Info blocks' headers are (`_tabbedBlock` in job_detail_screen.dart; user
+  /// 2026-11-25, audit item 20: "line it up"): square, edge to edge across the block with no 8 px inset, the title 20 px
+  /// in, at least 48 px tall, a hairline under it. The controls sit flush right beside the title while both fit whole,
+  /// and drop under it when not, so the title is never cut short (audit item 101: "PRODUCTS & SE..." at 640-760 px).
   Widget _itemsPanel({List<Widget> actions = const [], required Widget body}) {
     final still = MediaQuery.disableAnimationsOf(context);
     // The catalog's capitals, bigger (user 2026-11-24: "make the products and services header bigger"): 15 px, not 12.
@@ -515,66 +658,49 @@ extension _JobItems on _JobDetailScreenState {
         key: _itemsKey,
         decoration: _JobDetailScreenState._blockFill, // a square full-width block, like the rest of the page
         clipBehavior: Clip.hardEdge,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          // The outline runs from the band's top down to the bottom of the table showing, not round the summary under
-          // it (user 2026-11-24: "end the outline before the summary blocks"); round the whole block when no table shows.
-          child: CustomPaint(
+        // The outline runs from the band's top down to the bottom of the table showing, not round the summary under it
+        // (user 2026-11-24: "end the outline before the summary blocks"); round the whole block when no table shows.
+        child: CustomPaint(
           foregroundPainter: _TableOutlinePainter(panel: _itemsOutlineKey, tables: _tableKeys.values),
           child: Column(
-          key: _itemsOutlineKey,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            LayoutBuilder(
-              builder: (context, c) {
-                final inline = c.maxWidth >= 640 || buttons == null;
-                // The service page's section band (32 px at least, 12 px in) in the grey of this page's own strips, Site
-                // Visits, Notes and Task List (user 2026-11-24): DashUi.faint. The outline's top strip, a hairline under it;
-                // the outline rounds its corners.
-                Widget band(Widget child, {double vertical = 7}) => ClipRRect(
-                  borderRadius: const BorderRadius.vertical(top: Radius.circular(_outlineRadius)),
-                  child: Container(
-                    constraints: const BoxConstraints(minHeight: 48),
-                    alignment: Alignment.centerLeft,
-                    padding: EdgeInsets.symmetric(horizontal: 14, vertical: vertical),
-                    decoration: const BoxDecoration(
-                      color: DashUi.faint,
-                      border: Border(bottom: BorderSide(color: DashUi.line)),
-                    ),
-                    child: child,
-                  ),
-                );
-                return inline
-                    ? band(
-                        Row(
-                          children: [
-                            const Expanded(child: title),
-                            if (buttons != null) ...[const SizedBox(width: 16), buttons],
-                          ],
+            key: _itemsOutlineKey,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // The Details and Job Info header: DashUi.faint, edge to edge, square, the title 20 px in, a hairline under it.
+              Container(
+                constraints: const BoxConstraints(minHeight: 48),
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+                decoration: const BoxDecoration(
+                  color: DashUi.faint,
+                  border: Border(bottom: BorderSide(color: DashUi.line)),
+                ),
+                child: buttons == null
+                    ? title
+                    // Beside the title, flush right, when both fit whole; under it, at the left, when not.
+                    : SizedBox(
+                        width: double.infinity,
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceBetween,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 16,
+                          runSpacing: 10,
+                          children: [title, buttons],
                         ),
-                        vertical: buttons == null ? 7 : 4,
-                      )
-                    : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          band(title),
-                          Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0), child: Align(alignment: Alignment.centerLeft, child: buttons)),
-                        ],
-                      );
-              },
-            ),
-            // The preview strip opens and closes with the editing state.
-            AnimatedSize(
-              duration: still ? Duration.zero : const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: _editing
-                  ? _EditPreviewBar(what: _isEstimate ? 'estimate' : 'job', changed: _dirty.isNotEmpty, saveAsked: _saveAsked, onExit: _stopEditing)
-                  : const SizedBox(width: double.infinity),
-            ),
-            Padding(padding: const EdgeInsets.only(bottom: 16), child: body),
-          ],
-          ),
+                      ),
+              ),
+              // The preview strip opens and closes with the editing state.
+              AnimatedSize(
+                duration: still ? Duration.zero : const Duration(milliseconds: 240),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: _editing
+                    ? _EditPreviewBar(what: _isEstimate ? 'estimate' : 'job', changed: _dirty.isNotEmpty, saveAsked: _saveAsked, onExit: _exitPreview)
+                    : const SizedBox(width: double.infinity),
+              ),
+              ?_staleLinesBanner(),
+              Padding(padding: const EdgeInsets.only(bottom: 16), child: body),
+            ],
           ),
         ),
       ),
@@ -732,7 +858,8 @@ extension _JobItems on _JobDetailScreenState {
       danger: true,
     );
     if (!ok) return;
-    _set(() => _dirty.remove(o.id));
+    // Its amber dot and the leave check go only once it is gone (_keepOptionInView drops the changes of options that
+    // no longer exist): a failed delete keeps both (audit item 100).
     await _run('delete', () => _api.delete(o.id), done: '${o.name} deleted.');
   }
 
@@ -769,6 +896,9 @@ extension _JobItems on _JobDetailScreenState {
     _set(() => _busy = 'convert');
     try {
       final (s, r) = await _api.convert(o.id, target);
+      // The page may have been left while the request was out: nothing more to show, and _load() would call setState
+      // on a disposed state (audit item 81).
+      if (!mounted) return;
       _set(() {
         _lines = s;
         _keepOptionInView();
@@ -779,7 +909,7 @@ extension _JobItems on _JobDetailScreenState {
             : '${o.name} sent to job #${r.jobId}.${r.customerDiffers ? ' Note: that job is for a different customer.' : ''}',
         action: SnackBarAction(label: 'Open job', onPressed: () => _openRecord(r.jobId, estimate: false)),
       );
-      unawaited(_load()); // the estimate now links to the job for certain
+      if (mounted) unawaited(_load()); // the estimate now links to the job for certain
     } on LineItemsException catch (e) {
       _say(e.message);
     } finally {
@@ -1144,7 +1274,17 @@ class _MoreTab extends StatelessWidget {
   Widget build(BuildContext context) => PsMenuButton<String>(
     entries: () => [
       for (final (id, f) in hidden)
-        PsMenuItem(id, f.name, icon: f.recommended ? Icons.star_rounded : (f.mark != null ? Icons.check_circle_rounded : null), trailing: centsMoney(f.totalCents)),
+        // The tabs' own marks (audit item 103): the amber star for the recommended one, the seal for the accepted one, the
+        // check for the current one.
+        PsMenuItem(
+          id,
+          f.name,
+          icon: f.recommended
+              ? Icons.star_rounded
+              : (f.accepted ? Icons.verified_rounded : (f.current ? Icons.check_circle_rounded : null)),
+          iconColor: f.recommended ? DashUi.amber : (f.accepted ? DashUi.emeraldText : null),
+          trailing: centsMoney(f.totalCents),
+        ),
     ],
     onSelected: (id) => state._set(() => state._option = id),
     width: 320,
@@ -1299,9 +1439,14 @@ class _OptionTabs extends StatelessWidget {
       }
     }
     final hidden = [for (final i in all) if (!shown.contains(i)) entries[i]];
-    // Too narrow even for the open tab and "+N more": the open tab gives up width (its name is cut short).
+    // Too narrow even for the open tab and "+N more": the open tab gives up width (its name is cut short), but never
+    // below its floor, its figures and marks whole (audit item 79: at text x1.3 it went to 64 px and overflowed). What
+    // still doesn't fit then scrolls sideways (below) rather than overflowing.
     final over = need(shown, more: hidden.length) - room;
-    if (over > 0) w[sel] = (w[sel] - over).clamp(64.0, w[sel]).toDouble();
+    if (over > 0) {
+      final floor = _OptionTab.floorOf(context, entries[sel].$2, showMargin: showMargin, dirty: s._dirty.contains(entries[sel].$1));
+      w[sel] = (w[sel] - over).clamp(math.min(floor, w[sel]), w[sel]).toDouble();
+    }
     final kids = <Widget>[];
     for (var k = 0; k < shown.length; k++) {
       final i = shown[k];
@@ -1333,11 +1478,13 @@ class _OptionTabs extends StatelessWidget {
       );
     }
     if (hidden.isNotEmpty) kids.addAll([const SizedBox(width: _gap), _MoreTab(state: s, hidden: hidden)]);
+    final strip = IntrinsicHeight(
+      child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: kids),
+    );
     return Align(
       alignment: Alignment.bottomLeft,
-      child: IntrinsicHeight(
-        child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: kids),
-      ),
+      // Only when even the open tab at its floor and "+N more" don't fit (a very narrow block at a large text size).
+      child: need(shown, more: hidden.length) > room + 0.5 ? SingleChildScrollView(scrollDirection: Axis.horizontal, child: strip) : strip,
     );
   }
 
@@ -1354,17 +1501,24 @@ class _OptionTabs extends StatelessWidget {
     }
     final canEdit = s._canEditLines;
     final busy = s._busy != null;
-    final menu = canEdit ? _OptionMenu(state: s, option: o, canAddOption: s._lines!.options.length < 10, withActions: compact) : null;
+    final accepted = s._lines!.accepted;
+    // Someone who can't edit still gets the menu on a narrow strip when it has something for them: where the option
+    // stands, and Open job # once it was sent (audit item 96: under 640 px they had no way to it).
+    final menu = canEdit || (compact && (o.converted || _optionAbout(o).isNotEmpty))
+        ? _OptionMenu(state: s, option: o, canAddOption: s._lines!.options.length < 10, withActions: compact, canEdit: canEdit)
+        : null;
     if (compact) return [?menu];
     final cantAccept = s._cantAccept(o);
     return [
       if (o.accepted && roomy) _StripNote(_acceptedNote(o), tone: DashUi.emeraldText, key: const ValueKey('option-note')),
+      // Why this one has no Accept (audit item 97): only one option can be accepted.
+      if (accepted != null && !o.accepted) _StripNote('${accepted.name} was accepted instead', key: const ValueKey('option-note')),
       if (o.converted)
         TextButton.icon(
           onPressed: () => s._openRecord(o.convertedJobId!, estimate: false),
           icon: const Icon(Icons.open_in_new_rounded, size: 16),
           label: Text('Open job #${o.convertedJobId}', style: const TextStyle(fontWeight: FontWeight.w600)),
-          style: TextButton.styleFrom(foregroundColor: _JobDetailScreenState._link, minimumSize: const Size(0, 34)).copyWith(overlayColor: dashNoHoverOverlay),
+          style: TextButton.styleFrom(foregroundColor: DashUi.blue, minimumSize: const Size(0, 34)).copyWith(overlayColor: dashNoHoverOverlay),
         )
       else if (o.accepted && canEdit) ...[
         TextButton(
@@ -1393,7 +1547,8 @@ class _OptionTabs extends StatelessWidget {
             // Still clickable when it can't accept yet: with no hover text on the block, the click says why (_accept).
             onPressed: busy ? null : () => s._accept(o),
             icon: s._busy == 'accept'
-                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                // A neutral spinner, not the theme's brand red (audit item 89).
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate))
                 : const Icon(Icons.verified_outlined, size: 17),
             label: const Text('Accept'),
             style: OutlinedButton.styleFrom(
@@ -1410,9 +1565,12 @@ class _OptionTabs extends StatelessWidget {
   }
 }
 
-/// "Accepted Nov 2 by Dana Whitfield": when and by whom an option was accepted, and that its price is locked.
+/// A day as the option notes give it, with its year (audit item 91: "Accepted Nov 2" left it out): "Nov 2, 2026".
+String _optionDay(DateTime d) => DateFormat('MMM d, yyyy').format(d.toLocal());
+
+/// "Accepted Nov 2, 2026 by Dana Whitfield": when and by whom an option was accepted, and that its price is locked.
 String _acceptedNote(LineOption o) {
-  final when = o.acceptedAt == null ? '' : ' ${DateFormat('MMM d').format(o.acceptedAt!.toLocal())}';
+  final when = o.acceptedAt == null ? '' : ' ${_optionDay(o.acceptedAt!)}';
   final by = o.acceptedBy.isEmpty ? '' : ' by ${o.acceptedBy}';
   return 'Accepted$when$by · price locked';
 }
@@ -1426,7 +1584,7 @@ String _optionAbout(LineOption o) {
   final parts = [
     if (o.source == 'service_fusion') 'Started from Service Fusion\'s items',
     if (o.source == 'copy' && o.sourceOptionName != null) 'Copied from ${o.sourceOptionName}',
-    if (o.updatedAt != null) 'saved ${DateFormat('MMM d').format(o.updatedAt!.toLocal())}${o.updatedBy.isEmpty ? '' : ' by ${o.updatedBy}'}',
+    if (o.updatedAt != null) 'saved ${_optionDay(o.updatedAt!)}${o.updatedBy.isEmpty ? '' : ' by ${o.updatedBy}'}',
   ].join(', ');
   return parts.isEmpty ? '' : parts[0].toUpperCase() + parts.substring(1);
 }
@@ -1498,7 +1656,10 @@ class _OptionMenu extends StatelessWidget {
 
   /// A narrow strip, with no room for the option's buttons beside its tabs: they are in here instead.
   final bool withActions;
-  const _OptionMenu({required this.state, required this.option, required this.canAddOption, this.withActions = false});
+
+  /// Someone who can change options. Without it the menu only says where the option stands and opens its job.
+  final bool canEdit;
+  const _OptionMenu({required this.state, required this.option, required this.canAddOption, this.withActions = false, this.canEdit = true});
 
   @override
   Widget build(BuildContext context) {
@@ -1512,29 +1673,42 @@ class _OptionMenu extends StatelessWidget {
       'convert': () => s._convert(o),
       'open': () => s._openRecord(o.convertedJobId!, estimate: false),
       'rename': () => s._renameOption(o),
-      'duplicate': () => s._newOption('copy', copyOf: o.id),
+      // At 10 options the copy says why it can't be made, rather than sitting greyed out with the reason in a hidden
+      // tooltip (audit item 76).
+      'duplicate': () => canAddOption ? s._newOption('copy', copyOf: o.id) : s._say(_kOptionLimit),
       'delete': () => s._deleteOption(o),
     };
     return PsMenuButton<String>(
       entries: () {
         final about = _optionAbout(o);
+        final accepted = s._lines?.accepted;
         final steps = <PsMenuEntry<String>>[
           if (o.converted)
             PsMenuItem('open', 'Open job #${o.convertedJobId}', icon: Icons.open_in_new_rounded)
+          else if (!canEdit)
+            ...const <PsMenuEntry<String>>[]
           else if (o.accepted) ...[
             PsMenuItem('convert', 'Send to job', icon: Icons.send_rounded, enabled: !busy),
             PsMenuItem('unaccept', 'Undo acceptance', icon: Icons.undo_rounded, enabled: !busy),
-          ] else if (s._lines?.accepted == null)
-            PsMenuItem('accept', 'Accept', icon: Icons.verified_outlined, enabled: !busy),
+          ] else if (accepted == null)
+            PsMenuItem('accept', 'Accept', icon: Icons.verified_outlined, enabled: !busy)
+          else
+            // Why there's no Accept (audit item 97), where the strip has no room to say it.
+            PsMenuItem('accept', 'Accept: ${accepted.name} was accepted instead', icon: Icons.verified_outlined, enabled: false),
         ];
         return [
-          if (about.isNotEmpty) PsMenuHeading(about),
-          if (withActions && steps.isNotEmpty) ...[...steps, const PsMenuDivider()],
-          if (!o.accepted) PsMenuItem('rename', 'Rename', icon: Icons.drive_file_rename_outline_rounded, enabled: !busy),
-          PsMenuItem('duplicate', dirty ? 'Duplicate (as saved)' : 'Duplicate as a new option', icon: Icons.copy_all_rounded, enabled: !busy && canAddOption),
-          if (!o.accepted && !o.converted) ...[
-            const PsMenuDivider(),
-            PsMenuItem('delete', 'Delete option', icon: Icons.delete_outline_rounded, danger: true, enabled: !busy),
+          // Wraps (up to three lines) rather than being cut to one: under 640 px it is the only place this shows (audit
+          // item 78).
+          if (about.isNotEmpty) PsMenuHeading(about, maxLines: 3),
+          if (withActions && steps.isNotEmpty) ...[...steps, if (canEdit) const PsMenuDivider()],
+          if (canEdit) ...[
+            if (!o.accepted) PsMenuItem('rename', 'Rename', icon: Icons.drive_file_rename_outline_rounded, enabled: !busy),
+            // One name for this action everywhere, the New option menu's (audit item 90).
+            PsMenuItem('duplicate', _copyLabel(o.name, asSaved: dirty), icon: Icons.copy_all_rounded, enabled: !busy),
+            if (!o.accepted && !o.converted) ...[
+              const PsMenuDivider(),
+              PsMenuItem('delete', 'Delete option', icon: Icons.delete_outline_rounded, danger: true, enabled: !busy),
+            ],
           ],
         ];
       },
@@ -1565,7 +1739,17 @@ class _OptionMenu extends StatelessWidget {
   }
 }
 
-// "New option": with options to copy, a menu (blank, or a copy of the one on show); with none, a blank option at once.
+/// Why no more options can be made: said when New option or a copy is clicked at the limit (audit item 76).
+const _kOptionLimit = 'An estimate can have at most 10 options. Delete one to make room for another.';
+
+/// The one name for copying an option, in the New option menu and the option's own menu (audit item 90): "Copy of
+/// Premium", and "(as saved)" while the preview has changes in it (the copy takes the saved lines).
+String _copyLabel(String name, {bool asSaved = false}) => 'Copy of $name${asSaved ? ' (as saved)' : ''}';
+
+// "New option": a menu of what the new option starts from. On an option of ours, a copy of it or a blank one. On the
+// estimate's own option (or with no option of ours yet) a copy of its Service Fusion lines, "Copy of Estimate Option",
+// comes first (audit item 82: a blank one can never get lines while saving is off, so it was a dead end); a blank one is
+// offered after it, and is the only choice when the estimate has no lines of its own.
 class _NewOptionButton extends StatelessWidget {
   final _JobDetailScreenState state;
   final LineOption? current;
@@ -1578,31 +1762,38 @@ class _NewOptionButton extends StatelessWidget {
     final busy = s._busy != null;
     final full = count >= 10;
     final cur = current;
-    final tip = full ? 'An estimate can have at most 10 options' : (cur == null ? 'Start a blank option' : 'A blank option, or a copy of ${cur.name}');
-    Widget button(VoidCallback? onTap, {bool open = false}) => Tooltip(
-      message: tip,
-      child: TextButton.icon(
-        onPressed: busy || full ? null : onTap,
-        icon: s._busy == 'new'
-            ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
-            : const Icon(Icons.add_rounded, size: 18),
-        // Weight on the label, not the button's textStyle, which would replace the app font.
-        label: const Text('New option', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-        // Lit while its menu is open, so the menu reads as coming from it.
-        style: open ? _addStyle.copyWith(backgroundColor: WidgetStatePropertyAll(DashUi.blue.withValues(alpha: 0.08))) : _addStyle,
-      ),
+    final sfHasLines = s._sfItems.isNotEmpty;
+    Widget button(VoidCallback? onTap, {bool open = false}) => TextButton.icon(
+      // Clickable at the limit too: the click says why (the reason used to be only in a hidden tooltip).
+      onPressed: busy ? null : (full ? () => s._say(_kOptionLimit) : onTap),
+      icon: s._busy == 'new'
+          // A neutral spinner, not the theme's brand red (audit item 89).
+          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: DashUi.slate))
+          : const Icon(Icons.add_rounded, size: 18),
+      // Weight on the label, not the button's textStyle, which would replace the app font.
+      label: const Text('New option', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+      // Lit while its menu is open, so the menu reads as coming from it: the faint grey the option menu's button uses
+      // (audit item 102: this one tinted blue).
+      style: open ? _addStyle.copyWith(backgroundColor: const WidgetStatePropertyAll(DashUi.faint)) : _addStyle,
     );
-    if (cur == null) return button(() => s._newOption('blank'));
+    if (cur == null && !sfHasLines) return button(() => s._newOption('blank'));
     return PsMenuButton<String>(
       entries: () => [
+        if (cur == null)
+          PsMenuItem('sf', _copyLabel(kEstimateOptionName, asSaved: s._dirty.contains('sf')), icon: Icons.copy_all_rounded)
+        else
+          PsMenuItem('copy', _copyLabel(cur.name, asSaved: s._dirty.contains(cur.id)), icon: Icons.copy_all_rounded),
         const PsMenuItem('blank', 'Blank option', icon: Icons.note_add_outlined),
-        PsMenuItem('copy', s._dirty.contains(cur.id) ? 'Copy of ${cur.name} (as saved)' : 'Copy of ${cur.name}', icon: Icons.copy_all_rounded),
       ],
-      onSelected: (v) => v == 'blank' ? s._newOption('blank') : s._newOption('copy', copyOf: cur.id),
+      onSelected: (v) => switch (v) {
+        'sf' => s._newOption('service_fusion'),
+        'copy' => s._newOption('copy', copyOf: cur!.id),
+        _ => s._newOption('blank'),
+      },
       width: 280,
       align: PsMenuAlign.end,
       label: 'New option',
-      builder: (context, open, show) => button(show, open: open),
+      builder: (context, open, show) => button(full ? null : show, open: open),
     );
   }
 }
@@ -1697,7 +1888,7 @@ class _ItemsBanner extends StatelessWidget {
   final String text;
   final Color tone;
   final List<Widget> actions;
-  const _ItemsBanner({required this.icon, required this.text, this.tone = DashUi.slate, this.actions = const []});
+  const _ItemsBanner({super.key, required this.icon, required this.text, this.tone = DashUi.slate, this.actions = const []});
 
   @override
   Widget build(BuildContext context) {
@@ -1754,7 +1945,8 @@ class _ItemsBanner extends StatelessWidget {
 
 /// Across the block under its title while editing: what this is, a preview that is never saved, and its one way out.
 /// There is no Save: nothing here can be kept yet, so offering one only to say so was confusing (user 2026-11-13).
-/// Exit preview puts back what was there. Ctrl+S, pressed from habit, says here that nothing was saved.
+/// Exit preview puts back what was there (asking first when there are changes: [_JobItems._exitPreview]). Ctrl+S,
+/// pressed from habit, says here that nothing was saved.
 class _EditPreviewBar extends StatelessWidget {
   final String what; // job | estimate
   final bool changed;
@@ -1794,7 +1986,8 @@ class _EditPreviewBar extends StatelessWidget {
       ],
     );
     final body = Text(
-      'Changes made here will NOT overwrite or update Service Fusion, and they can\'t be saved yet. The original $what stays exactly as it is.',
+      // Said calmly, in sentence case (audit item 25: it shouted "will NOT overwrite").
+      'Changes here are a preview only. Service Fusion isn\'t changed, and they can\'t be saved yet. The original $what stays as it is.',
       style: const TextStyle(fontSize: 12.5, color: _ink, height: 1.4),
     );
     final exit = Tooltip(
@@ -2004,9 +2197,6 @@ class _SendToJobDialogState extends State<_SendToJobDialog> {
 }
 
 
-/// The corners of the Products & Services outline (and its band's top).
-const _outlineRadius = 6.0;
-
 /// The hairline round the Products & Services block's band and table, down to the bottom of the table that is showing
 /// (an estimate's other options are mounted offstage), so the summary under it sits outside. In the rule under each
 /// line's shade ([LineItemsEditor.outlineColor], user 2026-11-24: "outline and line item lines should be the same
@@ -2043,7 +2233,8 @@ class _TableOutlinePainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1
       ..color = LineItemsEditor.outlineColor;
-    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTRB(0.5, 0.5, size.width - 0.5, bottom - 0.5), const Radius.circular(_outlineRadius)), paint);
+    // Square, as the band is (it runs edge to edge like the Details and Job Info headers since 2026-11-25).
+    canvas.drawRect(Rect.fromLTRB(0.5, 0.5, size.width - 0.5, bottom - 0.5), paint);
   }
 
   @override

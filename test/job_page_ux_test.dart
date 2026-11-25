@@ -125,7 +125,8 @@ void main() {
       await _pump(t, _record(due: 400));
       await t.tap(find.text('Payment'));
       await t.pumpAndSettle();
-      expect(find.text('Balance Due'), findsOneWidget);
+      // Job Info and the P&S summary both say "Balance due" since labels went sentence case (audit item 13).
+      expect(find.text('Balance due'), findsWidgets);
       expect(find.text(r'$400.00'), findsOneWidget);
       expect(find.text('Paid in full'), findsNothing);
 
@@ -139,8 +140,8 @@ void main() {
       await _pump(t, _record(estimate: true, due: 1000));
       await t.tap(find.text('Payment'));
       await t.pumpAndSettle();
-      expect(find.text('Estimate Total'), findsOneWidget);
-      expect(find.text('Balance Due'), findsNothing, reason: 'an estimate has no balance');
+      expect(find.text('Estimate total'), findsWidgets); // Job Info and the P&S summary (audit item 13)
+      expect(find.text('Balance due'), findsNothing, reason: 'an estimate has no balance');
     }, () => _mock(_record()));
   });
 

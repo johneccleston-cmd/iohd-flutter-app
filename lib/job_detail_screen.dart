@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart' show RenderOffstage;
-import 'package:flutter/services.dart' show Clipboard, ClipboardData, FilteringTextInputFormatter, LogicalKeyboardKey;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData, FilteringTextInputFormatter, LogicalKeyboardKey, TextInputFormatter;
 import 'package:go_router/go_router.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -17,7 +17,6 @@ import 'config/auth_session.dart';
 import 'services/line_items_api.dart';
 import 'services/tax_settings_api.dart';
 import 'theme/app_theme.dart';
-import 'utils/job_statuses.dart';
 import 'utils/charge_presets.dart';
 import 'utils/line_item_math.dart';
 import 'utils/status_colors.dart';
@@ -62,8 +61,6 @@ class JobDetailScreen extends StatefulWidget {
 }
 
 class _JobDetailScreenState extends State<JobDetailScreen> {
-  static const _link = Color(0xFF2563EB);
-
   /// The gutter between the blocks, the same both ways: the page is one surface cut into blocks, not cards on a backdrop.
   /// The same width as the standard page edge.
   static const double _gap = PageSheet.edge;
@@ -213,6 +210,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       _ourFiles = const [];
       _ourNotes = const [];
       _ourTasks = const [];
+      _taskPending.clear();
       _detailsTab = 0;
       _infoTab = 0;
       _notesExpanded = false;
@@ -354,10 +352,28 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
 
   static double _n(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0;
 
-  String _date(dynamic v) {
+  /// One date style for the whole page: "Oct 6, 2026", the same as the payments, notes and invoices (audit 2026-11-24,
+  /// item 11: it was "10/06/2026" here beside the banner's "Tue, Oct 6").
+  static final _dateFmt = DateFormat('MMM d, y');
+
+  static DateTime? _ymd(dynamic v) {
     final m = RegExp(r'^(\d{4})-(\d{2})-(\d{2})').firstMatch(v?.toString() ?? '');
-    if (m == null) return '';
-    return DateFormat('MM/dd/yyyy').format(DateTime(int.parse(m.group(1)!), int.parse(m.group(2)!), int.parse(m.group(3)!)));
+    if (m == null) return null;
+    return DateTime(int.parse(m.group(1)!), int.parse(m.group(2)!), int.parse(m.group(3)!));
+  }
+
+  String _date(dynamic v) {
+    final d = _ymd(v);
+    return d == null ? '' : _dateFmt.format(d);
+  }
+
+  /// "Oct 6 – Oct 7, 2026" (the year once when both days share it), "Dec 30, 2026 – Jan 2, 2027", or one day.
+  String _dateRange(dynamic from, dynamic to) {
+    final a = _ymd(from);
+    final b = _ymd(to);
+    if (a == null) return '';
+    if (b == null || b == a) return _dateFmt.format(a);
+    return a.year == b.year ? '${DateFormat('MMM d').format(a)} – ${_dateFmt.format(b)}' : '${_dateFmt.format(a)} – ${_dateFmt.format(b)}';
   }
 
   String _dateTime(dynamic v) {
@@ -558,7 +574,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         copy: _s('po_number').isEmpty ? null : (_s('po_number'), 'PO number'),
       ),
       _factRow(Icons.folder_open_rounded, _isEstimate ? 'Category' : 'Job category', _s('category').isEmpty ? null : _factText(_s('category'))),
-      if (_s('opportunity_owner').isNotEmpty) _factRow(Icons.badge_outlined, 'Sales owner', _factText(_s('opportunity_owner'))),
+      // The sales owner is in Job Info (Scheduling / Sales data) only: it was here too, under a second name (audit
+      // 2026-11-24, item 14).
       _tasksSection(),
     ];
     final detailsPanel = _detailsBlock(
@@ -569,7 +586,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           _detailsEmpty(
             Icons.straighten_rounded,
             'No takeoffs yet',
-            'Material and labor takeoffs for this job will show here once they are built.',
+            'Material and labor takeoffs for this $_kind will show here once they are built.',
             tone: DashUi.indigo,
           ),
         ],
@@ -591,8 +608,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     );
 
     final start = _date(job['start_date']);
-    final end = _date(job['end_date']);
-    final dates = start.isEmpty ? '' : (end.isEmpty || end == start ? start : '$start - $end');
+    final dates = _dateRange(job['start_date'], job['end_date']);
     final techs = _s('techs_assigned');
     final window = _window(_sf['time_frame_promised_start'], _sf['time_frame_promised_end']);
     final duration = _duration(_sf['duration']);
@@ -600,14 +616,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final requested = _date(job['sf_created_at']);
     final referral = (_sf['source'] ?? '').toString().trim();
     final rating = (_sf['opportunity_rating'] ?? '').toString().trim();
-    // The estimate's opportunity owner; the job's own field when the server didn't send the estimate's.
-    final salesAgent = (_estimateOwner ?? '').trim().isNotEmpty ? _estimateOwner!.trim() : _s('opportunity_owner');
+    // The sales owner (Service Fusion's opportunity owner), under one name on both kinds of record (audit 2026-11-24,
+    // item 14). A job shows its estimate's, or its own when the server didn't send the estimate's.
+    final salesOwner = !_isEstimate && (_estimateOwner ?? '').trim().isNotEmpty ? _estimateOwner!.trim() : _s('opportunity_owner');
+    final salesOwnerRow = _sfRow(Icons.hail_rounded, 'Sales owner', salesOwner.isEmpty ? null : _factText(salesOwner));
+    // The on-site visit on one line, like a visit row: "Oct 6, 2026  ·  8:00 AM – 10:00 AM (1h)".
+    final visitLine = [start, [window, if (duration.isNotEmpty) '($duration)'].where((e) => e.isNotEmpty).join('  ')]
+        .where((e) => e.isNotEmpty)
+        .join('  ·  ');
     // Estimates mirror Service Fusion's "Sales Data" block; jobs keep the scheduling block.
     final salesRows = <Widget>[
-      _sfRow(Icons.calendar_today_rounded, 'Requested On', requested.isEmpty ? null : _factText(requested)),
+      _sfRow(Icons.calendar_today_rounded, 'Requested on', requested.isEmpty ? null : _factText(requested)),
       _sfRow(
         Icons.emoji_events_outlined,
-        'Current Status',
+        'Current status',
         Wrap(
           spacing: 10,
           runSpacing: 6,
@@ -615,31 +637,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           children: [_statusPill(status, sub: false), _statusPill(subStatus, sub: true)],
         ),
       ),
-      _sfRow(Icons.signpost_outlined, 'Referral Source', referral.isEmpty ? null : _factText(referral)),
-      _sfRow(Icons.star_rounded, 'Opportunity Rating', rating.isEmpty ? null : _factText(rating)),
-      _sfRow(Icons.hail_rounded, 'Opportunity Owner', _s('opportunity_owner').isEmpty ? null : _factText(_s('opportunity_owner'))),
-      _sfRow(
-        Icons.event_rounded,
-        'On-Site Visit',
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            start.isEmpty ? _factText('Not Set', quiet: true) : _factText(start),
-            const SizedBox(height: 6),
-            window.isEmpty ? _factText('Not Set', quiet: true) : _factText(window),
-            const SizedBox(height: 6),
-            duration.isEmpty ? _factText('Not Set', quiet: true) : _factText(duration),
-          ],
-        ),
-      ),
-      _sfRow(Icons.engineering_outlined, 'Assigned Techs', _techsValue(techs)),
-      _sfRow(Icons.sticky_note_2_outlined, 'Notes For Techs', notes.isEmpty ? null : _factText(notes)),
+      _sfRow(Icons.signpost_outlined, 'Referral source', referral.isEmpty ? null : _factText(referral)),
+      _sfRow(Icons.star_rounded, 'Opportunity rating', rating.isEmpty ? null : _factText(rating)),
+      salesOwnerRow,
+      _sfRow(Icons.event_rounded, 'On-site visit', visitLine.isEmpty ? null : _factText(visitLine)),
+      _sfRow(Icons.engineering_outlined, 'Assigned techs', _techsValue(techs)),
+      _sfRow(Icons.sticky_note_2_outlined, 'Notes for techs', notes.isEmpty ? null : _factText(notes)),
     ];
     final timing = _isEstimate ? null : _timingBanner(job);
     final schedulingRows = <Widget>[
       _sfRow(
         Icons.flag_outlined,
-        'Current Status',
+        'Current status',
         Wrap(
           spacing: 10,
           runSpacing: 6,
@@ -647,14 +656,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           children: [_statusPill(status, sub: false), _statusPill(subStatus, sub: true)],
         ),
       ),
-      _sfRow(Icons.event_rounded, _isEstimate ? 'Estimate Date' : 'Start & End Dates', start.isEmpty ? null : _factText(_isEstimate ? start : dates)),
+      _sfRow(Icons.event_rounded, _isEstimate ? 'Estimate date' : 'Start & end dates', start.isEmpty ? null : _factText(_isEstimate ? start : dates)),
       if (!_isEstimate && _day(job['closed_at']) != null) _sfRow(Icons.event_available_rounded, 'Closed', _factText(_date(job['closed_at']))),
-      _sfRow(Icons.schedule_rounded, 'Arrival Time Window', window.isEmpty ? null : _factText(window)),
-      _sfRow(Icons.timelapse_rounded, 'Estimated Duration', duration.isEmpty ? null : _factText(duration)),
-      _sfRow(Icons.priority_high_rounded, 'Job Priority', priority.isEmpty ? null : _factText(priority)),
-      _sfRow(Icons.engineering_outlined, 'Assigned Techs', _techsValue(techs)),
-      if (!_isEstimate) _sfRow(Icons.hail_rounded, 'Sales Agent', salesAgent.isEmpty ? null : _factText(salesAgent)),
-      _sfRow(Icons.sticky_note_2_outlined, 'Notes For Techs', notes.isEmpty ? null : _factText(notes)),
+      _sfRow(Icons.schedule_rounded, 'Arrival time window', window.isEmpty ? null : _factText(window)),
+      _sfRow(Icons.timelapse_rounded, 'Estimated duration', duration.isEmpty ? null : _factText(duration)),
+      _sfRow(Icons.priority_high_rounded, 'Job priority', priority.isEmpty ? null : _factText(priority)),
+      _sfRow(Icons.engineering_outlined, 'Assigned techs', _techsValue(techs)),
+      if (!_isEstimate) salesOwnerRow,
+      _sfRow(Icons.sticky_note_2_outlined, 'Notes for techs', notes.isEmpty ? null : _factText(notes)),
       // An estimate has no visits to show: don't draw an empty "Site Visits (0)" box on it.
       if (!(_isEstimate && _sfVisits.isEmpty)) _visitsSection(),
     ];
@@ -666,7 +675,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         _ => _isEstimate ? salesRows : schedulingRows,
       },
       tabs: [
-        _DetailTab(_isEstimate ? 'Sales Data' : 'Scheduling', Icons.calendar_month_rounded),
+        _DetailTab(_isEstimate ? 'Sales data' : 'Scheduling', Icons.calendar_month_rounded),
         _DetailTab('Payment', Icons.payments_outlined, count: _payments.length + _stripeMatch.unmatched.length),
         const _DetailTab('Activity', Icons.view_headline_rounded),
       ],
@@ -693,24 +702,42 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           // for the content is inside each block (its 20 px side padding).
           padding: EdgeInsets.zero,
           children: [
-            if (_error != null)
+            // A Refresh that failed after the record had loaded: a block of its own, square and edge to edge like the
+            // others (audit 2026-11-24, item 23: it was a rounded card with its own margins).
+            if (_error != null) ...[
               Container(
-                margin: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(20, 6, 12, 6),
+                constraints: const BoxConstraints(minHeight: 48),
                 decoration: BoxDecoration(
-                  color: AppTheme.notesBg,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.notesStroke),
+                  color: Color.alphaBlend(DashUi.amber.withValues(alpha: 0.08), Colors.white),
+                  border: Border(bottom: BorderSide(color: DashUi.amber.withValues(alpha: 0.30))),
                 ),
                 child: Row(
                   children: [
+                    const Icon(Icons.warning_amber_rounded, size: 18, color: DashUi.amberText),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: Text('$_error Showing what we already have.', style: const TextStyle(color: AppTheme.notesText)),
+                      child: Text(
+                        "Couldn't refresh. $_error Showing what was loaded before.",
+                        style: const TextStyle(fontSize: 13.5, color: DashUi.ink, height: 1.35),
+                      ),
                     ),
-                    TextButton(onPressed: _load, child: const Text('Retry')),
+                    const SizedBox(width: 12),
+                    TextButton.icon(
+                      onPressed: _loading ? null : _load,
+                      style: TextButton.styleFrom(
+                        foregroundColor: DashUi.ink,
+                        visualDensity: VisualDensity.compact,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ).copyWith(overlayColor: dashNoHoverOverlay),
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('Retry', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700)),
+                    ),
                   ],
                 ),
               ),
+              const SizedBox(height: _gap),
+            ],
             LayoutBuilder(
               builder: (context, c) {
                 final wide = c.maxWidth >= 900;
@@ -781,7 +808,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     if (a.isEmpty && b.isEmpty) return '';
     if (b.isEmpty) return a;
     if (a.isEmpty) return b;
-    return '$a - $b';
+    return '$a – $b'; // an en dash, as in every range on the page
   }
 
   /// Service Fusion sends durations in seconds: 3600 -> "1h", 5400 -> "1h 30m".
@@ -1001,64 +1028,110 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final m = _moneyState(job);
     if (m.total <= 0) {
       final due = _n(job['due_total']);
-      return _text(_money.format(due)).withColor(due > 0.005 ? const Color(0xFFB91C1C) : AppTheme.primaryText);
+      return _text(_money.format(due)).withColor(due > 0.005 ? DashUi.redText : AppTheme.primaryText);
     }
+    // Money owed is red everywhere on the page, and overpaid reads "Overpaid by $X" everywhere (audit 2026-11-24,
+    // items 15 and 16).
     return switch (m.state) {
-      'owed' => _text(_money.format(m.owed)).withColor(const Color(0xFFB91C1C)),
-      'paid' when m.over > 0.005 => _text('Overpaid by ${_money.format(m.over)}', link: false).withColor(DashUi.amberText),
+      'owed' => _text(_money.format(m.owed)).withColor(DashUi.redText),
+      'paid' when m.over > 0.005 => _text(_overpaid(m.over), link: false).withColor(DashUi.amberText),
       'paid' => _text('Paid in full', link: false).withColor(AppTheme.successGreen),
       'invoice-paid' => _text('Paid (invoice #${m.invoice!['number']})', link: false).withColor(AppTheme.successGreen),
-      'invoice-owed' => _text('${_money.format(m.owed)} on invoice #${m.invoice!['number']}, unpaid').withColor(const Color(0xFFB91C1C)),
+      'invoice-owed' => _text('${_money.format(m.owed)} on invoice #${m.invoice!['number']}, unpaid').withColor(DashUi.redText),
       _ when m.paid > 0.005 => _text('${_money.format(0)} (only ${_money.format(m.paid)} paid on file)', muted: true),
       _ => _text('${_money.format(0)} (no payment on file)', muted: true),
     };
   }
 
-  /// Placeholder cards shaped like the page, shown while a job opened by its address (no row to show yet) loads.
+  /// Placeholder blocks shaped like the page, shown while a job opened by its address (no row to show yet) loads: Details
+  /// and Notes on the left, Job Info on the right, Products & Services under them, each with its grey title band, so the
+  /// page doesn't jump when it arrives (audit 2026-11-24, item 26).
   Widget _skeletonPage() {
     Widget bar(double w, double h) => Container(
       width: w,
       height: h,
-      decoration: BoxDecoration(color: const Color(0xFFD4D4D4), borderRadius: BorderRadius.circular(6)),
+      decoration: BoxDecoration(color: DashUi.line, borderRadius: BorderRadius.circular(6)),
     );
-    Widget card({int rows = 6}) => Container(
-      decoration: _blockFill,
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    // The grey title band every block opens with (see [_tabbedBlock]), with the title's place and, for the tabbed
+    // blocks, the tab track's.
+    Widget band({bool tabs = true}) => Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      decoration: const BoxDecoration(
+        color: DashUi.faint,
+        border: Border(bottom: BorderSide(color: DashUi.line)),
+      ),
+      child: Row(
         children: [
-          bar(120, 16),
-          const SizedBox(height: 18),
-          for (var i = 0; i < rows; i++) ...[
-            Row(
-              children: [
-                bar(130, 12),
-                const SizedBox(width: 24),
-                Expanded(child: bar(double.infinity, 12)),
-              ],
-            ),
-            const SizedBox(height: 18),
-          ],
+          bar(110, 14),
+          const SizedBox(width: 16),
+          Expanded(child: Align(alignment: Alignment.centerRight, child: tabs ? bar(220, 32) : null)),
         ],
       ),
     );
-    // The same edge-to-edge blocks as the page itself.
+    Widget block({required int rows, bool tabs = true}) => Container(
+      decoration: _blockFill,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          band(tabs: tabs),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
+            child: Column(
+              children: [
+                for (var i = 0; i < rows; i++) ...[
+                  Row(
+                    children: [
+                      bar(130, 12),
+                      const SizedBox(width: 24),
+                      Expanded(child: bar(double.infinity, 12)),
+                    ],
+                  ),
+                  const SizedBox(height: 22),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+    final details = block(rows: 7);
+    final notes = block(rows: 2, tabs: false);
+    final info = block(rows: 9);
+    final items = block(rows: 4, tabs: false);
+    // The same edge-to-edge blocks and gutters as the page itself. It never scrolls; whatever doesn't fit is cut off.
     return LayoutBuilder(
       builder: (context, c) => SkeletonPulse(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            c.maxWidth >= 900
-                ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: card(rows: 8)),
-                      const SizedBox(width: _gap),
-                      Expanded(child: card(rows: 8)),
-                    ],
-                  )
-                : card(),
-          ],
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (c.maxWidth >= 900)
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [details, const SizedBox(height: _gap), notes],
+                      ),
+                    ),
+                    const SizedBox(width: _gap),
+                    Expanded(child: info),
+                  ],
+                )
+              else ...[
+                details,
+                const SizedBox(height: _gap),
+                notes,
+                const SizedBox(height: _gap),
+                info,
+              ],
+              const SizedBox(height: _gap),
+              items,
+            ],
+          ),
         ),
       ),
     );
@@ -1068,7 +1141,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   static double _textWidth(BuildContext context, String text, TextStyle style) {
     final tp = TextPainter(
       text: TextSpan(text: text, style: DefaultTextStyle.of(context).style.merge(style)),
-      textDirection: TextDirection.ltr,
+      textDirection: Directionality.of(context),
       textScaler: MediaQuery.textScalerOf(context),
       maxLines: 1,
     )..layout();
@@ -1081,7 +1154,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     padding: const EdgeInsets.only(bottom: 2),
     child: SelectableText(
       v,
-      style: TextStyle(fontSize: 14, height: 1.3, color: link ? _link : (muted ? AppTheme.sectionLabel : AppTheme.primaryText)),
+      style: TextStyle(fontSize: 14, height: 1.3, color: link ? DashUi.blue : (muted ? AppTheme.sectionLabel : AppTheme.primaryText)),
     ),
   );
 
@@ -1408,17 +1481,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     }
   }
 
-  /// The Upload button row at the top of the Pics and Docs tabs.
   // ---- Details: the Pics and Docs tabs ----------------------------------------------------------------------------
 
   /// The top of the Pics and Docs tabs: how many there are and where they came from (or the upload in progress, or
-  /// why uploads are off), and the Upload button, whose tooltip lists the file types it takes.
+  /// why uploads are off), and the Upload button, whose tooltip lists the file types it takes. With none yet it is only
+  /// the tab's name and the button: the empty state under it says there are none (audit 2026-11-24, item 27: it was
+  /// said three times).
   Widget _filesToolbar({required bool pictures, required int ours, required int sf}) {
     final busy = _uploadStatus != null;
     final total = ours + sf;
     final noun = pictures ? (total == 1 ? 'picture' : 'pictures') : (total == 1 ? 'document' : 'documents');
     final from = [if (ours > 0) '$ours added here', if (sf > 0) '$sf from Service Fusion'].join('  ·  ');
-    final Widget status;
+    final Widget? status;
     if (busy) {
       status = Row(
         children: [
@@ -1447,7 +1521,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         ],
       );
     } else {
-      status = Text(from.isEmpty ? 'None on this job yet' : from, style: const TextStyle(fontSize: 13, color: DashUi.slate));
+      status = from.isEmpty ? null : Text(from, style: const TextStyle(fontSize: 13, color: DashUi.slate));
     }
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
@@ -1459,23 +1533,25 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  total == 0 ? 'No $noun' : '$total $noun',
+                  total == 0 ? (pictures ? 'Pictures' : 'Documents') : '$total $noun',
                   style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: -0.2),
                 ),
-                const SizedBox(height: 2),
-                status,
+                if (status != null) ...[const SizedBox(height: 2), status],
               ],
             ),
           ),
           const SizedBox(width: 12),
-          if (_canUpdate) Tooltip(
-            message: pictures ? 'JPG, PNG, WEBP, GIF or HEIC, up to 25 MB each' : 'PDF, Word, Excel, PowerPoint, CSV, TXT or DWG, up to 25 MB each',
-            child: FilledButton.icon(
-              onPressed: (busy || !_filesEnabled) ? null : () => _upload(pictures: pictures),
-              icon: const Icon(Icons.upload_rounded, size: 18),
-              label: Text(pictures ? 'Upload pictures' : 'Upload documents'),
+          // The ink button of the app's dialogs, not the theme's brand-red fill, which read as destructive (audit
+          // 2026-11-24, item 17).
+          if (_canUpdate)
+            Tooltip(
+              message: pictures ? 'JPG, PNG, WEBP, GIF or HEIC, up to 25 MB each' : 'PDF, Word, Excel, PowerPoint, CSV, TXT or DWG, up to 25 MB each',
+              child: AppButton.ink(
+                pictures ? 'Upload pictures' : 'Upload documents',
+                (busy || !_filesEnabled) ? null : () => _upload(pictures: pictures),
+                icon: Icons.upload_rounded,
+              ),
             ),
-          ),
         ],
       ),
     );
@@ -1578,10 +1654,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       else
         _detailsEmpty(
           Icons.photo_camera_outlined,
-          sf == null ? 'No pictures yet' : 'No pictures on this job',
+          'No pictures yet',
           _filesEnabled && _canUpdate
-              ? (sf == null ? 'Upload one above. Service Fusion pictures appear after the next sync of this job.' : 'Upload one above.')
-              : (sf == null ? 'Service Fusion pictures appear after the next sync of this job.' : 'Service Fusion has none on this job either.'),
+              ? (sf == null ? 'Upload one above. Service Fusion pictures appear after the next sync of this $_kind.' : 'Upload one above.')
+              : (sf == null ? 'Service Fusion pictures appear after the next sync of this $_kind.' : 'Service Fusion has none on this $_kind either.'),
           tone: DashUi.sky,
         ),
     ];
@@ -1637,10 +1713,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       if (rows.isEmpty)
         _detailsEmpty(
           Icons.description_outlined,
-          sf == null ? 'No documents yet' : 'No documents on this job',
+          'No documents yet',
           _filesEnabled && _canUpdate
-              ? (sf == null ? 'Upload one above. Service Fusion documents appear after the next sync of this job.' : 'Upload one above.')
-              : (sf == null ? 'Service Fusion documents appear after the next sync of this job.' : 'Service Fusion has none on this job either.'),
+              ? (sf == null ? 'Upload one above. Service Fusion documents appear after the next sync of this $_kind.' : 'Upload one above.')
+              : (sf == null ? 'Service Fusion documents appear after the next sync of this $_kind.' : 'Service Fusion has none on this $_kind either.'),
         )
       else
         Padding(
@@ -1739,7 +1815,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Future<void> _addTask() async {
     final ok = await _textDialog(
       title: 'Add a task',
-      subtitle: 'Goes on this $_kind\'s Task List here. Service Fusion is not changed.',
+      subtitle: 'Goes on this $_kind\'s task list here. Service Fusion is not changed.',
       icon: Icons.add_task_rounded,
       hint: 'What needs to be done?',
       saveLabel: 'Save task',
@@ -1810,7 +1886,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         msg = (json.decode(res.body) as Map)['error']?.toString();
       } catch (_) {}
       problem = switch (res.statusCode) {
-        403 => 'Only admins can delete ${kind}s.',
+        // Who may delete is the Team screen's Delete switch now, not being an admin (audit 2026-11-24, item 29).
+        403 => "You don't have permission to delete ${kind}s. An admin can turn it on in Team.",
         404 => 'It is already gone from the app. Refresh the list.',
         _ => msg ?? 'Server error (${res.statusCode}). Nothing was deleted.',
       };
@@ -1841,7 +1918,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Future<void> _removeTask(Map<String, dynamic> t) async {
     final ok = await _confirm(
       'Remove this task?',
-      '"${t['description']}" comes off this $_kind\'s Task List for everyone. This cannot be undone.',
+      '"${t['description']}" comes off this $_kind\'s task list for everyone. This cannot be undone.',
       'Remove task',
     );
     if (!ok) return;
@@ -1850,20 +1927,41 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     await _loadNotesTasks();
   }
 
+  /// Tasks whose tick is on its way to the server (task id), so the tick shows at once and can't be pressed twice.
+  final Set<String> _taskPending = {};
+
+  /// Ticks a task off (or back on) straight away and then saves it (audit 2026-11-24, item 28: the tick used to wait
+  /// for the server with no sign anything was happening). A failed save puts the tick back and says why.
   Future<void> _toggleTask(Map<String, dynamic> t) async {
-    final err = await _send('PATCH', 'tasks/${Uri.encodeComponent(t['id'].toString())}', {'is_completed': t['isCompleted'] != true});
-    if (err != null) _say('Could not update the task: $err');
+    final id = t['id'].toString();
+    if (_taskPending.contains(id)) return;
+    final done = t['isCompleted'] != true;
+    List<Map<String, dynamic>> flipped(bool to) => [
+      for (final x in _ourTasks) x['id'].toString() == id ? {...x, 'isCompleted': to} : x,
+    ];
+    setState(() {
+      _taskPending.add(id);
+      _ourTasks = flipped(done);
+    });
+    final err = await _send('PATCH', 'tasks/${Uri.encodeComponent(id)}', {'is_completed': done});
+    if (!mounted) return;
+    if (err != null) {
+      setState(() => _ourTasks = flipped(!done));
+      _say('Could not update the task: $err');
+    }
     await _loadNotesTasks();
+    if (mounted) setState(() => _taskPending.remove(id));
   }
 
-  /// The Add Task / Add Notes button at the right of its block's heading, styled like Request payment.
+  /// The Add task / Add note button at the right of its block's heading, styled like Request payment. No hover wash
+  /// (USER RULE 2026-11-24): `styleFrom(foregroundColor:)` brings its own, which beats the page's theme.
   Widget _addButton(String label, VoidCallback onTap) => TextButton.icon(
     onPressed: onTap,
     style: TextButton.styleFrom(
       foregroundColor: DashUi.blue,
       visualDensity: VisualDensity.compact,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-    ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    ).copyWith(overlayColor: dashNoHoverOverlay),
     icon: const Icon(Icons.add_rounded, size: 18),
     // Weight on the label, not the button's textStyle, which would replace the app font.
     label: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
@@ -1871,8 +1969,6 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
 
   DateTime? _when(dynamic v) => DateTime.tryParse(v?.toString() ?? '');
 
-  /// The strip that opens a section at the top of a section (Task List on Details, the Notes card), drawn like Site
-  /// Visits' on Job Info: icon and "Title (n)", an optional [note] beside it ("1 of 3 done"), the Add button on the right.
   /// Where a section is switched off for this person: one plain line in place of it.
   Widget _noAccess(String text) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
@@ -1885,6 +1981,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     ),
   );
 
+  /// The strip that opens a section (the task list on Details, the Notes card), drawn like Site visits' on Job Info:
+  /// icon and "Title (n)", an optional [note] beside it ("1 of 3 done"), the Add button on the right.
   Widget _sectionStrip(IconData icon, String title, {String note = '', Color noteTone = DashUi.subtle, required Widget action}) => Container(
     padding: const EdgeInsets.fromLTRB(20, 2, 8, 2),
     decoration: const BoxDecoration(
@@ -1919,9 +2017,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   Widget _tasksSection() {
     final raw = _sf['tasks'];
     final List<Map<String, dynamic>> sfTasks = raw is List ? raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() : const [];
-    final action = _canUpdate ? _addButton('Add Task', _addTask) : const SizedBox.shrink();
+    final action = _canUpdate ? _addButton('Add task', _addTask) : const SizedBox.shrink();
 
-    Widget row({required Key key, required String text, required bool done, required String sub, bool synced = false, VoidCallback? onToggle, VoidCallback? onRemove}) =>
+    Widget row({
+      required Key key,
+      required String text,
+      required bool done,
+      required String sub,
+      bool synced = false,
+      bool pending = false,
+      VoidCallback? onToggle,
+      VoidCallback? onRemove,
+    }) =>
         _HoverRow(
           key: key,
           builder: (_) => Padding(
@@ -1929,7 +2036,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _TaskCheck(done: done, onTap: onToggle),
+                _TaskCheck(done: done, pending: pending, onTap: onToggle),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Padding(
@@ -1985,6 +2092,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
             if ((t['createdBy'] ?? '').toString().isNotEmpty) 'Added by ${t['createdBy']}',
             if (t['isCompleted'] == true && (t['completedBy'] ?? '').toString().isNotEmpty) 'done by ${t['completedBy']}',
           ].join('  ·  '),
+          pending: _taskPending.contains(t['id'].toString()),
           onToggle: _canUpdate ? () => _toggleTask(t) : null,
           onRemove: _canUpdate ? () => _removeTask(t) : null,
         ),
@@ -2005,7 +2113,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       children: [
         _sectionStrip(
           Icons.checklist_rounded,
-          'Task List ($total)',
+          'Task list ($total)',
           note: total == 0 ? '' : (all ? (total == 1 ? 'Done' : 'All $total done') : '$done of $total done'),
           noteTone: all ? DashUi.emeraldText : DashUi.subtle,
           action: action,
@@ -2014,7 +2122,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           Padding(
             padding: const EdgeInsets.all(20),
             child: _factText(
-              '${_sf['tasks'] is List ? 'No tasks on this $_kind.' : 'No tasks yet.'}${_canUpdate ? ' Use Add Task to add one.' : ''}',
+              '${_sf['tasks'] is List ? 'No tasks on this $_kind.' : 'No tasks yet.'}${_canUpdate ? ' Use Add task to add one.' : ''}',
               quiet: true,
             ),
           )
@@ -2062,7 +2170,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           ),
         ),
     ]..sort((a, b) => (b.at ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(a.at ?? DateTime.fromMillisecondsSinceEpoch(0)));
-    final action = _canUpdate ? _addButton('Add Notes', _addNote) : const SizedBox.shrink();
+    final action = _canUpdate ? _addButton('Add note', _addNote) : const SizedBox.shrink();
     // Collapsed by default when there are more than a couple: the newest few, then a control to show them all.
     final collapsible = all.length > _notesCollapsedCount;
     final shown = (collapsible && !_notesExpanded) ? all.take(_notesCollapsedCount).toList() : all;
@@ -2074,7 +2182,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           Padding(
             padding: const EdgeInsets.all(20),
             child: _factText(
-              '${_sf['notes'] is List ? 'No notes on this $_kind.' : 'No notes yet.'}${_canUpdate ? ' Use Add Notes to write one.' : ''}',
+              '${_sf['notes'] is List ? 'No notes on this $_kind.' : 'No notes yet.'}${_canUpdate ? ' Use Add note to write one.' : ''}',
               quiet: true,
             ),
           )
@@ -2086,40 +2194,54 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               return _RiseIn(key: row.key, index: i, child: row);
             }(),
           ],
-          if (collapsible) ...[
-            const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
-            InkWell(
-              mouseCursor: WidgetStateMouseCursor.clickable,
+          if (collapsible)
+            _showAllToggle(
+              expanded: _notesExpanded,
+              label: _notesExpanded ? 'Show fewer notes' : 'Show all ${all.length} notes (${all.length - _notesCollapsedCount} older)',
               onTap: () => setState(() => _notesExpanded = !_notesExpanded),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
-                child: Row(
-                  children: [
-                    AnimatedRotation(
-                      turns: _notesExpanded ? 0.5 : 0,
-                      duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: const Icon(Icons.expand_more_rounded, size: 20, color: DashUi.blue),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      _notesExpanded ? 'Show fewer notes' : 'Show all ${all.length} notes (${all.length - _notesCollapsedCount} older)',
-                      style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.blue),
-                    ),
-                  ],
-                ),
-              ),
             ),
-          ],
           const SizedBox(height: 4),
         ],
       ],
     );
   }
 
-  /// One note: who wrote it (their avatar, or a sync badge for Service Fusion's) and when, then what it says.
+  /// "Show all n notes" / "Show all n visits" under a collapsed list, and "Show fewer" once it is open: the same control,
+  /// in the same place, for both lists (audit 2026-11-24, item 34: the visits' one sat above its list).
+  Widget _showAllToggle({required bool expanded, required String label, required VoidCallback onTap}) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
+      InkWell(
+        mouseCursor: WidgetStateMouseCursor.clickable,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
+          child: Row(
+            children: [
+              AnimatedRotation(
+                turns: expanded ? 0.5 : 0,
+                duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                child: const Icon(Icons.expand_more_rounded, size: 20, color: DashUi.blue),
+              ),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(label, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.blue)),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+
+  /// One note: who wrote it (their avatar, or a sync badge for Service Fusion's) and when, then what it says. A note
+  /// saved without an author gets a plain person badge, not initials made from the stand-in name (audit 2026-11-24,
+  /// item 30: it showed "AH" from "Added here").
   Widget _noteRow({required Key key, required String who, required String when, required String text, bool synced = false, VoidCallback? onRemove}) {
-    final name = who.trim().isEmpty ? 'Added here' : who.trim();
+    final anonymous = who.trim().isEmpty;
+    final name = anonymous ? 'Added here' : who.trim();
     return _HoverRow(
       key: key,
       builder: (_) => Padding(
@@ -2129,6 +2251,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           children: [
             synced
                 ? _infoBadge(Icons.sync_rounded, DashUi.indigo)
+                : anonymous
+                ? _infoBadge(Icons.person_outline_rounded, DashUi.subtle)
                 : DashAvatar(name: name, imageUrl: _techPhotos[name.toLowerCase()] ?? '', size: 30, accent: DashUi.blue),
             const SizedBox(width: 12),
             Expanded(
@@ -2166,6 +2290,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     );
   }
 
+  /// A status change in words, with no bare arrow when one side is empty (audit 2026-11-24, item 29).
+  static String _statusChange(String from, String to) {
+    if (from.isEmpty && to.isEmpty) return 'Status changed';
+    if (from.isEmpty) return 'Status set to $to';
+    if (to.isEmpty) return 'Status cleared (was $from)';
+    return 'Status changed: $from  →  $to';
+  }
+
   /// Activity tab: one timeline, newest first. Anything done in this app names the person; status changes come from
   /// Service Fusion's sync, which does not tell us who made them.
   List<Widget> _activityRows() {
@@ -2175,7 +2307,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           at: _when(h['changed_at']),
           icon: Icons.swap_horiz_rounded,
           who: 'Service Fusion',
-          what: 'Status ${(h['old_status'] ?? '').toString()}  →  ${(h['new_status'] ?? '').toString()}',
+          what: _statusChange((h['old_status'] ?? '').toString().trim(), (h['new_status'] ?? '').toString().trim()),
         ),
       for (final n in _ourNotes)
         (at: _when(n['createdAt']), icon: Icons.sticky_note_2_outlined, who: (n['author'] ?? '').toString(), what: 'Added a note'),
@@ -2461,11 +2593,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return (total: total, paid: paid.clamp(0, total).toDouble(), owed: 0, over: 0, state: 'unknown', invoice: null);
   }
 
+  /// The one wording for money paid beyond the total, wherever it shows (audit 2026-11-24, item 15).
+  String _overpaid(double over) => 'Overpaid by ${_money.format(over)}';
+
   /// The balance after a payment in the list: still owed, settled, or paid beyond the total (amber, it is owed back).
   Widget _leftAfter(double left) {
     final over = left < -0.005;
     return Text(
-      over ? '${_money.format(-left)} over' : (left <= 0.005 ? 'Nothing left to pay' : '${_money.format(left)} left'),
+      over ? _overpaid(-left) : (left <= 0.005 ? 'Nothing left to pay' : '${_money.format(left)} left'),
       style: TextStyle(
         fontSize: 12.5,
         color: over ? DashUi.amberText : DashUi.subtle,
@@ -2490,11 +2625,14 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final full = m.state == 'paid' || m.state == 'invoice-paid';
     final (String right, Color rightTone) = switch (m.state) {
       'owed' => ('${_money.format(m.owed)} left', DashUi.redText),
-      'invoice-owed' => ('${_money.format(m.owed)} on invoice #${m.invoice!['number']}', DashUi.amberText),
+      // Owed is red here too, as under Balance due (audit 2026-11-24, item 16).
+      'invoice-owed' => ('${_money.format(m.owed)} on invoice #${m.invoice!['number']}', DashUi.redText),
       'invoice-paid' => ('Paid on invoice #${m.invoice!['number']}', DashUi.emeraldText),
-      'paid' when over => ('Overpaid ${_money.format(m.over)}', DashUi.amberText),
+      'paid' when over => (_overpaid(m.over), DashUi.amberText),
       'paid' => ('Paid in full', DashUi.emeraldText),
-      _ when m.paid > 0.005 => ('Rest not on file', DashUi.subtle),
+      // Service Fusion shows nothing due, but the payments on file don't cover the total (audit item 29: this said
+      // "Rest not on file").
+      _ when m.paid > 0.005 => ('${_money.format(m.total - m.paid)} with no payment on file', DashUi.subtle),
       _ => ('No payment on file', DashUi.subtle),
     };
     String? age;
@@ -2594,9 +2732,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                   age,
                   style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: ageTone),
                 ),
-              ] else if (over)
-                const Icon(Icons.warning_amber_rounded, size: 18, color: DashUi.amberText)
-              else if (full)
+              ] else if (full && !over) // overpaid: the callout below carries the one warning icon (audit item 32)
                 const Icon(Icons.verified_rounded, size: 17, color: DashUi.emeraldDeep),
             ],
           ),
@@ -2709,7 +2845,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final url = str('pay_online_url');
     final facts = <(IconData, String, String)>[
       // Only when the server sent the field: an older backend leaves it out, which is not the same as "not emailed".
-      if (inv.containsKey('mail_send_date')) (Icons.outgoing_mail, 'Emailed', sent().isEmpty ? 'Not emailed yet' : sent()),
+      if (inv.containsKey('mail_send_date')) (Icons.forward_to_inbox_rounded, 'Emailed', sent().isEmpty ? 'Not emailed yet' : sent()),
       if (terms.isNotEmpty) (Icons.event_note_outlined, 'Terms', _termWords[terms.toUpperCase()] ?? terms),
       if (str('customer_contact').isNotEmpty) (Icons.person_outline_rounded, 'Billed to', str('customer_contact')),
       if (str('qbo_invoice_no').isNotEmpty) (Icons.account_balance_outlined, 'QuickBooks', 'Invoice #${str('qbo_invoice_no')}'),
@@ -2766,7 +2902,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                     foregroundColor: DashUi.blue,
                     visualDensity: VisualDensity.compact,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
+                  ).copyWith(overlayColor: dashNoHoverOverlay),
                   icon: const Icon(Icons.open_in_new_rounded, size: 16),
                   label: const Text('Open invoice', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                 ),
@@ -2779,7 +2915,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                     foregroundColor: DashUi.slate,
                     visualDensity: VisualDensity.compact,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
+                  ).copyWith(overlayColor: dashNoHoverOverlay),
                   icon: const Icon(Icons.link_rounded, size: 16),
                   label: const Text('Copy link', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600)),
                 ),
@@ -2807,7 +2943,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                 padding: const EdgeInsets.fromLTRB(20, 9, 12, 9),
                 child: Row(
                   children: [
-                    _infoBadge(Icons.receipt_long_outlined, paid ? DashUi.emeraldDeep : DashUi.amber),
+                    _infoBadge(Icons.receipt_long_outlined, tone), // red while unpaid, like its pill (audit item 16)
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(what, style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.4)),
@@ -2912,29 +3048,35 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return [
       _sfRow(
         Icons.receipt_long_outlined,
-        _isEstimate ? 'Estimate Total' : 'Job Total',
+        _isEstimate ? 'Estimate total' : 'Job total',
         job['total_revenue'] == null ? null : _factText(_money.format(_n(job['total_revenue']))),
       ),
       // An estimate has no balance: Service Fusion carries the whole quote in that field.
       if (!_isEstimate) ...[
         const Divider(height: 1, indent: 20, endIndent: 20, color: DashUi.line),
-        _sfRow(Icons.account_balance_wallet_outlined, 'Balance Due', job['due_total'] == null ? null : _balanceText(job)),
+        _sfRow(Icons.account_balance_wallet_outlined, 'Balance due', job['due_total'] == null ? null : _balanceText(job)),
       ],
       if (showRequest && _canRequestPayment)
         Padding(
-          padding: const EdgeInsets.fromLTRB(14, 4, 14, 8),
+          // 8 + the button's own 12 px start padding puts its icon on the rows' 20 px icon line (audit item 31).
+          padding: const EdgeInsets.fromLTRB(8, 4, 14, 8),
           child: Align(
             alignment: Alignment.centerLeft,
             child: TextButton.icon(
               onPressed: () => showDialog<void>(
                 context: context,
-                builder: (_) => _PaymentLinkDialog(jobId: widget.jobId, total: _n(job['total_revenue']), balance: ask),
+                builder: (_) => _PaymentLinkDialog(
+                  jobId: widget.jobId,
+                  estimate: _isEstimate,
+                  total: _n(job['total_revenue']),
+                  balance: ask,
+                ),
               ),
               style: TextButton.styleFrom(
                 foregroundColor: DashUi.blue,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-              ),
-              icon: const Icon(Icons.link, size: 18),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ).copyWith(overlayColor: dashNoHoverOverlay),
+              icon: const Icon(Icons.link_rounded, size: 18),
               // Weight on the label, not the button's textStyle, which would replace the app font.
               label: Text(
                 ask > 0.005 ? 'Request ${_money.format(ask)}' : 'Request payment',
@@ -2961,8 +3103,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     ];
   }
 
-  /// A Job Info row, drawn like a Details Summary row. A null value reads "Not Set", like Service Fusion.
-  Widget _sfRow(IconData icon, String label, Widget? value) => _factRow(icon, label, value ?? _factText('Not Set', quiet: true));
+  /// A Job Info row, drawn like a Details Summary row. A null value reads "Not set", as on Details (audit 2026-11-24,
+  /// item 12).
+  Widget _sfRow(IconData icon, String label, Widget? value) => _factRow(icon, label, value);
 
   /// "Site Visits (n)" strip at the bottom of the Job Info panel. Uses Service Fusion's own visits when synced
   /// (date, arrival window, duration, techs with status, notes); until then, the tech work days we recorded.
@@ -2972,7 +3115,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final visits = _sfVisits; // only what Service Fusion lists: no visit rows from it means no visits
     final count = visits.length;
     // More than a handful of visits: collapsed by default to the latest few (keeping their real numbers, so the
-    // hidden ones are the earliest). The control sits right under the heading, where the hidden ones would start.
+    // hidden ones are the earliest). The control sits under the list, as the Notes card's does (audit item 34).
     final collapsible = count > _visitsCollapsedCount;
     final first = (collapsible && !_visitsExpanded) ? count - _visitsCollapsedCount : 0;
     return Column(
@@ -2989,39 +3132,22 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
               const Icon(Icons.home_repair_service_outlined, size: 16, color: DashUi.subtle),
               const SizedBox(width: 8),
               Text(
-                'Site Visits ($count)',
+                'Site visits ($count)',
                 style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.slate),
               ),
             ],
           ),
         ),
-        if (collapsible)
-          InkWell(
-            mouseCursor: WidgetStateMouseCursor.clickable,
-            onTap: () => setState(() => _visitsExpanded = !_visitsExpanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-              child: Row(
-                children: [
-                  AnimatedRotation(
-                    turns: _visitsExpanded ? 0.5 : 0,
-                    duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 220),
-                    curve: Curves.easeOutCubic,
-                    child: const Icon(Icons.expand_more_rounded, size: 20, color: DashUi.blue),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    _visitsExpanded ? 'Show fewer visits' : 'Show all $count visits ($first earlier)',
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.blue),
-                  ),
-                ],
-              ),
-            ),
-          ),
         if (count == 0)
           Padding(padding: const EdgeInsets.all(20), child: _factText('No visits scheduled.', quiet: true))
         else
           ..._visitTimeline(visits, first),
+        if (collapsible)
+          _showAllToggle(
+            expanded: _visitsExpanded,
+            label: _visitsExpanded ? 'Show fewer visits' : 'Show all $count visits ($first earlier)',
+            onTap: () => setState(() => _visitsExpanded = !_visitsExpanded),
+          ),
       ],
     );
   }
@@ -3165,7 +3291,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                         'Visit ${i + 1}',
                         style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: when == 0 ? DashUi.blue : DashUi.ink),
                       ),
-                      _factText(dateText.isEmpty ? 'Not Set' : dateText, quiet: dateText.isEmpty),
+                      _factText(dateText.isEmpty ? 'Not set' : dateText, quiet: dateText.isEmpty),
                       _factText(timeText.isEmpty ? 'No time set' : timeText, quiet: true),
                     ],
                   ),
@@ -3347,12 +3473,15 @@ extension _Recolor on Widget {
 }
 
 /// "Request payment": the office picks an amount, the backend returns a signed Stripe pay link for this job, and the
-/// office copies it to the customer. The payment lands on the job by itself once Stripe confirms it.
+/// office copies it to the customer. The payment lands on the job by itself once Stripe confirms it. In the app's
+/// standard pop-up (audit 2026-11-24, item 18): pill choices, a quiet field that only takes a money amount, a warning
+/// when the amount is more than is owed, and the server's refusal above the buttons.
 class _PaymentLinkDialog extends StatefulWidget {
   final String jobId;
+  final bool estimate;
   final double total;
   final double balance;
-  const _PaymentLinkDialog({required this.jobId, required this.total, required this.balance});
+  const _PaymentLinkDialog({required this.jobId, required this.estimate, required this.total, required this.balance});
 
   @override
   State<_PaymentLinkDialog> createState() => _PaymentLinkDialogState();
@@ -3360,11 +3489,19 @@ class _PaymentLinkDialog extends StatefulWidget {
 
 class _PaymentLinkDialogState extends State<_PaymentLinkDialog> {
   final _amount = TextEditingController();
+  final _amountFocus = FocusNode();
   final _money = NumberFormat.currency(symbol: r'$');
+
+  /// Digits with at most one point and two decimals ("1.2.3" and "1.234" can't be typed).
+  static final _moneyShape = RegExp(r'^\d*\.?\d{0,2}$');
+
   String _kind = 'custom';
-  String? _error;
+  String? _amountError; // under the field
+  String? _failed; // the server's refusal, above the buttons
   String? _url;
   bool _busy = false;
+
+  String get _what => widget.estimate ? 'estimate' : 'job';
 
   @override
   void initState() {
@@ -3380,23 +3517,42 @@ class _PaymentLinkDialogState extends State<_PaymentLinkDialog> {
   @override
   void dispose() {
     _amount.dispose();
+    _amountFocus.dispose();
     super.dispose();
   }
 
   void _pick(String kind, double amount) {
     _kind = kind;
     _amount.text = amount.toStringAsFixed(2);
+    _amountError = null;
+  }
+
+  double? get _typed => double.tryParse(_amount.text.trim());
+
+  /// A caution, not a block: a deposit on a bigger job or a combined payment can be right, so it only says so.
+  String? get _caution {
+    final a = _typed;
+    if (a == null) return null;
+    if (widget.total > 0 && a > widget.total + 0.005) {
+      return 'That is more than the $_what total of ${_money.format(widget.total)}.';
+    }
+    if (widget.balance > 0 && a > widget.balance + 0.005) {
+      return 'That is more than the ${_money.format(widget.balance)} balance due.';
+    }
+    return null;
   }
 
   Future<void> _create() async {
-    final amount = double.tryParse(_amount.text.trim());
+    if (_busy) return;
+    final amount = _typed;
     if (amount == null || amount < 1) {
-      setState(() => _error = 'Enter an amount of at least \$1.');
+      setState(() => _amountError = r'Enter an amount of at least $1.00, like 125.00.');
       return;
     }
     setState(() {
       _busy = true;
-      _error = null;
+      _amountError = null;
+      _failed = null;
     });
     try {
       final res = await http
@@ -3419,99 +3575,134 @@ class _PaymentLinkDialogState extends State<_PaymentLinkDialog> {
         });
       } else {
         setState(() {
-          _error = body is Map && body['error'] != null ? body['error'].toString() : 'Could not create the link.';
+          _failed = body is Map && body['error'] != null ? body['error'].toString() : 'Could not create the link.';
           _busy = false;
         });
       }
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not reach the server.';
+        _failed = 'Could not reach the server.';
         _busy = false;
       });
     }
   }
 
+  Widget _form() {
+    final options = <(String, String)>[
+      if (widget.total > 0) ('deposit', '50% deposit'),
+      if (widget.balance > 0) ('final', 'Balance due'),
+      ('custom', 'Other amount'),
+    ];
+    final caution = _caution;
+    final help = [
+      if (widget.total > 0) '${widget.estimate ? 'Estimate' : 'Job'} total ${_money.format(widget.total)}',
+      if (widget.balance > 0) '${_money.format(widget.balance)} due',
+    ].join('  ·  ');
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (options.length > 1) ...[
+          AppSegmented<String>(
+            value: _kind,
+            options: options,
+            onChanged: (k) => setState(() {
+              switch (k) {
+                case 'deposit':
+                  _pick('deposit', widget.total / 2);
+                case 'final':
+                  _pick('final', widget.balance);
+                default:
+                  _kind = 'custom';
+                  _amountFocus.requestFocus();
+              }
+            }),
+          ),
+          const SizedBox(height: 16),
+        ],
+        AppFieldLabel('Amount', help: help.isEmpty ? null : help),
+        TextField(
+          controller: _amount,
+          focusNode: _amountFocus,
+          autofocus: true,
+          enabled: !_busy,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [
+            TextInputFormatter.withFunction((before, after) => _moneyShape.hasMatch(after.text) ? after : before),
+          ],
+          textInputAction: TextInputAction.done,
+          onChanged: (_) => setState(() {
+            _kind = 'custom';
+            _amountError = null;
+          }),
+          onSubmitted: (_) => _create(),
+          style: const TextStyle(fontSize: 14.5, color: DashUi.ink, fontFeatures: [FontFeature.tabularFigures()]),
+          decoration: appFieldDecoration(hint: '0.00', prefixText: r'$ ', error: _amountError),
+        ),
+        if (caution != null) ...[
+          const SizedBox(height: 10),
+          AppNotice(caution, kind: AppNoticeKind.warning),
+        ],
+      ],
+    );
+  }
+
+  Widget _result(String url) => Column(
+    mainAxisSize: MainAxisSize.min,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Text(
+        'Send this link to the customer for ${_money.format(_typed ?? 0)}:',
+        style: const TextStyle(fontSize: 14, color: DashUi.ink, height: 1.4),
+      ),
+      const SizedBox(height: 10),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: DashUi.faint,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: DashUi.line),
+        ),
+        child: SelectableText(url, style: const TextStyle(fontSize: 13, color: DashUi.slate, height: 1.4)),
+      ),
+      const SizedBox(height: 10),
+      Text(
+        'It stays valid for 30 days. The payment appears on this $_what once the customer pays.',
+        style: const TextStyle(fontSize: 13, color: DashUi.slate, height: 1.4),
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     final url = _url;
-    return AlertDialog(
-      title: Text('Request payment · Job # ${widget.jobId}'),
-      content: SizedBox(
+    return PopScope(
+      canPop: !_busy,
+      child: AppDialog(
+        title: 'Request payment',
+        subtitle: '${widget.estimate ? 'Estimate' : 'Job'} #${widget.jobId}',
+        icon: Icons.link_rounded,
         width: 480,
-        child: url != null
-            ? Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Send this link to the customer for ${_money.format(double.tryParse(_amount.text) ?? 0)}:'),
-                  const SizedBox(height: 10),
-                  SelectableText(url, style: const TextStyle(fontSize: 13, color: AppTheme.secondaryText)),
-                  const SizedBox(height: 10),
-                  const Text('It stays valid for 30 days. The payment appears on this job once the customer pays.', style: TextStyle(fontSize: 13)),
-                ],
-              )
-            : Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      if (widget.total > 0)
-                        ChoiceChip(
-                          label: Text('50% deposit ${_money.format(widget.total / 2)}'),
-                          selected: _kind == 'deposit',
-                          onSelected: (_) => setState(() => _pick('deposit', widget.total / 2)),
-                        ),
-                      if (widget.balance > 0)
-                        ChoiceChip(
-                          label: Text('Balance ${_money.format(widget.balance)}'),
-                          selected: _kind == 'final',
-                          onSelected: (_) => setState(() => _pick('final', widget.balance)),
-                        ),
-                      ChoiceChip(label: const Text('Other amount'), selected: _kind == 'custom', onSelected: (_) => setState(() => _kind = 'custom')),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: _amount,
-                    autofocus: true,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
-                    onChanged: (_) => setState(() => _kind = 'custom'),
-                    onSubmitted: (_) => _busy ? null : _create(),
-                    decoration: InputDecoration(labelText: 'Amount', prefixText: r'$ ', errorText: _error),
-                  ),
-                ],
-              ),
+        body: url == null ? _form() : _result(url),
+        footer: url == null && _failed != null ? AppNotice(_failed!, kind: AppNoticeKind.error) : null,
+        actions: url == null
+            ? [
+                AppButton.ghost('Cancel', _busy ? null : () => Navigator.of(context).pop()),
+                AppButton.ink(_busy ? 'Creating…' : 'Create link', _busy ? null : _create, icon: _busy ? null : Icons.link_rounded),
+              ]
+            : [
+                AppButton.ghost('Close', () => Navigator.of(context).pop()),
+                AppButton.ghost('Open', () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication)),
+                AppButton.ink('Copy link', () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  await Clipboard.setData(ClipboardData(text: url));
+                  messenger
+                    ..hideCurrentSnackBar()
+                    ..showSnackBar(const SnackBar(content: Text('Link copied')));
+                }, icon: Icons.copy_rounded, autofocus: true),
+              ],
       ),
-      actions: [
-        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: Text(url == null ? 'Cancel' : 'Close')),
-        if (url == null)
-          FilledButton(
-            onPressed: _busy ? null : _create,
-            child: _busy
-                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Text('Create link'),
-          )
-        else ...[
-          TextButton(
-            onPressed: () => launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
-            child: const Text('Open'),
-          ),
-          FilledButton(
-            onPressed: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              await Clipboard.setData(ClipboardData(text: url));
-              messenger
-                ..hideCurrentSnackBar()
-                ..showSnackBar(const SnackBar(content: Text('Link copied')));
-            },
-            child: const Text('Copy link'),
-          ),
-        ],
-      ],
     );
   }
 }
@@ -3667,11 +3858,13 @@ class _LivePulseState extends State<_LivePulse> with SingleTickerProviderStateMi
 }
 
 /// A task's tick: an empty ring that fills green, with the check popping in, when the task is done. Without [onTap]
-/// (Service Fusion's tasks, read-only here) it only shows the state, in grey.
+/// (Service Fusion's tasks, read-only here) it only shows the state, in grey. While [pending] (the tick is being
+/// saved) it already shows the new state, a little faded, and can't be pressed again.
 class _TaskCheck extends StatelessWidget {
   final bool done;
+  final bool pending;
   final VoidCallback? onTap;
-  const _TaskCheck({required this.done, this.onTap});
+  const _TaskCheck({required this.done, this.pending = false, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -3701,7 +3894,12 @@ class _TaskCheck extends StatelessWidget {
     if (onTap == null) {
       return SizedBox(width: 48, height: 48, child: Center(child: mark)); // the same box as the IconButton, so the text lines up
     }
-    return IconButton(tooltip: done ? 'Mark not done' : 'Mark done', onPressed: onTap, icon: mark);
+    // Still a live button while saving (a disabled one would drop keyboard focus); a press then does nothing.
+    return IconButton(
+      tooltip: pending ? 'Saving…' : (done ? 'Mark not done' : 'Mark done'),
+      onPressed: pending ? () {} : onTap,
+      icon: AnimatedOpacity(opacity: pending ? 0.55 : 1, duration: still ? Duration.zero : const Duration(milliseconds: 150), child: mark),
+    );
   }
 }
 
@@ -3779,48 +3977,6 @@ class _DetailLinkState extends State<_DetailLink> {
                   Flexible(child: text),
                 ],
               ),
-      ),
-    );
-  }
-}
-
-/// A picture tile that lifts a little and gains a blue edge under the pointer.
-class _HoverLift extends StatefulWidget {
-  final VoidCallback? onTap;
-  final Widget child;
-  const _HoverLift({required this.onTap, required this.child});
-
-  @override
-  State<_HoverLift> createState() => _HoverLiftState();
-}
-
-class _HoverLiftState extends State<_HoverLift> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final d = MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 160);
-    final lit = _hover && widget.onTap != null;
-    return MouseRegion(
-      cursor: widget.onTap == null ? MouseCursor.defer : SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
-      onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        onTap: widget.onTap,
-        child: AnimatedSlide(
-          duration: d,
-          curve: Curves.easeOutCubic,
-          offset: Offset(0, lit ? -0.02 : 0),
-          child: AnimatedContainer(
-            duration: d,
-            padding: const EdgeInsets.all(1),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(11),
-              border: Border.all(color: lit ? DashUi.blue.withValues(alpha: 0.5) : DashUi.line),
-            ),
-            child: widget.child,
-          ),
-        ),
       ),
     );
   }
@@ -4196,7 +4352,8 @@ class _PicTileState extends State<_PicTile> {
                         child: Tooltip(
                           message: 'Remove',
                           child: Material(
-                            color: DashUi.ink.withValues(alpha: _hover ? 0.78 : 0.5),
+                            // One fill, pointer or not (USER RULE 2026-11-24, audit item 21: it darkened on hover).
+                            color: DashUi.ink.withValues(alpha: 0.6),
                             shape: const CircleBorder(),
                             child: InkWell(
                               mouseCursor: WidgetStateMouseCursor.clickable,
@@ -4223,7 +4380,8 @@ class _PicTileState extends State<_PicTile> {
 }
 
 /// A document in the Docs list: a tile coloured by its file type, its name, note and details, where it came from, and
-/// (for our own) a remove button. The whole row opens it and tints under the pointer.
+/// (for our own) a remove button. The whole row opens it; under the pointer its name and open icon turn link blue, with
+/// no shading (USER RULE 2026-11-24).
 class _DocRow extends StatefulWidget {
   final String name;
   final String comment;
@@ -4305,8 +4463,8 @@ class _DocRowState extends State<_DocRow> {
                     height: 42,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: tint.withValues(alpha: _hover ? 0.18 : 0.12),
-                      borderRadius: BorderRadius.circular(10),
+                      color: tint.withValues(alpha: 0.12), // no hover tint (audit item 21)
+                      borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
                       label,

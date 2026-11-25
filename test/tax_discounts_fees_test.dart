@@ -438,7 +438,8 @@ void main() {
       await t.enterText(find.byKey(const ValueKey('oos-name')), 'Out-of-state sales tax (Missouri)');
       await t.enterText(find.byKey(const ValueKey('oos-rate')), '45');
       await t.pumpAndSettle();
-      expect(find.text(kTaxRateRuleText), findsOneWidget);
+      // Its own rule: above 0%, not "between 0% and 30%", since 0 is refused (audit item 72).
+      expect(find.text('Enter a rate above 0% and up to 30%.'), findsOneWidget);
       await t.enterText(find.byKey(const ValueKey('oos-rate')), '8.225');
       await t.pumpAndSettle();
       await t.tap(find.byKey(const ValueKey('save-oos')));

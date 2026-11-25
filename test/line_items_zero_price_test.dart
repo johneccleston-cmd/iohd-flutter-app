@@ -88,7 +88,7 @@ void main() {
       await _pump(t, _preview(_lines));
       await t.tap(find.text(_confirm));
       await t.pumpAndSettle();
-      expect(find.text("Charge nothing for 'Haul away old door'?"), findsOneWidget);
+      expect(find.text('Charge nothing for "Haul away old door"?'), findsOneWidget);
       expect(find.text('It will show \$0.00 to the customer.'), findsOneWidget);
       expect(find.text('Enter a price'), findsOneWidget);
       await t.tap(find.text('Enter a price'));
@@ -262,6 +262,8 @@ void main() {
         await settle(t, frames: 6);
         expect(find.text('No charge · confirmed by Test Admin'), findsOneWidget);
         await t.tap(find.text('Exit preview'));
+        await settle(t, frames: 4);
+        await t.tap(find.text('Discard changes')); // the confirmation is a change: Exit preview asks first (audit item 87)
         await settle(t, frames: 6);
         expect(find.text(_confirm), findsOneWidget, reason: 'back to the saved option');
       });

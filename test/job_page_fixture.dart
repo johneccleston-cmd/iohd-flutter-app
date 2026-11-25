@@ -638,13 +638,6 @@ Future<PageErrors> pumpJobPage(
 /// The catalog search under the line items.
 Finder get catalogSearch => find.byWidgetPredicate((w) => w is TextField && (w.decoration?.hintText ?? '').startsWith('Add a line'));
 
-/// Scrolls the page to a section with the jump bar, as a person would ('items', 'visits', 'payments', 'notes',
-/// 'files', 'comms', 'activity', and 'details' on a narrow window).
-Future<void> jumpTo(WidgetTester t, String section) async {
-  await t.tap(find.byKey(ValueKey('jump-$section')));
-  await settle(t, frames: 8);
-}
-
 Future<void> settle(WidgetTester t, {int frames = 14}) async {
   for (var i = 0; i < frames; i++) {
     await t.pump(const Duration(milliseconds: 100));

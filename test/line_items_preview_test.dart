@@ -260,6 +260,8 @@ void main() {
         // Exit preview: the loaded values, figures and total are back.
         await t.tap(find.text('Exit preview'));
         await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes')); // with changes, Exit preview asks first (audit item 87)
+        await t.pumpAndSettle();
         expect(_inTable('1.50'), findsOneWidget);
         expect(_inTable('3.50'), findsNothing);
         expect(_inTable(r'$825.41'), findsNWidgets(2), reason: 'the job total and the balance due (nothing paid)');
@@ -317,6 +319,8 @@ void main() {
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing, reason: 'a good quantity, not marked');
         await _shot(t, 'line_items_job_big_negative_qty_editing');
         await t.tap(find.text('Exit preview'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
         await t.pumpAndSettle();
         expect(_inTable('35,125.30'), findsOneWidget, reason: 'Exit preview puts Service Fusion\'s quantity back');
       }, () => client);
@@ -511,7 +515,7 @@ void main() {
         await t.tap(find.text('Edit Job'));
         await t.pumpAndSettle();
         expect(find.text('Editing preview only'), findsOneWidget);
-        expect(find.textContaining('will NOT overwrite or update Service Fusion'), findsOneWidget);
+        expect(find.textContaining('Service Fusion isn\'t changed'), findsOneWidget);
         expect(find.text('Editing'), findsOneWidget, reason: 'the ribbon button shows the state and is off');
         expect(find.text('Edit Job'), findsNothing);
         expect(find.text('Save'), findsNothing, reason: 'nothing can be saved yet, so nothing offers to');
@@ -575,6 +579,9 @@ void main() {
         // Exit preview: the original lines and Service Fusion's own figures are back.
         await t.tap(find.text('Exit preview'));
         await t.pumpAndSettle();
+        expect(find.text('Exit the preview?'), findsOneWidget, reason: 'with changes it asks first, as leaving the page does');
+        await t.tap(find.text('Discard changes'));
+        await t.pumpAndSettle();
         expect(find.text('Editing preview only'), findsNothing);
         expect(find.text('Edit Job'), findsOneWidget);
         expect(find.byType(TextField), findsNothing);
@@ -619,6 +626,8 @@ void main() {
         await t.pumpAndSettle();
         await _shot(t, 'line_items_job_eye');
         await t.tap(find.text('Exit preview'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
         await t.pumpAndSettle();
         expect(find.byIcon(Icons.visibility_off_outlined), findsOneWidget, reason: 'Exit preview puts the original back');
         expect(said('Hidden from the customer'), findsOneWidget);
@@ -726,6 +735,8 @@ void main() {
         await _shot(t, 'line_items_job_tax_picked');
         await t.tap(find.text('Exit preview'));
         await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
+        await t.pumpAndSettle();
         expect(find.text('Rogers'), findsNWidgets(2));
         expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
       }, () => client);
@@ -797,6 +808,8 @@ void main() {
         expect(find.textContaining('from the preview'), findsOneWidget);
         expect(find.text(r'$1,265.00'), findsNWidgets(2)); // $1,150 + $115 tax: the job total and the balance due
         await t.tap(find.text('Exit preview'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
         await t.pumpAndSettle();
         expect(find.text('SMH Installation | Gallery Steel | 16x7 | White'), findsOneWidget);
         expect(find.text(r'$1,565.00'), findsNWidgets(2), reason: 'the job total and the balance due');
@@ -918,7 +931,7 @@ void main() {
         await t.tap(find.text('Edit Estimate'));
         await t.pumpAndSettle();
         expect(find.text('Editing preview only'), findsOneWidget);
-        expect(find.textContaining('The original estimate stays exactly as it is.'), findsOneWidget);
+        expect(find.textContaining('The original estimate stays as it is.'), findsOneWidget);
         await _shot(t, 'line_items_estimate_editing');
 
         // Opener $650 -> $500: items 4,350; tax 10% of 3,900 = 390; total 4,740. Its tab follows the draft (round 4: it
@@ -945,6 +958,8 @@ void main() {
         expect(find.textContaining('Not saved: saving isn\'t available yet'), findsOneWidget);
 
         await t.tap(find.text('Exit preview'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
         await t.pumpAndSettle();
         expect(find.text('Edit Estimate'), findsOneWidget);
         expect(find.byType(TextField), findsNothing);
@@ -974,6 +989,8 @@ void main() {
         expect(_inTable(r'$1,977.50'), findsOneWidget);
         expect(find.descendant(of: tab, matching: find.text(r'$1,977.50')), findsOneWidget, reason: 'the tab follows the draft');
         await t.tap(find.text('Exit preview'));
+        await t.pumpAndSettle();
+        await t.tap(find.text('Discard changes'));
         await t.pumpAndSettle();
         expect(_inTable(r'$1,565.00'), findsOneWidget);
         expect(find.descendant(of: tab, matching: find.text(r'$1,565.00')), findsOneWidget, reason: 'and goes back with it');

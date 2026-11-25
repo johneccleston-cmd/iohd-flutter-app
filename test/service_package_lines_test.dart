@@ -170,7 +170,7 @@ void main() {
     });
   });
 
-  testWidgets('Remove package takes all its lines at once, and Undo puts them all back', (t) async {
+  testWidgets('Delete package takes all its lines at once, and Undo puts them all back', (t) async {
     final s = _server();
     await pumpJobPage(t, s, size: const Size(1500, 2600), body: () async {
       await _toBlock(t);
@@ -182,7 +182,7 @@ void main() {
       await t.ensureVisible(actions);
       await t.tap(actions);
       await settle(t, frames: 6);
-      await t.tap(find.text('Remove package'));
+      await t.tap(find.text('Delete package'));
       await settle(t, frames: 8);
       expect(_marks('service'), before);
       expect(find.text('Service package · 8 lines'), findsNothing);
@@ -228,7 +228,7 @@ void main() {
     expect(errors.messages, isEmpty, reason: errors.messages.join('\n'));
   });
 
-  testWidgets('Remove package takes its products too', (t) async {
+  testWidgets('Delete package takes its products too', (t) async {
     final s = _server(package: _packageWithProducts);
     await pumpJobPage(t, s, size: const Size(1500, 2600), body: () async {
       await _toBlock(t);
@@ -237,7 +237,7 @@ void main() {
       final actions = find.byWidgetPredicate((w) => w.key is ValueKey<String> && (w.key! as ValueKey<String>).value.endsWith('-actions') && (w.key! as ValueKey<String>).value.startsWith('package-'));
       await t.tap(actions.first);
       await settle(t, frames: 6);
-      await t.tap(find.text('Remove package').last);
+      await t.tap(find.text('Delete package').last);
       await settle(t, frames: 10);
       expect(find.textContaining('Torsion Spring 250', findRichText: true), findsNothing);
     });

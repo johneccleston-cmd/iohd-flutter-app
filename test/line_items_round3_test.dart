@@ -586,8 +586,9 @@ void main() {
         expect(split, lessThan(t.getTopLeft(_inTable(find.text('Loyal customer discount'))).dy));
         expect(split, greaterThan(t.getBottomLeft(_inTable(find.text(names.last))).dy));
         expect(rules.where((y) => y > firstTop && y < lastBottom && y != split), isEmpty, reason: 'no rules between the lines');
-        // The table's last rows are now its taxes (under the discounts): one hairline closes it, under them.
-        expect(rules.where((y) => y > lastBottom), hasLength(1), reason: 'one hairline closes the table');
+        // The table's last rows are now its taxes (under the discounts): the page's outline closes it, under them. No
+        // Divider of its own (audit 2026-11-24, item 41: with the outline it drew a 2 px bottom line).
+        expect(rules.where((y) => y > lastBottom), isEmpty, reason: 'the outline alone closes the table');
         await _edit(t);
         for (final n in names) {
           final c = shellColor(t, n);

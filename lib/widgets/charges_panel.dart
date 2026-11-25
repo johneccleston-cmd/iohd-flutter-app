@@ -118,6 +118,13 @@ class RemoveCharge extends ChargesResult {
 const kChargesPanelWidth = 560.0;
 const kTaxRateRule = 'Tax rate must be between 0% and 30%.';
 
+/// The out-of-state rate's rule: above 0%, so it says so (audit item 72: it showed [kTaxRateRule] while refusing 0).
+const kOutOfStateRateRule = 'Enter a rate above 0% and up to 30%.';
+
+/// The record's own rate (an estimate option's or a job's own set of lines), in plain words (audit item 104: "this
+/// set's own rate" was the code's word, not the office's).
+const _kOwnRateTitle = 'Sales tax (the record\'s own rate)';
+
 /// Opens the panel from the widget whose [context] is given (its button) and gives back what was done, or null.
 Future<ChargesResult?> showChargesPanel({required BuildContext context, required ChargesSnapshot snapshot}) {
   final nav = Navigator.of(context);
@@ -202,7 +209,11 @@ class _Choice {
 class _Heading {
   final _Section section;
   final int count;
-  const _Heading(this.section, this.count);
+
+  /// What the figures at the right are: "Rate", "Total rate", "Amount", or "Rate / amount" over the record's taxes and
+  /// charges together (audit item 94: "Amount" sat over tax rates).
+  final String figures;
+  const _Heading(this.section, this.count, this.figures);
 }
 
 /// The forms a pick opens.
@@ -348,7 +359,15 @@ class _ChargesPageState extends State<_ChargesPage> {
             .toList();
       }
       if (list.isEmpty) return;
-      out.add(_Heading(s, list.length));
+      final rates = list.any((c) => c.key.startsWith('rt:') || c.key == 'own');
+      final amounts = list.any((c) => !c.key.startsWith('rt:') && c.key != 'own');
+      final figures = switch (s) {
+        _Section.record => rates && amounts ? 'Rate / amount' : (rates ? 'Rate' : 'Amount'),
+        _Section.discounts || _Section.fees => 'Amount',
+        _Section.county || _Section.city => 'Total rate',
+        _ => 'Rate',
+      };
+      out.add(_Heading(s, list.length, figures));
       out.addAll(list);
     }
 
@@ -369,7 +388,7 @@ class _ChargesPageState extends State<_ChargesPage> {
     if (_s.canOwnRate && _s.ownRate != null)
       _Choice(
         key: 'own',
-        title: 'Sales tax (this set\'s own rate)',
+        title: _kOwnRateTitle,
         sub: 'Lines set to "Taxable" · ${_lines(_s.taxedLines[''] ?? 0)}',
         trailing: '${SalesTax.rateText(_s.ownRate!)}%',
         onRecord: true,
@@ -481,7 +500,8 @@ class _ChargesPageState extends State<_ChargesPage> {
           key: 'p:${p.id}',
           title: p.name,
           sub: p.mode == ChargeMode.percent ? 'Percentage of ${fee ? 'items less discounts' : 'items'}' : 'Dollar amount',
-          trailing: p.value == null ? (p.mode == ChargeMode.percent ? '%' : r'$') : _valueText(p.mode, p.value!),
+          // A preset with no value says what it needs, not a bare "%" or "$" (audit item 93).
+          trailing: p.value == null ? (p.mode == ChargeMode.percent ? 'Enter %' : 'Enter amount') : _valueText(p.mode, p.value!),
           open: () => _ChargeView(fee: fee, preset: p),
         ),
     _Choice(
@@ -676,12 +696,8 @@ class _ChargesPageState extends State<_ChargesPage> {
           child: Row(
             children: [
               const Expanded(
-                child: Text(
-                  'Tax, discounts & fees',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: DashUi.ink),
-                ),
+                // The forms' title style (audit item 105: 14 px here, 15 px there).
+                child: Text('Tax, discounts & fees', maxLines: 1, overflow: TextOverflow.ellipsis, style: _titleStyle),
               ),
               // Tabs flush right, the selected one in ink (user rule).
               for (final (f, label) in const [(_Filter.all, 'All'), (_Filter.taxes, 'Taxes'), (_Filter.discounts, 'Discounts'), (_Filter.fees, 'Fees')])
@@ -704,7 +720,7 @@ class _ChargesPageState extends State<_ChargesPage> {
         const Divider(height: 1, thickness: 1, color: DashUi.line),
         Expanded(
           child: rows.isEmpty
-              ? _NothingFound(query: _search.text.trim())
+              ? _NothingFound(query: _search.text.trim(), filter: _filter)
               : Scrollbar(
                   controller: _scroll,
                   child: ListView.builder(
@@ -716,7 +732,7 @@ class _ChargesPageState extends State<_ChargesPage> {
                       if (r is _Heading) {
                         return SizedBox(
                           height: _headH(s),
-                          child: _SectionHead(section: r.section, count: r.count, first: i == 0),
+                          child: _SectionHead(section: r.section, count: r.count, figures: r.figures, first: i == 0),
                         );
                       }
                       final c = r as _Choice;
@@ -736,9 +752,12 @@ class _ChargesPageState extends State<_ChargesPage> {
         const Divider(height: 1, thickness: 1, color: DashUi.line),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 9),
+          // "DFA" said in full once (audit item 104): the Arkansas Department of Finance and Administration publishes the
+          // rates.
           child: Text(
-            'Arkansas rates: DFA table ${ArkansasTax.source.lastQuarter} · checked ${dayText(ArkansasTax.source.verified)}',
-            maxLines: 1,
+            'Arkansas rates: Dept. of Finance & Administration (DFA) table ${ArkansasTax.source.lastQuarter} · '
+            'checked ${dayText(ArkansasTax.source.verified)}',
+            maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(fontSize: 11.5, color: DashUi.slate, height: 1.3),
           ),
@@ -765,7 +784,8 @@ class _Tab extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       mouseCursor: SystemMouseCursors.click,
-      hoverColor: DashUi.faint,
+      // No hover shading, as on the rest of the job page (user 2026-11-25, audit item 88); focus and a press still show.
+      overlayColor: dashNoHoverOverlay,
       splashFactory: NoSplash.splashFactory,
       child: Container(
         padding: const EdgeInsets.fromLTRB(9, 6, 9, 4),
@@ -815,7 +835,7 @@ class _SearchBox extends StatelessWidget {
                   tooltip: 'Clear the search',
                   onPressed: controller.clear,
                   icon: const Icon(Icons.close_rounded, size: 16, color: DashUi.slate),
-                  splashRadius: 16,
+                  style: ButtonStyle(overlayColor: dashNoHoverOverlay),
                 ),
         ),
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
@@ -839,8 +859,9 @@ class _SearchBox extends StatelessWidget {
 class _SectionHead extends StatelessWidget {
   final _Section section;
   final int count;
+  final String figures;
   final bool first;
-  const _SectionHead({required this.section, required this.count, required this.first});
+  const _SectionHead({required this.section, required this.count, required this.figures, required this.first});
 
   @override
   Widget build(BuildContext context) {
@@ -873,11 +894,7 @@ class _SectionHead extends StatelessWidget {
                 style: style,
               ),
             ),
-            Text(switch (section) {
-              _Section.record || _Section.discounts || _Section.fees => 'Amount',
-              _Section.county || _Section.city => 'Total rate',
-              _ => 'Rate',
-            }, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle, height: 1.3)),
+            Text(figures, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: DashUi.subtle, height: 1.3)),
           ],
         ),
       ),
@@ -960,10 +977,24 @@ class _ChoiceRow extends StatelessWidget {
 
 class _NothingFound extends StatelessWidget {
   final String query;
-  const _NothingFound({required this.query});
+  final _Filter filter;
+  const _NothingFound({required this.query, required this.filter});
 
   @override
-  Widget build(BuildContext context) => Center(
+  Widget build(BuildContext context) {
+    // What to try next, for the list being searched (audit item 107: it always talked about Arkansas places).
+    final hint = switch (filter) {
+      _Filter.discounts => 'No discount on this record or in the presets has that name. Clear the search for Custom discount.',
+      _Filter.fees => 'No fee on this record or in the presets has that name. Clear the search for Custom fee.',
+      _Filter.taxes => 'Only Arkansas places with a local sales tax are listed. For a sale outside Arkansas use Out-of-state tax.',
+      _Filter.all =>
+        'Only Arkansas places with a local sales tax are listed, with the discount and fee presets. For a sale outside '
+            'Arkansas use Out-of-state tax.',
+    };
+    return _nothing(hint);
+  }
+
+  Widget _nothing(String hint) => Center(
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Column(
@@ -977,10 +1008,10 @@ class _NothingFound extends StatelessWidget {
             style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Only Arkansas places with a local sales tax are listed. For a sale outside Arkansas use Out-of-state tax.',
+          Text(
+            hint,
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.4),
+            style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.4),
           ),
         ],
       ),
@@ -1014,7 +1045,8 @@ class _Form extends StatelessWidget {
               tooltip: 'Back to the list',
               onPressed: onBack,
               icon: const Icon(Icons.arrow_back_rounded, size: 18, color: DashUi.ink),
-              splashRadius: 18,
+              // No hover shading (audit item 88).
+              style: ButtonStyle(overlayColor: dashNoHoverOverlay),
             ),
             const SizedBox(width: 2),
             Expanded(
@@ -1025,12 +1057,7 @@ class _Form extends StatelessWidget {
                   children: [
                     Semantics(
                       header: true,
-                      child: Text(
-                        title,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3),
-                      ),
+                      child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis, style: _titleStyle),
                     ),
                     if (sub != null)
                       Padding(
@@ -1091,7 +1118,11 @@ class _FormBodyState extends State<_FormBody> {
   );
 }
 
-/// The panel's buttons: 36 px, the block's quiet text button and its ink one.
+/// The panel's titles, the list's and every form's: one size and weight (audit item 105).
+const _titleStyle = TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3);
+
+/// The panel's buttons: 36 px, the block's quiet text button and its ink one. No hover shading, as on the rest of the
+/// job page (user 2026-11-25, audit item 88); keyboard focus and a press still show.
 Widget _ghost(String label, VoidCallback? onPressed, {Key? key, bool danger = false}) => TextButton(
   key: key,
   onPressed: onPressed,
@@ -1100,7 +1131,7 @@ Widget _ghost(String label, VoidCallback? onPressed, {Key? key, bool danger = fa
     minimumSize: const Size(0, 36),
     padding: const EdgeInsets.symmetric(horizontal: 12),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-  ),
+  ).copyWith(overlayColor: dashNoHoverOverlay),
   child: Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
 );
 
@@ -1115,7 +1146,7 @@ Widget _primary(String label, VoidCallback? onPressed, {Key? key}) => FilledButt
     minimumSize: const Size(0, 36),
     padding: const EdgeInsets.symmetric(horizontal: 16),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-  ),
+  ).copyWith(overlayColor: dashNoHoverOverlay),
   child: Text(
     label,
     maxLines: 1,
@@ -1153,7 +1184,8 @@ class _Parts extends StatelessWidget {
   final String totalLabel;
   final String total;
 
-  /// Toggles beside the county and city rows (a place's form): null rows have none.
+  /// Toggles beside the county and city rows (a place's form): null rows have none. A part that is off is still listed
+  /// (greyed, its rate struck through) and left out of [total].
   final Map<String, ({bool on, bool locked, ValueChanged<bool>? onChanged})> toggles;
   const _Parts({required this.parts, required this.totalLabel, required this.total, this.toggles = const {}});
 
@@ -1161,32 +1193,33 @@ class _Parts extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget row(String id, String name, String sub, String rate, {bool strong = false, bool off = false}) {
+    Widget row(String id, String name, String sub, String rate, {bool strong = false}) {
       final t = toggles[id];
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+      // A part turned off stays listed, greyed, so it can be turned back on (audit item 74: it used to vanish).
+      final off = t != null && !t.on;
+      final change = t == null || t.locked || t.onChanged == null ? null : t.onChanged!;
+      final line = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
             if (toggles.isNotEmpty)
               SizedBox(
-                width: 30,
+                width: 38,
                 child: t == null
                     ? null
+                    // A 32 px target (audit item 75: it was 18 px), and the part's name turns it on and off too (below).
                     : Align(
                         alignment: Alignment.centerLeft,
-                        child: SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: Checkbox(
-                            key: ValueKey('part-$id'),
-                            value: t.on,
-                            onChanged: t.locked || t.onChanged == null ? null : (v) => t.onChanged!(v == true),
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            activeColor: DashUi.ink,
-                            side: const BorderSide(color: LineTable.edgeHover, width: 1.2),
-                            semanticLabel: '$name${t.locked ? ', always included' : ''}',
-                          ),
+                        child: Checkbox(
+                          key: ValueKey('part-$id'),
+                          value: t.on,
+                          onChanged: change == null ? null : (v) => change(v == true),
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          activeColor: DashUi.ink,
+                          overlayColor: dashNoHoverOverlay,
+                          side: const BorderSide(color: LineTable.edgeHover, width: 1.2),
+                          semanticLabel: '$name${t.locked ? ', always included' : ''}',
                         ),
                       ),
               ),
@@ -1217,11 +1250,18 @@ class _Parts extends StatelessWidget {
                 fontSize: strong ? 15 : 13.5,
                 fontWeight: strong ? FontWeight.w800 : FontWeight.w600,
                 color: off ? DashUi.slate : DashUi.ink,
+                decoration: off ? TextDecoration.lineThrough : null,
                 fontFeatures: _figures,
               ),
             ),
           ],
         ),
+      );
+      if (change == null) return line;
+      // The whole row is the checkbox's label: a click on the name or the rate turns the part on or off.
+      return MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: () => change(!t!.on), child: line),
       );
     }
 
@@ -1259,14 +1299,19 @@ class _PlaceForm extends StatefulWidget {
 }
 
 class _PlaceFormState extends State<_PlaceForm> {
-  TaxJurisdiction? _county;
-  TaxJurisdiction? _city;
+  /// The county the place is in (for a city in two, the one picked), and whether its and the city's parts are in.
+  TaxJurisdiction? _place;
+  bool _countyOn = true;
+  bool _cityOn = true;
+
+  /// What is added: the county and city only while their parts are in.
+  TaxJurisdiction? get _county => _countyOn ? _place : null;
+  TaxJurisdiction? get _city => _cityOn ? widget.view.city : null;
 
   @override
   void initState() {
     super.initState();
-    _county = widget.view.county;
-    _city = widget.view.city;
+    _place = widget.view.county;
   }
 
   @override
@@ -1274,27 +1319,31 @@ class _PlaceFormState extends State<_PlaceForm> {
     final p = widget.page;
     final day = p._day;
     final comp = TaxComposition(day: day, county: _county, city: _city);
-    final parts = comp.parts;
+    // Every part the place has, those turned off too, so one turned off can be turned back on (audit item 74).
+    final parts = TaxComposition(day: day, county: _place, city: widget.view.city).parts;
     final already = p._taxNames.contains(comp.serviceFusionName);
     final cityCounties = widget.view.city == null ? const <TaxJurisdiction>[] : [for (final n in widget.view.city!.counties) ?ArkansasTax.county(n)];
     final title = _city != null ? '${_city!.name} sales tax' : (_county != null ? '${_county!.name} sales tax' : 'Arkansas state sales tax');
     // A county with no tax that day (Saline, Monroe) is still the county a city is in; it adds nothing.
-    final countyRate = _county == null ? null : ArkansasTax.milliOn(_county!, day);
+    final countyRate = _place == null ? null : ArkansasTax.milliOn(_place!, day);
     final toggles = <String, ({bool on, bool locked, ValueChanged<bool>? onChanged})>{
       ArkansasTax.state.id: (on: true, locked: true, onChanged: null),
-      if (widget.view.county != null && countyRate != null)
-        _county!.id: (
-          on: true,
-          locked: _city != null,
-          onChanged: (v) {
-            if (!v) setState(() => _county = null);
-          },
+      // The county's part is always in while the city's is: a city's tax comes with its county's.
+      if (_place != null && countyRate != null)
+        _place!.id: (on: _countyOn || _cityOn, locked: _cityOn && widget.view.city != null, onChanged: (v) => setState(() => _countyOn = v)),
+      if (widget.view.city != null)
+        widget.view.city!.id: (
+          on: _cityOn,
+          locked: false,
+          onChanged: (v) => setState(() {
+            _cityOn = v;
+            if (v) _countyOn = true;
+          }),
         ),
-      if (_city != null) _city!.id: (on: true, locked: false, onChanged: (v) => setState(() => _city = v ? _city : null)),
     };
     final dropped = [
       if (widget.view.city != null && _city == null) widget.view.city!,
-      if (widget.view.county != null && _county == null && widget.view.city == null) widget.view.county!,
+      if (_place != null && countyRate != null && _county == null) _place!,
     ];
     return _Form(
       title: title,
@@ -1307,16 +1356,13 @@ class _PlaceFormState extends State<_PlaceForm> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (cityCounties.length > 1 && _city != null) ...[
-            const Text(
-              'Which county is the job in?',
-              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: DashUi.ink),
-            ),
-            const SizedBox(height: 8),
-            _CountyChoice(counties: cityCounties, day: day, value: _county!, onChanged: (c) => setState(() => _county = c)),
+            // The form's one label style (audit item 105).
+            _label('Which county is the job in?'),
+            const SizedBox(height: 2),
+            _CountyChoice(counties: cityCounties, city: _city!, day: day, value: _place!, onChanged: (c) => setState(() => _place = c)),
             const SizedBox(height: 12),
           ],
-          Text('PARTS', style: LineTable.head.copyWith(color: DashUi.subtle)),
-          const SizedBox(height: 2),
+          _label('Parts'),
           _Parts(parts: parts, totalLabel: 'Sales tax charged', total: milliText(comp.milli), toggles: toggles),
           for (final d in dropped)
             Padding(
@@ -1344,13 +1390,15 @@ class _PlaceFormState extends State<_PlaceForm> {
   }
 }
 
-/// Which of a city's counties the job is in: one even-width choice per county, with what the tax comes to there.
+/// Which of a city's counties the job is in: one even-width choice per county, with what the tax comes to there (state,
+/// county and city together; audit item 106: it showed the county's own part rate).
 class _CountyChoice extends StatelessWidget {
   final List<TaxJurisdiction> counties;
+  final TaxJurisdiction city;
   final String day;
   final TaxJurisdiction value;
   final ValueChanged<TaxJurisdiction> onChanged;
-  const _CountyChoice({required this.counties, required this.day, required this.value, required this.onChanged});
+  const _CountyChoice({required this.counties, required this.city, required this.day, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) => Row(
@@ -1367,6 +1415,7 @@ class _CountyChoice extends StatelessWidget {
               onTap: () => onChanged(c),
               borderRadius: BorderRadius.circular(LineTable.radius),
               mouseCursor: SystemMouseCursors.click,
+              overlayColor: dashNoHoverOverlay,
               child: AnimatedContainer(
                 duration: LineTable.motion(context, 120),
                 height: 42,
@@ -1393,7 +1442,7 @@ class _CountyChoice extends StatelessWidget {
                       ),
                     ),
                     Text(
-                      milliText(ArkansasTax.milliOn(c, day) ?? 0),
+                      milliText(TaxComposition(day: day, county: c, city: city).milli),
                       style: const TextStyle(fontSize: 12.5, color: DashUi.slate, fontFeatures: [FontFeature.tabularFigures()]),
                     ),
                   ],
@@ -1433,19 +1482,21 @@ class _RecordTaxForm extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (parts.isNotEmpty) ...[
-            Text(tax.parts.isNotEmpty ? 'PARTS' : 'PARTS TODAY (DFA)', style: LineTable.head.copyWith(color: DashUi.subtle)),
-            const SizedBox(height: 2),
+            // Plain words for "DFA" (audit item 104) and the form's one label style (item 105).
+            _label(tax.parts.isNotEmpty ? 'Parts' : 'Parts at today\'s Arkansas rates'),
             _Parts(
               parts: parts,
-              totalLabel: tax.parts.isNotEmpty ? 'Sales tax charged' : 'DFA rate on ${dayText(p._day)}',
+              totalLabel: tax.parts.isNotEmpty ? 'Sales tax charged' : 'Arkansas rate on ${dayText(p._day)}',
               total: milliText(tax.parts.isNotEmpty ? charged : now!.milli),
             ),
             const SizedBox(height: 12),
           ],
           if (differs)
+            // The way to act on it is the button at the foot (audit item 84: it said to add the place again from the
+            // list, where its button reads "Already on this record").
             _Note(
-              'This record charges ${SalesTax.rateText(tax.rate)}%. DFA\'s rate for ${now.place} on ${dayText(p._day)} is ${milliText(now.milli)}. '
-              'The record keeps its own rate; add ${now.place} again from the list to use today\'s.',
+              'This record charges ${SalesTax.rateText(tax.rate)}%. Arkansas\'s published rate for ${now.place} on ${dayText(p._day)} is '
+              '${milliText(now.milli)}. The record keeps its own rate unless you update it; lines set to this tax follow.',
               icon: Icons.warning_amber_rounded,
               tone: DashUi.amberText,
             )
@@ -1460,13 +1511,30 @@ class _RecordTaxForm extends StatelessWidget {
         ],
       ),
       start: [_ghost('Remove tax', () => p._finish(RemoveTax(tax)), key: const ValueKey('remove-tax'), danger: true)],
-      end: [_primary('Done', p._back)],
+      // Back, not a "Done" that only went back like the arrow (audit item 108); when today's Arkansas rate differs, the
+      // one thing to do here is take it (item 84).
+      end: [
+        _ghost('Back', p._back),
+        // The same tax line (its name, so its lines keep it, and whether it is the record's own) at today's rate and parts.
+        if (differs)
+          _primary(
+            'Use ${milliText(now.milli)}',
+            () => p._finish(
+              UpdateTax(
+                tax,
+                SalesTax(tax.name, now.milli / 1000, onRecord: tax.onRecord, kind: tax.kind, parts: now.parts, asOf: p._day, display: tax.display),
+              ),
+            ),
+            key: const ValueKey('update-tax'),
+          ),
+      ],
     );
   }
 }
 
-/// A rate box: the figure at the right, its "%" (or "$" at the left) inside the box, so switching between them moves
-/// nothing (one width, one height: [LineTable.boxHeight]).
+/// A rate box: the figure at the left, right after its "$" (the table's value boxes since 2026-11-23; user 2026-11-25,
+/// audit item 109), or with its "%" at the box's right. Both marks are always laid out (one shown), so switching between
+/// them moves nothing (one width, one height: [LineTable.boxHeight]). [label] is its name for screen readers.
 class _ValueBox extends StatelessWidget {
   final TextEditingController controller;
   final bool percent;
@@ -1501,11 +1569,15 @@ class _ValueBox extends StatelessWidget {
       height: CatalogSearchField.height,
       child: _OwnFocus(
         autofocus: autofocus,
-        builder: (node) => TextField(
+        // A labelled node around the field (audit item 85: screen readers heard only "0"). Not MergeSemantics: merging a TextField trips a semantics assertion.
+        builder: (node) => Semantics(container: true,
+          child: Semantics(
+            label: label,
+            child: TextField(
           key: fieldKey,
           controller: controller,
           focusNode: node,
-          textAlign: TextAlign.right,
+          textAlign: TextAlign.left,
           style: style,
           cursorColor: DashUi.ink,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -1520,10 +1592,14 @@ class _ValueBox extends StatelessWidget {
             visualDensity: VisualDensity.standard,
             hintText: hint,
             hintStyle: LineTable.hint.copyWith(fontSize: 14),
-            // Both are always laid out (one shown), so the figure never moves when % and $ are swapped.
+            // Both are always laid out (one shown), so the figure never moves when % and $ are swapped. The "$" sits at
+            // the prefix's right edge, a space before the figure, as the table's "$ " does.
             prefixIcon: SizedBox(
               width: 28,
-              child: Center(child: Text(percent ? '' : r'$', style: LineTable.currency.copyWith(fontSize: 14))),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(percent ? '' : r'$ ', style: LineTable.currency.copyWith(fontSize: 14)),
+              ),
             ),
             prefixIconConstraints: const BoxConstraints(minWidth: 28, maxWidth: 28),
             suffixIcon: SizedBox(
@@ -1535,7 +1611,8 @@ class _ValueBox extends StatelessWidget {
             border: b(LineTable.edge, 1),
             enabledBorder: b(error ? DashUi.red : LineTable.edge, error ? 1.5 : 1),
             focusedBorder: b(error ? DashUi.red : DashUi.ink, 1.5),
-            semanticCounterText: label,
+          ),
+            ),
           ),
         ),
       ),
@@ -1543,15 +1620,24 @@ class _ValueBox extends StatelessWidget {
   }
 }
 
-/// A text box in the same look (the name of a discount, fee or out-of-state tax).
+/// A text box in the same look (the name of a discount, fee or out-of-state tax). [label] is its name for screen readers.
 class _TextBox extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
+  final String label;
   final Key? fieldKey;
   final bool error;
   final ValueChanged<String> onChanged;
   final bool autofocus;
-  const _TextBox({required this.controller, required this.hint, required this.onChanged, this.fieldKey, this.error = false, this.autofocus = false});
+  const _TextBox({
+    required this.controller,
+    required this.hint,
+    required this.onChanged,
+    this.label = 'Name on the record',
+    this.fieldKey,
+    this.error = false,
+    this.autofocus = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1563,7 +1649,11 @@ class _TextBox extends StatelessWidget {
       height: CatalogSearchField.height,
       child: _OwnFocus(
         autofocus: autofocus,
-        builder: (node) => TextField(
+        // A labelled node around the field (audit item 85).
+        builder: (node) => Semantics(container: true,
+          child: Semantics(
+            label: label,
+            child: TextField(
           key: fieldKey,
           controller: controller,
           focusNode: node,
@@ -1582,6 +1672,8 @@ class _TextBox extends StatelessWidget {
             border: b(LineTable.edge, 1),
             enabledBorder: b(error ? DashUi.red : LineTable.edge, error ? 1.5 : 1),
             focusedBorder: b(error ? DashUi.red : DashUi.ink, 1.5),
+          ),
+            ),
           ),
         ),
       ),
@@ -1691,7 +1783,8 @@ class _OutOfStateFormState extends State<_OutOfStateForm> {
     final typed = _rate.text.trim().isNotEmpty;
     final lines = widget.existing == null ? 0 : (p._s.taxedLines[widget.existing!.name] ?? 0);
     return _Form(
-      title: widget.existing == null ? 'Out-of-state sales tax' : 'Out-of-state: ${widget.existing!.short}',
+      // Its own name as the title (audit item 92: "Out-of-state: Out-of-state sales tax"); the line under it says what it is.
+      title: widget.existing == null ? 'Out-of-state sales tax' : widget.existing!.short,
       sub: 'For a sale outside Arkansas. Enter that place\'s rate.',
       onBack: p._back,
       body: Column(
@@ -1705,10 +1798,15 @@ class _OutOfStateFormState extends State<_OutOfStateForm> {
             error: _n.isEmpty || _clash,
             onChanged: (_) => setState(() {}),
           ),
-          if (_clash)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: _Note('Another tax on this record has that name.', icon: Icons.error_outline_rounded, tone: DashUi.redText),
+          // The red border always says why (audit item 83: an empty name had a red border and no text).
+          if (_clash || _n.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _Note(
+                _clash ? 'Another tax on this record has that name.' : 'Enter a name for this tax.',
+                icon: Icons.error_outline_rounded,
+                tone: DashUi.redText,
+              ),
             ),
           const SizedBox(height: 14),
           _label('Rate'),
@@ -1718,7 +1816,7 @@ class _OutOfStateFormState extends State<_OutOfStateForm> {
             error: typed && !_rateOk,
             hint: '0',
             fieldKey: const ValueKey('oos-rate'),
-            label: 'Out-of-state rate',
+            label: 'Out-of-state rate, percent',
             autofocus: true,
             onChanged: (_) => setState(() {}),
             onSubmitted: _submit,
@@ -1728,7 +1826,7 @@ class _OutOfStateFormState extends State<_OutOfStateForm> {
             child: typed && !_rateOk
                 ? const Padding(
                     padding: EdgeInsets.only(top: 6),
-                    child: Text(kTaxRateRule, style: TextStyle(fontSize: 12, color: DashUi.redText)),
+                    child: Text(kOutOfStateRateRule, style: TextStyle(fontSize: 12, color: DashUi.redText)),
                   )
                 : null,
           ),
@@ -1790,8 +1888,8 @@ class _OwnRateFormState extends State<_OwnRateForm> {
     final p = widget.page;
     final lines = p._s.taxedLines[''] ?? 0;
     return _Form(
-      title: 'Sales tax (this set\'s own rate)',
-      sub: 'The rate this set was given (from Service Fusion\'s tax line). Lines set to "Taxable" pay it.',
+      title: _kOwnRateTitle,
+      sub: 'The rate these products and services were given (from Service Fusion\'s tax line). Lines set to "Taxable" pay it.',
       onBack: p._back,
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1805,7 +1903,7 @@ class _OwnRateFormState extends State<_OwnRateForm> {
                 error: !_ok,
                 hint: '0',
                 fieldKey: const ValueKey('tax-rate'),
-                label: 'Tax rate',
+                label: 'Tax rate, percent',
                 autofocus: true,
                 onChanged: (_) => setState(() {}),
                 onSubmitted: _submit,
@@ -1923,11 +2021,16 @@ class _ChargeFormState extends State<_ChargeForm> {
     final typed = _value.text.trim().isNotEmpty;
     final cents = _cents;
     final base = _fee ? s.itemsCents - s.discountCents : s.itemsCents;
+    // The percent as the panel writes rates, not as typed (audit item 73: "10%%", "1,5%").
+    final pct = cents == null || _mode != ChargeMode.percent ? '' : SalesTax.rateText(_v!);
     final preview = cents == null
         ? null
         : _fee
-        ? 'Adds ${centsMoney(cents)}${_mode == ChargeMode.percent ? ' (${_value.text.trim()}% of ${centsMoney(base)}, the items less discounts)' : ''}.'
-        : 'Takes ${centsMoney(cents)} off${_mode == ChargeMode.percent ? ' (${_value.text.trim()}% of ${centsMoney(base)} in items)' : ' the items'}.';
+        ? 'Adds ${centsMoney(cents)}${_mode == ChargeMode.percent ? ' ($pct% of ${centsMoney(base)}, the items less discounts)' : ''}.'
+        : 'Takes ${centsMoney(cents)} off${_mode == ChargeMode.percent ? ' ($pct% of ${centsMoney(base)} in items)' : ' the items'}.';
+    // An empty name says so once something has been typed (audit item 83: Add was greyed out with no reason given).
+    final nameMissing = _n.isEmpty && (_name.text.isNotEmpty || typed);
+    final v = _v;
     return _Form(
       title: widget.view.existing != null ? 'Change $what' : (widget.view.preset?.name ?? 'Custom $what'),
       sub: _fee ? 'Added to the total. Fees are never taxed.' : 'Taken off the total. It doesn\'t change the sales tax.',
@@ -1940,13 +2043,22 @@ class _ChargeFormState extends State<_ChargeForm> {
             controller: _name,
             hint: _fee ? 'What the fee is for' : 'What the discount is for',
             fieldKey: const ValueKey('charge-name'),
-            error: _n.isEmpty && _name.text.isNotEmpty,
+            label: 'Name of the $what',
+            error: nameMissing,
             autofocus: widget.view.preset == null && widget.view.existing == null,
             onChanged: (_) => setState(() {}),
           ),
+          if (nameMissing)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: _Note('Enter a name for the $what.', icon: Icons.error_outline_rounded, tone: DashUi.redText),
+            ),
           const SizedBox(height: 14),
           _label('Amount'),
-          Row(
+          // Wraps the box under the choice in a narrow panel rather than overflowing (audit item 80: 360 px fixed).
+          Wrap(
+            spacing: 10,
+            runSpacing: 8,
             children: [
               SizedBox(
                 width: 210,
@@ -1960,14 +2072,13 @@ class _ChargeFormState extends State<_ChargeForm> {
                   }),
                 ),
               ),
-              const SizedBox(width: 10),
               _ValueBox(
                 controller: _value,
                 percent: _mode == ChargeMode.percent,
                 error: typed && !_valueOk,
                 hint: _mode == ChargeMode.percent ? '0' : '0.00',
                 fieldKey: const ValueKey('charge-value'),
-                label: _mode == ChargeMode.percent ? 'Percentage' : 'Dollar amount',
+                label: _mode == ChargeMode.percent ? 'Percentage of the $what' : 'Dollar amount of the $what',
                 autofocus: widget.view.preset != null || widget.view.existing != null,
                 onChanged: (_) => setState(() {}),
                 onSubmitted: _submit,
@@ -1981,7 +2092,10 @@ class _ChargeFormState extends State<_ChargeForm> {
               padding: const EdgeInsets.only(top: 8),
               child: typed && !_valueOk
                   ? Text(
-                      _mode == ChargeMode.percent ? 'Enter a percentage above 0% and up to 100%.' : 'Enter an amount above \$0.',
+                      _mode == ChargeMode.percent
+                          ? 'Enter a percentage above 0% and up to 100%.'
+                          // Too big says so (audit item 95: over $999,999.99 it said "above $0").
+                          : (v != null && v > kMaxLineRate ? 'Enter an amount up to ${centsMoney((kMaxLineRate * 100).round())}.' : 'Enter an amount above \$0.'),
                       style: const TextStyle(fontSize: 12.5, color: DashUi.redText),
                     )
                   : Text(
@@ -2038,6 +2152,7 @@ class AppSegmentedLite<V> extends StatelessWidget {
                 onTap: () => onChanged(o.$1),
                 borderRadius: BorderRadius.circular(6),
                 mouseCursor: SystemMouseCursors.click,
+                overlayColor: dashNoHoverOverlay, // no hover shading (audit item 88)
                 splashFactory: NoSplash.splashFactory,
                 child: AnimatedContainer(
                   duration: LineTable.motion(context, 140),

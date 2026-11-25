@@ -169,11 +169,11 @@ void main() {
       expect(_where(router), '/estimates/$_estimateId', reason: 'moved to the Estimates section once loaded');
       expect(find.text('ESTIMATE # $_estimateId'), findsOneWidget);
       expect(find.text('Estimate Info'), findsOneWidget);
-      expect(find.text('Sales Data'), findsOneWidget); // an estimate's first tab mirrors Service Fusion's Sales Data block
-      expect(find.text('Opportunity Owner'), findsOneWidget);
-      expect(find.text('Start & End Dates'), findsNothing);
-      expect(find.textContaining('Site Visits'), findsNothing); // an estimate has no visits to list
-      expect(find.text('Zac Clemens'), findsWidgets); // sales owner (Details and Sales Data)
+      expect(find.text('Sales data'), findsOneWidget); // an estimate's first tab mirrors Service Fusion's Sales Data block
+      expect(find.text('Sales owner'), findsOneWidget); // once: Sales data only (audit 2026-11-24, item 14)
+      expect(find.text('Start & end dates'), findsNothing);
+      expect(find.textContaining('Site visits'), findsNothing); // an estimate has no visits to list
+      expect(find.text('Zac Clemens'), findsWidgets); // the sales owner, in Sales data
       await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/estimate_page.png'));
 
       // The Summary's "Became job" link opens the job, whose "Matching estimate" link leads back.
@@ -193,18 +193,20 @@ void main() {
     }, () => _mock(log));
   });
 
-  testWidgets('an estimate gets estimate statuses in the status dropdown, not job statuses', (t) async {
+  testWidgets('an estimate shows its own status read-only, and clicking it opens no status list', (t) async {
     final router = _router();
     await _pump(t, router, _mock([]));
     await http.runWithClient(() async {
       router.go('/estimates/$_estimateId');
       await t.pumpAndSettle();
-      await t.tap(find.text('Estimate Provided').first);
+      expect(find.text('Estimate Provided'), findsWidgets);
+      // Status is a read-only pill until changing it can be saved (audit 2026-11-24, item 2).
+      await t.tap(find.text('Estimate Provided').first, warnIfMissed: false);
       await t.pumpAndSettle();
-      expect(find.text('Estimate Won'), findsOneWidget);
-      expect(find.text('Lost'), findsOneWidget);
+      expect(find.text('Estimate Won'), findsNothing);
       expect(find.text('Final Invoice Sent'), findsNothing);
       expect(find.text('Paid & Closed'), findsNothing);
+      expect(t.takeException(), isNull);
     }, () => _mock([]));
   });
 

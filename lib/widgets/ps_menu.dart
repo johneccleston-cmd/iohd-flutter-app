@@ -49,12 +49,19 @@ class PsMenuItem<T> extends PsMenuEntry<T> {
 
   /// A choice that removes something (Delete): red.
   final bool danger;
-  const PsMenuItem(this.value, this.label, {this.icon, this.trailing, this.selected = false, this.enabled = true, this.danger = false});
+
+  /// The icon's own colour where it carries meaning (the recommended option's amber star); slate otherwise. Greyed out
+  /// with the choice.
+  final Color? iconColor;
+  const PsMenuItem(this.value, this.label, {this.icon, this.trailing, this.selected = false, this.enabled = true, this.danger = false, this.iconColor});
 }
 
+/// A small heading over a group of choices. [maxLines] above 1 lets a long one (where an option stands: "Accepted ...
+/// · price locked · sent to job #...") wrap instead of being cut to one line; the menu makes room for the lines it takes.
 class PsMenuHeading<T> extends PsMenuEntry<T> {
   final String label;
-  const PsMenuHeading(this.label);
+  final int maxLines;
+  const PsMenuHeading(this.label, {this.maxLines = 1});
 }
 
 class PsMenuDivider<T> extends PsMenuEntry<T> {
@@ -293,6 +300,7 @@ const _gap = 4.0, _margin = 8.0;
 const _pad = 6.0;
 double _itemH(TextScaler s) => math.max(36, (s.scale(13.5) * 1.3).ceilToDouble() + 16);
 double _headH(TextScaler s) => math.max(28, (s.scale(12) * 1.3).ceilToDouble() + 12);
+const _headStyle = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.2, height: 1.3);
 const _ruleH = 11.0;
 
 class _PsMenuPage<T> extends StatefulWidget {
@@ -372,11 +380,28 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
     Navigator.of(context).pop(e.value);
   }
 
-  static double _heightOf(PsMenuEntry<Object?> e, TextScaler s) => switch (e) {
+  double _heightOf(PsMenuEntry<Object?> e, TextScaler s) => switch (e) {
     PsMenuItem() => _itemH(s),
-    PsMenuHeading() => _headH(s),
+    final PsMenuHeading<Object?> h => _headingH(h, s),
     PsMenuDivider() => _ruleH,
   };
+
+  /// A heading's height: one line's, or as many lines as a wrapping one ([PsMenuHeading.maxLines]) takes at the menu's
+  /// width and the reader's text size.
+  double _headingH(PsMenuHeading<Object?> h, TextScaler s) {
+    if (h.maxLines <= 1) return _headH(s);
+    final menuW = math.min(_r.width, MediaQuery.sizeOf(context).width - 2 * _margin);
+    final p = TextPainter(
+      text: TextSpan(text: h.label, style: DefaultTextStyle.of(context).style.merge(_headStyle)),
+      textDirection: Directionality.of(context),
+      textScaler: s,
+      maxLines: h.maxLines,
+      ellipsis: '…',
+    )..layout(maxWidth: math.max(0.0, menuW - 2 * _pad - 2 - (_r.checks ? 32 : 10) - 10));
+    final lines = p.height;
+    p.dispose();
+    return math.max(_headH(s), lines.ceilToDouble() + 12);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -431,15 +456,10 @@ class _PsMenuPageState<T> extends State<_PsMenuPage<T>> {
               onTap: () => _pick(i),
             ),
             final PsMenuHeading<T> e => Container(
-              height: _headH(s),
+              height: _headingH(e, s),
               alignment: Alignment.bottomLeft,
               padding: EdgeInsets.fromLTRB(_r.checks ? 32 : 10, 0, 10, 6),
-              child: Text(
-                e.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.ink, letterSpacing: 0.2, height: 1.3),
-              ),
+              child: Text(e.label, maxLines: e.maxLines, overflow: TextOverflow.ellipsis, style: _headStyle),
             ),
             PsMenuDivider<T>() => const Padding(
               padding: EdgeInsets.symmetric(vertical: 5, horizontal: 4),
@@ -591,7 +611,7 @@ class _Item<T> extends StatelessWidget {
               children: [
                 if (checks) SizedBox(width: 24, child: e.selected ? const Icon(Icons.check_rounded, size: 17, color: DashUi.ink) : null),
                 if (e.icon != null) ...[
-                  Icon(e.icon, size: 17, color: on ? (e.danger ? DashUi.redText : DashUi.slate) : DashUi.muted),
+                  Icon(e.icon, size: 17, color: on ? (e.danger ? DashUi.redText : (e.iconColor ?? DashUi.slate)) : DashUi.muted),
                   const SizedBox(width: 10),
                 ],
                 Expanded(

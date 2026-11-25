@@ -316,6 +316,8 @@ void main() {
         expect(total, r'$3,192.35', reason: '2 doors, the return and the keypad at 0: \$2,889.00 + 10.5% tax');
         expect(_inTable(find.text(total)), findsWidgets, reason: 'the tab and the summary agree');
         await t.tap(find.text('Exit preview'));
+        await settle(t, frames: 4);
+        await t.tap(find.text('Discard changes')); // with changes, Exit preview asks first (audit item 87)
         await settle(t, frames: 6);
         expect(t.widget<Text>(find.descendant(of: open, matching: find.textContaining(r'$')).first).data, was);
         expect(saved.items.first['quantity'], 1, reason: 'nothing saved');

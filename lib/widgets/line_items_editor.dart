@@ -264,13 +264,14 @@ class _Cols {
   /// the whole table, so every line puts it in the same place.
   final bool skuInBox;
 
-  /// While editing, some line's SKU sits under its box ([skuInBox] false): every line keeps that room, so the rows
-  /// stay one height and opening a line never moves the ones below it.
+  /// While editing, some line's SKU sits under its box ([skuInBox] false): every product and service line keeps that
+  /// room, so the rows stay one height and opening a line never moves the ones below it. (The discounts and fees,
+  /// compact rows of their own, don't: see [_metaUnderBox].)
   final bool metaSlot;
 
-  /// Read-only, the room added to each of the five gaps between the columns from the item on: the item column stops
-  /// at [maxReadItemW] and the rest of the width spreads the figures out (user 2026-11-24: "shorten the line item name
-  /// ... it's too long and scrunching the other columns").
+  /// Read-only, the room added to each gap between the columns from the item on (five with costs, four without). Past
+  /// [spreadFromItemW] the width first spreads the figures out (user 2026-11-24: "shorten the line item name ... it's
+  /// too long and scrunching the other columns"), up to [maxSpread] a gap; past that the item column takes the rest.
   final double spread;
   const _Cols({required this.cost, required this.editable, this.stacked = false, this.skuInBox = true, this.metaSlot = false, this.spread = 0});
 
@@ -278,9 +279,12 @@ class _Cols {
       ? this
       : _Cols(cost: cost, editable: editable, stacked: stacked, skuInBox: skuInBox, metaSlot: slot, spread: spread);
 
-  /// Read-only, the widest the item column takes before the room goes between the figures, and the most each gap
-  /// takes (past that, on a very wide window, the item column has the rest).
-  static const maxReadItemW = 400.0, maxSpread = 60.0;
+  /// Read-only: the item column's width at which the spare room starts going between the figures, and the most each
+  /// gap takes. Not a cap on the item column: once every gap has [maxSpread] (a table about 1,390 px wide with costs,
+  /// 1,210 without), the item column grows with the window again, to about 900 px in a 1920 window with costs. That
+  /// growth is wanted (user 2026-11-25: let the item column grow on wide screens, rather than leaving the room after
+  /// Tax). The item column is an Expanded, so no width can make the row overflow.
+  static const spreadFromItemW = 400.0, maxSpread = 60.0;
 
   /// Where a line's SKU goes while editing: inside its name box, or under it. A discount's or fee's "Discount" / "Fee"
   /// always sits in its box, stacked too (it is short): under it, a fee's mark gave every line an empty line of room.
@@ -301,7 +305,10 @@ class _Cols {
   // holds "Springdale 10.5%", the place and its rate: "the tax box could be more informational");
   // a long place is cut to its first part in the box, as before. Read-only keeps taxW, so a long place reads whole.
   // 176 (was 164): "Springdale, Washington" in the table's semibold figures still fits on one line (user 2026-11-24).
-  static const taxW = 176.0, taxEditW = 156.0, actionsW = 42.0;
+  // taxEditW 180 (was 156, audit 2026-11-24 item 24): at 1366 the box read "Prairie G... 10.5%"; 138 px of text room
+  // holds "Prairie Grove 10.5%" whole. The 24 px come out of the name boxes, which stack only below a table of about
+  // 1,010 px (was 990).
+  static const taxW = 176.0, taxEditW = 180.0, actionsW = 42.0;
 
   // The room the name boxes gave up (48 px, shorter three times, user 2026-11-23) is spread through the line rather
   // than left in one gap before the quantity ("sprinkle a little extra space through the line"): a little more round
@@ -325,6 +332,10 @@ class _Cols {
 
   /// Stacked (a small window): one width for every line's amount, so the name boxes beside it line up.
   static const stackAmountW = 104.0;
+
+  /// Stacked, the narrowest the name may get beside the amount: narrower (a 360 px window), the amount goes under it,
+  /// on the figures' line.
+  static const minStackNameW = 150.0;
 
   /// The narrowest name box that still shows the SKU inside it, and the most the SKU may take there. The name is what
   /// the line is, so it keeps at least about 260 px before the SKU joins it (round 2: at 400 a 1280 window cut every
@@ -353,7 +364,7 @@ class _Cols {
     // The name box is the item column less the room for each line's mark.
     final free = width - fixed;
     final gaps = cost ? 5 : 4;
-    final spread = editable || free <= maxReadItemW ? 0.0 : ((free - maxReadItemW) / gaps).clamp(0.0, maxSpread);
+    final spread = editable || free <= spreadFromItemW ? 0.0 : ((free - spreadFromItemW) / gaps).clamp(0.0, maxSpread);
     return _Cols(cost: cost, editable: editable, stacked: free < minItemW, skuInBox: free - markW >= skuInBoxW, spread: spread);
   }
 
@@ -412,7 +423,6 @@ const _head = LineTable.head;
 // the total column"): already ink, but at w500 (Segoe UI has none, so regular) they looked grey beside TOTAL. Semibold,
 // and TOTAL bold ([_amountStyle]) so it still leads.
 const _cell = TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600, color: DashUi.ink, height: 1.35, fontFeatures: _figures);
-const _cellMuted = LineTable.quiet;
 const _costText = _cell;
 const _nameStyle = LineTable.name;
 const _metaStyle = LineTable.meta;
@@ -944,10 +954,21 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     final ctx = _chargesButton.currentContext;
     if (ctx == null || !widget.editable) return;
     final totals = _totals();
+    // The amounts the table shows ([_lineFigures]: Service Fusion's own for its untouched lines), so the panel and the
+    // rows agree; worked out afresh, an untouched Service Fusion percentage charge could differ from its row by a cent
+    // or more.
+    final figures = _lineFigures(totals);
     final charges = [
       for (var i = 0; i < _rows.length; i++)
-        if (_rows[i].line.isCharge) ChargeEntry(_rows[i].uid, _rows[i].line, totals.lines[i].amountCents),
+        if (_rows[i].line.isCharge) ChargeEntry(_rows[i].uid, _rows[i].line, figures[i].amountCents),
     ];
+    var itemsCents = 0, lineDiscounts = 0;
+    for (var i = 0; i < _rows.length; i++) {
+      final l = _rows[i].line;
+      if (!l.isCharge) itemsCents += figures[i].amountCents;
+      if (l.isDiscount) lineDiscounts += figures[i].amountCents.abs();
+    }
+    final outsideDiscounts = widget.recordDiscounts?.call(itemsCents) ?? 0;
     // Only the discounts and charges that aren't lines of the table. Rows built from the lines ([LineSummaryRow.fromLines])
     // are already listed as the editable discounts and fees above them; listing them again showed every Service Fusion
     // discount and fee twice (the 11-24 rule: Service Fusion's discounts and fees are lines).
@@ -964,9 +985,10 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
         canOwnRate: widget.summary == null,
         charges: charges,
         recordCharges: record,
-        itemsCents: totals.itemsCents,
-        // Every discount a percentage fee is worked out after: the draft's and the record's own (see _totals).
-        discountCents: totals.itemsCents - totals.feeBaseCents,
+        itemsCents: itemsCents,
+        // Every discount a percentage fee is worked out after: the draft's and the record's own (see _totals), from the
+        // same amounts as the rows.
+        discountCents: lineDiscounts + outsideDiscounts,
         today: isoDay(DashClock.now()),
         settings: widget.taxSettings,
       ),
@@ -1133,21 +1155,36 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     _notifyDirty();
   }
 
+  /// Where the keyboard goes once a line closed by Enter or Esc has turned back into its boxes: the box of the field it
+  /// was in ([_FieldCell.takeFocus], which takes it without opening the line again). Without it the focused field went
+  /// with the open line and the keyboard dropped to the top of the page (audit 2026-11-24, item 44). Cleared after the
+  /// frame that hands it over.
+  ({int uid, String field})? _refocus;
+
+  void _focusAfterClose(int uid, String? field) {
+    if (field == null) return;
+    _refocus = (uid: uid, field: field);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _refocus = null);
+  }
+
   /// Enter, Tab out of the line, or a click elsewhere: the line closes and keeps what was typed (a figure that isn't a
-  /// number is put back and the editor says so, see [_settleBad]).
-  void _close(int uid) {
+  /// number is put back and the editor says so, see [_settleBad]). [refocus]: closed from the keyboard (Enter) in that
+  /// field, whose box keeps the keyboard.
+  void _close(int uid, {String? refocus}) {
     if (_active != uid) return;
     _settleBad(uid, const ['qty', 'rate', 'cost', 'pct']);
+    _focusAfterClose(uid, refocus);
     setState(() => _active = null);
   }
 
   /// Esc (decision A1, 2026-11-23; it used to close the line keeping what was typed): the line goes back to how it was
   /// when the box being edited took the keyboard ([_baseline]), quietly, and closes. What Enter, Tab or a move to another
   /// box in the line already kept stays. Spreadsheets and most editors take Esc as "cancel".
-  void _cancel(int uid) {
+  void _cancel(int uid, {String? refocus}) {
     if (_active != uid) return;
     final i = _rows.indexWhere((r) => r.uid == uid);
     final was = _baseline;
+    _focusAfterClose(uid, refocus);
     _changed(() {
       if (i >= 0 && was != null) _rows[i].line = was;
       _invalid.remove(uid);
@@ -1232,7 +1269,10 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       );
   }
 
-  void _duplicate(int index) => _insert(_Row(_nextUid++, _rows[index].line.copyWith(id: null)), at: index + 1);
+  /// Copy: a new line, so nobody has confirmed it as no charge yet (a copy of a confirmed $0.00 line used to arrive
+  /// already "confirmed by" whoever confirmed the original).
+  void _duplicate(int index) =>
+      _insert(_Row(_nextUid++, _rows[index].line.copyWith(id: null, zeroPriceConfirmed: false)), at: index + 1);
 
   // ---- $0.00 lines ------------------------------------------------------------------------------------------------
 
@@ -1247,14 +1287,18 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
   /// line at a time. In the preview it is the draft's (with who confirmed it), and comes off again if the line's name,
   /// quantity or price changes; on saved lines the page asks the server.
   Future<void> _askZero(_Row r) async {
-    final name = r.line.name.trim().isEmpty ? 'this line' : r.line.name.trim();
+    final name = r.line.name.trim();
+    // Double quotes, as the rest of the app quotes a name; and only a line the customer sees "shows" to them.
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AppDialog(
-        title: "Charge nothing for '$name'?",
+        title: name.isEmpty ? 'Charge nothing for this line?' : 'Charge nothing for "$name"?',
         icon: Icons.money_off_rounded,
         iconColor: DashUi.amberText,
-        body: const Text('It will show \$0.00 to the customer.', style: TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45)),
+        body: Text(
+          r.line.customerVisible ? 'It will show \$0.00 to the customer.' : 'It stays at \$0.00. The line is hidden from the customer.',
+          style: const TextStyle(fontSize: 14, color: DashUi.slate, height: 1.45),
+        ),
         actions: [
           AppButton.ghost('Enter a price', () => Navigator.pop(ctx, false)),
           AppButton.ink('Confirm no charge', () => Navigator.pop(ctx, true)),
@@ -1484,7 +1528,20 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     mainAxisSize: MainAxisSize.min,
     children: [
       if (!cols.stacked) _header(cols) else const Divider(height: 1, color: DashUi.line),
-      if (_rows.isEmpty) _empty() else _list(cols, figures, extras),
+      if (_rows.isEmpty) ...[
+        _empty(),
+        // With no lines the summary still adds up a tax rate or money a source doesn't itemize: listed here too, so the
+        // table shows what the summary counts (audit 2026-11-24, item 64).
+        if (extras.isNotEmpty) ...[
+          const Divider(height: 1, thickness: 1, color: DashUi.line),
+          const SizedBox(height: 10),
+          ColoredBox(
+            color: Colors.white,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: _figureRows(cols, extras)),
+          ),
+        ],
+      ] else
+        _list(cols, figures, extras),
     ],
   );
 
@@ -1679,14 +1736,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     final twoLine = !widget.editable && _rows.any((r) => !r.line.isCharge && (_hasMeta(r.line) || _taxTwoLines(context, r.line, _taxes, _tax) != null));
     final shown = _shown;
     final firstCharge = shown.indexWhere((r) => r.line.isCharge);
-    // The rule, and more room under it before the discounts and fees (user 2026-11-24).
-    const rule = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      // The black rule under the last product or service sets the discounts and fees off now (user 2026-11-24): this one
-      // only keeps the room, so the two don't draw a double line.
-      children: [SizedBox(key: ValueKey('charges-rule'), height: 1), SizedBox(height: 10)],
-    );
+    const rule = _chargesRule;
     Widget row(int i) {
       final r = shown[i];
       // Where the line sits in its own part, which is all Move up / Move down can move it within (see [_moveShown]).
@@ -1713,7 +1763,8 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               onInvalid: (f, bad) => _setInvalid(r.uid, f, bad),
               onSettle: (f) => _settleBad(r.uid, [f]),
               onDone: () => _close(r.uid),
-              onCancel: () => _cancel(r.uid),
+              onSubmit: (f) => _close(r.uid, refocus: f),
+              onCancel: (f) => _cancel(r.uid, refocus: f ?? 'name'),
               onKeep: () => _keepSoFar(r.uid),
               onMove: (d) => _moveShown(i, i + d),
               onMenu: (a) => _menu(a, i),
@@ -1744,6 +1795,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               onMenu: (a) => _menu(a, i),
               moves: moves,
               serviceNames: widget.serviceNames,
+              refocus: widget.editable && _refocus?.uid == r.uid ? _refocus!.field : null,
             );
       // Under the line, from where its name starts: its $0.00 confirmation, and what the catalog said about a service
       // just added (see [_lineNotes]).
@@ -1779,8 +1831,12 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
         // discounts and fees are compact and unruled, as the taxes under them are.
         stripe: false,
         // Edge to edge, out to the block's outline (user 2026-11-24). A service package's lines read as one group: no
-        // rule between two of its lines, only under its last one (user 2026-11-24).
-        ruleLeft: r.line.isCharge || (r.line.packageId != null && i + 1 < shown.length && shown[i + 1].line.packageId == r.line.packageId)
+        // rule between two of its lines, only under its last one (user 2026-11-24). None under the read-only table's
+        // last line when nothing follows it: the page's outline is the bottom line there, and the square-ended rule ran
+        // into its rounded corners (audit 2026-11-24, items 41 and 62).
+        ruleLeft: r.line.isCharge ||
+                (r.line.packageId != null && i + 1 < shown.length && shown[i + 1].line.packageId == r.line.packageId) ||
+                (!widget.editable && i == shown.length - 1 && extras.isEmpty)
             ? null
             : 0,
         child: body,
@@ -1822,17 +1878,18 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     // The taxes and charges that aren't lines, under the discounts and fees (under the rule when there are none):
     // compact and unstriped, as they are.
     final figureRows = [
-      if (extras.isNotEmpty && firstCharge < 0) rule,
-      for (var k = 0; k < extras.length; k++) _FigureRow(row: extras[k], cols: cols, onOpen: widget.editable ? _openChargesPanel : null),
+      if (extras.isNotEmpty && firstCharge < 0) _chargesRule,
+      ..._figureRows(cols, extras),
     ];
     if (!widget.editable) {
-      // The headings' hairline above, this one under the last line: the table is framed, the stripes do the rest. White
-      // behind it all, so the compact rows' fractional heights never leave a seam of the page between them.
+      // The headings' rule above; under the last line, the page's outline (no Divider of its own: on top of the last
+      // line's rule and the outline it drew a 2 px bottom line, audit 2026-11-24 item 41). White behind it all, so the
+      // compact rows' fractional heights never leave a seam of the page between them.
       return ColoredBox(
         color: Colors.white,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [for (var i = 0; i < shown.length; i++) row(i), ...figureRows, const Divider(height: 1, thickness: 1, color: DashUi.line)],
+          children: [for (var i = 0; i < shown.length; i++) row(i), ...figureRows],
         ),
       );
     }
@@ -1849,6 +1906,20 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     if (figureRows.isEmpty) return list;
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, mainAxisSize: MainAxisSize.min, children: [list, ...figureRows]);
   }
+
+  /// The rule, and more room under it before the discounts and fees (user 2026-11-24).
+  static const _chargesRule = Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    mainAxisSize: MainAxisSize.min,
+    // The black rule under the last product or service sets the discounts and fees off now (user 2026-11-24): this one
+    // only keeps the room, so the two don't draw a double line.
+    children: [SizedBox(key: ValueKey('charges-rule'), height: 1), SizedBox(height: 10)],
+  );
+
+  /// The taxes and charges that aren't lines ([_tableFigures]), one compact row each.
+  List<Widget> _figureRows(_Cols cols, List<_TotalsRow> extras) => [
+    for (final e in extras) _FigureRow(row: e, cols: cols, onOpen: widget.editable ? _openChargesPanel : null),
+  ];
 
   /// The lines as the table shows them: the products and services, then the discounts and fees, each in draft order.
   List<_Row> get _shown => [..._rows.where((r) => !r.line.isCharge), ..._rows.where((r) => r.line.isCharge)];
@@ -2001,7 +2072,14 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       // 12 px in from the block's outline (it was _side, 20): inside the outline the three blocks still fit in one row at
       // a 1280 window.
       padding: const EdgeInsets.fromLTRB(12, 75, 12, 12),
-      child: _Statement(rows: rows, profit: profit, warning: warning, aside: widget.aside, paidCents: widget.paidCents),
+      child: _Statement(
+        rows: rows,
+        profit: profit,
+        warning: warning,
+        aside: widget.aside,
+        paidCents: widget.paidCents,
+        estimate: widget.totalLabel.trim().toLowerCase().startsWith('estimate'),
+      ),
     );
   }
 }
@@ -2051,6 +2129,10 @@ class _ViewRow extends StatelessWidget {
 
   /// The record's Service Fusion service names ([LineItemsEditor.serviceNames]).
   final Set<String> serviceNames;
+
+  /// Just closed from the keyboard (Enter or Esc) in this field: its box takes the keyboard back
+  /// (_LineItemsEditorState._refocus). A field with no box of its own here gives it to the name's.
+  final String? refocus;
   const _ViewRow({
     super.key,
     required this.index,
@@ -2071,6 +2153,7 @@ class _ViewRow extends StatelessWidget {
     required this.onMenu,
     this.moves = (up: false, down: false),
     this.serviceNames = const {},
+    this.refocus,
   });
 
   @override
@@ -2081,9 +2164,12 @@ class _ViewRow extends StatelessWidget {
     final discount = line.isCharge;
     final pct = line.percent;
     final description = _cleanDescription(line.description);
+    // The box that takes the keyboard back after Enter or Esc: the figure's own (each has a box on a wide window), else
+    // the name's (the description, the SKU, a stacked line's figures).
+    final focusAt = refocus == null ? null : (!cols.stacked && const {'qty', 'rate', 'cost', 'pct'}.contains(refocus) ? refocus : 'name');
     // A value that opens into its field (editing), or the value padded the same (read-only).
     Widget cell(String field, Widget child, {Alignment align = Alignment.centerLeft, Widget? end, double? endWidth, bool divider = false}) => open
-        ? _FieldCell(onTap: () => onOpen!(field), align: align, end: end, endWidth: endWidth, divider: divider, child: child)
+        ? _FieldCell(onTap: () => onOpen!(field), takeFocus: focusAt == field, align: align, end: end, endWidth: endWidth, divider: divider, child: child)
         : Padding(
             padding: const EdgeInsets.symmetric(horizontal: _cellX),
             // Drawn smaller, never cut short, when wider than its column.
@@ -2121,11 +2207,11 @@ class _ViewRow extends StatelessWidget {
         : (idle ? _nameStyle.copyWith(color: _quietTone, fontWeight: FontWeight.w500) : _nameStyle);
     // "Description": read-only under the name, on a line that has one; while editing at the end of the name box on every
     // line (on a line with none it opens the line's description box, empty, ready to type in).
-    Widget? toggleOf({bool compact = false}) => discount || (description.isEmpty && !open)
+    Widget? toggleOf({bool compact = false, bool fill = false}) => discount || (description.isEmpty && !open)
         ? null
         : description.isEmpty
-        ? _DescToggle(key: ValueKey('line-$index-more'), open: false, compact: compact, onTap: () => onOpen!('description'))
-        : _DescToggle(key: ValueKey('line-$index-more'), open: more, compact: compact, onTap: onMore);
+        ? _DescToggle(key: ValueKey('line-$index-more'), open: false, compact: compact, fill: fill, onTap: () => onOpen!('description'))
+        : _DescToggle(key: ValueKey('line-$index-more'), open: more, compact: compact, fill: fill, onTap: onMore);
     final toggle = toggleOf();
     final desc = description.isEmpty || !more ? null : _Description(description, onTap: open ? () => onOpen!('description') : null);
     // Before the item: the grip (editable) and the eye, always there: a toggle in a box while editing.
@@ -2145,20 +2231,20 @@ class _ViewRow extends StatelessWidget {
       alignment: Alignment.topRight,
       child: _RowMenu(index: index, moves: moves, onMenu: onMenu),
     );
-    // "Not priced" is a to-do on lines being edited; a read-only line with no rate just has none.
+    // "Not priced" is a to-do on lines being edited; a read-only line with no rate just has none: "—", in the line's
+    // own ink like every figure of the table (audit 2026-11-24, item 46; it was the quiet slate).
     final unpriced = line.rate == null;
-    final rateStyle = unpriced ? sized(editable ? _cell.copyWith(fontWeight: FontWeight.w600, color: DashUi.amberText) : _cellMuted) : cellStyle;
+    final rateStyle = unpriced ? (editable ? sized(_cell.copyWith(fontWeight: FontWeight.w600, color: DashUi.amberText)) : cellStyle) : cellStyle;
     final Widget rateValue = unpriced
         ? Text(editable ? 'No price' : '—', maxLines: 1, overflow: TextOverflow.ellipsis, style: rateStyle)
         : _money(context, line.rate!, boxed: open, style: cellStyle);
     // No cost reads 0.00, read-only and in its box (user 2026-11-23: "if there is no cost should be 0.00"; it was a dash,
-    // and "Cost" in an empty box). Display only: the line still counts as having no cost in the summary. Quiet (slate,
-    // its weight), so a cost that isn't known reads apart from a real $0.00 one.
-    final costStyle = sized(
-      // Slate in the figures' own weight: a lighter weight drew "0.00" a pixel narrower than the box's placeholder it
-      // opens into, so it moved as the line opened.
-      line.cost == null || idle ? _costText.copyWith(color: _quietTone) : _costText,
-    );
+    // and "Cost" in an empty box). Display only: the line still counts as having no cost in the summary. In ink like
+    // every figure of the table (user 2026-11-24: "all font ... should be black"; audit 2026-11-24, item 46: it was
+    // slate to set an unknown cost apart from a real $0.00 one); only a line at quantity 0 is quieter. The figures' own
+    // weight: a lighter one drew "0.00" a pixel narrower than the box's placeholder it opens into, so it moved as the
+    // line opened.
+    final costStyle = sized(idle ? _costText.copyWith(color: _quietTone) : _costText);
     // In its box, an empty cost is laid out exactly as the field's "$ 0.00" placeholder it opens into, so it stays put.
     final Widget costValue = line.cost == null && open
         ? Row(
@@ -2196,9 +2282,10 @@ class _ViewRow extends StatelessWidget {
     Widget nameBox() => LayoutBuilder(
       builder: (context, c) => _FieldCell(
         onTap: () => onOpen!('name'),
+        takeFocus: focusAt == 'name',
         meta: cols.metaInBox(line) ? _inlineMeta(line, strut: _valueLine(context, nameStyle)) : null,
         metaWidth: _Cols.skuRoom(c.maxWidth),
-        end: toggleOf(compact: c.maxWidth < _Cols.compactToggleW),
+        end: toggleOf(compact: c.maxWidth < _Cols.compactToggleW, fill: true),
         divider: true,
         child: nameInBox,
       ),
@@ -2209,88 +2296,117 @@ class _ViewRow extends StatelessWidget {
     // Every line's mark: "S" a service line, "I" an inventory item (USER RULE 2026-11-20); a package's lines sit a step
     // further in, under its heading.
     final mark = _KindMark.of(context, line, services: serviceNames, height: open ? _boxHeight(context) : _KindMark.textLine(context));
+    // A read-only line with no price and nothing charged reads "—" under TOTAL as it does under RATE (it was a bold
+    // "$0.00" beside the dash: audit 2026-11-24, item 61). A source's own amount for it (Service Fusion's) still shows.
+    final noAmount = unpriced && !editable && !discount && figures.amountCents == 0;
+    final amountText = noAmount
+        ? Text('—', maxLines: 1, semanticsLabel: 'no price', style: cellStyle)
+        : Text(centsMoney(figures.amountCents), maxLines: 1, style: amountStyle);
 
     if (cols.stacked) {
       // A small window: the name and amount on top; under the name its quiet line, then quantity x rate, tax and cost.
+      // The same words and marks as the columns of a wide window: "—" for no price, "No tax", "Cost" (audit 2026-11-24,
+      // item 52: it said "no price" in lower case beside "No tax").
       String money(double? v) => v == null ? '' : centsMoney((v * 100).round());
       final figuresText = [
         if (open && !discount && line.sku.trim().isNotEmpty) line.sku.trim(),
-        if (!discount) '${qtyText(line.quantity)} × ${line.rate == null ? 'no price' : money(line.rate)}',
+        if (!discount) '${qtyText(line.quantity)} × ${line.rate == null ? '—' : money(line.rate)}',
         // A discount or fee says nothing about tax (USER RULE 2026-11-24).
         if (!discount) _taxLabel(line, taxOptions, defaultRate),
-        if (cols.cost && !discount) 'cost ${money(line.cost ?? 0)}',
+        if (cols.cost && !discount) 'Cost ${money(line.cost ?? 0)}',
         // A percentage discount or fee keeps its percentage, as its RATE column has it on a wide window.
         if (discount && pct != null) '${SalesTax.rateText(pct)}%',
       ].join('  ·  ');
-      final figuresLine = figuresText.isEmpty
-          ? null
-          : Text(
-              figuresText,
-              style: _metaStyle.copyWith(fontSize: 12.5, color: line.rate == null && !discount && editable ? DashUi.amberText : DashUi.ink),
-            );
-      // Editable: only the name is a box, the same one-line box (Description at its end) as the name field it opens
-      // into, so clicking it never changes its size (user 2026-11-13). Its figures sit under it, as the opened line's
-      // do; a click on them opens the line at its quantity.
-      final Widget body = open
-          ? Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                nameBox(),
-                if (figuresLine != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(_cellX, 4, 0, 0),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onOpen!('qty'),
-                        child: SelectionContainer.disabled(child: figuresLine),
-                      ),
-                    ),
-                  ),
-                _Reveal(child: desc == null ? null : Padding(padding: const EdgeInsets.fromLTRB(0, 8, 0, 2), child: desc)),
-              ],
-            )
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                readName,
-                if (meta != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: _metaGap),
-                    child: meta,
-                  ),
-                if (figuresLine != null) Padding(padding: const EdgeInsets.only(top: 3), child: figuresLine),
-                _Reveal(child: desc == null ? null : Padding(padding: const EdgeInsets.fromLTRB(0, 8, 0, 2), child: desc)),
-              ],
-            );
+      // The line's own tone: ink, slate on a line at quantity 0 (as its name and figures are), amber while editing a
+      // line with no price yet.
+      final figuresTone = line.rate == null && !discount && editable ? DashUi.amberText : (idle ? _quietTone : DashUi.ink);
+      final figuresLine = figuresText.isEmpty ? null : Text(figuresText, style: _metaStyle.copyWith(fontSize: 12.5, color: figuresTone));
+      final amount = _fit(
+        noAmount
+            ? Text('—', textAlign: TextAlign.right, maxLines: 1, semanticsLabel: 'no price', style: cellStyle)
+            : Text(centsMoney(figures.amountCents), textAlign: TextAlign.right, maxLines: 1, style: amountStyle),
+        alignment: Alignment.centerRight,
+      );
       return Semantics(
         label: _lineLabel(index, line),
         child: Padding(
           padding: EdgeInsets.symmetric(horizontal: _side, vertical: discount ? (open ? _chargeBoxPad : _chargePad) : (open ? _editPad : _rowPad)),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (cols.editable) SizedBox(width: _Cols.gripW, child: grip),
-              SizedBox(width: _Cols.eyeW, child: eye),
-              mark,
-              Expanded(child: body),
-              const SizedBox(width: 10),
-              // One width for every line's amount, so the name boxes above line up.
-              SizedBox(
-                width: _Cols.stackAmountW,
-                child: Padding(
-                  padding: EdgeInsets.only(top: open ? _cellY : 0),
-                  child: _fit(
-                    Text(centsMoney(figures.amountCents), textAlign: TextAlign.right, maxLines: 1, style: amountStyle),
-                    alignment: Alignment.centerRight,
-                  ),
-                ),
-              ),
-              if (cols.editable) SizedBox(width: _Cols.actionsW, child: actions),
-            ],
+          child: LayoutBuilder(
+            builder: (context, c) {
+              // Beside the amount, a narrow window (360 px) left the name box about 62 px and the name vanished (audit
+              // 2026-11-24, item 53). With less than [_Cols.minStackNameW] for the name, the amount goes on the
+              // figures' line under it instead and the name takes the row.
+              final lead = (cols.editable ? _Cols.gripW + _Cols.actionsW : 0) + _Cols.eyeW + _Cols.markW + (line.inPackage ? _Cols.packageIndent : 0);
+              final under = c.maxWidth - lead - 10 - _Cols.stackAmountW < _Cols.minStackNameW;
+              Widget? figuresRow(Widget? figures) {
+                if (!under) return figures;
+                final amountUnder = SizedBox(width: _Cols.stackAmountW, child: Align(alignment: Alignment.centerRight, child: amount));
+                return Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [Expanded(child: figures ?? const SizedBox.shrink()), const SizedBox(width: 10), amountUnder],
+                );
+              }
+
+              // Editable: only the name is a box, the same one-line box (Description at its end) as the name field it
+              // opens into, so clicking it never changes its size (user 2026-11-13). Its figures sit under it, as the
+              // opened line's do; a click on them opens the line at its quantity.
+              final Widget body = open
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        nameBox(),
+                        ?figuresRow(
+                          figuresLine == null
+                              ? null
+                              : Padding(
+                                  padding: const EdgeInsets.fromLTRB(_cellX, 4, 0, 0),
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
+                                      onTap: () => onOpen!('qty'),
+                                      child: SelectionContainer.disabled(child: figuresLine),
+                                    ),
+                                  ),
+                                ),
+                        ),
+                        _Reveal(child: desc == null ? null : Padding(padding: const EdgeInsets.fromLTRB(0, 8, 0, 2), child: desc)),
+                      ],
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        readName,
+                        if (meta != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: _metaGap),
+                            child: meta,
+                          ),
+                        ?figuresRow(figuresLine == null ? null : Padding(padding: const EdgeInsets.only(top: 3), child: figuresLine)),
+                        _Reveal(child: desc == null ? null : Padding(padding: const EdgeInsets.fromLTRB(0, 8, 0, 2), child: desc)),
+                      ],
+                    );
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (cols.editable) SizedBox(width: _Cols.gripW, child: grip),
+                  SizedBox(width: _Cols.eyeW, child: eye),
+                  mark,
+                  Expanded(child: body),
+                  if (!under) ...[
+                    const SizedBox(width: 10),
+                    // One width for every line's amount, so the name boxes above line up.
+                    SizedBox(
+                      width: _Cols.stackAmountW,
+                      child: Padding(padding: EdgeInsets.only(top: open ? _cellY : 0), child: amount),
+                    ),
+                  ],
+                  if (cols.editable) SizedBox(width: _Cols.actionsW, child: actions),
+                ],
+              );
+            },
           ),
         ),
       );
@@ -2344,8 +2460,7 @@ class _ViewRow extends StatelessWidget {
         ? (pct == null ? null : (open ? cell('pct', _percentValue(context, pct, boxed: true)) : plain(_percentValue(context, pct, boxed: false))))
         : (open ? cell('rate', rateValue) : plain(rateValue));
     // A discount's amount is what is typed (a box while editing); an item's is worked out: read-only plain text, while
-    // editing a grey box that can't be typed into ([_TotalBox]).
-    final amountText = Text(centsMoney(figures.amountCents), maxLines: 1, style: amountStyle);
+    // editing a grey box that can't be typed into ([_TotalBox]). ([amountText]: "—" on an unpriced read-only line.)
     final Widget amount = discount && open && pct == null
         ? cell('rate', _money(context, figures.amountCents.abs() / 100, boxed: true, style: amountStyle))
         : (open ? _TotalBox(child: amountText) : plain(amountText));
@@ -2369,13 +2484,10 @@ class _ViewRow extends StatelessWidget {
       ),
     );
     if (twoLine && !open && !discount) {
-      // As tall as a line with a quiet line under its name; a line without one sits in the middle of that height.
-      body = ConstrainedBox(
-        constraints: BoxConstraints(minHeight: _twoLineHeight(context)),
-        // A line with a description sits at the top: centred, it rose a pixel as its description opened (its closed
-        // name row is a hair shorter than the room). The others sit in the middle, as before.
-        child: Align(alignment: description.isEmpty ? Alignment.centerLeft : Alignment.topLeft, child: body),
-      );
+      // As tall as a line with a quiet line under its name; a line without one sits in the middle of that height, one
+      // with a Description as well as one without (audit 2026-11-24, item 51: the first sat at the top, the other in
+      // the middle). [_EvenRow] keeps it where it sat closed while its description is open, so opening it moves nothing.
+      body = _EvenRow(room: _twoLineHeight(context), held: desc != null, guess: _hasMeta(line) ? 0 : null, child: body);
     }
     return Semantics(label: _lineLabel(index, line), child: body);
   }
@@ -2506,22 +2618,31 @@ class _PackageHeader extends StatelessWidget {
               // The name and its count take the row; the ⋮ sits in the lines' menu column, under theirs.
               Expanded(
                 child: ExcludeSemantics(
-                  child: Row(
-                    children: [
-                      Flexible(
-                        child: Text.rich(
-                          _nameSpan(name, const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3, letterSpacing: -0.1)),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                  child: LayoutBuilder(
+                    builder: (context, c) => Row(
+                      children: [
+                        Flexible(
+                          child: Text.rich(
+                            _nameSpan(name, const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.3, letterSpacing: -0.1)),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Service package · $count',
-                        maxLines: 1,
-                        style: const TextStyle(fontSize: 12.5, color: DashUi.slate, height: 1.3),
-                      ),
-                    ],
+                        const SizedBox(width: 10),
+                        // At its own width, but never more than part of the row, cut short past that: it overflowed at
+                        // text x1.3 near 360 px (audit 2026-11-24, item 54). Ink, as all the table's text is (item 46:
+                        // it was slate).
+                        ConstrainedBox(
+                          constraints: BoxConstraints(maxWidth: c.maxWidth * 0.45),
+                          child: Text(
+                            'Service package · $count',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12.5, color: DashUi.ink, height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
@@ -2531,7 +2652,8 @@ class _PackageHeader extends StatelessWidget {
                   child: Align(
                     alignment: Alignment.centerRight,
                     child: PsMenuButton<String>(
-                      entries: () => const [PsMenuItem('remove-package', 'Remove package', icon: Icons.delete_outline_rounded, danger: true)],
+                      // "Delete", the line menu's word for the same action (audit 2026-11-24, item 59).
+                      entries: () => const [PsMenuItem('remove-package', 'Delete package', icon: Icons.delete_outline_rounded, danger: true)],
                       onSelected: (_) => remove(),
                       width: 210,
                       align: PsMenuAlign.end,
@@ -2566,8 +2688,8 @@ class _NameText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Up to three lines: the item column stops at [_Cols.maxReadItemW] read-only, so a long catalog name needs the
-    // third rather than being cut short.
+    // Up to three lines: the item column can be as narrow as about [_Cols.spreadFromItemW] read-only, so a long
+    // catalog name needs the third rather than being cut short.
     final name = Text.rich(_nameSpan(text, style), maxLines: 3, overflow: TextOverflow.ellipsis);
     if (trailing != null) {
       // The name at its own width with the toggle straight after it when both fit on one line. A name too long for
@@ -2704,9 +2826,10 @@ Widget? _inlineMeta(LineDraft line, {StrutStyle? strut}) {
 /// Under an editable line's name box when the boxes are too narrow to carry it ([_Cols.skuInBox]): its SKU (or "Fee"),
 /// where the read-only line has it. A line without one keeps the same room empty when another line has one
 /// ([_Cols.metaSlot]), so the rows stay one height. Null when the SKU is inside the box (or the lines are stacked,
-/// which put it with their figures).
+/// which put it with their figures), and always on a discount or fee: those are compact rows with their mark in the box,
+/// and the empty room made them taller than the tax rows under them (audit 2026-11-24, item 47).
 Widget? _metaUnderBox(_Cols cols, LineDraft line) {
-  if (cols.stacked) return null;
+  if (cols.stacked || line.isCharge) return null;
   final meta = cols.metaUnder(line);
   if (meta == null && !cols.metaSlot) return null;
   return Padding(
@@ -2885,6 +3008,70 @@ class _RowShellState extends State<_RowShell> with SingleTickerProviderStateMixi
   }
 }
 
+/// A read-only line in a table whose lines are all [room] tall (see _LineItemsEditorState._list): its row sits in the
+/// middle of that height, and stays exactly there while [held] (its description open), so its name and figures never
+/// move as the description opens or closes. The middle is measured from the closed row after it is laid out; until
+/// then it is [guess] (null: worked out for a one-line name, the usual case; 0 for a row that fills the room).
+class _EvenRow extends StatefulWidget {
+  final double room;
+  final bool held;
+  final double? guess;
+  final Widget child;
+  const _EvenRow({required this.room, required this.held, this.guess, required this.child});
+
+  @override
+  State<_EvenRow> createState() => _EvenRowState();
+}
+
+class _EvenRowState extends State<_EvenRow> {
+  final _key = GlobalKey(debugLabel: 'even row');
+
+  /// The room above the row, measured; null until it has been.
+  double? _top;
+
+  /// The closed row's height when last measured. While a description closes (it folds up over a few frames) a taller
+  /// row is the description on its way out, not a new closed height, so it is not measured.
+  double? _closedH;
+  bool _closing = false;
+
+  @override
+  void didUpdateWidget(_EvenRow old) {
+    super.didUpdateWidget(old);
+    if (old.held && !widget.held) _closing = true;
+    if (old.room != widget.room) _closing = false; // a new text size: measure afresh
+  }
+
+  void _measure() {
+    if (!mounted || widget.held) return;
+    final box = _key.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final h = box.size.height;
+    if (_closing) {
+      if (_closedH != null && h > _closedH! + 0.5) return;
+      _closing = false;
+    }
+    _closedH = h;
+    final top = ((widget.room - h) / 2).clamp(0.0, widget.room);
+    if (_top == null || (top - _top!).abs() > 0.25) setState(() => _top = top);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.held) WidgetsBinding.instance.addPostFrameCallback((_) => _measure());
+    final top = _top ?? widget.guess ?? ((widget.room - 2 * _rowPad - _KindMark.textLine(context)) / 2).clamp(0.0, widget.room);
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: widget.room),
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: Padding(
+          padding: EdgeInsets.only(top: top),
+          child: KeyedSubtree(key: _key, child: widget.child),
+        ),
+      ),
+    );
+  }
+}
+
 /// A box for a value in an editable line, always there (user 2026-11-13): white with a quiet hairline, darker under the
 /// pointer, ink with a soft ring while its field has focus, red when what is typed isn't a number. Nothing in it is
 /// grey (user 2026-11-13 pass 5): [end] sits inside the box at its right, past a hairline when [divider] (Description,
@@ -2912,6 +3099,10 @@ class _FieldCell extends StatefulWidget {
   final bool pad;
   final bool openOnFocus;
 
+  /// Takes the keyboard as it is built, without opening its line: the box of the field a line was closed from with
+  /// Enter or Esc, so the keyboard stays where it was (see _LineItemsEditorState._refocus).
+  final bool takeFocus;
+
   // One fixed height ([_boxHeight]), the same for the value and for the field it opens into, so focusing a value never
   // changes the row's height (user 2026-11-13).
   const _FieldCell({
@@ -2927,6 +3118,7 @@ class _FieldCell extends StatefulWidget {
     this.error = false,
     this.pad = true,
     this.openOnFocus = true,
+    this.takeFocus = false,
   });
 
   @override
@@ -2937,8 +3129,33 @@ class _FieldCellState extends State<_FieldCell> with _FocusRing {
   final _node = FocusNode(debugLabel: 'line value');
   bool _hover = false;
 
+  /// The focus about to land is [_FieldCell.takeFocus]'s: it must not open the line.
+  bool _quiet = false;
+
   @override
   FocusNode get ringNode => _node;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.takeFocus) _grabFocus();
+  }
+
+  @override
+  void didUpdateWidget(_FieldCell old) {
+    super.didUpdateWidget(old);
+    if (widget.takeFocus && !old.takeFocus) _grabFocus();
+  }
+
+  void _grabFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || widget.onTap == null) return;
+      _quiet = true;
+      _node.requestFocus();
+      // The focus change is applied in a microtask queued by requestFocus, so this one runs after it.
+      scheduleMicrotask(() => _quiet = false);
+    });
+  }
 
   @override
   void dispose() {
@@ -3021,6 +3238,10 @@ class _FieldCellState extends State<_FieldCell> with _FocusRing {
         // focus too, and must do just its own thing (found by the 2026-11-13 review).
         onFocusChange: widget.openOnFocus
             ? (f) {
+                if (f && _quiet) {
+                  _quiet = false;
+                  return;
+                }
                 if (f && _node.hasPrimaryFocus) tap();
               }
             : null,
@@ -3464,10 +3685,11 @@ class _TaxCell extends StatelessWidget {
     // In the select's box: the place and its rate (user 2026-11-24: "the tax box could be more informational"; the
     // read-only line keeps the place only, 2026-11-23). The whole place when it fits beside the rate, else its first
     // part ("Springdale" for "Springdale, Washington"), cut short before the rate is; the rate in a lighter weight so
-    // the place still leads. Its menu has the place in full.
+    // the place still leads, in the line's own ink (audit 2026-11-24, item 46: it was slate). Its menu has the place in
+    // full.
     final rate = parts.rate;
     final rateText = rate == null ? null : ' $rate';
-    final rateStyle = style.copyWith(fontWeight: FontWeight.w400, color: quiet ? _quietTone : DashUi.slate);
+    final rateStyle = style.copyWith(fontWeight: FontWeight.w400);
     final place = !_overflows(context, '$label${rateText ?? ''}', _taxBoxTextW) ? label : parts.name.split(', ').first;
     final Widget text = rateText == null
         ? Text(place, maxLines: 1, overflow: TextOverflow.ellipsis, style: style)
@@ -3534,7 +3756,13 @@ class _DescToggle extends StatefulWidget {
 
   /// A narrow box: the description icon and chevron only (the label is its tooltip).
   final bool compact;
-  const _DescToggle({super.key, required this.open, required this.onTap, this.compact = false});
+
+  /// In a name box: the click target fills the box's height (about 29 px) while the toggle looks the same, so it is at
+  /// least 24 px tall (audit 2026-11-24, item 55; the toggle itself is about 19 px). Read-only, beside the name, it
+  /// keeps its own height, so the rows with a description stay as tall as the others; nothing else clickable is within
+  /// 24 px of it there.
+  final bool fill;
+  const _DescToggle({super.key, required this.open, required this.onTap, this.compact = false, this.fill = false});
 
   /// Room before the label, for the keyboard focus ring.
   static const inset = 6.0;
@@ -3581,9 +3809,10 @@ class _DescToggleState extends State<_DescToggle> with _FocusRing {
             widget.onTap();
           },
           // Text and a chevron: no taller than the name, so the name box is as tall as the others. A button, not text:
-          // the page-wide selection must not highlight (or I-beam) its label.
+          // the page-wide selection must not highlight (or I-beam) its label. In a name box the click target is the
+          // box's whole height ([_DescToggle.fill]).
           child: SelectionContainer.disabled(
-            child: AnimatedContainer(
+            child: _tapArea(context, AnimatedContainer(
               duration: _motion(context, 120),
               height: _metaHeight(context),
               padding: const EdgeInsets.fromLTRB(_DescToggle.inset, 0, 2, 0),
@@ -3619,12 +3848,16 @@ class _DescToggleState extends State<_DescToggle> with _FocusRing {
                   ),
                 ],
               ),
-            ),
+            )),
           ),
         ),
       ),
     );
   }
+
+  /// [toggle] as it is, or in a name box centred in a click target the box's height (see [_DescToggle.fill]).
+  Widget _tapArea(BuildContext context, Widget toggle) =>
+      widget.fill ? SizedBox(height: _boxHeight(context) - 2 * _edgeW, child: Center(child: toggle)) : toggle;
 }
 
 /// The opened description under a line, in a box of its own so it doesn't run into the page: read-only a light outline,
@@ -3676,7 +3909,9 @@ class _Handle extends StatelessWidget {
           waitDuration: Duration(milliseconds: 600),
           child: Align(
             alignment: Alignment.centerLeft,
-            child: Icon(Icons.drag_indicator_rounded, size: 18, color: DashUi.muted),
+            // Subtle, not muted: muted was about 2.7:1 on white, under the 3:1 a control's icon needs (audit
+            // 2026-11-24, item 56).
+            child: Icon(Icons.drag_indicator_rounded, size: 18, color: DashUi.subtle),
           ),
         ),
       ),
@@ -3814,11 +4049,16 @@ class _EditRow extends StatefulWidget {
 
   /// A figure's box was left holding something that isn't a number (see _LineItemsEditorState._settleBad).
   final ValueChanged<String>? onSettle;
+
+  /// Focus left the line (Tab out of it, a click elsewhere): it closes.
   final VoidCallback onDone;
 
+  /// Enter in [field]: the line closes, and that field's box keeps the keyboard (_LineItemsEditorState._refocus).
+  final ValueChanged<String> onSubmit;
+
   /// Esc: the line goes back to how it was when the box being edited took the keyboard, and closes
-  /// (_LineItemsEditorState._cancel).
-  final VoidCallback onCancel;
+  /// (_LineItemsEditorState._cancel). Given the field that had the keyboard, if any, whose box keeps it.
+  final ValueChanged<String?> onCancel;
 
   /// The keyboard moved to another box in the line: what was typed so far is kept (_LineItemsEditorState._keepSoFar).
   final VoidCallback onKeep;
@@ -3848,6 +4088,7 @@ class _EditRow extends StatefulWidget {
     required this.onInvalid,
     this.onSettle,
     required this.onDone,
+    required this.onSubmit,
     required this.onCancel,
     required this.onKeep,
     this.moves = (up: false, down: false),
@@ -4106,7 +4347,8 @@ class _EditRowState extends State<_EditRow> {
   KeyEventResult _keys(FocusNode _, KeyEvent e) {
     if (e is! KeyDownEvent && e is! KeyRepeatEvent) return KeyEventResult.ignored;
     if (e.logicalKey == LogicalKeyboardKey.escape) {
-      widget.onCancel(); // cancel what was typed in this box (decision A1, 2026-11-23)
+      // Cancel what was typed in this box (decision A1, 2026-11-23); the box keeps the keyboard once the line closes.
+      widget.onCancel(_f.entries.where((f) => f.value.hasFocus).firstOrNull?.key);
       return KeyEventResult.handled;
     }
     final alt = HardwareKeyboard.instance.isAltPressed;
@@ -4330,7 +4572,7 @@ class _EditRowState extends State<_EditRow> {
             contentPadding: EdgeInsets.fromLTRB(_cellX - _edgeW, _cellY - _edgeW, _cellX - _edgeW - (right ? _caretRoom : 0), _cellY - _edgeW),
           ),
     onChanged: (v) => numeric ? _number(key, v) : _text(key, v),
-    onSubmitted: multiline ? null : (_) => widget.onDone(),
+    onSubmitted: multiline ? null : (_) => widget.onSubmit(key),
   );
 
   @override
@@ -4372,6 +4614,7 @@ class _EditRowState extends State<_EditRow> {
                 key: ValueKey('line-${widget.index}-more'),
                 open: widget.more,
                 compact: c.maxWidth < _Cols.compactToggleW,
+                fill: true,
                 onTap: widget.onMore,
               ),
       ),
@@ -4394,7 +4637,7 @@ class _EditRowState extends State<_EditRow> {
       hint: '1.00',
       right: false,
       numeric: true,
-      label: 'Quantity',
+      label: 'Line ${widget.index + 1} quantity',
       trailing: _Spin(value: _typedQty, rate: l.rate, onChanged: _stepQty, inField: true),
       trailingWidth: _Spin.width,
     );
@@ -4412,7 +4655,7 @@ class _EditRowState extends State<_EditRow> {
     // An item's amount is worked out: a grey box that can't be typed into, the same one the closed line has, so it
     // doesn't move as the line opens.
     final amountText = _TotalBox(child: Text(centsMoney(widget.figures.amountCents), maxLines: 1, style: _amountFor(widget.figures.amountCents)));
-    final rateField = _field('rate', hint: 'Price', right: false, numeric: true, money: true, label: 'Rate');
+    final rateField = _field('rate', hint: 'Price', right: false, numeric: true, money: true, label: 'Line ${widget.index + 1} rate');
     // A dollar discount or fee: its amount is typed. A percentage one: its percentage is typed where an item's rate is,
     // and its amount is worked out beside it.
     final discountField = pct
@@ -4423,13 +4666,13 @@ class _EditRowState extends State<_EditRow> {
             right: false,
             numeric: true,
             money: true,
-            label: l.isDiscount ? 'Discount amount' : 'Fee amount',
+            label: 'Line ${widget.index + 1} ${l.isDiscount ? 'discount' : 'fee'} amount',
             style: _amountStyle.copyWith(color: l.isDiscount ? DashUi.redText : DashUi.ink),
           );
     final pctField = pct
-        ? _field('pct', hint: '0', right: false, numeric: true, percent: true, label: l.isDiscount ? 'Discount percentage' : 'Fee percentage')
+        ? _field('pct', hint: '0', right: false, numeric: true, percent: true, label: 'Line ${widget.index + 1} ${l.isDiscount ? 'discount' : 'fee'} percentage')
         : null;
-    final costField = _field('cost', hint: '0.00', right: false, numeric: true, money: true, label: 'Unit cost');
+    final costField = _field('cost', hint: '0.00', right: false, numeric: true, money: true, label: 'Line ${widget.index + 1} unit cost');
     final under = cols.stacked && !cols.metaInBox(l) ? _inlineMeta(l) : null;
     final item = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4494,7 +4737,9 @@ class _EditRowState extends State<_EditRow> {
                       if (cols.cost) labelled('Cost', 112, costField),
                     ],
                     if (discount) offTaxed else labelled('Tax', 170, taxCell),
-                    SizedBox(width: 104, child: amountText),
+                    // The worked-out total, headed like every other figure here (audit 2026-11-24, item 65). Not on a
+                    // dollar discount or fee: its Amount box is that figure already, and it showed twice (item 48).
+                    if (!discount || pct) labelled('Total', 104, amountText),
                   ],
                 ),
               ),
@@ -4626,7 +4871,12 @@ class _Statement extends StatelessWidget {
 
   /// A job's payments and deposits (see [LineItemsEditor.paidCents]); null on an estimate.
   final int? paidCents;
-  const _Statement({required this.rows, this.profit, this.warning, this.aside, this.paidCents});
+
+  /// The lines are an estimate's: the cost line says "Estimate cost". From the editor's [LineItemsEditor.totalLabel],
+  /// not the total row's label, which a Service Fusion estimate with no total of its own doesn't have (it said "Job
+  /// cost": audit 2026-11-24, item 60).
+  final bool estimate;
+  const _Statement({required this.rows, this.profit, this.warning, this.aside, this.paidCents, this.estimate = false});
 
   @override
   Widget build(BuildContext context) {
@@ -4663,26 +4913,31 @@ class _Statement extends StatelessWidget {
         // Money Service Fusion doesn't itemize is part of the figure too: then it says so.
         final unitemized = rows.any((r) => r.extra && r.kind == SummaryKind.unitemized && r.cents != 0);
         final charges = <_SummaryLine>[
-          _SummaryLine(label: unitemized ? 'Taxes, fees & other charges' : 'Taxes, fees & discounts', amount: _plain(extras)),
+          // Discounts stay in the name when it adds "other charges" (audit 2026-11-24, item 57: it dropped them).
+          _SummaryLine(label: unitemized ? 'Taxes, fees, discounts & other charges' : 'Taxes, fees & discounts', amount: _plain(extras)),
           if (total != null) _SummaryLine(label: total.label, amount: _plain(total.cents, strong: true), strong: true, tip: total.tip),
         ];
         // On a job, what has been paid (green) and what is left to pay: a mini block of its own, next to the total
         // (user 2026-11-24).
         const paidTone = DashUi.emeraldText;
-        const dueTone = DashUi.redText;
+        // Overpaid: amber, as the page's own "Overpaid by $X" reads (job_detail_screen.dart, audit 2026-11-24 item 15).
+        const overTone = DashUi.amberText;
         // Nothing paid yet: "$0.00" in ink (green says money came in).
         final due = total == null || paid == null ? 0 : total.cents - paid;
+        // Money owed is red; nothing owed (paid in full) is ink, not a red "$0.00" (audit 2026-11-24, item 50).
+        final dueTone = due > 0 ? DashUi.redText : DashUi.ink;
         final payments = total == null || paid == null
             ? null
             : <_SummaryLine>[
                 paid == 0
                     ? _SummaryLine(label: 'Payments/Deposits', amount: _plain(0))
                     : _SummaryLine(label: 'Payments/Deposits', amount: _plain(-paid, color: paidTone), tone: paidTone),
-                // Red, the name and the amount (user 2026-11-24). Paid beyond the total, what is over is the customer's
-                // credit, in green, not a red minus that reads as money owed.
+                // Red, the name and the amount (user 2026-11-24), while anything is owed. Paid beyond the total, the line
+                // says so in the page's own words, "Overpaid by" and how much (audit 2026-11-24, item 15; it was a green
+                // "Credit"), never a red minus that reads as money owed.
                 due < 0
-                    ? _SummaryLine(label: 'Credit', amount: _plain(-due, strong: true, color: paidTone), strong: true, tone: paidTone)
-                    : _SummaryLine(label: 'Balance due', amount: _plain(due, strong: true, color: dueTone), strong: true, tone: dueTone),
+                    ? _SummaryLine(label: 'Overpaid by', amount: _plain(-due, strong: true, color: overTone), strong: true, tone: overTone)
+                    : _SummaryLine(label: 'Balance due', amount: _plain(due, strong: true, color: dueTone), strong: true, tone: dueTone == DashUi.ink ? null : dueTone),
               ];
         // Every block a mini block of its own, in a row (user 2026-11-24): for people who can see costs the job's cost
         // and gross profit on the left, the total in the middle and a little wider than the others, and on a job what
@@ -4690,9 +4945,10 @@ class _Statement extends StatelessWidget {
         // width, the total first (a phone: full width).
         const gap = 16.0;
         const blockW = 360.0;
-        const totalW = 460.0; // a little longer again (user 2026-11-24; it was 420)
+        // 460: the user widened it from the 420 of the 11-24 notes the same day, and kept it at 460 (2026-11-25).
+        const totalW = 460.0;
         const blockAmountW = 140.0;
-        final profitLines = p == null ? null : _profitLines(p, estimate: total?.label.startsWith('Estimate') ?? false);
+        final profitLines = p == null ? null : _profitLines(p, estimate: estimate);
         final fixedW = (profitLines == null ? 0 : blockW + gap) + totalW + (payments == null ? 0 : gap + blockW);
         final inRow = fixedW <= c.maxWidth;
         // Only a little room to spare: the total takes it, so the blocks end on the table's own edges rather than a few
@@ -5076,7 +5332,10 @@ class _ZeroChip extends StatelessWidget {
         children: [
           const Icon(Icons.money_off_rounded, size: 13, color: DashUi.amberText),
           const SizedBox(width: 4),
-          Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.amberText, height: 1.3)),
+          // Wraps rather than running off a narrow window (360 px: audit 2026-11-24, item 49).
+          Flexible(
+            child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: DashUi.amberText, height: 1.3)),
+          ),
         ],
       ),
     );
@@ -5090,7 +5349,11 @@ class _ZeroChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(999),
         hoverColor: Colors.transparent,
         splashFactory: NoSplash.splashFactory,
-        child: chip,
+        // The chip is about 21 px tall: the click target is at least 24 (audit 2026-11-24, item 55), the chip the same.
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 24),
+          child: Align(alignment: Alignment.centerLeft, widthFactor: 1, heightFactor: 1, child: chip),
+        ),
       ),
     );
   }
@@ -5113,7 +5376,8 @@ class _NoChargeNote extends StatelessWidget {
           by == null || by!.trim().isEmpty ? 'No charge · confirmed' : 'No charge · confirmed by ${by!.trim()}',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, color: DashUi.slate, height: 1.3),
+          // Ink, as all the table's text is (audit 2026-11-24, item 46: it was slate); the regular weight keeps it quiet.
+          style: const TextStyle(fontSize: 12, color: DashUi.ink, height: 1.3),
         ),
       ),
     ],

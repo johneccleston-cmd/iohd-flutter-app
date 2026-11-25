@@ -105,7 +105,7 @@ void main() {
       await _open(t, off);
       expect(find.text('Schuber Mitchell Homes'), findsWidgets, reason: 'the job loaded');
       expect(_deleteButton, findsNothing);
-      expect(find.text('Add Task'), findsOneWidget, reason: 'Update is still on');
+      expect(find.text('Add task'), findsOneWidget, reason: 'Update is still on');
     }, () => off);
   });
 
@@ -115,9 +115,9 @@ void main() {
       await _open(t, client);
       expect(find.text('Schuber Mitchell Homes'), findsWidgets);
       expect(_deleteButton, findsNothing);
-      expect(find.text('Add Task'), findsNothing);
-      expect(find.text('Add Notes'), findsNothing);
-      expect(find.textContaining('Use Add Task'), findsNothing);
+      expect(find.text('Add task'), findsNothing);
+      expect(find.text('Add note'), findsNothing);
+      expect(find.textContaining('Use Add task'), findsNothing);
       expect(find.textContaining('Request'), findsNothing);
     }, () => client);
   });

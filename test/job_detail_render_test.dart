@@ -272,12 +272,12 @@ void main() {
       await t.pumpAndSettle();
       // Default tabs: Summary (Details) and Scheduling (Job Info).
       expect(find.text('Primary contact'), findsOneWidget);
-      expect(find.text('Arrival Time Window'), findsOneWidget);
+      expect(find.text('Arrival time window'), findsOneWidget);
 
       await t.tap(find.text('Payment'));
       await t.pumpAndSettle();
-      expect(find.text('Balance Due'), findsOneWidget);
-      expect(find.text('Arrival Time Window'), findsNothing);
+      expect(find.text('Balance due'), findsOneWidget);
+      expect(find.text('Arrival time window'), findsNothing);
       await t.tap(find.textContaining('Pics'));
       await t.pumpAndSettle();
       expect(find.text('front-of-house.jpg'), findsOneWidget);
@@ -302,7 +302,7 @@ void main() {
       await t.tap(find.text('Scheduling'));
       await t.pumpAndSettle();
       expect(find.text('Primary contact'), findsOneWidget);
-      expect(find.text('Arrival Time Window'), findsOneWidget);
+      expect(find.text('Arrival time window'), findsOneWidget);
       expect(t.takeException(), isNull);
     }, () => _mock());
   });
@@ -407,8 +407,8 @@ void main() {
       await t.pumpAndSettle();
       expect(_requests, contains('GET /api/jobs/1096183137/notes-tasks'));
 
-      // Add Notes: an empty save is refused inside the dialog; a real one is saved and shown with the author.
-      await t.tap(find.text('Add Notes'));
+      // Add note: an empty save is refused inside the dialog; a real one is saved and shown with the author.
+      await t.tap(find.text('Add note'));
       await t.pumpAndSettle();
       await t.tap(find.text('Save note'));
       await t.pumpAndSettle();
@@ -421,8 +421,8 @@ void main() {
       expect(find.text('Dana Whitfield'), findsWidgets); // the note's author, beside its date
       expect(find.textContaining('Service Fusion'), findsWidgets); // the synced notes are labelled as such
 
-      // Add Task, then tick it off: who added and who finished it is shown.
-      await t.tap(find.text('Add Task'));
+      // Add task, then tick it off: who added and who finished it is shown.
+      await t.tap(find.text('Add task'));
       await t.pumpAndSettle();
       await t.enterText(find.byType(TextField), 'Order the forklift for day two');
       await t.tap(find.text('Save task'));
@@ -548,7 +548,7 @@ void main() {
 
     // Exactly three: nothing to collapse.
     await open(jobWithVisits(3), 'three');
-    expect(find.text('Site Visits (3)'), findsOneWidget);
+    expect(find.text('Site visits (3)'), findsOneWidget);
     expect(find.textContaining('Show all'), findsNothing);
     for (var i = 1; i <= 3; i++) {
       expect(find.text('Visit $i'), findsOneWidget);
@@ -556,12 +556,15 @@ void main() {
 
     // Eight: only the latest three (Visit 6..8, real numbers kept), with a control for the five earlier ones.
     await open(jobWithVisits(8), 'eight');
-    expect(find.text('Site Visits (8)'), findsOneWidget);
+    expect(find.text('Site visits (8)'), findsOneWidget);
     expect(find.text('Show all 8 visits (5 earlier)'), findsOneWidget);
     expect(find.text('Visit 5'), findsNothing);
     expect(find.text('Visit 6'), findsOneWidget);
     expect(find.text('Visit 8'), findsOneWidget);
     await expectLater(find.byKey(const ValueKey('eight')), matchesGoldenFile('shots/job_detail_visits_collapsed.png'));
+    // The control sits under the list now, as the notes' does (audit 2026-11-24, item 34).
+    await t.ensureVisible(find.text('Show all 8 visits (5 earlier)'));
+    await t.pumpAndSettle();
     await t.tap(find.text('Show all 8 visits (5 earlier)'));
     await t.pumpAndSettle();
     for (var i = 1; i <= 8; i++) {
@@ -577,7 +580,7 @@ void main() {
     // Service Fusion sent no visits: the section says so, however many work days our commission ledger holds (7 here)
     // and whatever the job's own start date is. It must show exactly what Service Fusion shows.
     await open(jobWithVisits(7, serviceFusion: false), 'workdays');
-    expect(find.text('Site Visits (0)'), findsOneWidget);
+    expect(find.text('Site visits (0)'), findsOneWidget);
     expect(find.text('No visits scheduled.'), findsOneWidget);
     expect(find.text('Visit 1'), findsNothing);
     expect(find.textContaining('Show'), findsNothing);
@@ -603,7 +606,7 @@ void main() {
       expect(find.byType(QuoActivityPanel), findsOneWidget); // the Quo calls-and-texts panel replaced the old "not tracked" placeholder
       expect(find.text('No communications recorded'), findsNothing);
       expect(find.text('Primary contact'), findsNothing); // the Details card swapped to that tab
-      expect(find.text('Arrival Time Window'), findsOneWidget); // Job Info is untouched
+      expect(find.text('Arrival time window'), findsOneWidget); // Job Info is untouched
     }, () => _mock());
   });
 

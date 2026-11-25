@@ -296,6 +296,10 @@ void main() {
         await _pick(t, 'spring', 'Spring Replacement | Labor');
         expect(find.text('Spring Replacement | Labor'), findsOneWidget);
         await t.tap(find.text('Exit preview'));
+        await settle(t, frames: 4);
+        // With changes in the preview, Exit preview asks first (audit item 87), as leaving the page does.
+        expect(find.text('Exit the preview?'), findsOneWidget);
+        await t.tap(find.text('Discard changes'));
         await settle(t, frames: 6);
         expect(find.text('Spring Replacement | Labor'), findsNothing);
         expect(find.text(r'$1,735.97'), findsOneWidget);
@@ -329,7 +333,7 @@ void main() {
       final s = FakeJobServer();
       seedThreeOptions(s);
       await pumpJobPage(t, s, id: kEstimateId, body: () async {
-        await optionMenu(t, 'Duplicate as a new option');
+        await optionMenu(t, 'Copy of Upgraded'); // one name for copying an option everywhere (audit item 90)
         expect(find.text('Upgraded (copy)'), findsWidgets);
         await optionMenu(t, 'Rename');
         await t.enterText(find.byType(TextField).last, 'Upgraded plus');
@@ -387,7 +391,7 @@ void main() {
         await settle(t, frames: 3);
         await t.tap(find.byKey(const ValueKey('option-actions')));
         await settle(t, frames: 4);
-        expect(find.text('Duplicate (as saved)'), findsOneWidget);
+        expect(find.text('Copy of Ready (as saved)'), findsOneWidget);
       });
       expect(s.requests.where((r) => r.endsWith('/accept')), isEmpty);
     });
@@ -478,7 +482,8 @@ void main() {
         await pumpJobPage(t, s, body: () async {
           await t.tap(find.text('Payment').first);
           await settle(t, frames: 4);
-          expect(find.text('Balance Due'), findsOneWidget);
+          // Job Info and the P&S summary both say "Balance due" since labels went sentence case (audit item 13).
+          expect(find.text('Balance due'), findsWidgets);
           expect(find.text(shown), findsWidgets, reason: shown);
         });
       }
@@ -524,13 +529,14 @@ void main() {
       }, r'$0.00 (only $200.00 paid on file)');
     });
 
-    testWidgets('Scheduling names the sales agent: the estimate\'s opportunity owner, else the job\'s own, else Not Set', (t) async {
+    testWidgets('Scheduling names the sales owner: the estimate\'s opportunity owner, else the job\'s own, else Not set', (t) async {
       Future<void> check(Map<String, dynamic> Function(Map<String, dynamic>) edit, String shown) async {
         final s = FakeJobServer(records: {kJobId: edit(jobRecord()), kEstimateId: estimateRecord()});
         await pumpJobPage(t, s, body: () async {
-          expect(find.text('Sales Agent'), findsOneWidget);
+          // One name, shown once on the page (audit 2026-11-24, item 14: "Sales owner" on Details, "Sales Agent" here).
+          expect(find.text('Sales owner'), findsOneWidget);
           // The nearest Row is the icon + label; the next one out is the whole row with its value.
-          final row = find.ancestor(of: find.text('Sales Agent'), matching: find.byType(Row)).at(1);
+          final row = find.ancestor(of: find.text('Sales owner'), matching: find.byType(Row)).at(1);
           expect(find.descendant(of: row, matching: find.text(shown)), findsWidgets, reason: shown);
         });
       }
@@ -540,7 +546,7 @@ void main() {
       await check((r) {
         (r['job'] as Map).remove('opportunity_owner');
         return r;
-      }, 'Not Set');
+      }, 'Not set');
     });
 
     testWidgets('Scheduling opens with where the job stands in time, and the visits sit on a timeline with today marked', (t) async {
@@ -560,7 +566,7 @@ void main() {
 
       await check(11, 3, (r) => r, ['Closed 25 days ago'], shot: 'timing_closed');
       expect(find.textContaining('Today, '), findsNothing); // a closed job's visits are all behind it
-      await check(10, 6, open, ['On site today', 'Day 1 of 2  ·  8:00 AM - 10:00 AM'], shot: 'timing_on_site');
+      await check(10, 6, open, ['On site today', 'Day 1 of 2  ·  8:00 AM – 10:00 AM'], shot: 'timing_on_site');
       await check(10, 1, open, ['Starts in 5 days', 'Today, Oct 1'], shot: 'timing_upcoming');
       await check(10, 20, open, ['Work finished 13 days ago', 'Today, Oct 20']);
       await check(10, 20, (r) {
@@ -628,7 +634,7 @@ void main() {
       ]);
       final errors = await pumpJobPage(t, s, body: () async {
         await saveJobShot(t, 'notes_tasks');
-        expect(find.text('Task List (3)'), findsOneWidget);
+        expect(find.text('Task list (3)'), findsOneWidget);
         expect(find.text('1 of 3 done'), findsOneWidget); // ours + Service Fusion's two, one already ticked
         expect(find.text('Notes (3)'), findsOneWidget);
         expect(find.text('Show all 3 notes (1 older)'), findsOneWidget);
@@ -649,7 +655,7 @@ void main() {
       // The pop-ups: an empty note is refused under the field; a failed save keeps the text and says why; then it saves.
       await pumpJobPage(t, s, body: () async {
         s.notesDown = true;
-        await t.tap(find.text('Add Notes'));
+        await t.tap(find.text('Add note'));
         await settle(t, frames: 6);
         expect(find.text('Add a note'), findsOneWidget);
         await t.tap(find.text('Save note'));
@@ -669,7 +675,7 @@ void main() {
         expect(find.text('Add a note'), findsNothing);
         expect(find.text('Builder asked for a Saturday install.'), findsOneWidget); // now on the page
 
-        await t.tap(find.text('Add Task'));
+        await t.tap(find.text('Add task'));
         await settle(t, frames: 6);
         await saveJobShot(t, 'dialog_task');
         await t.enterText(find.byType(TextField), 'Call the builder about Saturday');
@@ -693,10 +699,10 @@ void main() {
         ..remove('tasks')
         ..remove('notes');
       final empty = await pumpJobPage(t, FakeJobServer(records: {kJobId: bare, kEstimateId: estimateRecord()}), body: () async {
-        expect(find.text('No tasks yet. Use Add Task to add one.'), findsOneWidget);
-        expect(find.text('No notes yet. Use Add Notes to write one.'), findsOneWidget);
-        expect(find.text('Add Task'), findsOneWidget);
-        expect(find.text('Add Notes'), findsOneWidget);
+        expect(find.text('No tasks yet. Use Add task to add one.'), findsOneWidget);
+        expect(find.text('No notes yet. Use Add note to write one.'), findsOneWidget);
+        expect(find.text('Add task'), findsOneWidget);
+        expect(find.text('Add note'), findsOneWidget);
         await saveJobShot(t, 'notes_tasks_empty');
       });
       expect(empty.messages, isEmpty);
@@ -729,7 +735,8 @@ void main() {
         expect(find.textContaining('Credit Card (Offline)'), findsNothing); // the Service Fusion copy is not drawn again
         expect(find.text('pi_final'), findsOneWidget);
         expect(find.text('Nothing left to pay'), findsOneWidget); // after the entered one
-        expect(find.text(r'$40.00 over'), findsOneWidget); // the $40 on top is beyond the total
+        // The $40 on top is beyond the total: one wording in the card, Balance due and the list (audit item 15).
+        expect(find.text(r'Overpaid by $40.00'), findsNWidgets(3));
         expect(find.text('102% paid'), findsOneWidget);
         expect(find.text('Payment via Stripe'), findsOneWidget);
         expect(find.text('Not in Service Fusion'), findsOneWidget); // only the $40
@@ -756,12 +763,11 @@ void main() {
         await saveJobShot(t, 'payment_overpaid');
         expect(find.textContaining(r'$3,471.94', findRichText: true), findsWidgets); // $3,471.94 of $1,735.97 paid
         expect(find.text('200% paid'), findsOneWidget);
-        expect(find.text(r'Overpaid $1,735.97'), findsOneWidget);
-        expect(find.text(r'Overpaid by $1,735.97'), findsOneWidget); // Balance Due
+        // One wording in the card, Balance due and after the second payment (audit 2026-11-24, item 15).
+        expect(find.text(r'Overpaid by $1,735.97'), findsNWidgets(3));
         expect(find.text('Paid in full'), findsNothing);
         expect(find.textContaining(r'$1,735.97 more than the job total was paid.', findRichText: true), findsOneWidget);
         expect(find.text('Nothing left to pay'), findsOneWidget); // after the first
-        expect(find.text(r'$1,735.97 over'), findsOneWidget); // after the second
         expect(find.textContaining('Request '), findsNothing);
       });
       expect(errors.messages, isEmpty);
@@ -859,7 +865,8 @@ void main() {
 
       // Narrow window: the details still fit.
       final narrow = await pumpJobPage(t, s, size: const Size(560, 3200), body: () async {
-        await t.tap(find.byTooltip('Payment').first); // narrow tabs are icons, named by their tooltip
+        // The tab names show whenever they fit (audit 2026-11-24, item 3); at 560 px they do.
+        await t.tap(find.text('Payment').first);
         await settle(t, frames: 12);
         expect(find.text('Due upon receipt'), findsOneWidget);
         await saveJobShot(t, 'payment_invoice_narrow');
