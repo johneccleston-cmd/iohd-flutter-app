@@ -202,7 +202,7 @@ void main() {
     await _shot(t, const Size(1500, 900), 'job_detail_wide', _mock());
   });
 
-  testWidgets('status dropdown opens and a pick says it is not saved', (t) async {
+  testWidgets('status is read-only until changing it can be saved', (t) async {
     t.view.physicalSize = const Size(1500, 900);
     t.view.devicePixelRatio = 1;
     await http.runWithClient(() async {
@@ -214,16 +214,14 @@ void main() {
         ),
       ));
       await t.pump(const Duration(milliseconds: 400));
-      await t.tap(find.text('Final Invoice Sent').first);
-      await t.pump(const Duration(milliseconds: 400));
       await t.pumpAndSettle();
-      expect(find.text('Need To Schedule'), findsOneWidget); // the list is there
+      // The pill shows the value; clicking it opens no list of statuses (it used to, then said the pick wasn't saved).
+      await t.tap(find.text('Final Invoice Sent').first, warnIfMissed: false);
+      await t.pumpAndSettle();
+      expect(find.text('Need To Schedule'), findsNothing);
+      expect(find.textContaining('is not saved yet'), findsNothing);
+      expect(find.text('Final Invoice Sent'), findsWidgets);
       expect(t.takeException(), isNull);
-      await expectLater(find.byKey(const ValueKey('shot')), matchesGoldenFile('shots/job_detail_status_menu.png'));
-      await t.tap(find.text('Close Job'));
-      await t.pump(const Duration(milliseconds: 400));
-      expect(find.textContaining('is not saved yet'), findsOneWidget);
-      expect(find.text('Final Invoice Sent'), findsWidgets); // value on screen is unchanged
     }, () => _mock());
   });
 

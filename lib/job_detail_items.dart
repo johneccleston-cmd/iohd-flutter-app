@@ -1364,12 +1364,12 @@ class _OptionTabs extends StatelessWidget {
           onPressed: () => s._openRecord(o.convertedJobId!, estimate: false),
           icon: const Icon(Icons.open_in_new_rounded, size: 16),
           label: Text('Open job #${o.convertedJobId}', style: const TextStyle(fontWeight: FontWeight.w600)),
-          style: TextButton.styleFrom(foregroundColor: _JobDetailScreenState._link, minimumSize: const Size(0, 34)),
+          style: TextButton.styleFrom(foregroundColor: _JobDetailScreenState._link, minimumSize: const Size(0, 34)).copyWith(overlayColor: dashNoHoverOverlay),
         )
       else if (o.accepted && canEdit) ...[
         TextButton(
           onPressed: busy ? null : () => s._unaccept(o),
-          style: TextButton.styleFrom(foregroundColor: DashUi.ink, minimumSize: const Size(0, 34)),
+          style: TextButton.styleFrom(foregroundColor: DashUi.ink, minimumSize: const Size(0, 34)).copyWith(overlayColor: dashNoHoverOverlay),
           child: const Text('Undo acceptance', style: TextStyle(fontWeight: FontWeight.w600)),
         ),
         const SizedBox(width: 6),
@@ -1384,7 +1384,7 @@ class _OptionTabs extends StatelessWidget {
             minimumSize: const Size(0, 34),
             padding: const EdgeInsets.symmetric(horizontal: 14),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          ),
+          ).copyWith(overlayColor: dashNoHoverOverlay),
         ),
       ] else if (canEdit && s._lines!.accepted == null)
         Tooltip(
@@ -1402,7 +1402,7 @@ class _OptionTabs extends StatelessWidget {
               minimumSize: const Size(0, 34),
               padding: const EdgeInsets.symmetric(horizontal: 14),
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
+            ).copyWith(overlayColor: dashNoHoverOverlay),
           ),
         ),
       if (menu != null) ...[const SizedBox(width: 6), menu],
@@ -1607,12 +1607,13 @@ class _NewOptionButton extends StatelessWidget {
   }
 }
 
-/// New option, drawn like the page's other adds at the right of a heading (Add Task, Add Notes: _addButton).
+/// New option, drawn like the page's other adds at the right of a heading (Add Task, Add Notes: _addButton). No hover
+/// wash (USER RULE 2026-11-24: nothing on the job page shades under the pointer).
 final ButtonStyle _addStyle = TextButton.styleFrom(
   foregroundColor: DashUi.blue,
   visualDensity: VisualDensity.compact,
   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(9)),
-);
+).copyWith(overlayColor: dashNoHoverOverlay);
 
 /// A small text link with an icon, for the block's title row ("From estimate #123").
 class _QuietLink extends StatelessWidget {
@@ -1629,7 +1630,7 @@ class _QuietLink extends StatelessWidget {
       onPressed: onTap,
       icon: Icon(icon, size: 16),
       label: Text(text, style: const TextStyle(fontWeight: FontWeight.w600)),
-      style: TextButton.styleFrom(foregroundColor: DashUi.ink, minimumSize: const Size(0, 34), padding: const EdgeInsets.symmetric(horizontal: 10)),
+      style: TextButton.styleFrom(foregroundColor: DashUi.ink, minimumSize: const Size(0, 34), padding: const EdgeInsets.symmetric(horizontal: 10)).copyWith(overlayColor: dashNoHoverOverlay),
     ),
   );
 }
@@ -1808,7 +1809,7 @@ class _EditPreviewBar extends StatelessWidget {
           minimumSize: const Size(0, 34),
           padding: const EdgeInsets.symmetric(horizontal: 14),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
+        ).copyWith(overlayColor: dashNoHoverOverlay),
       ),
     );
     final asked = saveAsked

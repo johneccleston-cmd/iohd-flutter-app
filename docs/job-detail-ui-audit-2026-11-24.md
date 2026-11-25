@@ -1,6 +1,8 @@
 # Job / Estimate detail page: UI, UX and formatting audit (2026-11-24)
 
-**Status: a list only. Nothing here has been fixed.**
+**Status (2026-11-25):** the 15 Must fix items (1–10, 38–40, 67, 68) are fixed in code, marked **[FIXED 11-25]** below.
+They have not been analyzed, tested or rendered yet: `flutter` doesn't run on this Mac (macOS 13) since the SDK was
+updated to a version that needs macOS 14. Everything else is still open.
 
 **Scope.** The whole job and estimate detail page:
 
@@ -37,9 +39,9 @@ Items marked **ASK** touch a user rule or a design decision. Check with the user
 
 ## If only a few things get fixed
 
-1. **Hover shading leaks.** Items 21, 38, 68 and 88 share one root cause: `TextButton.styleFrom(foregroundColor: …)` builds its own 8% hover overlay, and that beats the page's `_noHoverShading` theme.
-2. **Dead ends.** Controls that look usable but go nowhere: 2, 7, 82, 87 and 96.
-3. **Money shown inconsistently or wrong.** Items 1, 15, 16, 50 and 67.
+1. **[FIXED 11-25]** **Hover shading leaks.** Items 21, 38, 68 and 88 share one root cause: `TextButton.styleFrom(foregroundColor: …)` builds its own 8% hover overlay, and that beats the page's `_noHoverShading` theme.
+2. **[FIXED 11-25]** **Dead ends.** Controls that look usable but go nowhere: 2, 7, 82, 87 and 96.
+3. **[FIXED 11-25]** **Money shown inconsistently or wrong.** Items 1, 15, 16, 50 and 67.
 
 ## Main page (`lib/job_detail_screen.dart`) and renders
 
@@ -47,17 +49,17 @@ Items marked **ASK** touch a user rule or a design decision. Check with the user
 1. **The paid bar says "100% paid" while money is still owed.** The percent is rounded (`:2492`). Round down while anything is owed.
 2. **The status and sub-status picker is a dead end.** It lists every status, but any pick only says "not saved yet". The empty state is a lowercase blue "set status" / "set sub-status" (`:956-970`, `:960`). Show read-only pills until saving exists, and use "Not set".
 3. **Details and Job Info tabs go icon-only on common laptop widths.** This happens for windows of 900 to about 1285 px, 1280 included, because each block is under 640 px (`:1148`). At 800 px, where the blocks stack, the labels come back. Switch to icons only when the labels really don't fit.
-4. **At text ×1.3 the Details tab bar shrinks to tiny text.** `FittedBox(scaleDown)` scales it down (`:1167`).
-5. **The copy button (PO #, phone) is invisible but still active.** It fades to opacity 0 yet can still be focused and clicked. When the row is stacked (under 460 px) it disappears entirely (`:1242`, `_CopyValue` `:4356`).
-6. **Picture tiles can't be opened from the keyboard** and have no semantics (`_PicTile` `:4100`, GestureDetector only).
-7. **Service Fusion documents look openable but never open.** They show a pointer and an open-in-new icon, then always fail with a "file name only" snackbar (`:1632`, `_DocRow` `:4332`).
-8. **The not-found / load-failed screen is a dead end.**
+4. **[FIXED 11-25]** **At text ×1.3 the Details tab bar shrinks to tiny text.** `FittedBox(scaleDown)` scales it down (`:1167`).
+5. **[FIXED 11-25]** **The copy button (PO #, phone) is invisible but still active.** It fades to opacity 0 yet can still be focused and clicked. When the row is stacked (under 460 px) it disappears entirely (`:1242`, `_CopyValue` `:4356`).
+6. **[FIXED 11-25]** **Picture tiles can't be opened from the keyboard** and have no semantics (`_PicTile` `:4100`, GestureDetector only).
+7. **[FIXED 11-25]** **Service Fusion documents look openable but never open.** They show a pointer and an open-in-new icon, then always fail with a "file name only" snackbar (`:1632`, `_DocRow` `:4332`).
+8. **[FIXED 11-25]** **The not-found / load-failed screen is a dead end.**
    - Small grey text and a red Retry (theme primary) that can't fix a not-found.
    - No way back to the list.
    - It says "Job #" on estimate pages (`:240-251`, `:467-481`).
    - Fix: use `DashErrorPanel` with a back link, and word it from `_estimatePage`.
-9. **The "Description ⌄" toggle lands mid-name when a long name wraps.** At 1366 and 1100 it reads "…Complete Door [Description ⌄]" with "| Sandtone (Clay)" on the next line (view row in `line_items_editor.dart`).
-10. **At text ×1.3 the summary labels break.** They render as "Gross (36.4%) / profit" and "Payments/ / Deposits" (`line_items_editor.dart:4668`, `:4748`).
+9. **[FIXED 11-25]** **The "Description ⌄" toggle lands mid-name when a long name wraps.** At 1366 and 1100 it reads "…Complete Door [Description ⌄]" with "| Sandtone (Clay)" on the next line (view row in `line_items_editor.dart`).
+10. **[FIXED 11-25]** **At text ×1.3 the summary labels break.** They render as "Gross (36.4%) / profit" and "Payments/ / Deposits" (`line_items_editor.dart:4668`, `:4748`).
 
 ### Should fix
 11. **Three date formats on one page.** "10/06/2026 - 10/07/2026" (`_date` `:355`, `:586`) sits right under the banner's "Worked Tue, Oct 6 – Wed, Oct 7" (`:896`), with a hyphen in one and an en dash in the other. Payments and notes use "Oct 9, 2026 10:00 AM".
@@ -113,9 +115,9 @@ Items marked **ASK** touch a user rule or a design decision. Check with the user
 ## Products table (`lib/widgets/line_items_editor.dart`)
 
 ### Must fix
-38. **The Tax, discounts & fees button and the "Use last billed $X" hint button get an 8% ink hover fill.** `_quietButton` uses `TextButton.styleFrom(foregroundColor)` (`:2003`, used at `:1543`; `:5121-5131`). Add an `overlayColor` that is transparent on hover.
-39. **Two line-menu moves look enabled but do nothing:** Move down on the last product and Move up on the first discount/fee. `_moveShown` clamps within each group (`:1858-1862`), but the menu (`:3690-3691`) is given `_rows.length`. Pass the index and size within the group.
-40. **The "Recent price change" hint is stale.** It always ends "No price is filled in; check it before quoting.", even after a price is typed (`:4999`, no `line.rate` check).
+38. **[FIXED 11-25]** **The Tax, discounts & fees button and the "Use last billed $X" hint button get an 8% ink hover fill.** `_quietButton` uses `TextButton.styleFrom(foregroundColor)` (`:2003`, used at `:1543`; `:5121-5131`). Add an `overlayColor` that is transparent on hover.
+39. **[FIXED 11-25]** **Two line-menu moves look enabled but do nothing:** Move down on the last product and Move up on the first discount/fee. `_moveShown` clamps within each group (`:1858-1862`), but the menu (`:3690-3691`) is given `_rows.length`. Pass the index and size within the group.
+40. **[FIXED 11-25]** **The "Recent price change" hint is stale.** It always ends "No price is filled in; check it before quoting.", even after a price is typed (`:4999`, no `line.rate` check).
 
 ### Should fix
 41. **A read-only table with no charge rows ends in a 2 px bottom line.** The last row's rule, the trailing Divider and the outline all land on it (`:1828`, `:1776-1778`). Drop the Divider.
@@ -160,12 +162,12 @@ Items marked **ASK** touch a user rule or a design decision. Check with the user
 ## Option tabs, strip and band (`lib/job_detail_items.dart`) and Tax, discounts & fees panel (`lib/widgets/charges_panel.dart`)
 
 ### Must fix
-67. **SF discounts and fees are listed twice under "On this record" in Tax, discounts & fees.** Each shows as an editable line and again as a greyed "Discounts"/"Fees" figure row ("From Service Fusion · in the totals").
+67. **[FIXED 11-25]** **SF discounts and fees are listed twice under "On this record" in Tax, discounts & fees.** Each shows as an editable line and again as a greyed "Discounts"/"Fees" figure row ("From Service Fusion · in the totals").
     - This breaks the 11-24 rule that SF discounts and fees are lines.
     - Cause: `line_items_editor.dart:951-954` copies every discount/charge summary row, including the `fromLines` totals from `job_detail_items.dart:199-200`. They are shown at `charges_panel.dart:407`.
     - The doc comment at `charges_panel.dart:53-55` is stale.
     - Fix: skip `fromLines` rows.
-68. **Hover tints on the option buttons:** emerald on Accept, blue on New option and Open job, grey on Undo acceptance and "From estimate #", and Exit preview lightens. Locations: `:1367`, `:1372`, `:1399-1400`, `_addStyle` `:1611-1615`, `_QuietLink` `:1632`, `:1805-1807`. Same root cause as 38.
+68. **[FIXED 11-25]** **Hover tints on the option buttons:** emerald on Accept, blue on New option and Open job, grey on Undo acceptance and "From estimate #", and Exit preview lightens. Locations: `:1367`, `:1372`, `:1399-1400`, `_addStyle` `:1611-1615`, `_QuietLink` `:1632`, `:1805-1807`. Same root cause as 38.
 
 ### Should fix
 69. **A failed lines reload after a good load hides things without saying so.** The "This job | Service Fusion" toggle and the "From estimate" link vanish, with no banner and no Retry. On estimates it fails silently and the option actions use stale versions (`:492`; `job_detail_screen.dart:290-300`).

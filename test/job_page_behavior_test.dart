@@ -867,12 +867,14 @@ void main() {
       expect(narrow.messages, isEmpty);
     });
 
-    testWidgets('a record opened by its address shows the page shape, then the record; a missing one says so with Retry', (t) async {
+    testWidgets('a record opened by its address shows the page shape, then the record; a missing one says so with a way back', (t) async {
       final s = FakeJobServer();
       final errors = await pumpJobPage(t, s, id: '1999999999');
       expect(errors.messages, isEmpty);
-      expect(find.text('Job #1999999999 was not found.'), findsOneWidget);
-      expect(find.text('Retry'), findsOneWidget);
+      expect(find.text('Job #1999999999 was not found'), findsOneWidget);
+      // Retrying can't find a missing record: the only action is back to the list (audit 2026-11-24, item 8).
+      expect(find.text('Try again'), findsNothing);
+      expect(find.text('Back to jobs'), findsOneWidget);
     });
   });
 }

@@ -14,6 +14,17 @@ import 'package:flutter/scheduler.dart';
 import 'dash_hover_card.dart';
 import 'dashboard_data.dart';
 
+/// A button overlay with no hover wash, for pages where nothing shades under the pointer (the job page, USER RULE
+/// 2026-11-24). `TextButton.styleFrom(foregroundColor: …)` otherwise builds its own 8% hover fill, which beats the
+/// page theme. Keyboard focus and a press still show, in ink. Use as `style.copyWith(overlayColor: dashNoHoverOverlay)`.
+final WidgetStateProperty<Color?> dashNoHoverOverlay = WidgetStateProperty.resolveWith(
+  (states) => states.contains(WidgetState.pressed)
+      ? DashUi.ink.withValues(alpha: 0.10)
+      : states.contains(WidgetState.focused)
+      ? DashUi.ink.withValues(alpha: 0.08)
+      : Colors.transparent,
+);
+
 class DashUi {
   // Text tones: black and neutral greys, no blue cast (user 2026-11-23: "there should be no dark blue font on the app,
   // should be black"). They were Tailwind's slate family (ink #0F172A, a navy). Each keeps its old contrast or better:
@@ -694,6 +705,9 @@ class DashErrorPanel extends StatelessWidget {
   final String? hint;
   final IconData icon;
 
+  /// An extra way out under the retry button (or alone when there's no retry), e.g. "Back to jobs".
+  final Widget? action;
+
   /// Failure titles can run to two lines, so they are centred; the plain panel keeps its original look.
   final bool _centerTitle;
 
@@ -705,10 +719,11 @@ class DashErrorPanel extends StatelessWidget {
     this.retryLabel = 'Try again',
     this.hint = 'Check your connection, then try again.',
     this.icon = Icons.cloud_off_rounded,
+    this.action,
   }) : _centerTitle = false;
 
   /// A dashboard load failure in plain words: [what] names the data ("financials"). No raw error text is shown.
-  DashErrorPanel.failure(DashLoadException failure, {super.key, required String what, required VoidCallback onRetry})
+  DashErrorPanel.failure(DashLoadException failure, {super.key, required String what, required VoidCallback onRetry, this.action})
       : title = failure.title(what),
         message = failure.message,
         hint = null,
@@ -771,6 +786,7 @@ class DashErrorPanel extends StatelessWidget {
                 ),
               ),
             ],
+            if (action != null) ...[SizedBox(height: onRetry != null ? 8 : 20), action!],
           ],
         ),
       ),

@@ -948,9 +948,12 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
       for (var i = 0; i < _rows.length; i++)
         if (_rows[i].line.isCharge) ChargeEntry(_rows[i].uid, _rows[i].line, totals.lines[i].amountCents),
     ];
+    // Only the discounts and charges that aren't lines of the table. Rows built from the lines ([LineSummaryRow.fromLines])
+    // are already listed as the editable discounts and fees above them; listing them again showed every Service Fusion
+    // discount and fee twice (the 11-24 rule: Service Fusion's discounts and fees are lines).
     final record = [
       for (final r in widget.summary ?? const <LineSummaryRow>[])
-        if (r.kind == SummaryKind.discount || r.kind == SummaryKind.charge) (r.label, r.cents, r.kind == SummaryKind.discount),
+        if (!r.fromLines && (r.kind == SummaryKind.discount || r.kind == SummaryKind.charge)) (r.label, r.cents, r.kind == SummaryKind.discount),
     ];
     final result = await showChargesPanel(
       context: ctx,
@@ -1686,6 +1689,10 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
     );
     Widget row(int i) {
       final r = shown[i];
+      // Where the line sits in its own part, which is all Move up / Move down can move it within (see [_moveShown]).
+      final partStart = r.line.isCharge ? (firstCharge < 0 ? 0 : firstCharge) : 0;
+      final partEnd = r.line.isCharge || firstCharge < 0 ? shown.length : firstCharge;
+      final moves = (up: i > partStart, down: i < partEnd - 1);
       final figures = all[_rows.indexOf(r)];
       final active = widget.editable && _active == r.uid;
       final child = active
@@ -1710,7 +1717,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               onKeep: () => _keepSoFar(r.uid),
               onMove: (d) => _moveShown(i, i + d),
               onMenu: (a) => _menu(a, i),
-              count: _rows.length,
+              moves: moves,
               serviceNames: widget.serviceNames,
             )
           : _ViewRow(
@@ -1735,7 +1742,7 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
               invalid: (_invalid[r.uid] ?? const {}).isNotEmpty,
               onOpen: widget.editable ? (f) => _open(r.uid, f) : null,
               onMenu: (a) => _menu(a, i),
-              count: _rows.length,
+              moves: moves,
               serviceNames: widget.serviceNames,
             );
       // Under the line, from where its name starts: its $0.00 confirmation, and what the catalog said about a service
@@ -2000,12 +2007,13 @@ class _LineItemsEditorState extends State<LineItemsEditor> {
 }
 
 /// The quiet buttons beside the catalog search: text and an icon, no outline.
+/// No hover wash (USER RULE 2026-11-24: nothing on the job page shades under the pointer).
 final ButtonStyle _quietButton = TextButton.styleFrom(
   minimumSize: const Size(0, 36),
   padding: const EdgeInsets.symmetric(horizontal: 10),
   foregroundColor: DashUi.ink,
   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-);
+).copyWith(overlayColor: dashNoHoverOverlay);
 
 /// Their labels: the size and weight set on the text itself, so it keeps the theme's font.
 const _quietLabel = TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600);
@@ -2037,8 +2045,9 @@ class _ViewRow extends StatelessWidget {
   final void Function(String field)? onOpen;
   final ValueChanged<String> onMenu;
 
-  /// How many lines the table has (the row menu's Move up / Move down stop at either end).
-  final int count;
+  /// Whether the row menu's Move up / Move down can move this line: a line moves only within its own part (products
+  /// and services above the rule, discounts and fees under it), so each stops at that part's ends.
+  final ({bool up, bool down}) moves;
 
   /// The record's Service Fusion service names ([LineItemsEditor.serviceNames]).
   final Set<String> serviceNames;
@@ -2060,7 +2069,7 @@ class _ViewRow extends StatelessWidget {
     required this.invalid,
     required this.onOpen,
     required this.onMenu,
-    this.count = 1,
+    this.moves = (up: false, down: false),
     this.serviceNames = const {},
   });
 
@@ -2134,7 +2143,7 @@ class _ViewRow extends StatelessWidget {
     );
     final actions = Align(
       alignment: Alignment.topRight,
-      child: _RowMenu(index: index, count: count, onMenu: onMenu),
+      child: _RowMenu(index: index, moves: moves, onMenu: onMenu),
     );
     // "Not priced" is a to-do on lines being edited; a read-only line with no rate just has none.
     final unpriced = line.rate == null;
@@ -2561,22 +2570,23 @@ class _NameText extends StatelessWidget {
     // third rather than being cut short.
     final name = Text.rich(_nameSpan(text, style), maxLines: 3, overflow: TextOverflow.ellipsis);
     if (trailing != null) {
-      // The name at its own width with the toggle straight after it; a long name wraps in the room left beside the
-      // toggle. (Not a span inside the name: its text stays exactly the name, for copying and finding.)
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      // The name at its own width with the toggle straight after it when both fit on one line. A name too long for
+      // that takes the full width and the toggle drops under it, instead of sitting beside the first line of a
+      // wrapped name ("…Complete Door [Description ⌄]" with the rest of the name below). (Not a span inside the
+      // name: its text stays exactly the name, for copying and finding.)
+      return Wrap(
+        crossAxisAlignment: WrapCrossAlignment.start,
         children: [
-          Flexible(
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (invalid) const _InvalidMark(),
-                Flexible(child: name),
-              ],
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (invalid) const _InvalidMark(),
+              Flexible(child: name),
+            ],
           ),
-          // The toggle pads its label for its focus ring: 10 px from the name to the label.
+          // The toggle pads its label for its focus ring: 10 px from the name to the label. (Wrapped under the name
+          // it keeps the same small indent.)
           Padding(padding: const EdgeInsets.only(left: 10 - _DescToggle.labelX), child: trailing),
         ],
       );
@@ -3679,16 +3689,16 @@ class _Handle extends StatelessWidget {
 /// out only at the table's ends, and do what Alt+Up / Alt+Down and dragging do, for people who don't drag.
 class _RowMenu extends StatelessWidget {
   final int index;
-  final int count;
+  final ({bool up, bool down}) moves;
   final ValueChanged<String> onMenu;
-  const _RowMenu({required this.index, this.count = 1, required this.onMenu});
+  const _RowMenu({required this.index, required this.moves, required this.onMenu});
 
   @override
   Widget build(BuildContext context) => PsMenuButton<String>(
     entries: () => [
       const PsMenuItem('duplicate', 'Copy', icon: Icons.content_copy_rounded),
-      PsMenuItem('up', 'Move up', icon: Icons.arrow_upward_rounded, enabled: index > 0),
-      PsMenuItem('down', 'Move down', icon: Icons.arrow_downward_rounded, enabled: index < count - 1),
+      PsMenuItem('up', 'Move up', icon: Icons.arrow_upward_rounded, enabled: moves.up),
+      PsMenuItem('down', 'Move down', icon: Icons.arrow_downward_rounded, enabled: moves.down),
       const PsMenuDivider(),
       const PsMenuItem('remove', 'Delete', icon: Icons.delete_outline_rounded, danger: true),
     ],
@@ -3813,8 +3823,9 @@ class _EditRow extends StatefulWidget {
   /// The keyboard moved to another box in the line: what was typed so far is kept (_LineItemsEditorState._keepSoFar).
   final VoidCallback onKeep;
 
-  /// How many lines the table has (the row menu's Move up / Move down stop at either end).
-  final int count;
+  /// Whether the row menu's Move up / Move down can move this line: a line moves only within its own part (products
+  /// and services above the rule, discounts and fees under it), so each stops at that part's ends.
+  final ({bool up, bool down}) moves;
   final ValueChanged<int> onMove;
   final ValueChanged<String> onMenu;
 
@@ -3839,7 +3850,7 @@ class _EditRow extends StatefulWidget {
     required this.onDone,
     required this.onCancel,
     required this.onKeep,
-    this.count = 1,
+    this.moves = (up: false, down: false),
     required this.onMove,
     required this.onMenu,
     this.serviceNames = const {},
@@ -4332,7 +4343,7 @@ class _EditRowState extends State<_EditRow> {
     final boxH = _boxHeight(context);
     final actions = Align(
       alignment: Alignment.topRight,
-      child: _RowMenu(index: widget.index, count: widget.count, onMenu: widget.onMenu),
+      child: _RowMenu(index: widget.index, moves: widget.moves, onMenu: widget.onMenu),
     );
     final grip = SizedBox(
       height: boxH,
@@ -4790,11 +4801,17 @@ class _SummaryLine {
   static const strongLabel = TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: DashUi.ink, height: 1.35);
 
   static Widget wrap(_SummaryLine l, {required double amountW}) {
-    final name = Text(
-      l.label,
-      maxLines: 2,
-      overflow: TextOverflow.ellipsis,
-      style: l.strong ? strongLabel.copyWith(color: l.tone ?? DashUi.ink) : label_.copyWith(color: l.tone),
+    // One line, never broken mid-label ("Payments/ / Deposits", "Gross (36.4%) / profit" at large text): a label
+    // short of room is drawn smaller instead, as the amount is.
+    final name = FittedBox(
+      fit: BoxFit.scaleDown,
+      alignment: Alignment.centerLeft,
+      child: Text(
+        l.label,
+        maxLines: 1,
+        softWrap: false,
+        style: l.strong ? strongLabel.copyWith(color: l.tone ?? DashUi.ink) : label_.copyWith(color: l.tone),
+      ),
     );
     final t = l.tip;
     final named = t != null && t.trim().isNotEmpty && t.trim() != l.label.trim()
@@ -4812,8 +4829,22 @@ class _SummaryLine {
               crossAxisAlignment: CrossAxisAlignment.baseline,
               textBaseline: TextBaseline.alphabetic,
               children: [
-                Flexible(child: named),
-                if (l.trailing != null) ...[const SizedBox(width: 8), l.trailing!],
+                // The label and its trailing figure (the margin) shrink together rather than the margin wrapping
+                // into the label.
+                Flexible(
+                  child: l.trailing == null
+                      ? named
+                      : FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.baseline,
+                            textBaseline: TextBaseline.alphabetic,
+                            children: [named, const SizedBox(width: 8), l.trailing!],
+                          ),
+                        ),
+                ),
               ],
             ),
           ),
@@ -4992,11 +5023,13 @@ List<Widget> _catalogHints(CatalogEntry e, LineDraft line, ValueChanged<double>?
       if (median != null) '18-month median ${m(median)}',
       if (recent.isNotEmpty) 'recent ${recent.map((p) => m(p.price)).join(', ')}',
     ];
+    // Once a price is typed, the advice is to check that price, not that none is filled in.
+    final advice = line.rate == null ? 'No price is filled in; check it before quoting.' : 'Check the price before quoting.';
     out.add(
       _Hint(
         key: const ValueKey('hint-recent-change'),
         title: 'Recent price change',
-        text: parts.isEmpty ? (change?.warning ?? 'No price is filled in; check it before quoting.') : '${parts.join(' · ')}. No price is filled in; check it before quoting.',
+        text: parts.isEmpty ? (line.rate == null ? (change?.warning ?? advice) : advice) : '${parts.join(' · ')}. $advice',
       ),
     );
   } else if (line.rate == null && e.priceStatus != null && e.priceStatus != 'settled') {
@@ -5128,7 +5161,7 @@ class _Hint extends StatelessWidget {
             visualDensity: VisualDensity.compact,
             side: const BorderSide(color: DashUi.fieldEdge),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(_radius)),
-          ),
+          ).copyWith(overlayColor: dashNoHoverOverlay), // no hover wash on the job page (USER RULE 2026-11-24)
           child: Text(label, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
         ),
       ],

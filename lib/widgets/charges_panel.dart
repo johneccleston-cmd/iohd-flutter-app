@@ -50,8 +50,9 @@ class ChargesSnapshot {
   final bool canOwnRate;
   final List<ChargeEntry> charges;
 
-  /// The source's own discounts and charges (Service Fusion's): label, cents, whether it is a discount. Shown for
-  /// reference: they are in its totals, not lines, so they can't be changed here.
+  /// The source's own discounts and charges that aren't lines of the table (Service Fusion figures it keeps only in
+  /// its totals): label, cents, whether it is a discount. Shown for reference; they can't be changed here. Service
+  /// Fusion's discounts and fees that are lines come in [charges] instead.
   final List<(String, int, bool)> recordCharges;
   final int itemsCents;
   final int discountCents;

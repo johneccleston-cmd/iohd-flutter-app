@@ -93,6 +93,9 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
   bool _visitsExpanded = false; // Site Visits shows only the latest few until this is on
   bool _notesExpanded = false; // the Notes section shows only the newest few until this is on
   String? _error;
+
+  /// The last load came back 404: retrying can't help, so the page offers only a way back to the list.
+  bool _notFound = false;
   int _detailsTab = 0; // Summary, Pics, Docs, Takeoffs
   int _infoTab = 0; // Scheduling, Payment, Communications, Activity
 
@@ -222,6 +225,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     setState(() {
       _loading = true;
       _error = null;
+      _notFound = false;
     });
     // Our files and notes only need the job number, so ask for them now instead of after the job comes back.
     unawaited(_loadFiles());
@@ -240,7 +244,8 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       if (res.statusCode == 404) {
         setState(() {
           _loading = false;
-          _error = 'Job #${widget.jobId} was not found.';
+          _error = '${_estimatePage ? 'Estimate' : 'Job'} #${widget.jobId} was not found.';
+          _notFound = _job == null;
         });
         return;
       }
@@ -466,16 +471,20 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
 
   Widget _bodyWithoutJob() {
     if (_loading) return _skeletonPage();
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.error_outline_rounded, size: 40, color: AppTheme.sectionLabel),
-          const SizedBox(height: 10),
-          Text(_error ?? 'Something went wrong.', style: const TextStyle(color: AppTheme.secondaryText)),
-          const SizedBox(height: 14),
-          OutlinedButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded), label: const Text('Retry')),
-        ],
+    final estimate = _estimatePage;
+    final kind = estimate ? 'estimate' : 'job';
+    final list = estimate ? 'estimates' : 'jobs';
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: DashErrorPanel(
+        icon: _notFound ? Icons.search_off_rounded : Icons.cloud_off_rounded,
+        title: _notFound ? '${estimate ? 'Estimate' : 'Job'} #${widget.jobId} was not found' : "This $kind couldn't be loaded",
+        message: _notFound
+            ? 'It may have been deleted, or the number is wrong.'
+            : (_error ?? 'Something went wrong.'),
+        hint: _notFound ? null : 'Check your connection, then try again.',
+        onRetry: _notFound ? null : _load,
+        action: AppButton.ghost('Back to $list', () => context.go('/$list')),
       ),
     );
   }
@@ -603,7 +612,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           spacing: 10,
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
-          children: [_statusPicker(status, sub: false), _statusPicker(subStatus, sub: true)],
+          children: [_statusPill(status, sub: false), _statusPill(subStatus, sub: true)],
         ),
       ),
       _sfRow(Icons.signpost_outlined, 'Referral Source', referral.isEmpty ? null : _factText(referral)),
@@ -635,7 +644,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
           spacing: 10,
           runSpacing: 6,
           crossAxisAlignment: WrapCrossAlignment.center,
-          children: [_statusPicker(status, sub: false), _statusPicker(subStatus, sub: true)],
+          children: [_statusPill(status, sub: false), _statusPill(subStatus, sub: true)],
         ),
       ),
       _sfRow(Icons.event_rounded, _isEstimate ? 'Estimate Date' : 'Start & End Dates', start.isEmpty ? null : _factText(_isEstimate ? start : dates)),
@@ -950,57 +959,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     return const _TimingBanner(tone: DashUi.amber, icon: Icons.event_busy_rounded, headline: 'Not scheduled yet', detail: 'No start date set');
   }
 
-  /// Click-to-change status. Shows every status in a list; picking one is not saved yet (nothing is written to the
-  /// database or Service Fusion), so the screen keeps showing the real value and says so. The status and sub-status
-  /// are drawn as the same pill as a tech's status on a visit (user, 2026-11-12).
-  Widget _statusPicker(String current, {required bool sub}) {
+  /// The status or sub-status, read-only. Changing it isn't saved anywhere yet (nothing is written to the database or
+  /// Service Fusion), so this shows the value only, as the same pill as a tech's status on a visit (user, 2026-11-12),
+  /// and "Not set" when there is none. Bring back a picker once saving exists.
+  Widget _statusPill(String current, {required bool sub}) {
     final has = current.trim().isNotEmpty && current != 'No status';
-    final Widget face = has
-        ? _visitPill(current)
-        : Text(sub ? 'set sub-status' : 'set status', style: const TextStyle(fontSize: 13, color: _link));
-    return PopupMenuButton<String>(
-      tooltip: sub ? 'Change sub-status' : 'Change status',
-      constraints: const BoxConstraints(maxHeight: 460, minWidth: 240),
-      position: PopupMenuPosition.under,
-      offset: const Offset(0, 6),
-      onSelected: (picked) {
-        ScaffoldMessenger.of(context)
-          ..hideCurrentSnackBar()
-          ..showSnackBar(SnackBar(content: Text('Changing ${sub ? 'sub-status' : 'status'} to "$picked" is not saved yet.')));
-      },
-      itemBuilder: (_) => [
-        for (final name in (_isEstimate ? kEstimateStatuses : kJobStatuses))
-          PopupMenuItem<String>(
-            value: name,
-            height: 38,
-            child: Row(
-              children: [
-                Container(
-                  width: 10,
-                  height: 10,
-                  decoration: BoxDecoration(color: statusColor(name), shape: BoxShape.circle),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(name, style: TextStyle(fontWeight: name == current ? FontWeight.w800 : FontWeight.w500)),
-                ),
-                if (name == current) const Icon(Icons.check_rounded, size: 16),
-              ],
-            ),
-          ),
-      ],
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(child: face),
-            const SizedBox(width: 2),
-            const Icon(Icons.arrow_drop_down_rounded, size: 20, color: AppTheme.sectionLabel),
-          ],
-        ),
-      ),
-    );
+    if (has) return Semantics(label: '${sub ? 'Sub-status' : 'Status'}: $current', child: _visitPill(current));
+    return const Text('Not set', style: TextStyle(fontSize: 13, color: DashUi.subtle));
   }
 
   // ---- links, key facts, loading skeleton -----------------------------------
@@ -1099,6 +1064,19 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     );
   }
 
+  /// How wide [text] lays out in [style] at the window's text size.
+  static double _textWidth(BuildContext context, String text, TextStyle style) {
+    final tp = TextPainter(
+      text: TextSpan(text: text, style: DefaultTextStyle.of(context).style.merge(style)),
+      textDirection: TextDirection.ltr,
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final w = tp.width;
+    tp.dispose();
+    return w.ceilToDouble();
+  }
+
   Widget _text(String v, {bool link = false, bool muted = false}) => Padding(
     padding: const EdgeInsets.only(bottom: 2),
     child: SelectableText(
@@ -1145,7 +1123,13 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
         children: [
           LayoutBuilder(
             builder: (context, c) {
-              final inline = c.maxWidth >= 640;
+              // Measured, not a fixed width: the tabs keep their names whenever they fit, beside the title when there
+              // is room and under it when not, and drop to icons only when even a full row is too narrow. Never
+              // scaled down (at large text sizes a FittedBox shrank them to unreadable).
+              final room = c.maxWidth - 40;
+              final full = _DetailTabs.fullWidth(context, tabs);
+              final inline = full + 16 + _textWidth(context, title.data!, title.style!) <= room;
+              final compact = !inline && full > room;
               // Edge to edge across the block (user 2026-11-24: "make the header extend the full block"), square, with a
               // hairline under it.
               return Container(
@@ -1159,14 +1143,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                 child: inline
                     ? Row(
                         children: [
-                          title,
+                          Flexible(child: title),
                           const SizedBox(width: 16),
-                          Expanded(
-                            child: Align(
-                              alignment: Alignment.centerRight,
-                              child: FittedBox(fit: BoxFit.scaleDown, child: tabBar()),
-                            ),
-                          ),
+                          const Spacer(),
+                          tabBar(),
                         ],
                       )
                     : Column(
@@ -1174,7 +1154,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                         children: [
                           title,
                           const SizedBox(height: 10),
-                          SingleChildScrollView(scrollDirection: Axis.horizontal, child: tabBar(compact: true)),
+                          SingleChildScrollView(scrollDirection: Axis.horizontal, child: tabBar(compact: compact)),
                         ],
                       ),
               );
@@ -1210,6 +1190,18 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       builder: (hover) => LayoutBuilder(
         builder: (context, c) {
           final stacked = c.maxWidth < 460;
+          Widget copyButton() {
+            final (text, what) = copy!;
+            return _CopyValue(
+              text: text,
+              what: what,
+              visible: hover,
+              onCopy: () async {
+                await Clipboard.setData(ClipboardData(text: text));
+                _say('Copied $text');
+              },
+            );
+          }
           final labelRow = Row(
             children: [
               Icon(icon, size: 18, color: DashUi.subtle),
@@ -1230,7 +1222,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                     children: [
                       labelRow,
                       const SizedBox(height: 4),
-                      Padding(padding: const EdgeInsets.only(left: 28), child: shown),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 28),
+                        child: copy == null ? shown : Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: shown), copyButton()]),
+                      ),
                     ],
                   )
                 : Row(
@@ -1239,16 +1234,7 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
                       SizedBox(width: 180, child: labelRow),
                       const SizedBox(width: 12),
                       Expanded(child: shown),
-                      if (copy != null)
-                        _CopyValue(
-                          text: copy.$1,
-                          what: copy.$2,
-                          visible: hover,
-                          onCopy: () async {
-                            await Clipboard.setData(ClipboardData(text: copy.$1));
-                            _say('Copied ${copy.$1}');
-                          },
-                        ),
+                      if (copy != null) copyButton(),
                     ],
                   ),
           );
@@ -1289,6 +1275,12 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     final uri = Uri.tryParse(u);
     if (uri != null && uri.hasScheme) return u;
     return picture ? '$_pictureBase${Uri.encodeComponent(u)}' : u;
+  }
+
+  /// A full web address (not a bare Service Fusion file name).
+  static bool _isLink(String url) {
+    final uri = Uri.tryParse(url.trim());
+    return uri != null && (uri.scheme == 'http' || uri.scheme == 'https');
   }
 
   Future<void> _openFile(String url) async {
@@ -1621,15 +1613,16 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
       final url = (f['url'] ?? '').toString();
       final meta = isOurs
           ? [_size(f['size']), if ((f['uploadedBy'] ?? '').toString().isNotEmpty) 'Uploaded by ${f['uploadedBy']}', _dateTime(f['createdAt'])]
-          : [(f['type'] ?? '').toString(), _dateTime(f['created_at'])];
+          : [(f['type'] ?? '').toString(), _dateTime(f['created_at']), if (!_isLink(url)) 'Open it in Service Fusion'];
       return _DocRow(
         name: (f['name'] ?? '').toString().isEmpty ? 'Document' : f['name'].toString(),
         comment: (f['comment'] ?? '').toString().trim(),
         meta: meta.where((e) => e.trim().isNotEmpty).join('  ·  '),
         ours: isOurs,
         private: f['is_private'] == true,
-        // Ours open in the viewer; Service Fusion's only have a file name, so they just explain that.
-        onOpen: isOurs ? () => showFileViewer(context, viewer, index) : (url.isEmpty ? null : () => _openFile(url)),
+        // Ours open in the viewer. Service Fusion's usually come with only a file name, which can't be opened from
+        // here, so those don't look clickable at all (no pointer, no open icon) and say where to find them.
+        onOpen: isOurs ? () => showFileViewer(context, viewer, index) : (_isLink(url) ? () => _openFile(url) : null),
         onRemove: isOurs && _canUpdate ? () => _removeFile(f) : null,
       );
     }
@@ -2489,7 +2482,10 @@ class _JobDetailScreenState extends State<JobDetailScreen> {
     if (m.total <= 0) return null;
     final share = (m.paid / m.total).clamp(0.0, 1.0);
     final over = m.over > 0.005;
-    final percent = ((m.paid + m.over) / m.total * 100).round(); // past 100 when overpaid
+    // Past 100 when overpaid. Held at 99 while anything is owed, so "100% paid" never shows with money still due
+    // (99.7% used to round up to it).
+    final rawPercent = ((m.paid + m.over) / m.total * 100).round();
+    final percent = m.paid < m.total - 0.005 ? math.min(rawPercent, 99) : rawPercent;
     final owing = m.state == 'owed' || m.state == 'invoice-owed';
     final full = m.state == 'paid' || m.state == 'invoice-paid';
     final (String right, Color rightTone) = switch (m.state) {
@@ -3853,6 +3849,21 @@ class _DetailTabs extends StatefulWidget {
   final String label;
   const _DetailTabs({required this.tabs, required this.selected, required this.onSelect, this.compact = false, this.label = 'Details view'});
 
+  /// The width of the full tab row (every tab with its name and count), to decide whether names fit.
+  static double fullWidth(BuildContext context, List<_DetailTab> tabs) {
+    double tw(String t, double size) => _JobDetailScreenState._textWidth(
+      context,
+      t,
+      TextStyle(fontSize: size, fontWeight: FontWeight.w700, letterSpacing: size == 13 ? -0.1 : null, height: 1.2),
+    );
+    var w = 6.0 + 2; // the track's padding, plus a hair of slack
+    for (final t in tabs) {
+      w += 24 + 3 + 16 + 6 + tw(t.label, 13); // padding, focus border, icon, gap, name
+      if (t.count > 0) w += 6 + (tw(t.count > 999 ? '999+' : '${t.count}', 11) + 10).clamp(18, double.infinity);
+    }
+    return w;
+  }
+
   @override
   State<_DetailTabs> createState() => _DetailTabsState();
 }
@@ -4059,6 +4070,7 @@ class _PicTile extends StatefulWidget {
 
 class _PicTileState extends State<_PicTile> {
   bool _hover = false;
+  bool _focus = false;
 
   Widget _placeholder(IconData icon) => Container(
     color: DashUi.faint,
@@ -4070,15 +4082,25 @@ class _PicTileState extends State<_PicTile> {
   Widget build(BuildContext context) {
     final still = MediaQuery.disableAnimationsOf(context);
     final d = still ? Duration.zero : const Duration(milliseconds: 200);
-    final lit = _hover && widget.onOpen != null;
+    final lit = (_hover || _focus) && widget.onOpen != null;
     final name = widget.name.isEmpty ? 'Picture' : widget.name;
+    final open = widget.onOpen;
     return Tooltip(
       message: [name, if (widget.uploadedBy.isNotEmpty) 'Uploaded by ${widget.uploadedBy}', if (widget.comment.isNotEmpty) widget.comment].join('\n'),
       waitDuration: const Duration(milliseconds: 500),
-      child: MouseRegion(
-        cursor: widget.onOpen == null ? MouseCursor.defer : SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
+      // Opens from the keyboard (Tab to it, Enter or Space) and tells a screen reader what it is, like a button.
+      child: Semantics(
+        button: open != null,
+        image: open == null,
+        label: [name, if (widget.comment.isNotEmpty) widget.comment].join(', '),
+        hint: open == null ? null : 'Open picture',
+        onTap: open,
+        child: FocusableActionDetector(
+        enabled: open != null,
+        mouseCursor: open == null ? MouseCursor.defer : SystemMouseCursors.click,
+        onShowFocusHighlight: (v) => setState(() => _focus = v),
+        onShowHoverHighlight: (v) => setState(() => _hover = v),
+        actions: {if (open != null) ActivateIntent: CallbackAction<ActivateIntent>(onInvoke: (_) => open())},
         child: AnimatedSlide(
           duration: d,
           curve: Curves.easeOutCubic,
@@ -4193,6 +4215,7 @@ class _PicTileState extends State<_PicTile> {
               ),
             ),
           ),
+        ),
         ),
       ),
     );
@@ -4348,22 +4371,22 @@ class _DocRowState extends State<_DocRow> {
 class _CopyValue extends StatelessWidget {
   final String text;
   final String what;
+
+  /// The row is under the pointer: the icon darkens from its quiet resting grey. It is always shown (it used to fade
+  /// to nothing yet stay clickable and focusable), so keyboard and touch users can find it too.
   final bool visible;
   final VoidCallback onCopy;
   const _CopyValue({required this.text, required this.what, required this.visible, required this.onCopy});
 
   @override
-  Widget build(BuildContext context) => AnimatedOpacity(
-    opacity: visible ? 1 : 0,
-    duration: MediaQuery.disableAnimationsOf(context) ? Duration.zero : const Duration(milliseconds: 150),
-    child: IconButton(
-      tooltip: 'Copy $what',
-      padding: EdgeInsets.zero,
-      constraints: const BoxConstraints.tightFor(width: 28, height: 22),
-      style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
-      iconSize: 16,
-      icon: const Icon(Icons.copy_rounded, color: DashUi.slate),
-      onPressed: onCopy,
-    ),
+  Widget build(BuildContext context) => IconButton(
+    tooltip: 'Copy $what',
+    padding: EdgeInsets.zero,
+    constraints: const BoxConstraints.tightFor(width: 28, height: 22),
+    // No hover wash on this page (USER RULE 2026-11-24); focus and press still show.
+    style: IconButton.styleFrom(tapTargetSize: MaterialTapTargetSize.shrinkWrap).copyWith(overlayColor: dashNoHoverOverlay),
+    iconSize: 16,
+    icon: Icon(Icons.copy_rounded, color: visible ? DashUi.slate : DashUi.subtle),
+    onPressed: onCopy,
   );
 }
