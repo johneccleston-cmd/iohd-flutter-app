@@ -6,6 +6,7 @@ import '../theme/app_theme.dart';
 import 'app_menu.dart';
 import 'app_ribbon.dart';
 import 'dashboard_kit.dart';
+import 'flat_page.dart' show OverflowTooltip;
 import 'focus_ring.dart';
 
 /// The Product Catalog's own design system (Phase 1 redesign, 2026-11-16): the list, its filters and the product page are
@@ -443,7 +444,10 @@ class CatalogCheckRow extends StatelessWidget {
 
   /// A coloured dot before the name (the "Needs attention" rows), or null.
   final Color? dot;
-  const CatalogCheckRow({super.key, required this.label, required this.count, required this.selected, required this.onTap, this.dot});
+
+  /// Grey the row out: picking it would show nothing with the other filters as they are (it can still be picked).
+  final bool dim;
+  const CatalogCheckRow({super.key, required this.label, required this.count, required this.selected, required this.onTap, this.dot, this.dim = false});
 
   static final _fmt = RegExp(r'\B(?=(\d{3})+(?!\d))');
 
@@ -481,18 +485,22 @@ class CatalogCheckRow extends StatelessWidget {
                 const SizedBox(width: 7),
               ],
               Expanded(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 13.5, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: DashUi.ink),
+                // A name cut short by the narrow sidebar shows in full on hover (and only then).
+                child: OverflowTooltip(
+                  message: label,
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13.5, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, color: dim && !selected ? DashUi.subtle : DashUi.ink),
+                  ),
                 ),
               ),
               if (n != null) ...[
                 const SizedBox(width: 8),
                 Text(
                   n,
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: selected ? DashUi.ink : DashUi.subtle, fontFeatures: CatalogUi.figures),
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: selected ? DashUi.ink : (dim ? DashUi.muted : DashUi.subtle), fontFeatures: CatalogUi.figures),
                 ),
               ],
             ],
@@ -878,6 +886,12 @@ class CatalogPager extends StatelessWidget {
   final ValueChanged<int> onPage;
   final ValueChanged<int> onPageSize;
   final bool compact;
+
+  /// All the rows across the pages: "Showing 1–50 of 446" (null keeps "Showing 1–50").
+  final int? total;
+
+  /// Keep the rows-per-page choice in a compact footer too (it is dropped there by default).
+  final bool sizesWhenCompact;
   const CatalogPager({
     super.key,
     required this.page,
@@ -889,7 +903,11 @@ class CatalogPager extends StatelessWidget {
     required this.onPageSize,
     this.pageSizes = const [50, 100],
     this.compact = false,
+    this.total,
+    this.sizesWhenCompact = false,
   });
+
+  static final NumberFormat _n = NumberFormat.decimalPattern();
 
   /// The page numbers to show: the first, the last, and the ones around [page], with null for a gap.
   static List<int?> numbers(int page, int total, {int around = 1}) {
@@ -924,29 +942,41 @@ class CatalogPager extends StatelessWidget {
         ),
         child: Row(
           children: [
-            if (!compact) ...[
-              const Text(
-                'Rows',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate),
-              ),
-              const SizedBox(width: 8),
+            if (!compact || sizesWhenCompact) ...[
+              if (!compact) ...[
+                const Text(
+                  'Rows',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: DashUi.slate),
+                ),
+                const SizedBox(width: 8),
+              ],
               for (final s in pageSizes) _SizePill(size: s, selected: s == pageSize, onTap: () => onPageSize(s)),
-              const SizedBox(width: 16),
+              SizedBox(width: compact ? 8 : 16),
             ],
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(
-                    text: 'Showing ',
-                    style: const TextStyle(color: DashUi.slate),
-                  ),
-                  TextSpan(
-                    text: '$firstRow–$last',
-                    style: const TextStyle(color: DashUi.ink, fontWeight: FontWeight.w700),
-                  ),
-                ],
+            Flexible(
+              child: Text.rich(
+                TextSpan(
+                  children: [
+                    if (!compact || total == null)
+                      TextSpan(
+                        text: 'Showing ',
+                        style: const TextStyle(color: DashUi.slate),
+                      ),
+                    TextSpan(
+                      text: total == null ? '$firstRow–$last' : '${_n.format(firstRow)}–${_n.format(last)}',
+                      style: const TextStyle(color: DashUi.ink, fontWeight: FontWeight.w700),
+                    ),
+                    if (total != null)
+                      TextSpan(
+                        text: ' of ${_n.format(total)}',
+                        style: const TextStyle(color: DashUi.slate),
+                      ),
+                  ],
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 13, fontFeatures: CatalogUi.figures),
               ),
-              style: const TextStyle(fontSize: 13, fontFeatures: CatalogUi.figures),
             ),
             const Spacer(),
             if (totalPages > 1) ...[

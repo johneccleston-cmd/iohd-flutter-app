@@ -61,11 +61,13 @@ void main() {
 
   test('status follows the reorder point, the same rule as the Inventory dashboard', () {
     expect(_item('a', 0, 2).status, StockStatus.out);
-    expect(_item('a', -1, 2).status, StockStatus.out);
+    expect(_item('a', -1, 2).status, StockStatus.negative); // a count below zero is its own warning (audit F6)
     expect(_item('a', 2, 2).status, StockStatus.low); // at the reorder point is low
     expect(_item('a', 3, 2).status, StockStatus.ok);
     expect(_item('a', 1250, 3000).status, StockStatus.low);
-    expect(_item('a', 0, 0).status, StockStatus.notStocked); // no reorder point: none on hand is not "out"
+    expect(_item('a', 0, 0).status, StockStatus.none); // no reorder point: none on hand is not "out"
+    expect(_item('a', -2, 0).status, StockStatus.negative); // below zero is always a warning
+    expect(_item('a', -2, 5).status, StockStatus.negative);
     expect(_item('a', 31, 0).status, StockStatus.ok); // no reorder point, units on hand: in stock, never low
   });
 
@@ -82,19 +84,17 @@ void main() {
 
   testWidgets('wide: sidebar counts, needs-attention first, status filter narrows', (t) async {
     await _pump(t, InventoryScreen(loader: () async => _sample), const Size(1366, 760));
-    expect(find.text('6 parts'), findsOneWidget);
+    expect(find.textContaining('6 parts'), findsOneWidget);
     // Out of stock first, then low (fewest first).
-    final names = [for (final w in t.widgetList<Text>(find.byType(Text))) w.data ?? ''];
+    final names = [for (final w in t.widgetList<Text>(find.byType(Text))) w.data ?? w.textSpan?.toPlainText() ?? ''];
     expect(names.indexOf('Cable 8ft'), lessThan(names.indexOf('Keypad | 878MAX')));
     expect(names.indexOf('Keypad | 878MAX'), lessThan(names.indexOf('Back Hang Nut')));
-    expect(find.text('Not kept in stock'), findsWidgets);
+    expect(find.text('None on hand'), findsWidgets);
 
-    expect(find.bySemanticsLabel('Low stock, 2'), findsNothing); // filter groups start collapsed
-    await t.tap(find.text('Stock status'));
-    await t.pumpAndSettle();
+    // Stock status starts open, so the counts show without a click (U1).
     await t.tap(find.bySemanticsLabel('Low stock, 2'));
     await t.pumpAndSettle();
-    expect(find.text('2 matching'), findsOneWidget);
+    expect(find.textContaining('2 matching'), findsOneWidget);
     expect(find.text('Bearing RC | Steel | 1"'), findsNothing);
   });
 
@@ -109,9 +109,9 @@ void main() {
     await t.pump(const Duration(milliseconds: 300));
     await t.pumpAndSettle();
     expect(find.text('No parts match "zzz"'), findsOneWidget);
-    await t.tap(find.text('Clear search and filters'));
+    await t.tap(find.text('Clear search'));
     await t.pumpAndSettle();
-    expect(find.text('6 parts'), findsOneWidget);
+    expect(find.textContaining('6 parts'), findsOneWidget);
   });
 
   testWidgets('error with nothing loaded, then retry works', (t) async {
@@ -151,8 +151,6 @@ void main() {
     }
     testWidgets('real data, low filter, 1366', (t) async {
       await _pump(t, InventoryScreen(loader: () async => real), const Size(1366, 768));
-      await t.tap(find.text('Stock status'));
-      await t.pumpAndSettle();
       await t.tap(find.bySemanticsLabel(RegExp(r'^Low stock, ')));
       await t.pumpAndSettle();
       await _save(t, 'real_low_1366');

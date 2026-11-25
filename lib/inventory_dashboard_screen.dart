@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'config/access.dart';
 import 'widgets/dash_hover_card.dart';
 import 'widgets/dashboard_data.dart';
@@ -268,16 +269,21 @@ class _InventoryDashboardContentState extends State<InventoryDashboardContent> w
         valueColor: DashUi.red,
         index: 1,
       ),
-      AnimatedMetricCard(
-        // Items at or below a reorder point that has been set. Amber only when there are some (none is not a problem).
-        title: 'At or below reorder point',
-        value: data.lowStockCount.toDouble(),
-        format: (v) => v.round().toString(),
-        caption: 'Items with a reorder point · today',
-        definition: 'Active items whose on-hand quantity is at or below their reorder point. Items with '
-            'no reorder point are not counted.',
-        valueColor: data.lowStockCount > 0 ? DashUi.amber : DashUi.ink,
-        index: 2,
+      // Items at or below a reorder point that has been set, counted on the live inventory sheet like Stock Levels, which a
+      // click opens on those parts (Stock Levels UI audit U4, F11). Amber only when there are some (none is not a problem).
+      _LinkedCard(
+        onTap: () => GoRouter.maybeOf(context)?.go('/inventory?view=attention'),
+        label: 'Open these parts in Stock Levels',
+        card: AnimatedMetricCard(
+          title: 'At or below reorder point',
+          value: data.lowStockCount.toDouble(),
+          format: (v) => v.round().toString(),
+          caption: 'Items with a reorder point · now',
+          definition: 'Parts on the inventory sheet whose on-hand quantity is at or below their reorder point (out of stock and '
+              'low stock together), the same parts Stock Levels shows under Needs attention. Parts with no reorder point are not counted. Click to open them in Stock Levels.',
+          valueColor: data.lowStockCount > 0 ? DashUi.amber : DashUi.ink,
+          index: 2,
+        ),
       ),
       AnimatedMetricCard(
         // This year's cycle counts against the system quantity: the same figure, title and wording as the warehouse
@@ -456,6 +462,8 @@ class _Grid extends StatelessWidget {
               dashTileTextWidth(context, title: '', value: d.value) * 22 / 28,
             ),
           ),
+        // A card that opens a page: sized by the card inside.
+        _LinkedCard l => need(l.card, line: line),
         _ => null,
       };
       final withLines = [for (final w in row) need(w, line: true)];
@@ -479,6 +487,25 @@ class _Grid extends StatelessWidget {
 // =============================================================================
 // SCORECARD WITH A DATE (same frame and type as AnimatedMetricCard)
 // =============================================================================
+
+/// A scorecard that opens a page when clicked (the low-stock card opens Stock Levels). It adds nothing to the layout, and
+/// _tileRow sizes it by the card inside.
+class _LinkedCard extends StatelessWidget {
+  final AnimatedMetricCard card;
+  final VoidCallback onTap;
+  final String label;
+  const _LinkedCard({required this.card, required this.onTap, required this.label});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    button: true,
+    label: label,
+    child: MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(behavior: HitTestBehavior.opaque, onTap: onTap, child: card),
+    ),
+  );
+}
 
 class _DateCard extends StatefulWidget {
   final String title;

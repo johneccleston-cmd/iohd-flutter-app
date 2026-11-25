@@ -198,7 +198,8 @@ final GoRouter _router = GoRouter(
             GoRoute(
               path: '/inventory',
               builder: (context, state) =>
-                  const InventoryScreen(), // "Stock Levels"
+                  // "Stock Levels". The query opens it filtered (?view=attention from the Inventory dashboard).
+                  InventoryScreen(link: state.uri.queryParameters),
               routes: [
                 GoRoute(
                   path: 'catalog',
